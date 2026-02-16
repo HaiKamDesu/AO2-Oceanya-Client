@@ -24,7 +24,7 @@ public class LiveServerConnectionTests
         string serverUrl = GetDefaultServerUrl();
         string probeMessage = $"[LiveTest:{DateTime.UtcNow:yyyy-MM-ddTHH:mm:ssZ}] single-client connectivity probe";
 
-        AOClient client = new AOClient(serverUrl, Globals.ConnectionString)
+        AOClient client = new AOClient(serverUrl)
         {
             clientName = "LiveTestPrimary",
             OOCShowname = "LiveTestPrimary"
@@ -32,7 +32,7 @@ public class LiveServerConnectionTests
 
         try
         {
-            Log($"START SingleClient url={serverUrl} location={Globals.ConnectionString}");
+            Log($"START SingleClient url={serverUrl}");
             int attempts = await ConnectWithCooldownRetryAsync(client, "SingleClient");
 
             Assert.Multiple(() =>
@@ -62,15 +62,13 @@ public class LiveServerConnectionTests
     public async Task LiveServer_DefaultServer_SecondClientConnectHandlesServerCooldown()
     {
         string serverUrl = GetDefaultServerUrl();
-        string sharedLocation = Globals.ConnectionString;
-
-        AOClient firstClient = new AOClient(serverUrl, sharedLocation)
+        AOClient firstClient = new AOClient(serverUrl)
         {
             clientName = "LiveTestFirst",
             OOCShowname = "LiveTestFirst"
         };
 
-        AOClient secondClient = new AOClient(serverUrl, sharedLocation)
+        AOClient secondClient = new AOClient(serverUrl)
         {
             clientName = "LiveTestSecond",
             OOCShowname = "LiveTestSecond"
@@ -78,7 +76,7 @@ public class LiveServerConnectionTests
 
         try
         {
-            Log($"START MultiClient url={serverUrl} location={sharedLocation}");
+            Log($"START MultiClient url={serverUrl}");
 
             int firstAttempts = await ConnectWithCooldownRetryAsync(firstClient, "MultiClientFirst");
             int secondAttempts = await ConnectWithCooldownRetryAsync(secondClient, "MultiClientSecond");

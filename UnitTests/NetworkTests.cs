@@ -14,7 +14,7 @@ public class NetworkTests
     [Test]
     public async Task HandleMessage_ParsesScDescriptionsIntoCharacterNames()
     {
-        var client = new AOClient("ws://localhost:10001/", "Basement");
+        var client = new AOClient("ws://localhost:10001/");
         await client.HandleMessage("SC#Phoenix&Defense Attorney#Franziska&Prosecutor#%");
 
         var parsed = GetServerCharacterList(client);
@@ -25,7 +25,7 @@ public class NetworkTests
     [Test]
     public async Task HandleMessage_UpdatesCharacterAvailabilityFromCharsCheck()
     {
-        var client = new AOClient("ws://localhost:10001/", "Basement");
+        var client = new AOClient("ws://localhost:10001/");
         await client.HandleMessage("SC#Phoenix#Franziska#Miles#%");
         await client.HandleMessage("CharsCheck#0#1#0#%");
 
@@ -42,7 +42,7 @@ public class NetworkTests
     [Test]
     public async Task SelectFirstAvailableINIPuppet_DoesNotThrow_WhenCharsCheckHasMoreSlotsThanCharacterList()
     {
-        AOClient client = new AOClient("ws://localhost:10001/", "Basement");
+        AOClient client = new AOClient("ws://localhost:10001/");
         await client.HandleMessage("SC#Phoenix#Franziska#%");
         await client.HandleMessage("CharsCheck#1#1#0#0#%");
 
@@ -52,7 +52,7 @@ public class NetworkTests
     [Test]
     public async Task HandleMessage_RaisesBackgroundAndPositionEvents()
     {
-        var client = new AOClient("ws://localhost:10001/", "Basement");
+        var client = new AOClient("ws://localhost:10001/");
 
         string? bg = null;
         string? side = null;
@@ -73,7 +73,7 @@ public class NetworkTests
     [Test]
     public async Task HandleMessage_ParsesOocPacketAndDecodesSymbols()
     {
-        var client = new AOClient("ws://localhost:10001/", "Basement");
+        var client = new AOClient("ws://localhost:10001/");
 
         string? showname = null;
         string? message = null;
@@ -99,7 +99,7 @@ public class NetworkTests
     [Test]
     public void HandleMessage_IgnoresMalformedOrUnknownPackets()
     {
-        var client = new AOClient("ws://localhost:10001/", "Basement");
+        var client = new AOClient("ws://localhost:10001/");
 
         Assert.DoesNotThrowAsync(async () =>
         {

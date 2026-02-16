@@ -1,15 +1,25 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
 namespace OceanyaClient
 {
+    public class CustomServerEntry
+    {
+        public string Name { get; set; } = "";
+        public string Endpoint { get; set; } = "";
+    }
+
     public class SaveData
     {
         //Initial Configuration
         public string ConfigIniPath { get; set; } = "";
-        public string ConnectionPath { get; set; } = "";
         public bool UseSingleInternalClient { get; set; } = true;
+        public string SelectedServerEndpoint { get; set; } = "";
+        // Legacy list kept for migration from endpoint-only storage.
+        public List<string> CustomServerEndpoints { get; set; } = new List<string>();
+        public List<CustomServerEntry> CustomServerEntries { get; set; } = new List<CustomServerEntry>();
 
 
         public string OOCName { get; set; } = "";

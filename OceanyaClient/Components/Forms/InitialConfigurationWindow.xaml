@@ -6,7 +6,7 @@
         xmlns:local="clr-namespace:OceanyaClient"
         mc:Ignorable="d"
         Title="Initial Configuration"
-        Height="300" 
+        Height="298" 
         Width="468"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterScreen"
@@ -27,6 +27,119 @@
             <Setter Property="Padding" Value="8,5"/>
             <Setter Property="FontSize" Value="13"/>
             <Setter Property="Height" Value="30"/>
+        </Style>
+
+        <Style x:Key="ModernComboBox" TargetType="{x:Type ComboBox}">
+            <Setter Property="Background" Value="#FF262626"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#444444"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,5"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ComboBox}">
+                        <Grid>
+                            <ToggleButton x:Name="DropDownToggle"
+                                          Focusable="False"
+                                          IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="{x:Type ToggleButton}">
+                                        <Border x:Name="ComboBorder"
+                                                Background="{Binding Background, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                                BorderBrush="{Binding BorderBrush, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                                BorderThickness="{Binding BorderThickness, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                                CornerRadius="3">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="30"/>
+                                                </Grid.ColumnDefinitions>
+                                                <ContentPresenter Margin="8,0,0,0"
+                                                                  VerticalAlignment="Center"
+                                                                  HorizontalAlignment="Left"
+                                                                  TextElement.Foreground="White"
+                                                                  Content="{Binding SelectionBoxItem, RelativeSource={RelativeSource AncestorType=ComboBox}}"/>
+                                                <Border Grid.Column="1" Background="#FF202020" BorderBrush="#444444" BorderThickness="1,0,0,0">
+                                                    <Path HorizontalAlignment="Center"
+                                                          VerticalAlignment="Center"
+                                                          Fill="#E0E0E0"
+                                                          Data="M 0 0 L 8 0 L 4 5 Z"/>
+                                                </Border>
+                                            </Grid>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="ComboBorder" Property="BorderBrush" Value="#6E6E6E"/>
+                                            </Trigger>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter TargetName="ComboBorder" Property="BorderBrush" Value="#8A8A8A"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+
+                            <Popup x:Name="PART_Popup"
+                                   Placement="Bottom"
+                                   IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   AllowsTransparency="True"
+                                   Focusable="False"
+                                   PopupAnimation="Fade">
+                                <Border x:Name="DropDownBorder"
+                                        MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
+                                        Background="#FF262626"
+                                        BorderBrush="#444444"
+                                        BorderThickness="1"
+                                        CornerRadius="3"
+                                        Margin="0,2,0,0">
+                                    <ScrollViewer MaxHeight="180" CanContentScroll="True">
+                                        <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="HasItems" Value="False">
+                                <Setter TargetName="DropDownBorder" Property="MinHeight" Value="20"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.6"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="ModernComboBoxItem" TargetType="{x:Type ComboBoxItem}">
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Background" Value="#FF262626"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ComboBoxItem}">
+                        <Border x:Name="ItemBorder" Background="{TemplateBinding Background}">
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <DataTrigger Binding="{Binding IsHeader}" Value="True">
+                                <Setter Property="IsEnabled" Value="False"/>
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#FF222222"/>
+                                <Setter Property="Foreground" Value="#FFB0B0B0"/>
+                            </DataTrigger>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#FF3D3D3D"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#FF171717"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
         <!-- Button style with darker overlay on hover and press -->
@@ -55,6 +168,11 @@
                             <!-- Even darker overlay when pressed -->
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter Property="Background" Value="#FF171717" TargetName="ButtonBorder"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Background" Value="#FF1A1A1A" TargetName="ButtonBorder"/>
+                                <Setter Property="BorderBrush" Value="#FF333333" TargetName="ButtonBorder"/>
+                                <Setter Property="Foreground" Value="#FF7A7A7A"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -126,7 +244,7 @@
     <Border BorderBrush="#222222" BorderThickness="1" CornerRadius="5">
         <Grid Margin="0,0,-1,-1">
             <Rectangle x:Name="imgScienceBlur" 
-                       HorizontalAlignment="Center" Width="467" Height="269" 
+                       HorizontalAlignment="Center" Width="467" Height="331" 
                        VerticalAlignment="Top" Margin="0,30,0,0">
                 <Rectangle.Fill>
                     <ImageBrush ImageSource="/Resources/scoienceblur.jpg" Opacity="0.5"/>
@@ -134,7 +252,7 @@
             </Rectangle>
 
             <Rectangle x:Name="imgScienceBlur_darken"
-                       HorizontalAlignment="Center" Width="467" Height="269" 
+                       HorizontalAlignment="Center" Width="467" Height="331" 
                        VerticalAlignment="Top" Margin="0,30,0,0" Fill="#7F000000"/>
 
             <!-- Background Logo -->
@@ -168,7 +286,7 @@
             </Border>
 
             <!-- Main Content -->
-            <StackPanel Margin="10,30,10,6">
+            <StackPanel Margin="10,30,10,10">
                 <!-- Attorney_Online.exe path -->
                 <TextBlock Text="CONFIG.INI PATH" Style="{StaticResource LabelText}"/>
                 <Grid>
@@ -189,12 +307,49 @@
                             Click="BrowseButton_Click"/>
                 </Grid>
 
-                <!-- Connection path -->
-                <TextBlock Text="CONNECTION PATH" Style="{StaticResource LabelText}"/>
-                <TextBox x:Name="ConnectionPathTextBox"
-                         Style="{StaticResource ModernTextBox}"
-                         Text="Basement/testing"
-                         Background="#FF262626"/>
+                <TextBlock Text="SERVER ENDPOINT" Style="{StaticResource LabelText}"/>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <ComboBox x:Name="ServerEndpointComboBox"
+                              Grid.Column="0"
+                              Style="{StaticResource ModernComboBox}"
+                              ItemContainerStyle="{StaticResource ModernComboBoxItem}"
+                              DisplayMemberPath="DisplayName"
+                              SelectionChanged="ServerEndpointComboBox_SelectionChanged"/>
+                    <Button x:Name="AddServerButton"
+                            Content="ADD"
+                            Grid.Column="1"
+                            Style="{StaticResource ModernButton}"
+                            Width="56"
+                            Margin="10,0,0,0"
+                            Click="AddServerButton_Click"/>
+                    <Button x:Name="EditServerButton"
+                            Content="EDIT"
+                            Grid.Column="2"
+                            Style="{StaticResource ModernButton}"
+                            IsEnabled="False"
+                            Width="56"
+                            Margin="8,0,0,0"
+                            Click="EditServerButton_Click"/>
+                    <Button x:Name="RemoveServerButton"
+                            Content="REMOVE"
+                            Grid.Column="3"
+                            Style="{StaticResource ModernButton}"
+                            IsEnabled="False"
+                            Width="70"
+                            Margin="8,0,0,0"
+                            Click="RemoveServerButton_Click"/>
+                </Grid>
+                <TextBlock Text="Preset entries are read-only. Custom entries can be edited or removed."
+                           Foreground="#A7A7A7"
+                           FontSize="11"
+                           TextWrapping="Wrap"
+                           Margin="0,5,0,0"/>
 
                 <!-- Refresh character and background info checkbox -->
                 <CheckBox x:Name="RefreshInfoCheckBox"
@@ -214,7 +369,7 @@
                         Style="{StaticResource ModernButton}"
                         Width="200"
                         Height="35"
-                        Margin="0,18,0,0"
+                        Margin="0,12,0,0"
                         HorizontalAlignment="Center"
                         Click="OkButton_Click"/>
             </StackPanel>

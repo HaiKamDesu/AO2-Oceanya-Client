@@ -440,7 +440,7 @@ namespace OceanyaClient
                 return;
             }
 
-            singleInternalClient = new AOClient(Globals.IPs[Globals.Servers.ChillAndDices], Globals.ConnectionString);
+            singleInternalClient = new AOClient(Globals.GetSelectedServerEndpoint());
             singleInternalClient.clientName = "InternalClient";
 
             singleInternalClient.OnICMessageReceived += (ICMessage icMessage) =>
@@ -518,7 +518,7 @@ namespace OceanyaClient
 
             try
             {
-                AOClient bot = new AOClient(Globals.IPs[Globals.Servers.ChillAndDices], Globals.ConnectionString);
+                AOClient bot = new AOClient(Globals.GetSelectedServerEndpoint());
                 bot.clientName = clientName;
 
                 if (useSingleInternalClient)
@@ -841,7 +841,7 @@ namespace OceanyaClient
         private async void ConnectButton_Click(object sender, RoutedEventArgs e)
         {
             #region Create the bot and connect to the server
-            AOClient bot = new AOClient(Globals.IPs[Globals.Servers.ChillAndDices], "Basement/testing");
+            AOClient bot = new AOClient(Globals.GetSelectedServerEndpoint());
             await bot.Connect();
             #endregion
 

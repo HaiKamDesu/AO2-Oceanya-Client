@@ -96,7 +96,7 @@ namespace UnitTests
             var chatLogManager = new ChatLogManager(10);
             
             // Create a mock AOClient (we won't actually connect it)
-            var client = new AOClient("ws://localhost:8080", "test");
+            var client = new AOClient("ws://localhost:8080");
             
             // Hook up the message received event
             client.OnMessageReceived += (chatLogType, characterName, showName, message, iniPuppetID) =>

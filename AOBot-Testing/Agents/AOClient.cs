@@ -10,7 +10,7 @@ using Common;
 
 namespace AOBot_Testing.Agents
 {
-    public partial class AOClient(string serverAddress, string location)
+    public partial class AOClient(string serverAddress)
     {
         private const int textCrawlSpeed = 35;
         private readonly Uri serverUri = new Uri(serverAddress);
@@ -44,7 +44,7 @@ namespace AOBot_Testing.Agents
         string hdid;
 
         public int playerID;
-        private string currentArea = location;
+        private string currentArea = string.Empty;
         private readonly List<string> availableAreas = new List<string>();
         public CharacterFolder? currentINI;
         public Emote? currentEmote;
@@ -487,8 +487,11 @@ namespace AOBot_Testing.Agents
                 CustomConsole.Info("===========================");
 
                 await Task.Delay(betweenHandshakeAndSetArea);
-                await SetArea(currentArea, betweenSetAreas);
-                CustomConsole.Info("===========================");
+                if (!string.IsNullOrWhiteSpace(currentArea))
+                {
+                    await SetArea(currentArea, betweenSetAreas);
+                    CustomConsole.Info("===========================");
+                }
 
                 //Allow some time for server to update area info
 
