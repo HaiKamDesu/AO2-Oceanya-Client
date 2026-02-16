@@ -1,6 +1,3 @@
-# CLAUDE.md
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Repository Structure
 - **AO2-Client/**: Git submodule pointing to the original Attorney Online client (reference code only)
 - **AOBot-Testing/**: My implementation of an Attorney Online bot client
@@ -21,10 +18,14 @@ Claude should NOT copy this code directly but use it to understand patterns and 
 - When cloning this repository for the first time, use: `git clone --recurse-submodules`
 - To update the submodule after cloning without the above flag: `git submodule update --init --recursive`
 
-## Build/Lint/Test Commands
-- Build: `dotnet build`
-- Run: `dotnet run`
-- Clean: `dotnet clean`
+## Build And Test Verification
+
+Any time code is changed, run build and test to verify the work using these exact commands from the project root:
+
+```bash
+/mnt/c/Program\ Files/dotnet/dotnet.exe build "AOBot-Testing.sln"
+/mnt/c/Program\ Files/dotnet/dotnet.exe test "AOBot-Testing.sln"
+```
 
 ## Code Style Guidelines
 - **Naming**: Use PascalCase for classes, methods, and properties. Use camelCase for local variables and parameters.

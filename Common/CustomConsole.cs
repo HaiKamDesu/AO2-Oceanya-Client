@@ -37,7 +37,7 @@ namespace Common
         /// <summary>
         /// Base method for all logging - writes a message to the console with timestamp
         /// </summary>
-        private static void WriteLine(string message)
+        public static void WriteLine(string message)
         {
             string timestampedMessage = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}";
             Console.WriteLine(timestampedMessage);
