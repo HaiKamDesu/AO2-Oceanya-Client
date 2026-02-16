@@ -232,7 +232,7 @@ namespace OceanyaClient
         /// <param name="buttons">The buttons to display in the message box.</param>
         /// <param name="icon">The icon to display in the message box.</param>
         /// <returns>A MessageBoxResult value that specifies which button was clicked.</returns>
-        public static MessageBoxResult Show(Window owner, string messageBoxText, string caption, MessageBoxButton buttons, MessageBoxImage icon)
+        public static MessageBoxResult Show(Window? owner, string messageBoxText, string caption, MessageBoxButton buttons, MessageBoxImage icon)
         {
             // Create and configure the OceanyaMessageBox
             OceanyaMessageBox messageBox = new OceanyaMessageBox();
@@ -273,7 +273,7 @@ namespace OceanyaClient
         /// <param name="owner">The window that owns this message box.</param>
         /// <param name="messageBoxText">The message to display.</param>
         /// <returns>A MessageBoxResult value that specifies which button was clicked.</returns>
-        public static MessageBoxResult Show(Window owner, string messageBoxText)
+        public static MessageBoxResult Show(Window? owner, string messageBoxText)
         {
             return Show(owner, messageBoxText, "", MessageBoxButton.OK, MessageBoxImage.None);
         }
@@ -285,7 +285,7 @@ namespace OceanyaClient
         /// <param name="messageBoxText">The message to display.</param>
         /// <param name="caption">The caption for the message box.</param>
         /// <returns>A MessageBoxResult value that specifies which button was clicked.</returns>
-        public static MessageBoxResult Show(Window owner, string messageBoxText, string caption)
+        public static MessageBoxResult Show(Window? owner, string messageBoxText, string caption)
         {
             return Show(owner, messageBoxText, caption, MessageBoxButton.OK, MessageBoxImage.None);
         }
@@ -298,7 +298,7 @@ namespace OceanyaClient
         /// <param name="caption">The caption for the message box.</param>
         /// <param name="buttons">The buttons to display in the message box.</param>
         /// <returns>A MessageBoxResult value that specifies which button was clicked.</returns>
-        public static MessageBoxResult Show(Window owner, string messageBoxText, string caption, MessageBoxButton buttons)
+        public static MessageBoxResult Show(Window? owner, string messageBoxText, string caption, MessageBoxButton buttons)
         {
             return Show(owner, messageBoxText, caption, buttons, MessageBoxImage.None);
         }

@@ -108,7 +108,7 @@ namespace UnitTests
             Assert.DoesNotThrow(() => new GPTClient("fake_test_api_key_for_unit_tests_only"), "Should initialize with valid API key");
             
             // Test initialization with null API key (should throw)
-            Assert.Throws<ArgumentNullException>(() => new GPTClient(null), "Should throw when API key is null");
+            Assert.Throws<ArgumentNullException>(() => new GPTClient(null!), "Should throw when API key is null");
         }
         
         [Test]
@@ -199,6 +199,7 @@ namespace UnitTests
                 Times.Once(),
                 ItExpr.Is<HttpRequestMessage>(req => 
                     req.Method == HttpMethod.Post && 
+                    req.RequestUri != null &&
                     req.RequestUri.ToString() == "https://api.openai.com/v1/chat/completions" &&
                     req.Headers.Contains("Authorization")
                 ),

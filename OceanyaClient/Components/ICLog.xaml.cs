@@ -14,10 +14,10 @@ namespace OceanyaClient.Components
     public partial class ICLog : UserControl
     {
         private static int LogMaxMessages => Globals.LogMaxMessages;
-        public Func<AOClient, AOClient> LogKeyResolver { get; set; }
+        public Func<AOClient, AOClient?>? LogKeyResolver { get; set; }
 
         private Dictionary<AOClient, (FlowDocument log, bool inverted)> clientLogs = new();
-        private AOClient currentClient = null;
+        private AOClient? currentClient = null;
         static bool InvertICLog { get; set; } = false;
 
         private readonly List<FormatRule> formatRules = new()
@@ -36,7 +36,7 @@ namespace OceanyaClient.Components
             public ICMessage.TextColors Name { get; set; }
             public char Start { get; set; }
             public char End { get; set; }
-            public SolidColorBrush ColorBrush { get; set; }
+            public SolidColorBrush ColorBrush { get; set; } = new SolidColorBrush(Colors.White);
             public bool Remove { get; set; }
         }
         public ICLog()
@@ -45,7 +45,7 @@ namespace OceanyaClient.Components
             LogBox.Document.Blocks.Clear();
         }
 
-        private AOClient ResolveLogClient(AOClient client)
+        private AOClient? ResolveLogClient(AOClient? client)
         {
             if (client == null)
             {
@@ -57,21 +57,21 @@ namespace OceanyaClient.Components
                 return client;
             }
 
-            AOClient resolvedClient = LogKeyResolver(client);
+            AOClient? resolvedClient = LogKeyResolver(client);
             return resolvedClient ?? client;
         }
 
-        private bool IsCurrentLogStream(AOClient client)
+        private bool IsCurrentLogStream(AOClient? client)
         {
-            AOClient currentLogClient = ResolveLogClient(currentClient);
-            AOClient messageLogClient = ResolveLogClient(client);
+            AOClient? currentLogClient = ResolveLogClient(currentClient);
+            AOClient? messageLogClient = ResolveLogClient(client);
             return ReferenceEquals(currentLogClient, messageLogClient);
         }
 
-        public void SetCurrentClient(AOClient client)
+        public void SetCurrentClient(AOClient? client)
         {
             currentClient = client;
-            AOClient logClient = ResolveLogClient(client);
+            AOClient? logClient = ResolveLogClient(client);
 
             if (logClient == null)
             {
@@ -88,9 +88,9 @@ namespace OceanyaClient.Components
             LogBox.ScrollToEnd();
         }
 
-        public void AddMessage(AOClient client, string showName, string message, bool isSentFromSelf = false, ICMessage.TextColors textColor = ICMessage.TextColors.White)
+        public void AddMessage(AOClient? client, string showName, string message, bool isSentFromSelf = false, ICMessage.TextColors textColor = ICMessage.TextColors.White)
         {
-            AOClient logClient = ResolveLogClient(client);
+            AOClient? logClient = ResolveLogClient(client);
             if (logClient == null)
             {
                 return;
@@ -313,9 +313,9 @@ namespace OceanyaClient.Components
             return formattedRuns;
         }
 
-        public void ClearClientLog(AOClient client)
+        public void ClearClientLog(AOClient? client)
         {
-            AOClient logClient = ResolveLogClient(client);
+            AOClient? logClient = ResolveLogClient(client);
             if (logClient != null && clientLogs.ContainsKey(logClient))
             {
                 clientLogs[logClient] = (new FlowDocument(), InvertICLog);
@@ -331,7 +331,7 @@ namespace OceanyaClient.Components
             LogBox.Document.Blocks.Clear();
         }
 
-        public AOClient GetCurrentClient()
+        public AOClient? GetCurrentClient()
         {
             return currentClient;
         }

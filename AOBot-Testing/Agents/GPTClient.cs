@@ -13,7 +13,7 @@ namespace AOBot_Testing.Agents
         private const string ApiUrl = "https://api.openai.com/v1/chat/completions";
 
         public Dictionary<string, string> systemVariables = new Dictionary<string, string>();
-        List<string> systemInstruction;
+        List<string> systemInstruction = new List<string>();
 
         public GPTClient SetSystemInstructions(List<string> instructions)
         {

@@ -198,7 +198,8 @@ Each of these settings has predefined integer values. **If a change is requested
             }
         }
 
-        List<string> mountPaths = new List<string>() { Path.GetDirectoryName(pathToConfigINI) };
+        string configDirectory = Path.GetDirectoryName(pathToConfigINI) ?? string.Empty;
+        List<string> mountPaths = new List<string>() { configDirectory };
 
         if (mountPathsRaw != "@Invalid()")
         {
@@ -212,7 +213,13 @@ Each of these settings has predefined integer values. **If a change is requested
 
             if (!Directory.Exists(current))
             {
-                var newMountPath = Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(pathToConfigINI)), current);
+                string? configParentDirectory = Path.GetDirectoryName(configDirectory);
+                if (string.IsNullOrWhiteSpace(configParentDirectory))
+                {
+                    throw new FileNotFoundException("Mount path base directory not found.");
+                }
+
+                var newMountPath = Path.Combine(configParentDirectory, current);
 
                 if (!Directory.Exists(newMountPath))
                 {

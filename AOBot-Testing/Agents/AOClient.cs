@@ -16,10 +16,9 @@ namespace AOBot_Testing.Agents
         private readonly Uri serverUri = new Uri(serverAddress);
         private ClientWebSocket? ws; // WebSocket instance
         public Stopwatch aliveTime = new Stopwatch();
-        private CountdownTimer speakTimer;
+        private CountdownTimer? speakTimer;
         bool AbleToSpeak { get; set; } = true;
 
-        private bool isHandshakeComplete = false;
 
         /// <summary>
         /// Key: Name of the character
@@ -41,7 +40,7 @@ namespace AOBot_Testing.Agents
         }
         public static string lastCharsCheck = string.Empty;
 
-        string hdid;
+        string hdid = string.Empty;
 
         public int playerID;
         private string currentArea = string.Empty;
@@ -70,7 +69,7 @@ namespace AOBot_Testing.Agents
         public (int Horizontal, int Vertical) SelfOffset;
         public bool switchPosWhenChangingINI = false;
 
-        private CharacterFolder CurrentINI
+        private CharacterFolder? CurrentINI
         {
             get
             {
@@ -80,27 +79,27 @@ namespace AOBot_Testing.Agents
             {
                 currentINI = value;
 
-                if(currentINI != null)
+                if (currentINI != null)
                 {
-                    currentEmote = value.configINI.Emotions.Values.First();
+                    currentEmote = currentINI.configINI.Emotions.Values.FirstOrDefault();
                 }
             }
         }
 
-        public Action<string, string, string, string, int> OnMessageReceived;
-        public Action<ICMessage> OnICMessageReceived;
-        public Action<string, string, bool> OnOOCMessageReceived;
-        public Action<CharacterFolder> OnChangedCharacter;
-        public Action<string> OnBGChange;
-        public Action<string> OnSideChange;
-        public Action OnINIPuppetChange; 
-        public Action<int> OnReconnectionAttempt;
-        public Action<int> OnReconnectionAttemptFailed;
-        public Action OnReconnect;
-        public Action OnWebsocketDisconnect;
-        public Action OnDisconnect;
-        public Action<string> OnCurrentAreaChanged;
-        public Action<IReadOnlyList<string>> OnAvailableAreasUpdated;
+        public Action<string, string, string, string, int>? OnMessageReceived;
+        public Action<ICMessage>? OnICMessageReceived;
+        public Action<string, string, bool>? OnOOCMessageReceived;
+        public Action<CharacterFolder>? OnChangedCharacter;
+        public Action<string>? OnBGChange;
+        public Action<string>? OnSideChange;
+        public Action? OnINIPuppetChange;
+        public Action<int>? OnReconnectionAttempt;
+        public Action<int>? OnReconnectionAttemptFailed;
+        public Action? OnReconnect;
+        public Action? OnWebsocketDisconnect;
+        public Action? OnDisconnect;
+        public Action<string>? OnCurrentAreaChanged;
+        public Action<IReadOnlyList<string>>? OnAvailableAreasUpdated;
 
         public string CurrentArea
         {
@@ -123,7 +122,7 @@ namespace AOBot_Testing.Agents
         public async Task SendICMessage(string showname, string message, bool queueMessage = false)
         {
             SetICShowname(showname);
-            SendICMessage(message, queueMessage);
+            await SendICMessage(message, queueMessage);
         }
         private bool isProcessingMessages = false;
 
@@ -131,6 +130,12 @@ namespace AOBot_Testing.Agents
         {
             if (ws != null && ws.State == WebSocketState.Open)
             {
+                if (CurrentINI == null || currentEmote == null)
+                {
+                    CustomConsole.Error("Cannot send IC message without selected character/emote.");
+                    return;
+                }
+
                 ICMessage msg = new ICMessage();
                 msg.DeskMod = deskMod;
                 msg.PreAnim = currentEmote.PreAnimation;
@@ -205,7 +210,7 @@ namespace AOBot_Testing.Agents
         {
             while (true)
             {
-                string messageToSend = null;
+                string? messageToSend = null;
 
                 lock (pendingMessages)
                 {
@@ -224,6 +229,11 @@ namespace AOBot_Testing.Agents
                 {
                     if (Globals.DebugMode)
                     {
+                        if (speakTimer == null)
+                        {
+                            break;
+                        }
+
                         var remainingTime = speakTimer.GetRemainingTime();
                         var formattedTime = $"{remainingTime.Hours}h {remainingTime.Minutes}m {remainingTime.Seconds}s {remainingTime.Milliseconds}ms";
                         CustomConsole.Debug($"Cannot speak yet, waiting for {formattedTime}...");
@@ -240,7 +250,10 @@ namespace AOBot_Testing.Agents
                     }
                 }
 
-                await SendPacket(messageToSend);
+                if (!string.IsNullOrEmpty(messageToSend))
+                {
+                    await SendPacket(messageToSend);
+                }
                 await Task.Delay(500); // Wait for command to process server-side
             }
         }
@@ -248,7 +261,7 @@ namespace AOBot_Testing.Agents
 
         public async Task SendOOCMessage(string message)
         {
-            SendOOCMessage(OOCShowname, message);
+            await SendOOCMessage(OOCShowname, message);
         }
         public async Task SendOOCMessage(string showname, string message)
         {
@@ -290,20 +303,18 @@ namespace AOBot_Testing.Agents
         }
         public void SetCharacter(string characterName)
         {
-            var newChar = new CharacterFolder();
-            try
-            {
-                newChar = CharacterFolder.FullList.First(c => c.Name == characterName);
-            }
-            catch
-            {
-                newChar = CharacterFolder.FullList.First(c => c.Name.ToLower() == characterName.ToLower());
-            }
+            CharacterFolder? newChar = CharacterFolder.FullList.FirstOrDefault(c => c.Name == characterName)
+                ?? CharacterFolder.FullList.FirstOrDefault(c => c.Name.Equals(characterName, StringComparison.OrdinalIgnoreCase));
 
             SetCharacter(newChar);
         }
-        public void SetCharacter(CharacterFolder character)
+        public void SetCharacter(CharacterFolder? character)
         {
+            if (character == null)
+            {
+                return;
+            }
+
             CurrentINI = character;
             if (switchPosWhenChangingINI || string.IsNullOrEmpty(curPos))
             {
@@ -329,7 +340,16 @@ namespace AOBot_Testing.Agents
         }
         public void SetEmote(string emoteDisplayID)
         {
-            currentEmote = CurrentINI.configINI.Emotions.Values.First(e => e.DisplayID == emoteDisplayID);
+            if (CurrentINI == null)
+            {
+                return;
+            }
+
+            currentEmote = CurrentINI.configINI.Emotions.Values.FirstOrDefault(e => e.DisplayID == emoteDisplayID);
+            if (currentEmote == null)
+            {
+                return;
+            }
 
             deskMod = currentEmote.DeskMod;
             emoteMod = currentEmote.Modifier;
@@ -617,7 +637,6 @@ namespace AOBot_Testing.Agents
             // Step 9: Wait for final confirmation
             response = await WaitForPacketAsync(packet => packet.StartsWith("DONE#"), "DONE");
 
-            isHandshakeComplete = true;
             CustomConsole.Info("Handshake completed successfully!");
         }
 
@@ -947,7 +966,10 @@ namespace AOBot_Testing.Agents
                             SelfOffset = prevSelfOffset;
 
                             SetCharacter(prevIni);
-                            SetEmote(prevEmote.DisplayID);
+                            if (prevEmote != null)
+                            {
+                                SetEmote(prevEmote.DisplayID);
+                            }
                             SetPos(prevCurPos);
                             CustomConsole.Info("State reapplied after reconnecting.");
                             OnReconnect?.Invoke();

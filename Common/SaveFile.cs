@@ -37,7 +37,7 @@ namespace OceanyaClient
             "savefile.json"
         );
 
-        private static SaveData _data;
+        private static SaveData _data = new SaveData();
 
         static SaveFile()
         {
@@ -61,7 +61,7 @@ namespace OceanyaClient
                 if (File.Exists(saveFilePath))
                 {
                     var json = File.ReadAllText(saveFilePath);
-                    _data = JsonSerializer.Deserialize<SaveData>(json);
+                    _data = JsonSerializer.Deserialize<SaveData>(json) ?? new SaveData();
                 }
                 else
                 {
@@ -80,7 +80,8 @@ namespace OceanyaClient
         {
             try
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(saveFilePath));
+                string directory = Path.GetDirectoryName(saveFilePath) ?? string.Empty;
+                Directory.CreateDirectory(directory);
                 var json = JsonSerializer.Serialize(_data, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(saveFilePath, json);
             }

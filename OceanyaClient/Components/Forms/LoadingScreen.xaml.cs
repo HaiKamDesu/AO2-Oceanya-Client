@@ -69,7 +69,7 @@ namespace OceanyaClient
             ProgressClip.Rect = new Rect(0, startY, logoWidth, revealHeight);
         }
 
-        private void LoadingScreen_Closing(object sender, System.ComponentModel.CancelEventArgs e)
+        private void LoadingScreen_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
         {
             if (_isClosing) return;
 
@@ -146,12 +146,12 @@ namespace OceanyaClient
     public static class LoadingScreenManager
     {
         // Fields that mirror your WaitForm approach
-        internal static LoadingScreen _instance;
-        private static Thread _uiThread;
-        private static Dispatcher _formDispatcher;
+        internal static LoadingScreen? _instance;
+        private static Thread? _uiThread;
+        private static Dispatcher? _formDispatcher;
         private static bool _threadRunning;
         private static readonly object _lock = new object();
-        private static TaskCompletionSource<bool> _initializationTcs;
+        private static TaskCompletionSource<bool>? _initializationTcs;
 
         /// <summary>Ensure the dedicated UI thread is started</summary>
         private static void StartFormOnNewThread()
@@ -161,8 +161,7 @@ namespace OceanyaClient
                 // If it's already running, do nothing except ensure the TCS is set
                 if (_threadRunning)
                 {
-                    if (_initializationTcs == null)
-                        _initializationTcs = new TaskCompletionSource<bool>();
+                    _initializationTcs ??= new TaskCompletionSource<bool>();
                     _initializationTcs.TrySetResult(true);
                     return;
                 }
@@ -178,7 +177,7 @@ namespace OceanyaClient
                             new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
 
                         _formDispatcher = Dispatcher.CurrentDispatcher;
-                        _initializationTcs.SetResult(true);
+                        _initializationTcs?.SetResult(true);
 
                         Dispatcher.Run(); // Pump messages
                     }
@@ -193,7 +192,7 @@ namespace OceanyaClient
                 _uiThread.Start();
 
                 // Wait for the dispatcher to be ready before returning
-                _initializationTcs.Task.Wait();
+                _initializationTcs?.Task.Wait();
             }
         }
 
@@ -205,6 +204,11 @@ namespace OceanyaClient
         {
             // Start (or ensure started) the dedicated thread
             StartFormOnNewThread();
+
+            if (_formDispatcher == null)
+            {
+                return;
+            }
 
             await _formDispatcher.InvokeAsync(() =>
             {
@@ -243,9 +247,9 @@ namespace OceanyaClient
                     // Wait a little for user to see 100%, then fade out
                     Task.Delay(500).ContinueWith(_ =>
                     {
-                        _formDispatcher.Invoke(() =>
+                        _formDispatcher?.Invoke(() =>
                         {
-                            _instance.CloseScreen(); // triggers fade-out, then closes
+                            _instance?.CloseScreen(); // triggers fade-out, then closes
                         });
                     });
                 }

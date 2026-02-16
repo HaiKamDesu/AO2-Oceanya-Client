@@ -27,13 +27,13 @@ namespace OceanyaClient.Components
         }
 
         public static int OOCShownameLengthLimit = 30;
-        public Action<string, string> OnSendOOCMessage;
-        public Func<AOClient, AOClient> LogKeyResolver { get; set; }
+        public Action<string, string>? OnSendOOCMessage;
+        public Func<AOClient, AOClient?>? LogKeyResolver { get; set; }
 
         private Dictionary<AOClient, LogState> clientLogs = new Dictionary<AOClient, LogState>();
 
-        private AOClient currentClient = null;
-        private ScrollViewer ScrollViewer;
+        private AOClient? currentClient = null;
+        private ScrollViewer? ScrollViewer;
 
         // URL detection regex pattern
         private static readonly Regex UrlRegex = new Regex(@"(https?:\/\/[^\s]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -53,7 +53,7 @@ namespace OceanyaClient.Components
             ScrollViewer = GetScrollViewer(LogBox);
         }
 
-        private AOClient ResolveLogClient(AOClient client)
+        private AOClient? ResolveLogClient(AOClient? client)
         {
             if (client == null)
             {
@@ -65,7 +65,7 @@ namespace OceanyaClient.Components
                 return client;
             }
 
-            AOClient resolvedClient = LogKeyResolver(client);
+            AOClient? resolvedClient = LogKeyResolver(client);
             return resolvedClient ?? client;
         }
 
@@ -87,7 +87,7 @@ namespace OceanyaClient.Components
 
         private void RefreshBottomAnchorForCurrentClient()
         {
-            AOClient logClient = ResolveLogClient(currentClient);
+            AOClient? logClient = ResolveLogClient(currentClient);
             if (logClient == null)
             {
                 return;
@@ -116,17 +116,17 @@ namespace OceanyaClient.Components
             LogBox.UpdateLayout();
         }
 
-        private bool IsCurrentLogStream(AOClient client)
+        private bool IsCurrentLogStream(AOClient? client)
         {
-            AOClient currentLogClient = ResolveLogClient(currentClient);
-            AOClient messageLogClient = ResolveLogClient(client);
+            AOClient? currentLogClient = ResolveLogClient(currentClient);
+            AOClient? messageLogClient = ResolveLogClient(client);
             return ReferenceEquals(currentLogClient, messageLogClient);
         }
 
-        public void SetCurrentClient(AOClient client)
+        public void SetCurrentClient(AOClient? client)
         {
             currentClient = client;
-            AOClient logClient = ResolveLogClient(client);
+            AOClient? logClient = ResolveLogClient(client);
 
             if (logClient == null)
             {
@@ -143,7 +143,7 @@ namespace OceanyaClient.Components
             ScrollToBottom();
         }
 
-        public void UpdateStreamLabel(AOClient client)
+        public void UpdateStreamLabel(AOClient? client)
         {
             if (client == null)
             {
@@ -158,9 +158,9 @@ namespace OceanyaClient.Components
             lblStream.Content = $"[{client.playerID}] {characterName} (\"{client.clientName}\")";
         }
 
-        public void AddMessage(AOClient client, string showName, string message, bool isSentFromServer = false)
+        public void AddMessage(AOClient? client, string showName, string message, bool isSentFromServer = false)
         {
-            AOClient logClient = ResolveLogClient(client);
+            AOClient? logClient = ResolveLogClient(client);
             if (logClient == null)
             {
                 DisplayMessage("System", "No client selected. Message not stored.", true);
@@ -260,9 +260,9 @@ namespace OceanyaClient.Components
             }
         }
 
-        private ScrollViewer GetScrollViewer(DependencyObject dep)
+        private ScrollViewer? GetScrollViewer(DependencyObject dep)
         {
-            if (dep is ScrollViewer) return dep as ScrollViewer;
+            if (dep is ScrollViewer scrollViewer) return scrollViewer;
 
             for (int i = 0; i < VisualTreeHelper.GetChildrenCount(dep); i++)
             {
@@ -279,9 +279,9 @@ namespace OceanyaClient.Components
             AddMessage(currentClient, showName, message, isSentFromServer);
         }
 
-        public void ClearClientLog(AOClient client)
+        public void ClearClientLog(AOClient? client)
         {
-            AOClient logClient = ResolveLogClient(client);
+            AOClient? logClient = ResolveLogClient(client);
             if (logClient != null && clientLogs.ContainsKey(logClient))
             {
                 clientLogs[logClient] = new LogState();

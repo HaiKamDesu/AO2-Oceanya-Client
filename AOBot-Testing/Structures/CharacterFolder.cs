@@ -33,7 +33,7 @@ namespace AOBot_Testing.Structures
             }
         }
 
-        public static void RefreshCharacterList(Action<CharacterFolder> onParsedCharacter = null, Action<string> onChangedMountPath = null)
+        public static void RefreshCharacterList(Action<CharacterFolder>? onParsedCharacter = null, Action<string>? onChangedMountPath = null)
         {
             foreach (var CharacterFolder in CharacterFolders)
             {
@@ -85,19 +85,19 @@ namespace AOBot_Testing.Structures
         static List<CharacterFolder> LoadFromJson(string filePath)
         {
             var json = File.ReadAllText(filePath);
-            return JsonSerializer.Deserialize<List<CharacterFolder>>(json);
+            return JsonSerializer.Deserialize<List<CharacterFolder>>(json) ?? new List<CharacterFolder>();
         }
         #endregion
 
 
 
-        public string Name { get; set; }
-        public string DirectoryPath { get; set; }
-        public string PathToConfigIni { get; set; }
-        public string CharIconPath { get; set; }
-        public string SoundListPath { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string DirectoryPath { get; set; } = string.Empty;
+        public string PathToConfigIni { get; set; } = string.Empty;
+        public string CharIconPath { get; set; } = string.Empty;
+        public string SoundListPath { get; set; } = string.Empty;
 
-        public CharacterConfigINI configINI { get; set; }
+        public CharacterConfigINI configINI { get; set; } = new CharacterConfigINI(string.Empty);
 
         public void Update(string configINIPath, bool updateConfigINI)
         {
@@ -111,7 +111,7 @@ namespace AOBot_Testing.Structures
         }
         private void UpdatePaths(string configINIPath)
         {
-            DirectoryPath = Path.GetDirectoryName(configINIPath);
+            DirectoryPath = Path.GetDirectoryName(configINIPath) ?? string.Empty;
 
             foreach (var extension in Globals.AllowedImageExtensions)
             {
@@ -130,7 +130,7 @@ namespace AOBot_Testing.Structures
             SoundListPath = Path.Combine(DirectoryPath, "soundlist.ini");
             PathToConfigIni = configINIPath;
 
-            Name = Path.GetFileName(DirectoryPath);
+            Name = Path.GetFileName(DirectoryPath) ?? string.Empty;
         }
         public static CharacterFolder Create(string configINIPath)
         {
@@ -145,12 +145,17 @@ namespace AOBot_Testing.Structures
     }
 
     [Serializable]
-    public class CharacterConfigINI(string pathToConfigINI)
+    public class CharacterConfigINI
     {
-        public string PathToConfigINI { get; set; } = pathToConfigINI;
-        public string ShowName { get; set; }
-        public string Gender { get; set; }
-        public string Side { get; set; }
+        public CharacterConfigINI(string pathToConfigINI)
+        {
+            PathToConfigINI = pathToConfigINI;
+        }
+
+        public string PathToConfigINI { get; set; }
+        public string ShowName { get; set; } = string.Empty;
+        public string Gender { get; set; } = string.Empty;
+        public string Side { get; set; } = string.Empty;
         public int PreAnimationTime { get; set; }
         public int EmotionsCount { get; set; }
         public Dictionary<int, Emote> Emotions { get; set; } = new();
@@ -225,7 +230,8 @@ namespace AOBot_Testing.Structures
             #endregion
 
             #region Gather Button Paths
-            string buttonPath = Path.Combine(Path.GetDirectoryName(pathToConfigINI), "Emotions");
+            string iniDirectory = Path.GetDirectoryName(PathToConfigINI) ?? string.Empty;
+            string buttonPath = Path.Combine(iniDirectory, "Emotions");
 
             foreach (var item in Emotions)
             {

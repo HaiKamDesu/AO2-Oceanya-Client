@@ -87,7 +87,7 @@ namespace UnitTests
     [TestFixture]
     public class SaveFileTests
     {
-        private string _testFilePath;
+        private string _testFilePath = string.Empty;
         
         [SetUp]
         public void SetUp()
@@ -153,8 +153,8 @@ namespace UnitTests
     [TestFixture]
     public class CustomConsoleTests
     {
-        private StringBuilder _testOutput;
-        private Action<string> _originalOnWriteLine;
+        private StringBuilder _testOutput = new StringBuilder();
+        private Action<string>? _originalOnWriteLine;
         
         [SetUp]
         public void SetUp()

@@ -10,7 +10,7 @@ namespace OceanyaClient
     /// </summary>
     public partial class InputDialog : Window
     {
-        public string UserInput { get; private set; }
+        public string UserInput { get; private set; } = string.Empty;
 
         private bool gotResult = false;
         public InputDialog(string prompt, string title = "Input Required", string defaultText = "")

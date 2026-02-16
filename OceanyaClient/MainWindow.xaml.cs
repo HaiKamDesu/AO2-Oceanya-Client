@@ -23,9 +23,9 @@ namespace OceanyaClient
     public partial class MainWindow : Window
     {
         private readonly Dictionary<ToggleButton, AOClient> clients = new Dictionary<ToggleButton, AOClient>();
-        private AOClient currentClient;
-        private AOClient singleInternalClient;
-        private AOClient boundSingleClientProfile;
+        private AOClient? currentClient;
+        private AOClient? singleInternalClient;
+        private AOClient? boundSingleClientProfile;
         private readonly bool useSingleInternalClient = SaveFile.Data.UseSingleInternalClient;
         private bool debug = false;
 
@@ -52,11 +52,18 @@ namespace OceanyaClient
                 SaveFile.Data.OOCName = showName;
                 SaveFile.Save();
 
-                AOClient networkClient = GetTargetClientForNetwork(currentClient);
+                AOClient? networkClient = GetTargetClientForNetwork(currentClient);
+                if (networkClient == null)
+                {
+                    return;
+                }
                 if (useSingleInternalClient)
                 {
-                    currentClient.OOCShowname = showName;
-                    ApplyProfileToSingleInternalClient(currentClient);
+                    if (currentClient != null)
+                    {
+                        currentClient.OOCShowname = showName;
+                        ApplyProfileToSingleInternalClient(currentClient);
+                    }
                 }
 
                 await networkClient.SendOOCMessage(showName, message);
@@ -66,7 +73,7 @@ namespace OceanyaClient
             {
                 // Split the message to get the client name and the actual message
                 var splitMessage = message.Split(new[] { ':' }, 2);
-                AOClient client = null;
+                AOClient? client = null;
                 var sendMessage = message;
                 if (splitMessage.Length == 2)
                 {
@@ -101,21 +108,26 @@ namespace OceanyaClient
                     sendMessage = " ";
                 }
 
+                if (client == null)
+                {
+                    return;
+                }
+
                 client.shoutModifiers = ICMessage.ShoutModifiers.Nothing;
 
-                if (HoldIt.IsChecked.Value)
+                if (HoldIt.IsChecked == true)
                 {
                     client.shoutModifiers = ICMessage.ShoutModifiers.HoldIt;
                 }
-                else if (Objection.IsChecked.Value)
+                else if (Objection.IsChecked == true)
                 {
                     client.shoutModifiers = ICMessage.ShoutModifiers.Objection;
                 }
-                else if (TakeThat.IsChecked.Value)
+                else if (TakeThat.IsChecked == true)
                 {
                     client.shoutModifiers = ICMessage.ShoutModifiers.TakeThat;
                 }
-                else if (Custom.IsChecked.Value)
+                else if (Custom.IsChecked == true)
                 {
                     client.shoutModifiers = ICMessage.ShoutModifiers.Custom;
                 }
@@ -123,7 +135,11 @@ namespace OceanyaClient
 
                 void OnICMessageReceivedHandler(ICMessage icMessage)
                 {
-                    AOClient targetNetworkClient = GetTargetClientForNetwork(client);
+                    AOClient? targetNetworkClient = GetTargetClientForNetwork(client);
+                    if (targetNetworkClient == null)
+                    {
+                        return;
+                    }
                     if (icMessage.CharId == targetNetworkClient.iniPuppetID &&
                     (icMessage.Message == "~"+sendMessage+"~" || icMessage.Message == sendMessage || icMessage.Message == sendMessage+"~"))
                     {
@@ -143,7 +159,11 @@ namespace OceanyaClient
                     }
                 }
 
-                AOClient networkClient = GetTargetClientForNetwork(client);
+                AOClient? networkClient = GetTargetClientForNetwork(client);
+                if (networkClient == null)
+                {
+                    return;
+                }
                 if (useSingleInternalClient)
                 {
                     ApplyProfileToSingleInternalClient(client);
@@ -202,12 +222,12 @@ namespace OceanyaClient
             button.ToolTip = $"[{bot.playerID}] {characterName} (\"{bot.clientName}\")";
         }
 
-        private AOClient GetTargetClientForNetwork(AOClient profileClient)
+        private AOClient? GetTargetClientForNetwork(AOClient? profileClient)
         {
             return useSingleInternalClient ? singleInternalClient : profileClient;
         }
 
-        private AOClient ResolveLogClientKey(AOClient profileClient)
+        private AOClient? ResolveLogClientKey(AOClient profileClient)
         {
             if (profileClient == null)
             {
@@ -222,7 +242,7 @@ namespace OceanyaClient
             return singleInternalClient ?? profileClient;
         }
 
-        private AOClient GetClientForIncomingMessages()
+        private AOClient? GetClientForIncomingMessages()
         {
             if (!useSingleInternalClient)
             {
@@ -232,7 +252,7 @@ namespace OceanyaClient
             return boundSingleClientProfile ?? currentClient;
         }
 
-        private AOClient GetSingleModeLogTarget(AOClient profileClient = null, AOClient networkClient = null)
+        private AOClient? GetSingleModeLogTarget(AOClient? profileClient = null, AOClient? networkClient = null)
         {
             if (!useSingleInternalClient)
             {
@@ -249,8 +269,8 @@ namespace OceanyaClient
 
         private void RefreshAreaNavigatorForCurrentClient()
         {
-            AOClient profileClient = currentClient;
-            AOClient networkClient = profileClient == null ? null : GetTargetClientForNetwork(profileClient);
+            AOClient? profileClient = currentClient;
+            AOClient? networkClient = profileClient == null ? null : GetTargetClientForNetwork(profileClient);
 
             if (networkClient == null)
             {
@@ -331,7 +351,7 @@ namespace OceanyaClient
             {
                 Dispatcher.Invoke(() =>
                 {
-                    AOClient targetClient = GetSingleModeLogTarget(profileClient, networkClient);
+                    AOClient? targetClient = GetSingleModeLogTarget(profileClient, networkClient);
                     if (targetClient == null)
                     {
                         return;
@@ -352,7 +372,7 @@ namespace OceanyaClient
             {
                 Dispatcher.Invoke(() =>
                 {
-                    AOClient targetClient = GetSingleModeLogTarget(profileClient, networkClient);
+                    AOClient? targetClient = GetSingleModeLogTarget(profileClient, networkClient);
                     if (targetClient == null)
                     {
                         return;
@@ -368,7 +388,7 @@ namespace OceanyaClient
             {
                 Dispatcher.Invoke(() =>
                 {
-                    AOClient targetClient = GetSingleModeLogTarget(profileClient, networkClient);
+                    AOClient? targetClient = GetSingleModeLogTarget(profileClient, networkClient);
                     if (targetClient == null)
                     {
                         return;
@@ -384,7 +404,7 @@ namespace OceanyaClient
             {
                 Dispatcher.Invoke(() =>
                 {
-                    AOClient targetClient = GetSingleModeLogTarget(profileClient, networkClient);
+                    AOClient? targetClient = GetSingleModeLogTarget(profileClient, networkClient);
                     if (targetClient == null)
                     {
                         return;
@@ -401,7 +421,7 @@ namespace OceanyaClient
             {
                 Dispatcher.Invoke(() =>
                 {
-                    AOClient targetClient = GetSingleModeLogTarget(profileClient, networkClient);
+                    AOClient? targetClient = GetSingleModeLogTarget(profileClient, networkClient);
                     if (targetClient == null)
                     {
                         return;
@@ -447,7 +467,7 @@ namespace OceanyaClient
             {
                 Dispatcher.Invoke(() =>
                 {
-                    AOClient targetClient = GetSingleModeLogTarget(singleInternalClient, singleInternalClient);
+                    AOClient? targetClient = GetSingleModeLogTarget(singleInternalClient, singleInternalClient);
                     if (targetClient == null)
                     {
                         return;
@@ -465,7 +485,7 @@ namespace OceanyaClient
             {
                 Dispatcher.Invoke(() =>
                 {
-                    AOClient targetClient = GetSingleModeLogTarget(singleInternalClient, singleInternalClient);
+                    AOClient? targetClient = GetSingleModeLogTarget(singleInternalClient, singleInternalClient);
                     if (targetClient == null)
                     {
                         return;
@@ -479,7 +499,7 @@ namespace OceanyaClient
             {
                 Dispatcher.Invoke(() =>
                 {
-                    AOClient targetClient = GetSingleModeLogTarget(singleInternalClient, singleInternalClient);
+                    AOClient? targetClient = GetSingleModeLogTarget(singleInternalClient, singleInternalClient);
                     if (targetClient == null)
                     {
                         return;
@@ -494,7 +514,7 @@ namespace OceanyaClient
             {
                 Dispatcher.Invoke(() =>
                 {
-                    AOClient targetClient = GetSingleModeLogTarget(singleInternalClient, singleInternalClient);
+                    AOClient? targetClient = GetSingleModeLogTarget(singleInternalClient, singleInternalClient);
                     if (targetClient == null)
                     {
                         return;
@@ -509,7 +529,7 @@ namespace OceanyaClient
         }
         private void AddClient(string clientName)
         {
-            AddClientAsync(clientName);
+            _ = AddClientAsync(clientName);
         }
         private async Task AddClientAsync(string clientName)
         {
@@ -557,7 +577,7 @@ namespace OceanyaClient
 
                 if (useSingleInternalClient)
                 {
-                    if (singleInternalClient.currentINI != null)
+                    if (singleInternalClient != null && singleInternalClient.currentINI != null)
                     {
                         bot.SetCharacter(singleInternalClient.currentINI);
                     }
@@ -566,15 +586,18 @@ namespace OceanyaClient
                         bot.SetCharacter(CharacterFolder.FullList.First());
                     }
 
-                    bot.playerID = singleInternalClient.playerID;
-                    bot.iniPuppetID = singleInternalClient.iniPuppetID;
-                    bot.curBG = singleInternalClient.curBG;
-                    bot.SetPos(singleInternalClient.curPos);
+                    if (singleInternalClient != null)
+                    {
+                        bot.playerID = singleInternalClient.playerID;
+                        bot.iniPuppetID = singleInternalClient.iniPuppetID;
+                        bot.curBG = singleInternalClient.curBG;
+                        bot.SetPos(singleInternalClient.curPos);
+                    }
                 }
 
                 bot.SetICShowname(clientName);
                 bot.OOCShowname = clientName;
-                bot.switchPosWhenChangingINI = chkPosOnIniSwap.IsChecked.Value;
+                bot.switchPosWhenChangingINI = chkPosOnIniSwap.IsChecked == true;
 
                 ToggleButton toggleBtn = new ToggleButton
                 {
@@ -594,7 +617,11 @@ namespace OceanyaClient
                 MenuItem iniPuppetChange = new MenuItem { Header = "Select INIPuppet (Automatic)" };
                 iniPuppetChange.Click += async (sender, args) =>
                 {
-                    AOClient targetNetworkClient = GetTargetClientForNetwork(bot);
+                    AOClient? targetNetworkClient = GetTargetClientForNetwork(bot);
+                    if (targetNetworkClient == null)
+                    {
+                        return;
+                    }
                     await targetNetworkClient.SelectFirstAvailableINIPuppet(false);
 
                     if (useSingleInternalClient)
@@ -614,7 +641,11 @@ namespace OceanyaClient
                     {
                         try
                         {
-                            AOClient targetNetworkClient = GetTargetClientForNetwork(bot);
+                            AOClient? targetNetworkClient = GetTargetClientForNetwork(bot);
+                            if (targetNetworkClient == null)
+                            {
+                                return;
+                            }
                             await targetNetworkClient.SelectIniPuppet(newClientName, false);
                             if (useSingleInternalClient)
                             {
@@ -632,7 +663,11 @@ namespace OceanyaClient
                 MenuItem reconnectMenuItem = new MenuItem { Header = "Reconnect" };
                 reconnectMenuItem.Click += async (sender, args) =>
                 {
-                    AOClient targetNetworkClient = GetTargetClientForNetwork(bot);
+                    AOClient? targetNetworkClient = GetTargetClientForNetwork(bot);
+                    if (targetNetworkClient == null)
+                    {
+                        return;
+                    }
                     await targetNetworkClient.DisconnectWebsocket();
                 };
                 contextMenu.Items.Add(reconnectMenuItem);
@@ -765,7 +800,7 @@ namespace OceanyaClient
                             OOCLogControl.IsEnabled = false;
                             ICLogControl.IsEnabled = false;
                             ICMessageSettingsControl.IsEnabled = false;
-                            OOCLogControl.UpdateStreamLabel(null);
+            OOCLogControl.UpdateStreamLabel(null);
                         }
                         else
                         {
@@ -855,8 +890,8 @@ namespace OceanyaClient
             gptClient.SetSystemInstructions(new List<string> { Globals.AI_SYSTEM_PROMPT });
             gptClient.systemVariables = new Dictionary<string, string>()
             {
-                { "[[[current_character]]]", bot.currentINI.Name },
-                { "[[[current_emote]]]", bot.currentEmote.DisplayID }
+                { "[[[current_character]]]", bot.currentINI?.Name ?? string.Empty },
+                { "[[[current_emote]]]", bot.currentEmote?.DisplayID ?? string.Empty }
             };
             #endregion
 
@@ -871,7 +906,7 @@ namespace OceanyaClient
                 switch (chatLogType)
                 {
                     case "IC":
-                        if (showName == bot.ICShowname && characterName == bot.currentINI.Name && iniPuppetID == bot.iniPuppetID)
+                        if (showName == bot.ICShowname && characterName == bot.currentINI?.Name && iniPuppetID == bot.iniPuppetID)
                         {
                             return;
                         }
@@ -934,10 +969,10 @@ namespace OceanyaClient
                     return success;
                 }
 
-                string botMessage = responseJson["message"].ToString();
-                string chatlogType = responseJson["chatlog"].ToString();
-                string newShowname = responseJson["showname"].ToString();
-                string newCharacter = responseJson["current_character"].ToString();
+                string botMessage = responseJson["message"].ToString() ?? string.Empty;
+                string chatlogType = responseJson["chatlog"].ToString() ?? string.Empty;
+                string newShowname = responseJson["showname"].ToString() ?? string.Empty;
+                string newCharacter = responseJson["current_character"].ToString() ?? string.Empty;
 
                 // Ensure chatlogType is either "IC" or "OOC"
                 if (chatlogType != "IC" && chatlogType != "OOC")
@@ -1127,7 +1162,11 @@ namespace OceanyaClient
 
         private void ClientToggleButton_Checked(object sender, RoutedEventArgs e)
         {
-            ToggleButton clickedButton = sender as ToggleButton;
+            ToggleButton? clickedButton = sender as ToggleButton;
+            if (clickedButton == null || !clients.ContainsKey(clickedButton))
+            {
+                return;
+            }
 
             foreach (var button in clients.Keys)
             {
@@ -1143,7 +1182,11 @@ namespace OceanyaClient
         }
         private void ClientToggleButton_Unchecked(object sender, RoutedEventArgs e)
         {
-            ToggleButton clickedButton = sender as ToggleButton;
+            ToggleButton? clickedButton = sender as ToggleButton;
+            if (clickedButton == null)
+            {
+                return;
+            }
 
             if (clickedButton.IsChecked == false)
             {
@@ -1152,7 +1195,11 @@ namespace OceanyaClient
         }
         private void ToggleButton_Checked(object sender, RoutedEventArgs e)
         {
-            ToggleButton clickedButton = sender as ToggleButton;
+            ToggleButton? clickedButton = sender as ToggleButton;
+            if (clickedButton == null)
+            {
+                return;
+            }
 
             foreach (var button in objectionModifiers)
             {
@@ -1167,9 +1214,9 @@ namespace OceanyaClient
         {
             if (sender is CheckBox checkBox)
             {
-                ICMessageSettingsControl.stickyEffects = checkBox.IsChecked.Value;
+                ICMessageSettingsControl.stickyEffects = checkBox.IsChecked == true;
 
-                SaveFile.Data.StickyEffect = checkBox.IsChecked.Value;
+                SaveFile.Data.StickyEffect = checkBox.IsChecked == true;
                 SaveFile.Save();
             }
         }
@@ -1179,10 +1226,10 @@ namespace OceanyaClient
             {
                 foreach (var client in clients.Values)
                 {
-                    client.switchPosWhenChangingINI = checkBox.IsChecked.Value;
+                    client.switchPosWhenChangingINI = checkBox.IsChecked == true;
                 }
 
-                SaveFile.Data.SwitchPosOnIniSwap = checkBox.IsChecked.Value;
+                SaveFile.Data.SwitchPosOnIniSwap = checkBox.IsChecked == true;
                 SaveFile.Save();
             }
         }
@@ -1219,7 +1266,6 @@ namespace OceanyaClient
             SelectClient(currentClient);
         }
 
-        bool temp = false;
         private async void Button_Click(object sender, RoutedEventArgs e)
         {
             if (useSingleInternalClient)
@@ -1273,8 +1319,8 @@ namespace OceanyaClient
         {
             if (sender is CheckBox checkBox)
             {
-                ICLogControl.SetInvertOnClientLogs(checkBox.IsChecked.Value);
-                SaveFile.Data.InvertICLog = checkBox.IsChecked.Value;
+                ICLogControl.SetInvertOnClientLogs(checkBox.IsChecked == true);
+                SaveFile.Data.InvertICLog = checkBox.IsChecked == true;
                 SaveFile.Save();
             }
         }
@@ -1292,13 +1338,13 @@ namespace OceanyaClient
 
         private async void btnRefreshAreas_Click(object sender, RoutedEventArgs e)
         {
-            AOClient profileClient = currentClient;
+            AOClient? profileClient = currentClient;
             if (profileClient == null)
             {
                 return;
             }
 
-            AOClient networkClient = GetTargetClientForNetwork(profileClient);
+            AOClient? networkClient = GetTargetClientForNetwork(profileClient);
             if (networkClient == null)
             {
                 return;
@@ -1315,7 +1361,7 @@ namespace OceanyaClient
 
         private async void btnGoToArea_Click(object sender, RoutedEventArgs e)
         {
-            AOClient profileClient = currentClient;
+            AOClient? profileClient = currentClient;
             if (profileClient == null)
             {
                 return;
@@ -1326,7 +1372,7 @@ namespace OceanyaClient
                 return;
             }
 
-            AOClient networkClient = GetTargetClientForNetwork(profileClient);
+            AOClient? networkClient = GetTargetClientForNetwork(profileClient);
             if (networkClient == null)
             {
                 return;

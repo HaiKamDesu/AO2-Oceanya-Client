@@ -87,8 +87,8 @@ namespace UnitTests
     public class BackgroundTests
     {
         // We'll need to mock some file system behavior for testing
-        private string _tempDir;
-        private List<string> _originalBaseFolders;
+        private string _tempDir = string.Empty;
+        private List<string> _originalBaseFolders = new List<string>();
         
         [SetUp]
         public void SetUp()
@@ -155,11 +155,12 @@ namespace UnitTests
             
             // Verify background was loaded
             Assert.That(background, Is.Not.Null, "Background should be loaded from valid path");
-            Assert.That(background.Name, Does.Contain("background"), "Background name should be derived from directory path");
-            Assert.That(background.bgImages, Has.Count.EqualTo(4), "Background should have 4 images (excluding desk)");
+            Assert.That(background, Is.Not.Null);
+            Assert.That(background!.Name, Is.EqualTo("testbg"), "Background name should match the folder name");
+            Assert.That(background!.bgImages, Has.Count.EqualTo(4), "Background should have 4 images (excluding desk)");
             
             // Verify desk image was excluded
-            Assert.That(background.bgImages, Has.None.Contains("defensedesk"),
+            Assert.That(background!.bgImages, Has.None.Contains("defensedesk"),
                 "Background images should not include desk images");
         }
         
@@ -168,9 +169,10 @@ namespace UnitTests
         {
             // Load a background from the test path
             var background = Background.FromBGPath("testbg");
+            Assert.That(background, Is.Not.Null);
             
             // Get an image for a position
-            var defImage = background.GetBGImage("def");
+            var defImage = background!.GetBGImage("def");
             
             // Verify position mapping worked
             Assert.That(defImage, Does.Contain("defenseempty"),
@@ -188,9 +190,10 @@ namespace UnitTests
         {
             // Load a background from the test path
             var background = Background.FromBGPath("testbg");
+            Assert.That(background, Is.Not.Null);
             
             // Get possible positions
-            var positions = background.GetPossiblePositions();
+            var positions = background!.GetPossiblePositions();
             
             // Verify common positions are available
             Assert.That(positions.ContainsKey("def"), Is.True, "Defense position should be available");

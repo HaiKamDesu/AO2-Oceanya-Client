@@ -32,7 +32,7 @@ namespace Common
         /// <summary>
         /// Event that fires when a new line is written
         /// </summary>
-        public static Action<string> OnWriteLine;
+        public static Action<string>? OnWriteLine;
 
         /// <summary>
         /// Base method for all logging - writes a message to the console with timestamp

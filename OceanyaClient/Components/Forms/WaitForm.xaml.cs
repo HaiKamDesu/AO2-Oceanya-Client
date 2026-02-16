@@ -14,14 +14,14 @@ namespace OceanyaClient
     public partial class WaitForm : Window
     {
         public static bool Showing = false;
-        private static WaitForm _instance;
-        private static Thread _uiThread;
-        private static Dispatcher _formDispatcher;
+        private static WaitForm? _instance;
+        private static Thread? _uiThread;
+        private static Dispatcher? _formDispatcher;
         private static readonly object _lock = new object();
-        private static TaskCompletionSource<bool> _initializationTcs;
+        private static TaskCompletionSource<bool>? _initializationTcs;
         private static string _currentTitle = "";
         private static string _currentSubtitle = "";
-        private static Window _ownerWindow;
+        private static Window? _ownerWindow;
         private static bool _threadRunning = false;
 
         private WaitForm()
@@ -79,7 +79,7 @@ namespace OceanyaClient
                         _formDispatcher = Dispatcher.CurrentDispatcher;
 
                         // Signal that initialization is complete
-                        _initializationTcs.SetResult(true);
+                        _initializationTcs?.SetResult(true);
 
                         // Start dispatcher
                         Dispatcher.Run();
@@ -95,7 +95,7 @@ namespace OceanyaClient
                 _uiThread.Start();
 
                 // Wait for initialization to complete
-                _initializationTcs.Task.Wait();
+                _initializationTcs?.Task.Wait();
             }
         }
 
@@ -108,6 +108,11 @@ namespace OceanyaClient
             StartFormOnNewThread();
 
             // Use the form's dispatcher to show it
+            if (_formDispatcher == null)
+            {
+                return;
+            }
+
             await _formDispatcher.InvokeAsync(() =>
             {
                 if (_instance == null)
@@ -186,7 +191,7 @@ namespace OceanyaClient
                     DoubleAnimation fadeOutAnimation = new DoubleAnimation(1, 0, TimeSpan.FromSeconds(0.5));
                     fadeOutAnimation.Completed += (s, e) =>
                     {
-                        _instance.Close();
+                        _instance?.Close();
                         Showing = false;
                     };
                     _instance.BeginAnimation(Window.OpacityProperty, fadeOutAnimation);

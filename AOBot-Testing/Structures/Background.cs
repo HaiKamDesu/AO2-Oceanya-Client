@@ -22,13 +22,11 @@ namespace AOBot_Testing.Structures
         };
 
 
-        public string Name { get; set; }
-        public string PathToFile { get; set; }
-        public List<string> bgImages { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string PathToFile { get; set; } = string.Empty;
+        public List<string> bgImages { get; set; } = new List<string>();
 
-        public Background() { }
-
-        public static Background FromBGPath(string curBG)
+        public static Background? FromBGPath(string curBG)
         {
             foreach (var BackgroundFolder in BackgroundFolders)
             {
@@ -37,7 +35,7 @@ namespace AOBot_Testing.Structures
                 if (Directory.Exists(bgFolder))
                 {
                     var newBG = new Background();
-                    newBG.Name = Path.GetDirectoryName(bgFolder);
+                    newBG.Name = Path.GetFileName(bgFolder) ?? string.Empty;
                     newBG.PathToFile = bgFolder;
 
                     var bgFiles = Directory.GetFiles(bgFolder, "*.*", SearchOption.TopDirectoryOnly);
@@ -79,7 +77,7 @@ namespace AOBot_Testing.Structures
             return null;
         }
 
-        public string GetBGImage(string pos)
+        public string? GetBGImage(string pos)
         {
             var imageName = pos;
             if (posToBGName.ContainsKey(pos))
@@ -87,8 +85,7 @@ namespace AOBot_Testing.Structures
                 imageName = posToBGName[pos];
             }
 
-            var bgImage = bgImages.FirstOrDefault(f => Path.GetFileNameWithoutExtension(f).ToLower() == imageName);
-            return bgImage;
+            return bgImages.FirstOrDefault(f => Path.GetFileNameWithoutExtension(f).ToLower() == imageName);
         }
 
         public Dictionary<string, string> GetPossiblePositions()

@@ -33,10 +33,10 @@ namespace OceanyaClient.Components
         public static int ICShownameMaxLength = 22;
         public static int ICMessageMaxLength = 256;
         Dictionary<Emote, ToggleButton> emotes = new();
-        AOClient curClient;
+        AOClient? curClient;
         public bool stickyEffects;
 
-        public Action<string> OnSendICMessage;
+        public Action<string>? OnSendICMessage;
 
         public ICMessageSettings()
         {
@@ -93,6 +93,7 @@ namespace OceanyaClient.Components
         private void SfxDropdown_OnConfirm(object? sender, string sfx)
         {
             txtICMessage.Focus();
+            if (curClient == null) return;
             curClient.curSFX = sfx;
         }
 
@@ -133,6 +134,8 @@ namespace OceanyaClient.Components
 
         private void EffectDropdown_OnConfirm(object? sender, string newEffect)
         {
+            if (curClient == null) return;
+
             if (Enum.TryParse(newEffect, out ICMessage.Effects parsedEffect))
             {
                 curClient.effect = parsedEffect;
@@ -180,6 +183,8 @@ namespace OceanyaClient.Components
 
         private void CharacterDropdown_OnConfirm(object? sender, string iniName)
         {
+            if (curClient == null) return;
+
             var ini = CharacterFolder.FullList.FirstOrDefault(x => x.Name == iniName);
             if(ini != null)
             {
@@ -247,6 +252,11 @@ namespace OceanyaClient.Components
 
         private void EventHandler_ClientOnBgChange(string newBG)
         {
+            if (this.curClient == null)
+            {
+                return;
+            }
+
             UpdatePosDropdown(this.curClient);
         }
 
@@ -268,7 +278,7 @@ namespace OceanyaClient.Components
                     {
                         PositionDropdown.SelectedText = client.curPos;
                     }
-                    else if (allPos.ContainsKey(client.currentINI.configINI.Side))
+                    else if (client.currentINI != null && allPos.ContainsKey(client.currentINI.configINI.Side))
                     {
                         PositionDropdown.SelectedText = client.currentINI.configINI.Side;
                     }
@@ -282,12 +292,17 @@ namespace OceanyaClient.Components
                 }
                 else
                 {
-                    PositionDropdown.SelectedText = client.currentINI.configINI.Side;
+                    PositionDropdown.SelectedText = client.currentINI?.configINI.Side ?? string.Empty;
                 }
             });
         }
         private void UpdatePos(string newPos)
         {
+            if (curClient == null)
+            {
+                return;
+            }
+
             PositionDropdown.Dispatcher.Invoke(() =>
             {
                 curClient.OnSideChange -= UpdatePos;
@@ -531,7 +546,11 @@ namespace OceanyaClient.Components
 
         private void EmoteToggleBtn_Checked(object sender, RoutedEventArgs e)
         {
-            ToggleButton clickedButton = sender as ToggleButton;
+            ToggleButton? clickedButton = sender as ToggleButton;
+            if (clickedButton == null || curClient == null)
+            {
+                return;
+            }
 
             foreach (var button in emotes.Values)
             {
@@ -551,7 +570,11 @@ namespace OceanyaClient.Components
         }
         private void EmoteToggleBtn_Unchecked(object sender, RoutedEventArgs e)
         {
-            ToggleButton clickedButton = sender as ToggleButton;
+            ToggleButton? clickedButton = sender as ToggleButton;
+            if (clickedButton == null)
+            {
+                return;
+            }
 
             if (clickedButton.IsChecked == false)
             {
@@ -572,7 +595,7 @@ namespace OceanyaClient.Components
             }
         }
 
-        public Action OnResetMessageEffects;
+        public Action? OnResetMessageEffects;
         public void ResetMessageEffects()
         {
             btnRealization.IsChecked = false;
@@ -601,6 +624,7 @@ namespace OceanyaClient.Components
             if (sender is CheckBox checkBox)
             {
                 // Assuming 'currentClient' is an instance of AOBot
+                if (curClient == null) return;
                 curClient.emoteMod = checkBox.IsChecked == true ? ICMessage.EmoteModifiers.PlayPreanimation : ICMessage.EmoteModifiers.NoPreanimation;
                 txtICMessage.Focus();
             }
@@ -610,6 +634,7 @@ namespace OceanyaClient.Components
         {
             if (sender is CheckBox checkBox)
             {
+                if (curClient == null) return;
                 curClient.flip = checkBox.IsChecked == true;
                 txtICMessage.Focus();
             }
@@ -619,6 +644,7 @@ namespace OceanyaClient.Components
         {
             if (sender is CheckBox checkBox)
             {
+                if (curClient == null) return;
                 curClient.Additive = checkBox.IsChecked == true;
                 txtICMessage.Focus();
             }
@@ -628,6 +654,7 @@ namespace OceanyaClient.Components
         {
             if (sender is CheckBox checkBox)
             {
+                if (curClient == null) return;
                 curClient.Immediate = checkBox.IsChecked == true;
                 txtICMessage.Focus();
             }
@@ -660,6 +687,7 @@ namespace OceanyaClient.Components
             // Handle the checked state
             if (sender is ToggleButton toggleButton)
             {
+                if (curClient == null) return;
                 curClient.screenshake = true;
                 txtICMessage.Focus();
             }
@@ -670,6 +698,7 @@ namespace OceanyaClient.Components
             // Handle the unchecked state
             if (sender is ToggleButton toggleButton)
             {
+                if (curClient == null) return;
                 curClient.screenshake = false;
                 txtICMessage.Focus();
             }
