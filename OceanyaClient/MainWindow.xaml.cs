@@ -28,6 +28,13 @@ namespace OceanyaClient
         private AOClient? boundSingleClientProfile;
         private readonly bool useSingleInternalClient = SaveFile.Data.UseSingleInternalClient;
         private bool debug = false;
+        private readonly Brush areaFreeBrush = new SolidColorBrush(Color.FromRgb(77, 77, 77));
+        private readonly Brush areaLfpBrush = new SolidColorBrush(Color.FromRgb(76, 112, 63));
+        private readonly Brush areaCasingBrush = new SolidColorBrush(Color.FromRgb(113, 92, 53));
+        private readonly Brush areaRecessBrush = new SolidColorBrush(Color.FromRgb(84, 84, 110));
+        private readonly Brush areaRpBrush = new SolidColorBrush(Color.FromRgb(108, 69, 116));
+        private readonly Brush areaGamingBrush = new SolidColorBrush(Color.FromRgb(58, 116, 116));
+        private readonly Brush areaLockedBrush = new SolidColorBrush(Color.FromRgb(106, 54, 54));
 
         List<ToggleButton> objectionModifiers;
         public MainWindow()
@@ -288,7 +295,71 @@ namespace OceanyaClient
 
             string visibleArea = string.IsNullOrWhiteSpace(networkClient.CurrentArea) ? "Unknown" : networkClient.CurrentArea;
             txtCurrentArea.Text = $"Current: {visibleArea}";
-            lstAreas.ItemsSource = networkClient.AvailableAreas.ToList();
+            lstAreas.ItemsSource = networkClient.AvailableAreaInfos
+                .Select(areaInfo => CreateAreaNavigatorListItem(areaInfo))
+                .ToList();
+        }
+
+        private AreaNavigatorListItem CreateAreaNavigatorListItem(AreaInfo areaInfo)
+        {
+            string status = string.IsNullOrWhiteSpace(areaInfo.Status) ? "Unknown" : areaInfo.Status;
+            string caseManager = string.IsNullOrWhiteSpace(areaInfo.CaseManager) ? "Unknown" : areaInfo.CaseManager;
+            string lockState = string.IsNullOrWhiteSpace(areaInfo.LockState) ? "Unknown" : areaInfo.LockState;
+
+            string statusAndCmLine = status;
+            if (!string.Equals(caseManager, "FREE", StringComparison.OrdinalIgnoreCase))
+            {
+                statusAndCmLine += $" | CM: {caseManager}";
+            }
+
+            string playersAndLockLine = lockState;
+            if (areaInfo.Players != -1)
+            {
+                playersAndLockLine = $"{areaInfo.Players} users | {lockState}";
+            }
+
+            return new AreaNavigatorListItem
+            {
+                Name = areaInfo.Name,
+                StatusAndCmLine = statusAndCmLine,
+                PlayersAndLockLine = playersAndLockLine,
+                RowBackground = GetAreaBrush(status, lockState),
+            };
+        }
+
+        private Brush GetAreaBrush(string status, string lockState)
+        {
+            if (string.Equals(lockState, "LOCKED", StringComparison.OrdinalIgnoreCase))
+            {
+                return areaLockedBrush;
+            }
+
+            if (string.Equals(status, "LOOKING-FOR-PLAYERS", StringComparison.OrdinalIgnoreCase))
+            {
+                return areaLfpBrush;
+            }
+
+            if (string.Equals(status, "CASING", StringComparison.OrdinalIgnoreCase))
+            {
+                return areaCasingBrush;
+            }
+
+            if (string.Equals(status, "RECESS", StringComparison.OrdinalIgnoreCase))
+            {
+                return areaRecessBrush;
+            }
+
+            if (string.Equals(status, "RP", StringComparison.OrdinalIgnoreCase))
+            {
+                return areaRpBrush;
+            }
+
+            if (string.Equals(status, "GAMING", StringComparison.OrdinalIgnoreCase))
+            {
+                return areaGamingBrush;
+            }
+
+            return areaFreeBrush;
         }
 
         private void ApplyProfileToSingleInternalClient(AOClient profileClient)
@@ -445,6 +516,14 @@ namespace OceanyaClient
             };
 
             networkClient.OnAvailableAreasUpdated += (IReadOnlyList<string> _) =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    RefreshAreaNavigatorForCurrentClient();
+                });
+            };
+
+            networkClient.OnAvailableAreaInfosUpdated += (IReadOnlyList<AreaInfo> _) =>
             {
                 Dispatcher.Invoke(() =>
                 {
@@ -1366,13 +1445,24 @@ namespace OceanyaClient
 
         private async void btnGoToArea_Click(object sender, RoutedEventArgs e)
         {
+            await JoinSelectedAreaAsync();
+        }
+
+        private async void lstAreas_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            await JoinSelectedAreaAsync();
+        }
+
+        private async Task JoinSelectedAreaAsync()
+        {
             AOClient? profileClient = currentClient;
             if (profileClient == null)
             {
                 return;
             }
 
-            if (lstAreas.SelectedItem is not string selectedArea || string.IsNullOrWhiteSpace(selectedArea))
+            if (lstAreas.SelectedItem is not AreaNavigatorListItem selectedAreaItem
+                || string.IsNullOrWhiteSpace(selectedAreaItem.Name))
             {
                 return;
             }
@@ -1388,11 +1478,19 @@ namespace OceanyaClient
                 ApplyProfileToSingleInternalClient(profileClient);
             }
 
-            await networkClient.SetArea(selectedArea);
+            await networkClient.SetArea(selectedAreaItem.Name);
             RefreshAreaNavigatorForCurrentClient();
         }
 
         private bool _altGrActive = false;
+
+        private class AreaNavigatorListItem
+        {
+            public string Name { get; set; } = string.Empty;
+            public string StatusAndCmLine { get; set; } = string.Empty;
+            public string PlayersAndLockLine { get; set; } = string.Empty;
+            public Brush RowBackground { get; set; } = Brushes.Transparent;
+        }
 
         protected override void OnPreviewKeyDown(KeyEventArgs e)
         {

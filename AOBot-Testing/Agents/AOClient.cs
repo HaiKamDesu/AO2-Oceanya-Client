@@ -45,6 +45,7 @@ namespace AOBot_Testing.Agents
         public int playerID;
         private string currentArea = string.Empty;
         private readonly List<string> availableAreas = new List<string>();
+        private readonly List<AreaInfo> availableAreaInfos = new List<AreaInfo>();
         public CharacterFolder? currentINI;
         public Emote? currentEmote;
 
@@ -100,6 +101,7 @@ namespace AOBot_Testing.Agents
         public Action? OnDisconnect;
         public Action<string>? OnCurrentAreaChanged;
         public Action<IReadOnlyList<string>>? OnAvailableAreasUpdated;
+        public Action<IReadOnlyList<AreaInfo>>? OnAvailableAreaInfosUpdated;
 
         public string CurrentArea
         {
@@ -114,6 +116,14 @@ namespace AOBot_Testing.Agents
             get
             {
                 return availableAreas.AsReadOnly();
+            }
+        }
+
+        public IReadOnlyList<AreaInfo> AvailableAreaInfos
+        {
+            get
+            {
+                return availableAreaInfos.AsReadOnly();
             }
         }
 
@@ -433,6 +443,10 @@ namespace AOBot_Testing.Agents
             {
                 ParseAreaListFromFa(message);
             }
+            else if (message.StartsWith("ARUP#"))
+            {
+                ParseAreaUpdate(message);
+            }
             else if (message.StartsWith("CT#"))
             {
                 var fields = message.Split("#");
@@ -553,8 +567,22 @@ namespace AOBot_Testing.Agents
         private void ReplaceAvailableAreas(IEnumerable<string> areas)
         {
             availableAreas.Clear();
-            availableAreas.AddRange(areas.Where(area => !string.IsNullOrWhiteSpace(area)));
+            availableAreaInfos.Clear();
+
+            foreach (string area in areas)
+            {
+                if (string.IsNullOrWhiteSpace(area))
+                {
+                    continue;
+                }
+
+                string areaName = area.Trim();
+                availableAreas.Add(areaName);
+                availableAreaInfos.Add(new AreaInfo(areaName, 0, "Unknown", "Unknown", "Unknown"));
+            }
+
             OnAvailableAreasUpdated?.Invoke(availableAreas.AsReadOnly());
+            OnAvailableAreaInfosUpdated?.Invoke(availableAreaInfos.AsReadOnly());
         }
 
         private void ParseAreaListFromFa(string message)
@@ -582,6 +610,57 @@ namespace AOBot_Testing.Agents
             }
 
             ReplaceAvailableAreas(areas);
+        }
+
+        private void ParseAreaUpdate(string message)
+        {
+            string[] content = message.Substring(5).TrimEnd('#', '%')
+                .Split('#', StringSplitOptions.RemoveEmptyEntries);
+
+            if (content.Length == 0)
+            {
+                return;
+            }
+
+            if (!int.TryParse(content[0], out int updateType))
+            {
+                CustomConsole.Warning($"Malformed ARUP packet type: {message}");
+                return;
+            }
+
+            for (int nElement = 1; nElement < content.Length; nElement++)
+            {
+                int areaIndex = nElement - 1;
+                if (areaIndex >= availableAreaInfos.Count)
+                {
+                    break;
+                }
+
+                string value = Globals.ReplaceTextForSymbols(content[nElement]).Trim();
+                AreaInfo targetArea = availableAreaInfos[areaIndex];
+
+                if (updateType == 0)
+                {
+                    if (int.TryParse(value, out int players))
+                    {
+                        targetArea.Players = players;
+                    }
+                }
+                else if (updateType == 1)
+                {
+                    targetArea.Status = value;
+                }
+                else if (updateType == 2)
+                {
+                    targetArea.CaseManager = value;
+                }
+                else if (updateType == 3)
+                {
+                    targetArea.LockState = value;
+                }
+            }
+
+            OnAvailableAreaInfosUpdated?.Invoke(availableAreaInfos.AsReadOnly());
         }
 
         private static bool LooksLikeMusicEntry(string value)

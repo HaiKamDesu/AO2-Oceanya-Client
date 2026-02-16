@@ -399,10 +399,36 @@
                             BorderBrush="#FF575757"
                             BorderThickness="1"
                             Padding="8">
-                        <StackPanel Width="220">
+                        <StackPanel Width="260">
                             <TextBlock Text="Area Navigator" Foreground="White" FontWeight="Bold" Margin="0,0,0,4"/>
                             <TextBlock x:Name="txtCurrentArea" Text="Current: Unknown" Foreground="White" Margin="0,0,0,6"/>
-                            <ListBox x:Name="lstAreas" Height="170" Margin="0,0,0,6"/>
+                            <ListBox x:Name="lstAreas" Height="210" Margin="0,0,0,6" MouseDoubleClick="lstAreas_MouseDoubleClick">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Margin="0,0,0,4"
+                                                Padding="6,4"
+                                                CornerRadius="2"
+                                                Background="{Binding RowBackground}">
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Name}"
+                                                           FontWeight="Bold"
+                                                           Foreground="#FFF2F2F2"
+                                                           TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding StatusAndCmLine}"
+                                                           Margin="0,2,0,0"
+                                                           Foreground="#FFE8E8E8"
+                                                           FontSize="11"
+                                                           TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding PlayersAndLockLine}"
+                                                           Margin="0,1,0,0"
+                                                           Foreground="#FFE8E8E8"
+                                                           FontSize="11"
+                                                           TextTrimming="CharacterEllipsis"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                                 <Button x:Name="btnRefreshAreas"
                                         Content="Refresh"
