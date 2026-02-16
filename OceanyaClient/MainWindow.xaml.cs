@@ -169,6 +169,7 @@ namespace OceanyaClient
             chkInvertLog.IsChecked = SaveFile.Data.InvertICLog;
 
             btnDebug.Visibility = debug ? Visibility.Visible : Visibility.Collapsed;
+            RefreshAreaNavigatorForCurrentClient();
         }
         private void RenameClient(AOClient bot)
         {
@@ -244,6 +245,30 @@ namespace OceanyaClient
                 ?? singleInternalClient
                 ?? networkClient
                 ?? profileClient;
+        }
+
+        private void RefreshAreaNavigatorForCurrentClient()
+        {
+            AOClient profileClient = currentClient;
+            AOClient networkClient = profileClient == null ? null : GetTargetClientForNetwork(profileClient);
+
+            if (networkClient == null)
+            {
+                txtCurrentArea.Text = "Current: Unknown";
+                lstAreas.ItemsSource = null;
+                btnAreaNavigator.IsEnabled = false;
+                btnRefreshAreas.IsEnabled = false;
+                btnGoToArea.IsEnabled = false;
+                return;
+            }
+
+            btnAreaNavigator.IsEnabled = true;
+            btnRefreshAreas.IsEnabled = true;
+            btnGoToArea.IsEnabled = true;
+
+            string visibleArea = string.IsNullOrWhiteSpace(networkClient.CurrentArea) ? "Unknown" : networkClient.CurrentArea;
+            txtCurrentArea.Text = $"Current: {visibleArea}";
+            lstAreas.ItemsSource = networkClient.AvailableAreas.ToList();
         }
 
         private void ApplyProfileToSingleInternalClient(AOClient profileClient)
@@ -388,6 +413,22 @@ namespace OceanyaClient
                         OOCLogControl.UpdateStreamLabel(targetClient);
                     }
                     UpdateClientTooltip(targetClient);
+                });
+            };
+
+            networkClient.OnCurrentAreaChanged += (string _) =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    RefreshAreaNavigatorForCurrentClient();
+                });
+            };
+
+            networkClient.OnAvailableAreasUpdated += (IReadOnlyList<string> _) =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    RefreshAreaNavigatorForCurrentClient();
                 });
             };
         }
@@ -794,6 +835,7 @@ namespace OceanyaClient
             ICMessageSettingsControl.SetClient(currentClient);
             OOCLogControl.SetCurrentClient(currentClient);
             ICLogControl.SetCurrentClient(currentClient);
+            RefreshAreaNavigatorForCurrentClient();
         }
 
         private async void ConnectButton_Click(object sender, RoutedEventArgs e)
@@ -1075,6 +1117,7 @@ namespace OceanyaClient
                 ICMessageSettingsControl.IsEnabled = false;
                 OOCLogControl.UpdateStreamLabel(null);
                 currentClient = null;
+                RefreshAreaNavigatorForCurrentClient();
             }
             else
             {
@@ -1239,6 +1282,63 @@ namespace OceanyaClient
         private void THEDINGBUTTON_Click(object sender, RoutedEventArgs e)
         {
             AudioPlayer.PlayEmbeddedSound("Resources/BellDing.mp3", 0.25f);
+        }
+
+        private void btnAreaNavigator_Click(object sender, RoutedEventArgs e)
+        {
+            RefreshAreaNavigatorForCurrentClient();
+            AreaNavigatorPopup.IsOpen = true;
+        }
+
+        private async void btnRefreshAreas_Click(object sender, RoutedEventArgs e)
+        {
+            AOClient profileClient = currentClient;
+            if (profileClient == null)
+            {
+                return;
+            }
+
+            AOClient networkClient = GetTargetClientForNetwork(profileClient);
+            if (networkClient == null)
+            {
+                return;
+            }
+
+            if (useSingleInternalClient)
+            {
+                ApplyProfileToSingleInternalClient(profileClient);
+            }
+
+            await networkClient.RequestAreaList();
+            RefreshAreaNavigatorForCurrentClient();
+        }
+
+        private async void btnGoToArea_Click(object sender, RoutedEventArgs e)
+        {
+            AOClient profileClient = currentClient;
+            if (profileClient == null)
+            {
+                return;
+            }
+
+            if (lstAreas.SelectedItem is not string selectedArea || string.IsNullOrWhiteSpace(selectedArea))
+            {
+                return;
+            }
+
+            AOClient networkClient = GetTargetClientForNetwork(profileClient);
+            if (networkClient == null)
+            {
+                return;
+            }
+
+            if (useSingleInternalClient)
+            {
+                ApplyProfileToSingleInternalClient(profileClient);
+            }
+
+            await networkClient.SetArea(selectedArea);
+            RefreshAreaNavigatorForCurrentClient();
         }
 
         private bool _altGrActive = false;

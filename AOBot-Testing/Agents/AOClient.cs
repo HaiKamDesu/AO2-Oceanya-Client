@@ -3,6 +3,7 @@ using System;
 using System.Diagnostics;
 using System.Net.WebSockets;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Common;
@@ -44,6 +45,7 @@ namespace AOBot_Testing.Agents
 
         public int playerID;
         private string currentArea = location;
+        private readonly List<string> availableAreas = new List<string>();
         public CharacterFolder? currentINI;
         public Emote? currentEmote;
 
@@ -97,6 +99,24 @@ namespace AOBot_Testing.Agents
         public Action OnReconnect;
         public Action OnWebsocketDisconnect;
         public Action OnDisconnect;
+        public Action<string> OnCurrentAreaChanged;
+        public Action<IReadOnlyList<string>> OnAvailableAreasUpdated;
+
+        public string CurrentArea
+        {
+            get
+            {
+                return currentArea;
+            }
+        }
+
+        public IReadOnlyList<string> AvailableAreas
+        {
+            get
+            {
+                return availableAreas.AsReadOnly();
+            }
+        }
 
         private List<string> pendingMessages = new List<string>();
         #region Send Message Methods
@@ -261,7 +281,7 @@ namespace AOBot_Testing.Agents
                     await Task.Delay(delayBetweenAreas);
                 }
 
-                currentArea = areaName;
+                SetCurrentArea(areaName);
             }
             else
             {
@@ -385,6 +405,14 @@ namespace AOBot_Testing.Agents
                     }
                 }
             }
+            else if (message.StartsWith("SM#"))
+            {
+                ParseAreaListFromSm(message);
+            }
+            else if (message.StartsWith("FA#"))
+            {
+                ParseAreaListFromFa(message);
+            }
             else if (message.StartsWith("CT#"))
             {
                 var fields = message.Split("#");
@@ -401,6 +429,15 @@ namespace AOBot_Testing.Agents
                 if (messageText.ToLower().Contains("people in this area: ") && messageText.ToLower().Contains("===") && messageText.Split("\n").Length > 3)
                 {
                     List<Player> players = AO2Parser.ParseGetArea(messageText);
+                    Match areaMatch = Regex.Match(messageText, @"people in this area:\s*(.+?)\s*===", RegexOptions.IgnoreCase);
+                    if (areaMatch.Success)
+                    {
+                        string parsedArea = areaMatch.Groups[1].Value.Trim();
+                        if (!string.IsNullOrWhiteSpace(parsedArea))
+                        {
+                            SetCurrentArea(parsedArea);
+                        }
+                    }
                 }
 
                 // Handle OOC message
@@ -472,6 +509,70 @@ namespace AOBot_Testing.Agents
                 CustomConsole.Error($"Connection Error", ex);
                 throw;
             }
+        }
+
+        private void SetCurrentArea(string newArea)
+        {
+            if (string.IsNullOrWhiteSpace(newArea))
+            {
+                return;
+            }
+
+            if (string.Equals(currentArea, newArea, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            currentArea = newArea;
+            OnCurrentAreaChanged?.Invoke(currentArea);
+        }
+
+        private void ReplaceAvailableAreas(IEnumerable<string> areas)
+        {
+            availableAreas.Clear();
+            availableAreas.AddRange(areas.Where(area => !string.IsNullOrWhiteSpace(area)));
+            OnAvailableAreasUpdated?.Invoke(availableAreas.AsReadOnly());
+        }
+
+        private void ParseAreaListFromFa(string message)
+        {
+            string[] content = message.Substring(3).TrimEnd('#', '%')
+                .Split('#', StringSplitOptions.RemoveEmptyEntries);
+
+            ReplaceAvailableAreas(content);
+        }
+
+        private void ParseAreaListFromSm(string message)
+        {
+            string[] content = message.Substring(3).TrimEnd('#', '%')
+                .Split('#', StringSplitOptions.RemoveEmptyEntries);
+
+            List<string> areas = new List<string>();
+            foreach (string entry in content)
+            {
+                if (LooksLikeMusicEntry(entry))
+                {
+                    break;
+                }
+
+                areas.Add(entry);
+            }
+
+            ReplaceAvailableAreas(areas);
+        }
+
+        private static bool LooksLikeMusicEntry(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return false;
+            }
+
+            return value.EndsWith(".wav", StringComparison.OrdinalIgnoreCase)
+                || value.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase)
+                || value.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase)
+                || value.EndsWith(".ogg", StringComparison.OrdinalIgnoreCase)
+                || value.EndsWith(".opus", StringComparison.OrdinalIgnoreCase);
         }
         private async Task PerformHandshake()
         {
@@ -745,6 +846,11 @@ namespace AOBot_Testing.Agents
             {
                 CustomConsole.Error("WebSocket is not connected. Cannot send message.");
             }
+        }
+
+        public async Task RequestAreaList()
+        {
+            await SendPacket("RM#%");
         }
 
         private async Task<string> ReceiveMessageAsync()

@@ -379,6 +379,42 @@
                     Width="127" Height="16" BorderBrush="Black" 
                     Checked="chkInvertLog_Checked" Unchecked="chkInvertLog_Checked" 
                     Canvas.Left="229" Focusable="False" IsTabStop="False" VerticalContentAlignment="Center" HorizontalAlignment="Center" VerticalAlignment="Top"/>
+
+                <Button x:Name="btnAreaNavigator"
+                        Width="24"
+                        Height="24"
+                        Canvas.Left="458"
+                        Canvas.Top="603"
+                        Content="A"
+                        FontWeight="Bold"
+                        Click="btnAreaNavigator_Click"
+                        ToolTip="Area Navigator"/>
+
+                <Popup x:Name="AreaNavigatorPopup"
+                       PlacementTarget="{Binding ElementName=btnAreaNavigator}"
+                       Placement="Top"
+                       StaysOpen="False"
+                       AllowsTransparency="True">
+                    <Border Background="#FF202020"
+                            BorderBrush="#FF575757"
+                            BorderThickness="1"
+                            Padding="8">
+                        <StackPanel Width="220">
+                            <TextBlock Text="Area Navigator" Foreground="White" FontWeight="Bold" Margin="0,0,0,4"/>
+                            <TextBlock x:Name="txtCurrentArea" Text="Current: Unknown" Foreground="White" Margin="0,0,0,6"/>
+                            <ListBox x:Name="lstAreas" Height="170" Margin="0,0,0,6"/>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <Button x:Name="btnRefreshAreas"
+                                        Content="Refresh"
+                                        Margin="0,0,6,0"
+                                        Click="btnRefreshAreas_Click"/>
+                                <Button x:Name="btnGoToArea"
+                                        Content="Go"
+                                        Click="btnGoToArea_Click"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </Popup>
                 <Button x:Name="THEDINGBUTTON" Height="12" Width="12" 
                     BorderBrush="{x:Null}" Foreground="{x:Null}" Padding="0"
                     Canvas.Left="322" Canvas.Top="532"
