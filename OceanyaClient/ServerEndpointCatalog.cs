@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Sockets;
+using System.Net.WebSockets;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Text.Json;
@@ -23,16 +24,23 @@ namespace OceanyaClient
 
     internal sealed class ServerEndpointDefinition
     {
+        public int DisplayId { get; set; }
         public required string Name { get; init; }
         public required string Endpoint { get; init; }
         public required string Description { get; init; }
         public required ServerEndpointSource Source { get; init; }
         public required bool IsLegacy { get; init; }
+        public bool IsAoClientCompatible { get; set; } = true;
         public bool IsOnline { get; set; }
         public int? OnlinePlayers { get; set; }
         public int? MaxPlayers { get; set; }
 
-        public bool IsSelectable => IsOnline && !IsLegacy && InitialConfigurationWindow.IsValidServerEndpoint(Endpoint);
+        public bool IsSelectable => IsOnline
+            && OnlinePlayers.HasValue
+            && MaxPlayers.HasValue
+            && !IsLegacy
+            && IsAoClientCompatible
+            && InitialConfigurationWindow.IsValidServerEndpoint(Endpoint);
 
         public string SourceDisplayName => Source switch
         {
@@ -69,7 +77,7 @@ namespace OceanyaClient
                     return string.Empty;
                 }
 
-                return $"{OnlinePlayers.Value} / {MaxPlayers.Value}";
+                return $"{OnlinePlayers.Value}/{MaxPlayers.Value}";
             }
         }
     }
@@ -96,10 +104,17 @@ namespace OceanyaClient
     {
         private static readonly HttpClient httpClient = new HttpClient();
         private const string DefaultMasterServerUrl = "http://servers.aceattorneyonline.com";
+        private const int AoProbeConcurrency = 6;
+        private const int AoProbeTimeoutMs = 6000;
+        private const string AoProbeClientName = "AO2";
+        private const string AoProbeClientVersion = "2.11.0";
 
         public static async Task<List<ServerEndpointDefinition>> LoadAsync(string configIniPath, CancellationToken cancellationToken)
         {
             List<ServerEndpointDefinition> pollServers = await LoadAoServerPollAsync(configIniPath, cancellationToken);
+            await PopulateAoPlayerCountsAsync(
+                pollServers.Where(server => !server.IsLegacy),
+                cancellationToken);
             List<ServerEndpointDefinition> defaultServers = LoadDefaultServers();
             List<ServerEndpointDefinition> favoriteServers = LoadFavorites(configIniPath);
 
@@ -337,6 +352,7 @@ namespace OceanyaClient
                 server.IsOnline = knownStatus.IsOnline;
                 server.OnlinePlayers = knownStatus.OnlinePlayers;
                 server.MaxPlayers = knownStatus.MaxPlayers;
+                server.IsAoClientCompatible = knownStatus.IsAoClientCompatible;
             }
         }
 
@@ -352,6 +368,58 @@ namespace OceanyaClient
                     await concurrency.WaitAsync(cancellationToken);
                     try
                     {
+                        server.IsOnline = await IsEndpointReachableAsync(server.Endpoint, cancellationToken);
+                    }
+                    finally
+                    {
+                        concurrency.Release();
+                    }
+                }, cancellationToken));
+            }
+
+            await Task.WhenAll(tasks);
+        }
+
+        private static async Task PopulateAoPlayerCountsAsync(
+            IEnumerable<ServerEndpointDefinition> servers,
+            CancellationToken cancellationToken)
+        {
+            List<ServerEndpointDefinition> targets = servers.ToList();
+            if (targets.Count == 0)
+            {
+                return;
+            }
+
+            List<Task> tasks = new List<Task>();
+            using SemaphoreSlim concurrency = new SemaphoreSlim(AoProbeConcurrency);
+
+            foreach (ServerEndpointDefinition server in targets)
+            {
+                tasks.Add(Task.Run(async () =>
+                {
+                    await concurrency.WaitAsync(cancellationToken);
+                    try
+                    {
+                        (bool success, int? players, int? maxPlayers, bool incompatibleClient) =
+                            await ProbeAoPlayerCountAsync(server.Endpoint, cancellationToken);
+
+                        if (incompatibleClient)
+                        {
+                            server.IsOnline = true;
+                            server.IsAoClientCompatible = false;
+                            return;
+                        }
+
+                        if (success)
+                        {
+                            server.IsOnline = true;
+                            server.IsAoClientCompatible = true;
+                            server.OnlinePlayers = players;
+                            server.MaxPlayers = maxPlayers;
+                            return;
+                        }
+
+                        // Fallback status check if PN probe fails.
                         server.IsOnline = await IsEndpointReachableAsync(server.Endpoint, cancellationToken);
                     }
                     finally
@@ -394,6 +462,174 @@ namespace OceanyaClient
             {
                 return false;
             }
+        }
+
+        private static async Task<(bool Success, int? Players, int? MaxPlayers, bool IncompatibleClient)> ProbeAoPlayerCountAsync(
+            string endpoint,
+            CancellationToken cancellationToken)
+        {
+            if (!Uri.TryCreate(endpoint, UriKind.Absolute, out Uri? uri) || uri == null)
+            {
+                return (false, null, null, false);
+            }
+
+            bool validScheme = string.Equals(uri.Scheme, "ws", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(uri.Scheme, "wss", StringComparison.OrdinalIgnoreCase);
+            if (!validScheme)
+            {
+                return (false, null, null, false);
+            }
+
+            try
+            {
+                using ClientWebSocket webSocket = new ClientWebSocket();
+                webSocket.Options.SetRequestHeader(
+                    "User-Agent",
+                    $"AttorneyOnline/{AoProbeClientVersion} (Desktop)");
+
+                using CancellationTokenSource timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeoutCts.CancelAfter(AoProbeTimeoutMs);
+                CancellationToken timeoutToken = timeoutCts.Token;
+
+                await webSocket.ConnectAsync(uri, timeoutToken);
+
+                string hdid = Guid.NewGuid().ToString();
+                StringBuilder packetBuffer = new StringBuilder();
+                ArraySegment<byte> buffer = new ArraySegment<byte>(new byte[8192]);
+
+                while (webSocket.State == WebSocketState.Open && !timeoutToken.IsCancellationRequested)
+                {
+                    WebSocketReceiveResult receiveResult = await webSocket.ReceiveAsync(buffer, timeoutToken);
+                    if (receiveResult.MessageType == WebSocketMessageType.Close)
+                    {
+                        break;
+                    }
+
+                    if (receiveResult.MessageType != WebSocketMessageType.Text)
+                    {
+                        continue;
+                    }
+
+                    string text = Encoding.UTF8.GetString(buffer.Array!, 0, receiveResult.Count);
+                    packetBuffer.Append(text);
+
+                    bool keepParsing = true;
+                    while (keepParsing)
+                    {
+                        string current = packetBuffer.ToString();
+                        int packetEnd = current.IndexOf("#%", StringComparison.Ordinal);
+                        if (packetEnd < 0)
+                        {
+                            keepParsing = false;
+                            continue;
+                        }
+
+                        string packet = current.Substring(0, packetEnd + 1); // include trailing '#'
+                        packetBuffer.Remove(0, packetEnd + 2);
+
+                        List<string> outgoingPackets = GetProbeFollowUpPackets(packet, hdid);
+                        foreach (string outgoingPacket in outgoingPackets)
+                        {
+                            await SendWsPacketAsync(webSocket, outgoingPacket, timeoutToken);
+                        }
+
+                        if (TryParseProbePlayerCountPacket(packet, out int players, out int maxPlayers))
+                        {
+                            if (webSocket.State == WebSocketState.Open)
+                            {
+                                await webSocket.CloseAsync(
+                                    WebSocketCloseStatus.NormalClosure,
+                                    "Probe complete",
+                                    CancellationToken.None);
+                            }
+
+                            return (true, players, maxPlayers, false);
+                        }
+
+                        if (packet.StartsWith("BD#", StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (webSocket.State == WebSocketState.Open)
+                            {
+                                await webSocket.CloseAsync(
+                                    WebSocketCloseStatus.NormalClosure,
+                                    "Probe rejected by server",
+                                    CancellationToken.None);
+                            }
+
+                            return (false, null, null, true);
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                return (false, null, null, false);
+            }
+
+            return (false, null, null, false);
+        }
+
+        internal static List<string> GetProbeFollowUpPackets(string packet, string hdid)
+        {
+            List<string> outgoingPackets = new List<string>();
+            if (packet.StartsWith("decryptor#", StringComparison.OrdinalIgnoreCase))
+            {
+                outgoingPackets.Add($"HI#{hdid}#%");
+                return outgoingPackets;
+            }
+
+            if (!packet.StartsWith("ID#", StringComparison.OrdinalIgnoreCase))
+            {
+                return outgoingPackets;
+            }
+
+            // Match AO2 identity packet flow, then request a join transition.
+            // Some servers emit PN only after askchaa.
+            outgoingPackets.Add($"ID#{AoProbeClientName}#{AoProbeClientVersion}#%");
+            outgoingPackets.Add("askchaa#%");
+            return outgoingPackets;
+        }
+
+        internal static bool TryParseProbePlayerCountPacket(string packet, out int players, out int maxPlayers)
+        {
+            players = default;
+            maxPlayers = default;
+
+            if (!packet.StartsWith("PN#", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            string normalizedPacket = packet.EndsWith("#", StringComparison.Ordinal)
+                ? packet.Substring(0, packet.Length - 1)
+                : packet;
+            string[] parts = normalizedPacket.Split('#');
+            if (parts.Length < 3)
+            {
+                return false;
+            }
+
+            if (!int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out players))
+            {
+                players = 0;
+            }
+
+            if (!int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out maxPlayers))
+            {
+                maxPlayers = 0;
+            }
+
+            return true;
+        }
+
+        private static async Task SendWsPacketAsync(ClientWebSocket webSocket, string packet, CancellationToken cancellationToken)
+        {
+            byte[] bytes = Encoding.UTF8.GetBytes(packet);
+            await webSocket.SendAsync(
+                new ArraySegment<byte>(bytes),
+                WebSocketMessageType.Text,
+                endOfMessage: true,
+                cancellationToken);
         }
 
         private static int? GetCountValue(JsonElement source, params string[] keys)
@@ -442,42 +678,118 @@ namespace OceanyaClient
                 "max_clients",
                 "slots");
 
-            if (online.HasValue && max.HasValue)
-            {
-                return (online, max);
-            }
-
             foreach (JsonProperty property in source.EnumerateObject())
             {
-                string key = property.Name;
-                JsonElement value = property.Value;
+                string keyLower = property.Name.ToLowerInvariant();
+                if (!LooksLikePlayerCountKey(keyLower))
+                {
+                    continue;
+                }
 
+                JsonElement value = property.Value;
                 if (value.ValueKind == JsonValueKind.String)
                 {
-                    string text = value.GetString() ?? string.Empty;
-                    Match slashPattern = Regex.Match(text, @"(?<online>\d+)\s*/\s*(?<max>\d+)");
-                    if (slashPattern.Success)
-                    {
-                        online ??= int.Parse(slashPattern.Groups["online"].Value, CultureInfo.InvariantCulture);
-                        max ??= int.Parse(slashPattern.Groups["max"].Value, CultureInfo.InvariantCulture);
-                    }
+                    TryExtractPlayerPairFromText(value.GetString() ?? string.Empty, ref online, ref max);
+                    continue;
                 }
-                else if (value.ValueKind == JsonValueKind.Object)
-                {
-                    int? nestedOnline = GetCountValue(value, "players", "online", "current", "count");
-                    int? nestedMax = GetCountValue(value, "max", "maxplayers", "max_players", "capacity");
 
-                    if (key.Contains("player", StringComparison.OrdinalIgnoreCase)
-                        || key.Contains("count", StringComparison.OrdinalIgnoreCase)
-                        || key.Contains("status", StringComparison.OrdinalIgnoreCase))
+                if (value.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                int? nestedOnline = GetCountValue(
+                    value,
+                    "players",
+                    "player_count",
+                    "online",
+                    "current",
+                    "count",
+                    "users");
+                int? nestedMax = GetCountValue(
+                    value,
+                    "max",
+                    "maxplayers",
+                    "max_players",
+                    "capacity",
+                    "slots");
+
+                online ??= nestedOnline;
+                max ??= nestedMax;
+
+                foreach (JsonProperty nestedProperty in value.EnumerateObject())
+                {
+                    if (nestedProperty.Value.ValueKind != JsonValueKind.String)
                     {
-                        online ??= nestedOnline;
-                        max ??= nestedMax;
+                        continue;
                     }
+
+                    string nestedKeyLower = nestedProperty.Name.ToLowerInvariant();
+                    if (!LooksLikePlayerCountKey(nestedKeyLower))
+                    {
+                        continue;
+                    }
+
+                    TryExtractPlayerPairFromText(nestedProperty.Value.GetString() ?? string.Empty, ref online, ref max);
                 }
             }
 
             return (online, max);
+        }
+
+        private static bool LooksLikePlayerCountKey(string keyLower)
+        {
+            return keyLower.Contains("player", StringComparison.Ordinal)
+                || keyLower.Contains("online", StringComparison.Ordinal)
+                || keyLower.Contains("count", StringComparison.Ordinal)
+                || keyLower.Contains("slot", StringComparison.Ordinal)
+                || keyLower.Contains("capacity", StringComparison.Ordinal)
+                || keyLower.Contains("status", StringComparison.Ordinal)
+                || keyLower.Contains("user", StringComparison.Ordinal);
+        }
+
+        private static void TryExtractPlayerPairFromText(string text, ref int? online, ref int? max)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return;
+            }
+
+            Match slashPattern = Regex.Match(text, @"(?<online>\d+)\s*/\s*(?<max>\d+)", RegexOptions.IgnoreCase);
+            if (slashPattern.Success)
+            {
+                if (!online.HasValue
+                    && int.TryParse(slashPattern.Groups["online"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedOnline))
+                {
+                    online = parsedOnline;
+                }
+
+                if (!max.HasValue
+                    && int.TryParse(slashPattern.Groups["max"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedMax))
+                {
+                    max = parsedMax;
+                }
+
+                return;
+            }
+
+            Match onlinePattern = Regex.Match(text, @"online[^0-9]*(?<online>\d+)[^0-9]+(?<max>\d+)", RegexOptions.IgnoreCase);
+            if (!onlinePattern.Success)
+            {
+                return;
+            }
+
+            if (!online.HasValue
+                && int.TryParse(onlinePattern.Groups["online"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int altOnline))
+            {
+                online = altOnline;
+            }
+
+            if (!max.HasValue
+                && int.TryParse(onlinePattern.Groups["max"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int altMax))
+            {
+                max = altMax;
+            }
         }
 
         private static string GetEndpointKey(string endpoint)

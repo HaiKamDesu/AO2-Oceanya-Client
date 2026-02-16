@@ -18,9 +18,16 @@ namespace OceanyaClient
     /// </summary>
     public partial class ServerSelectionDialog : Window
     {
+        private sealed class SortState
+        {
+            public required string Column { get; init; }
+            public required bool Ascending { get; init; }
+        }
+
         private readonly string configIniPath;
         private readonly string initiallySelectedEndpoint;
         private readonly List<ServerEndpointDefinition> allEntries = new List<ServerEndpointDefinition>();
+        private readonly Dictionary<ServerEndpointSource, SortState> sortStates = new Dictionary<ServerEndpointSource, SortState>();
         private CancellationTokenSource? refreshCancellationTokenSource;
 
         internal ServerEndpointDefinition? SelectedServer { get; private set; }
@@ -55,6 +62,7 @@ namespace OceanyaClient
 
             try
             {
+                await WaitForm.ShowFormAsync("Loading servers...", this);
                 List<ServerEndpointDefinition> loadedEntries = await ServerEndpointCatalog.LoadAsync(configIniPath, cancellationToken);
                 allEntries.Clear();
                 allEntries.AddRange(loadedEntries);
@@ -80,6 +88,7 @@ namespace OceanyaClient
             {
                 RefreshPollButton.IsEnabled = true;
                 UpdateSelectionState();
+                await WaitForm.CloseFormAsync();
             }
         }
 
@@ -128,6 +137,50 @@ namespace OceanyaClient
 
         private async void AddFavoriteButton_Click(object sender, RoutedEventArgs e)
         {
+            bool isFavoritesTab = ServerTabs.SelectedIndex == 2;
+            if (!isFavoritesTab)
+            {
+                if (GetCurrentSelection() is not ServerEndpointDefinition selectedServer)
+                {
+                    return;
+                }
+
+                if (!TryParseWebsocketEndpoint(selectedServer.Endpoint, out string selectedAddress, out int selectedPort))
+                {
+                    OceanyaMessageBox.Show(
+                        "Only WebSocket servers can be added to favorites.",
+                        "Invalid Favorite",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                    return;
+                }
+
+                bool alreadyFavorite = allEntries.Any(server =>
+                    server.Source == ServerEndpointSource.Favorites
+                    && string.Equals(server.Endpoint, selectedServer.Endpoint, StringComparison.OrdinalIgnoreCase));
+                if (alreadyFavorite)
+                {
+                    ServerTabs.SelectedIndex = 2;
+                    SelectByEndpoint(selectedServer.Endpoint, ServerEndpointSource.Favorites, switchToMatchedTab: false);
+                    UpdateSelectionState();
+                    return;
+                }
+
+                ServerEndpointCatalog.AddFavorite(
+                    configIniPath,
+                    new FavoriteServerEntry
+                    {
+                        Name = selectedServer.Name,
+                        Address = selectedAddress,
+                        Port = selectedPort,
+                        Description = selectedServer.Description,
+                        Legacy = false
+                    });
+
+                await RefreshFavoritesOnlyAsync(selectedServer.Endpoint, switchToFavoritesTab: true);
+                return;
+            }
+
             if (!FavoriteServerEditorDialog.ShowDialog(
                     this,
                     out string name,
@@ -160,8 +213,7 @@ namespace OceanyaClient
                     Legacy = false
                 });
 
-            ServerTabs.SelectedIndex = 2;
-            await RefreshServersAsync(endpoint.Trim());
+            await RefreshFavoritesOnlyAsync(endpoint.Trim(), switchToFavoritesTab: true);
         }
 
         private async void EditFavoriteButton_Click(object sender, RoutedEventArgs e)
@@ -218,7 +270,7 @@ namespace OceanyaClient
                     Legacy = false
                 });
 
-            await RefreshServersAsync(endpoint.Trim());
+            await RefreshFavoritesOnlyAsync(endpoint.Trim(), switchToFavoritesTab: true);
         }
 
         private async void RemoveFavoriteButton_Click(object sender, RoutedEventArgs e)
@@ -245,7 +297,7 @@ namespace OceanyaClient
             }
 
             ServerEndpointCatalog.RemoveFavorite(configIniPath, favoriteIndex);
-            await RefreshServersAsync(selectEndpoint: string.Empty);
+            await RefreshFavoritesOnlyAsync(selectEndpoint: string.Empty, switchToFavoritesTab: true);
         }
 
         private void SelectButton_Click(object sender, RoutedEventArgs e)
@@ -301,39 +353,135 @@ namespace OceanyaClient
                     || Contains(item.Description, filter));
             }
 
-            return entries.ToList();
+            List<ServerEndpointDefinition> ordered = entries
+                .OrderByDescending(item => item.IsSelectable)
+                .ThenBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            for (int index = 0; index < ordered.Count; index++)
+            {
+                ordered[index].DisplayId = index + 1;
+            }
+
+            if (sortStates.TryGetValue(source, out SortState? sortState))
+            {
+                return ApplySort(ordered, sortState.Column, sortState.Ascending);
+            }
+
+            return ordered;
         }
 
-        private void SelectByEndpoint(string endpoint)
+        private static List<ServerEndpointDefinition> ApplySort(
+            IEnumerable<ServerEndpointDefinition> entries,
+            string column,
+            bool ascending)
+        {
+            return column switch
+            {
+                "ID" => ascending
+                    ? entries.OrderBy(item => item.DisplayId).ToList()
+                    : entries.OrderByDescending(item => item.DisplayId).ToList(),
+                "Name" => ascending
+                    ? entries.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToList()
+                    : entries.OrderByDescending(item => item.Name, StringComparer.OrdinalIgnoreCase).ToList(),
+                "Players" => SortByPlayers(entries, ascending),
+                _ => entries.ToList()
+            };
+        }
+
+        private static List<ServerEndpointDefinition> SortByPlayers(IEnumerable<ServerEndpointDefinition> entries, bool ascending)
+        {
+            IEnumerable<ServerEndpointDefinition> withPlayers = entries
+                .Where(item => item.OnlinePlayers.HasValue && item.MaxPlayers.HasValue);
+            IEnumerable<ServerEndpointDefinition> withoutPlayers = entries
+                .Where(item => !item.OnlinePlayers.HasValue || !item.MaxPlayers.HasValue);
+
+            IEnumerable<ServerEndpointDefinition> sortedWithPlayers = ascending
+                ? withPlayers
+                    .OrderBy(item => item.OnlinePlayers!.Value)
+                    .ThenBy(item => item.MaxPlayers!.Value)
+                : withPlayers
+                    .OrderByDescending(item => item.OnlinePlayers!.Value)
+                    .ThenByDescending(item => item.MaxPlayers!.Value);
+
+            return sortedWithPlayers.Concat(withoutPlayers).ToList();
+        }
+
+        private void GridHeader_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not GridViewColumnHeader header || header.Content is not string columnName)
+            {
+                return;
+            }
+
+            if (!string.Equals(columnName, "ID", StringComparison.Ordinal)
+                && !string.Equals(columnName, "Name", StringComparison.Ordinal)
+                && !string.Equals(columnName, "Players", StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            ServerEndpointSource source = GetCurrentSource();
+            bool ascending = true;
+            if (sortStates.TryGetValue(source, out SortState? existing)
+                && string.Equals(existing.Column, columnName, StringComparison.Ordinal))
+            {
+                ascending = !existing.Ascending;
+            }
+
+            sortStates[source] = new SortState
+            {
+                Column = columnName,
+                Ascending = ascending
+            };
+
+            string selectedEndpoint = GetCurrentSelectedEndpoint();
+            ApplyCurrentFilter();
+            SelectByEndpoint(selectedEndpoint, source, switchToMatchedTab: false);
+            UpdateSelectionState();
+        }
+
+        private void SelectByEndpoint(
+            string endpoint,
+            ServerEndpointSource? preferredSource = null,
+            bool switchToMatchedTab = true)
         {
             if (string.IsNullOrWhiteSpace(endpoint))
             {
                 return;
             }
 
+            if (preferredSource.HasValue)
+            {
+                ListView preferredList = GetListViewBySource(preferredSource.Value);
+                if (SelectInList(preferredList, endpoint))
+                {
+                    if (switchToMatchedTab)
+                    {
+                        ServerTabs.SelectedIndex = GetTabIndex(preferredSource.Value);
+                    }
+                    return;
+                }
+
+                if (!switchToMatchedTab)
+                {
+                    return;
+                }
+            }
+
             foreach (ListView listView in GetAllListViews())
             {
-                IEnumerable<ServerEndpointDefinition> listItems = listView.ItemsSource as IEnumerable<ServerEndpointDefinition>
-                    ?? Enumerable.Empty<ServerEndpointDefinition>();
-
-                ServerEndpointDefinition? match = listItems.FirstOrDefault(item =>
-                    string.Equals(item.Endpoint, endpoint, StringComparison.OrdinalIgnoreCase));
-                if (match == null)
+                if (!SelectInList(listView, endpoint))
                 {
                     continue;
                 }
 
-                ServerTabs.SelectedIndex = match.Source switch
+                if (switchToMatchedTab)
                 {
-                    ServerEndpointSource.Defaults => 0,
-                    ServerEndpointSource.AoServerPoll => 1,
-                    ServerEndpointSource.Favorites => 2,
-                    _ => 0
-                };
+                    ServerEndpointSource listSource = GetSourceByListView(listView);
+                    ServerTabs.SelectedIndex = GetTabIndex(listSource);
+                }
 
-                ListView targetList = GetCurrentListView();
-                targetList.SelectedItem = match;
-                targetList.ScrollIntoView(match);
                 return;
             }
         }
@@ -364,6 +512,108 @@ namespace OceanyaClient
             };
         }
 
+        private ListView GetListViewBySource(ServerEndpointSource source)
+        {
+            return source switch
+            {
+                ServerEndpointSource.Defaults => DefaultsListView,
+                ServerEndpointSource.AoServerPoll => AoPollListView,
+                ServerEndpointSource.Favorites => FavoritesListView,
+                _ => DefaultsListView
+            };
+        }
+
+        private static int GetTabIndex(ServerEndpointSource source)
+        {
+            return source switch
+            {
+                ServerEndpointSource.Defaults => 0,
+                ServerEndpointSource.AoServerPoll => 1,
+                ServerEndpointSource.Favorites => 2,
+                _ => 0
+            };
+        }
+
+        private ServerEndpointSource GetCurrentSource()
+        {
+            return ServerTabs.SelectedIndex switch
+            {
+                0 => ServerEndpointSource.Defaults,
+                1 => ServerEndpointSource.AoServerPoll,
+                2 => ServerEndpointSource.Favorites,
+                _ => ServerEndpointSource.Defaults
+            };
+        }
+
+        private static ServerEndpointSource GetSourceByListView(ListView listView)
+        {
+            return listView.Name switch
+            {
+                "DefaultsListView" => ServerEndpointSource.Defaults,
+                "AoPollListView" => ServerEndpointSource.AoServerPoll,
+                "FavoritesListView" => ServerEndpointSource.Favorites,
+                _ => ServerEndpointSource.Defaults
+            };
+        }
+
+        private static bool SelectInList(ListView listView, string endpoint)
+        {
+            IEnumerable<ServerEndpointDefinition> listItems = listView.ItemsSource as IEnumerable<ServerEndpointDefinition>
+                ?? Enumerable.Empty<ServerEndpointDefinition>();
+
+            ServerEndpointDefinition? match = listItems.FirstOrDefault(item =>
+                string.Equals(item.Endpoint, endpoint, StringComparison.OrdinalIgnoreCase));
+            if (match == null)
+            {
+                return false;
+            }
+
+            listView.SelectedItem = match;
+            listView.ScrollIntoView(match);
+            return true;
+        }
+
+        private async Task RefreshFavoritesOnlyAsync(string selectEndpoint, bool switchToFavoritesTab)
+        {
+            List<ServerEndpointDefinition> favorites = ServerEndpointCatalog.LoadFavorites(configIniPath);
+
+            foreach (ServerEndpointDefinition favorite in favorites)
+            {
+                ServerEndpointDefinition? known = allEntries.FirstOrDefault(server =>
+                    server.Source != ServerEndpointSource.Favorites
+                    && string.Equals(server.Endpoint, favorite.Endpoint, StringComparison.OrdinalIgnoreCase));
+
+                if (known == null)
+                {
+                    continue;
+                }
+
+                favorite.IsOnline = known.IsOnline;
+                favorite.OnlinePlayers = known.OnlinePlayers;
+                favorite.MaxPlayers = known.MaxPlayers;
+            }
+
+            allEntries.RemoveAll(server => server.Source == ServerEndpointSource.Favorites);
+            allEntries.AddRange(favorites);
+
+            ApplyCurrentFilter();
+
+            if (switchToFavoritesTab)
+            {
+                ServerTabs.SelectedIndex = 2;
+            }
+
+            if (!string.IsNullOrWhiteSpace(selectEndpoint))
+            {
+                SelectByEndpoint(selectEndpoint, ServerEndpointSource.Favorites, switchToMatchedTab: false);
+            }
+
+            int favoriteCount = allEntries.Count(item => item.Source == ServerEndpointSource.Favorites);
+            StatusTextBlock.Text = $"Favorites updated. Total favorites: {favoriteCount}.";
+            UpdateSelectionState();
+            await Task.CompletedTask;
+        }
+
         private IEnumerable<ListView> GetAllListViews()
         {
             yield return DefaultsListView;
@@ -377,7 +627,16 @@ namespace OceanyaClient
             bool hasSelection = selected != null;
 
             bool isFavoritesTab = ServerTabs.SelectedIndex == 2;
-            AddFavoriteButton.IsEnabled = isFavoritesTab;
+            if (isFavoritesTab)
+            {
+                AddFavoriteButton.Content = "ADD FAVORITE";
+                AddFavoriteButton.IsEnabled = true;
+            }
+            else
+            {
+                AddFavoriteButton.Content = "ADD TO FAVORITES";
+                AddFavoriteButton.IsEnabled = hasSelection;
+            }
 
             bool canManageFavorite = isFavoritesTab && hasSelection && selected!.Source == ServerEndpointSource.Favorites;
             EditFavoriteButton.IsEnabled = canManageFavorite;
@@ -418,9 +677,19 @@ namespace OceanyaClient
                 reasons.Add("Server appears offline.");
             }
 
+            if (server.IsOnline && (!server.OnlinePlayers.HasValue || !server.MaxPlayers.HasValue))
+            {
+                reasons.Add("Could not retrieve AO player counts.");
+            }
+
             if (server.IsLegacy)
             {
                 reasons.Add("Legacy TCP server (no WebSocket support).");
+            }
+
+            if (!server.IsAoClientCompatible)
+            {
+                reasons.Add("Server rejected AO2-compatible client probe.");
             }
 
             if (!InitialConfigurationWindow.IsValidServerEndpoint(server.Endpoint))

@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="Initial Configuration"
-        Height="320"
+        Height="268"
         Width="520"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterScreen"

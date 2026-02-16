@@ -16,7 +16,6 @@ namespace OceanyaClient
     public partial class InitialConfigurationWindow : Window
     {
         private ServerEndpointDefinition? selectedServer;
-        private bool hasMigratedLegacyCustomEntries;
 
         public InitialConfigurationWindow()
         {
@@ -147,8 +146,6 @@ namespace OceanyaClient
                 return;
             }
 
-            MigrateLegacyCustomEntriesToFavoritesIfNeeded(configIniPath);
-
             string currentEndpoint = selectedServer?.Endpoint
                 ?? SaveFile.Data.SelectedServerEndpoint
                 ?? Globals.GetDefaultServerEndpoint();
@@ -174,6 +171,7 @@ namespace OceanyaClient
             {
                 ConfigINIPathTextBox.Text = SaveFile.Data.ConfigIniPath;
                 UseSingleClientCheckBox.IsChecked = SaveFile.Data.UseSingleInternalClient;
+                CleanupLegacyCustomServerData();
 
                 selectedServer = ResolveInitialSelectedServer();
                 if (selectedServer != null)
@@ -237,57 +235,18 @@ namespace OceanyaClient
             return defaults.FirstOrDefault();
         }
 
-        private void MigrateLegacyCustomEntriesToFavoritesIfNeeded(string configIniPath)
+        private static void CleanupLegacyCustomServerData()
         {
-            if (hasMigratedLegacyCustomEntries)
+            bool hadLegacyCustomServers = (SaveFile.Data.CustomServerEntries?.Count ?? 0) > 0
+                || (SaveFile.Data.CustomServerEndpoints?.Count ?? 0) > 0;
+            if (!hadLegacyCustomServers)
             {
                 return;
             }
 
-            List<CustomServerEntry> legacyEntries = SaveFile.Data.CustomServerEntries ?? new List<CustomServerEntry>();
-            if (legacyEntries.Count == 0)
-            {
-                hasMigratedLegacyCustomEntries = true;
-                return;
-            }
-
-            List<FavoriteServerEntry> existingFavorites = FavoriteServerStore.LoadFavorites(
-                Path.Combine(Path.GetDirectoryName(configIniPath) ?? string.Empty, "favorite_servers.ini"));
-
-            foreach (CustomServerEntry legacyEntry in legacyEntries)
-            {
-                if (legacyEntry == null || string.IsNullOrWhiteSpace(legacyEntry.Endpoint))
-                {
-                    continue;
-                }
-
-                if (!TryParseEndpoint(legacyEntry.Endpoint, out string address, out int port))
-                {
-                    continue;
-                }
-
-                bool alreadyExists = existingFavorites.Any(favorite =>
-                    string.Equals(favorite.Address, address, StringComparison.OrdinalIgnoreCase)
-                    && favorite.Port == port);
-                if (alreadyExists)
-                {
-                    continue;
-                }
-
-                FavoriteServerEntry migratedEntry = new FavoriteServerEntry
-                {
-                    Name = string.IsNullOrWhiteSpace(legacyEntry.Name) ? "Migrated Favorite" : legacyEntry.Name.Trim(),
-                    Address = address,
-                    Port = port,
-                    Description = "Migrated from Oceanya custom endpoint.",
-                    Legacy = false
-                };
-
-                ServerEndpointCatalog.AddFavorite(configIniPath, migratedEntry);
-                existingFavorites.Add(migratedEntry);
-            }
-
-            hasMigratedLegacyCustomEntries = true;
+            SaveFile.Data.CustomServerEntries = new List<CustomServerEntry>();
+            SaveFile.Data.CustomServerEndpoints = new List<string>();
+            SaveFile.Save();
         }
 
         private void UpdateSelectedServerDisplay()
@@ -336,33 +295,6 @@ namespace OceanyaClient
                 || string.Equals(uri.Scheme, "wss", StringComparison.OrdinalIgnoreCase);
 
             return validScheme && !string.IsNullOrWhiteSpace(uri.Host);
-        }
-
-        private static bool TryParseEndpoint(string endpoint, out string address, out int port)
-        {
-            address = string.Empty;
-            port = 0;
-
-            if (!Uri.TryCreate(endpoint?.Trim(), UriKind.Absolute, out Uri? uri) || uri == null)
-            {
-                return false;
-            }
-
-            bool validScheme = string.Equals(uri.Scheme, "ws", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(uri.Scheme, "wss", StringComparison.OrdinalIgnoreCase);
-            if (!validScheme)
-            {
-                return false;
-            }
-
-            if (string.IsNullOrWhiteSpace(uri.Host) || uri.Port <= 0)
-            {
-                return false;
-            }
-
-            address = uri.Host;
-            port = uri.Port;
-            return true;
         }
 
         private void DragWindow(object sender, MouseButtonEventArgs e)
