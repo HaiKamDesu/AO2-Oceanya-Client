@@ -1257,6 +1257,11 @@ namespace OceanyaClient
                         WaitForm.SetSubtitle("Changed mount path: " + path);
                     }
                 );
+            AOBot_Testing.Structures.Background.RefreshCache(
+                onChangedMountPath: (path) =>
+                {
+                    WaitForm.SetSubtitle("Indexed background mount path: " + path);
+                });
             WaitForm.CloseForm();
             ICMessageSettingsControl.ReinitializeSettings();
             if (currentClient == null)

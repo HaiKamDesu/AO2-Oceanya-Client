@@ -1,4 +1,6 @@
 ﻿using System.IO;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Common;
 
@@ -8,19 +10,22 @@ namespace AOBot_Testing.Structures
     public class CharacterFolder
     {
         #region Static methods
+        private const int CacheVersion = 1;
         public static List<string> CharacterFolders => Globals.BaseFolders.Select(x => Path.Combine(x, "characters")).ToList();
         static string cacheFile = Path.Combine(Path.GetTempPath(), "characters.json");
         static List<CharacterFolder> characterConfigs = new List<CharacterFolder>();
+        static bool cachePathInitialized;
         public static List<CharacterFolder> FullList
         {
             get
             {
+                EnsureCacheFilePath();
+
                 if (characterConfigs.Count == 0)
                 {
-                    // If JSON cache exists, load from it instead of parsing INI files
-                    if (File.Exists(cacheFile))
+                    if (TryLoadFromJson(cacheFile, out List<CharacterFolder>? cachedCharacters))
                     {
-                        characterConfigs = LoadFromJson(cacheFile);
+                        characterConfigs = cachedCharacters;
                         CustomConsole.Info($"Loaded {characterConfigs.Count} characters from cache.");
                     }
                     else
@@ -35,57 +40,138 @@ namespace AOBot_Testing.Structures
 
         public static void RefreshCharacterList(Action<CharacterFolder>? onParsedCharacter = null, Action<string>? onChangedMountPath = null)
         {
-            foreach (var CharacterFolder in CharacterFolders)
-            {
-                onChangedMountPath?.Invoke(CharacterFolder);
-                var directories = Directory.GetDirectories(CharacterFolder);
+            EnsureCacheFilePath();
 
-                foreach (var directory in directories)
+            List<CharacterFolder> refreshedCharacters = new List<CharacterFolder>();
+            HashSet<string> seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (string characterFolder in CharacterFolders)
+            {
+                onChangedMountPath?.Invoke(characterFolder);
+                if (!Directory.Exists(characterFolder))
                 {
-                    var iniFilePath = Path.Combine(directory, "char.ini");
+                    continue;
+                }
+
+                string[] directories = Directory.GetDirectories(characterFolder);
+
+                foreach (string directory in directories)
+                {
+                    string iniFilePath = Path.Combine(directory, "char.ini");
                     if (File.Exists(iniFilePath))
                     {
-                        var folderName = Path.GetFileName(directory);
-
-                        //If there are none with same name
-                        if(!characterConfigs.Any(x => x.Name == folderName))
+                        string folderName = Path.GetFileName(directory);
+                        if (seenNames.Add(folderName))
                         {
-                            //Add new character
                             var config = Structures.CharacterFolder.Create(iniFilePath);
-                            CustomConsole.Debug($"Parsed Character: {config.Name} ({CharacterFolder})");
-                            characterConfigs.Add(config);
-                            onParsedCharacter?.Invoke(config);
-                        }
-                        //If there is one with same name, and the path is the same, update it.
-                        else if(characterConfigs.Any(x => x.PathToConfigIni == iniFilePath))
-                        {
-                            var config = characterConfigs.First(x => x.PathToConfigIni == iniFilePath);
-                            config.Update(iniFilePath, false);
-
+                            CustomConsole.Debug($"Parsed Character: {config.Name} ({characterFolder})");
+                            refreshedCharacters.Add(config);
                             onParsedCharacter?.Invoke(config);
                         }
                     }
                 }
             }
 
-            // Save to JSON file for fast future loading
+            characterConfigs = refreshedCharacters;
             SaveToJson(cacheFile, characterConfigs);
             CustomConsole.Info("Character list saved to cache.");
         }
 
-        static JsonSerializerOptions jsonOptions = new JsonSerializerOptions { WriteIndented = true };
-        // **Save all characters to a single JSON file**
+        static JsonSerializerOptions jsonOptions = new JsonSerializerOptions { WriteIndented = false };
+
+        private static void EnsureCacheFilePath()
+        {
+            string cacheRoot = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "OceanyaClient",
+                "cache");
+            Directory.CreateDirectory(cacheRoot);
+            string desiredCachePath = Path.Combine(cacheRoot, $"characters_{BuildCacheKey()}.json");
+
+            if (!cachePathInitialized || !string.Equals(cacheFile, desiredCachePath, StringComparison.OrdinalIgnoreCase))
+            {
+                cacheFile = desiredCachePath;
+                characterConfigs = new List<CharacterFolder>();
+                cachePathInitialized = true;
+            }
+        }
+
+        private static string BuildCacheKey()
+        {
+            string payload = $"{Globals.PathToConfigINI}|{string.Join("|", Globals.BaseFolders)}";
+            byte[] hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(payload));
+            return Convert.ToHexString(hashBytes).ToLowerInvariant();
+        }
+
         static void SaveToJson(string filePath, List<CharacterFolder> characters)
         {
-            var json = JsonSerializer.Serialize(characters, jsonOptions);
+            CharacterCacheContainer container = new CharacterCacheContainer
+            {
+                Version = CacheVersion,
+                ConfigPath = Globals.PathToConfigINI,
+                BaseFolders = new List<string>(Globals.BaseFolders),
+                Characters = characters
+            };
+
+            var json = JsonSerializer.Serialize(container, jsonOptions);
             File.WriteAllText(filePath, json);
         }
 
-        // **Load all characters from a single JSON file**
-        static List<CharacterFolder> LoadFromJson(string filePath)
+        static bool TryLoadFromJson(string filePath, out List<CharacterFolder> characters)
         {
-            var json = File.ReadAllText(filePath);
-            return JsonSerializer.Deserialize<List<CharacterFolder>>(json) ?? new List<CharacterFolder>();
+            characters = new List<CharacterFolder>();
+            if (!File.Exists(filePath))
+            {
+                return false;
+            }
+
+            string json = File.ReadAllText(filePath);
+
+            CharacterCacheContainer? container = JsonSerializer.Deserialize<CharacterCacheContainer>(json);
+            if (container != null && IsCacheCompatible(container))
+            {
+                characters = container.Characters ?? new List<CharacterFolder>();
+                return true;
+            }
+
+            List<CharacterFolder>? legacyCharacters = JsonSerializer.Deserialize<List<CharacterFolder>>(json);
+            if (legacyCharacters != null)
+            {
+                characters = legacyCharacters;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool IsCacheCompatible(CharacterCacheContainer container)
+        {
+            if (container.Version != CacheVersion)
+            {
+                return false;
+            }
+
+            if (!string.Equals(container.ConfigPath ?? string.Empty, Globals.PathToConfigINI ?? string.Empty,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            List<string> cachedBaseFolders = container.BaseFolders ?? new List<string>();
+            if (cachedBaseFolders.Count != Globals.BaseFolders.Count)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < cachedBaseFolders.Count; i++)
+            {
+                if (!string.Equals(cachedBaseFolders[i], Globals.BaseFolders[i], StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
         #endregion
 
@@ -270,5 +356,13 @@ namespace AOBot_Testing.Structures
             }
             #endregion
         }
+    }
+
+    internal sealed class CharacterCacheContainer
+    {
+        public int Version { get; set; }
+        public string ConfigPath { get; set; } = string.Empty;
+        public List<string> BaseFolders { get; set; } = new List<string>();
+        public List<CharacterFolder> Characters { get; set; } = new List<CharacterFolder>();
     }
 }

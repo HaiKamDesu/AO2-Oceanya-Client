@@ -319,8 +319,6 @@ namespace OceanyaClient.Components
 
             try
             {
-                ini.configINI.Update();
-
                 txtICShowname_Placeholder.Text = ini.configINI.ShowName;
 
                 EmoteGrid.ClearGrid();
