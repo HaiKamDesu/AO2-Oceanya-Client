@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:components="clr-namespace:OceanyaClient.Components"
         Title="Oceanya Online"
-        Height="658" Width="510"
+        Height="690" Width="510"
         Icon="/Resources/OceanyaO.ico"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterScreen"
@@ -103,7 +103,7 @@
               replicate these rectangles. Otherwise, remove them.
             -->
             <Rectangle x:Name="imgScienceBlur" 
-                       HorizontalAlignment="Center" Width="527" Height="638" 
+                       HorizontalAlignment="Center" Width="527" Height="670" 
                        VerticalAlignment="Top" Margin="0,30,0,0">
                 <Rectangle.Fill>
                     <ImageBrush ImageSource="/Resources/scoienceblur.jpg" Opacity="0.5"/>
@@ -111,7 +111,7 @@
             </Rectangle>
 
             <Rectangle x:Name="imgScienceBlur_darken"
-                       HorizontalAlignment="Center" Width="527" Height="638" 
+                       HorizontalAlignment="Center" Width="527" Height="670" 
                        VerticalAlignment="Top" Margin="0,30,0,0" Fill="#7F000000"/>
 
             <Rectangle HorizontalAlignment="Center" Width="369" Height="276"
@@ -331,7 +331,62 @@
                 <components:ICMessageSettings x:Name="ICMessageSettingsControl" Canvas.Top="343" 
                                               Width="509" Height="260" HorizontalAlignment="Center" VerticalAlignment="Center"/>
 
-                <Rectangle Height="24" Canvas.Top="603" Width="509" Fill="#FF36393F" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                <Rectangle x:Name="FeatureRowBackground" Height="30" Canvas.Top="603" Width="509" Fill="#FF303236" Visibility="Collapsed"/>
+                <TextBlock x:Name="DreddFeatureLabel"
+                           Text="Dredd's Background Overlay Override"
+                           Canvas.Left="8"
+                           Canvas.Top="610"
+                           Width="152"
+                           TextTrimming="CharacterEllipsis"
+                           ToolTip="Dredd's Background Overlay Override"
+                           Foreground="White"
+                           FontSize="9"
+                           VerticalAlignment="Center"
+                           Visibility="Collapsed"/>
+                <ComboBox x:Name="DreddOverlayComboBox"
+                          Canvas.Left="165"
+                          Canvas.Top="607"
+                          Width="120"
+                          Height="22"
+                          SelectionChanged="DreddOverlayComboBox_SelectionChanged"
+                          Visibility="Collapsed"/>
+                <CheckBox x:Name="DreddStickyOverlayCheckBox"
+                          Content="Sticky overlay"
+                          Canvas.Left="289"
+                          Canvas.Top="611"
+                          Foreground="White"
+                          FontFamily="Arial"
+                          FontSize="10"
+                          Checked="DreddStickyOverlayCheckBox_Checked"
+                          Unchecked="DreddStickyOverlayCheckBox_Checked"
+                          Visibility="Collapsed"/>
+                <Button x:Name="DreddOverlayConfigButton"
+                        Content="Config"
+                        Canvas.Left="374"
+                        Canvas.Top="607"
+                        Width="40"
+                        Height="22"
+                        Click="DreddOverlayConfigButton_Click"
+                        Visibility="Collapsed"/>
+                <Button x:Name="DreddViewChangesButton"
+                        Content="View"
+                        Canvas.Left="416"
+                        Canvas.Top="607"
+                        Width="36"
+                        Height="22"
+                        Click="DreddViewChangesButton_Click"
+                        Visibility="Collapsed"/>
+                <Button x:Name="DreddDiscardChangesButton"
+                        Content="Discard"
+                        Canvas.Left="454"
+                        Canvas.Top="607"
+                        Width="51"
+                        Height="22"
+                        FontSize="8"
+                        Click="DreddDiscardChangesButton_Click"
+                        Visibility="Collapsed"/>
+
+                <Rectangle x:Name="BottomStatusBar" Height="24" Canvas.Top="603" Width="509" Fill="#FF36393F" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 <CheckBox x:Name="chkSticky" Content="Sticky Effects" 
                           Canvas.Top="607" Foreground="White" FontFamily="Arial" FontSize="10" 
                           Width="82" Height="16" BorderBrush="Black" 

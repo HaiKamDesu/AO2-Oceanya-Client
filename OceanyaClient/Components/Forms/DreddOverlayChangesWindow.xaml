@@ -1,0 +1,52 @@
+<Window x:Class="OceanyaClient.DreddOverlayChangesWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Dredd Overlay Changes"
+        Height="420"
+        Width="980"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        Icon="/Resources/OceanyaO.ico"
+        Background="#FF202020">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0"
+                   Text="Cached design.ini changes (discard preview)"
+                   FontSize="16"
+                   Foreground="White"
+                   FontWeight="SemiBold"
+                   Margin="0,0,0,10"/>
+
+        <DataGrid Grid.Row="1"
+                  x:Name="ChangesGrid"
+                  AutoGenerateColumns="False"
+                  SelectionMode="Single"
+                  SelectionUnit="FullRow"
+                  CanUserAddRows="False"
+                  CanUserDeleteRows="False"
+                  IsReadOnly="True"
+                  HeadersVisibility="Column"
+                  Background="#FF2A2A2A"
+                  Foreground="White"
+                  BorderBrush="#FF4A4A4A"
+                  BorderThickness="1">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Design.ini" Binding="{Binding DesignIniPath}" Width="280"/>
+                <DataGridTextColumn Header="Pos" Binding="{Binding PositionKey}" Width="60"/>
+                <DataGridTextColumn Header="Original" Binding="{Binding OriginalValue}" Width="200"/>
+                <DataGridTextColumn Header="Current" Binding="{Binding CurrentValue}" Width="200"/>
+                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="*"/>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Width="120" Height="30" Margin="0,0,8,0" Content="Refresh" Click="RefreshButton_Click"/>
+            <Button Width="120" Height="30" Content="Close" Click="CloseButton_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

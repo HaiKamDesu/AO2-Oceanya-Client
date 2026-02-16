@@ -14,6 +14,7 @@ using AOBot_Testing.Agents;
 using AOBot_Testing.Structures;
 using Common;
 using NAudio.Wave;
+using OceanyaClient.AdvancedFeatures;
 using OceanyaClient.Components;
 using OceanyaClient.Utilities;
 using ToggleButton = System.Windows.Controls.Primitives.ToggleButton;
@@ -36,6 +37,8 @@ namespace OceanyaClient
         private readonly Brush areaRpBrush = new SolidColorBrush(Color.FromRgb(108, 69, 116));
         private readonly Brush areaGamingBrush = new SolidColorBrush(Color.FromRgb(58, 116, 116));
         private readonly Brush areaLockedBrush = new SolidColorBrush(Color.FromRgb(106, 54, 54));
+        private bool isLoadingDreddOverlaySelection;
+        private bool isDreddFeatureEnabled;
 
         List<ToggleButton> objectionModifiers;
         public MainWindow()
@@ -195,6 +198,7 @@ namespace OceanyaClient
             chkPosOnIniSwap.IsChecked = SaveFile.Data.SwitchPosOnIniSwap;
             chkSticky.IsChecked = SaveFile.Data.StickyEffect;
             chkInvertLog.IsChecked = SaveFile.Data.InvertICLog;
+            InitializeDreddFeatureUi();
 
             btnDebug.Visibility = debug ? Visibility.Visible : Visibility.Collapsed;
             RefreshAreaNavigatorForCurrentClient();
@@ -396,6 +400,152 @@ namespace OceanyaClient
             catch (Exception ex)
             {
                 CustomConsole.Warning("Failed to initialize area list on initial join.", ex);
+            }
+        }
+
+        private void InitializeDreddFeatureUi()
+        {
+            isDreddFeatureEnabled = SaveFile.Data.AdvancedFeatures.IsEnabled(AdvancedFeatureIds.DreddBackgroundOverlayOverride);
+            DreddStickyOverlayCheckBox.IsChecked = SaveFile.Data.DreddBackgroundOverlayOverride.StickyOverlay;
+            Height = isDreddFeatureEnabled ? 690 : 658;
+            imgScienceBlur.Height = isDreddFeatureEnabled ? 670 : 638;
+            imgScienceBlur_darken.Height = isDreddFeatureEnabled ? 670 : 638;
+
+            LoadDreddOverlayComboItems();
+            UpdateDreddFeatureVisibility();
+        }
+
+        private void UpdateDreddFeatureVisibility()
+        {
+            bool enabled = isDreddFeatureEnabled;
+            Visibility visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+            FeatureRowBackground.Visibility = visibility;
+            DreddFeatureLabel.Visibility = visibility;
+            DreddOverlayComboBox.Visibility = visibility;
+            DreddStickyOverlayCheckBox.Visibility = visibility;
+            DreddOverlayConfigButton.Visibility = visibility;
+            DreddViewChangesButton.Visibility = visibility;
+            DreddDiscardChangesButton.Visibility = visibility;
+
+            double verticalOffset = enabled ? 30 : 0;
+            Canvas.SetTop(BottomStatusBar, 603 + verticalOffset);
+            Canvas.SetTop(chkSticky, 607 + verticalOffset);
+            Canvas.SetTop(btnRefreshCharacters, 603 + verticalOffset);
+            Canvas.SetTop(chkPosOnIniSwap, 607 + verticalOffset);
+            Canvas.SetTop(btnDebug, 607 + verticalOffset);
+            Canvas.SetTop(chkInvertLog, 607 + verticalOffset);
+            Canvas.SetTop(btnAreaNavigator, 603 + verticalOffset);
+        }
+
+        private void LoadDreddOverlayComboItems()
+        {
+            isLoadingDreddOverlaySelection = true;
+            try
+            {
+                DreddOverlayComboBox.ItemsSource = null;
+                List<DreddOverlayEntry> overlays = SaveFile.Data.DreddBackgroundOverlayOverride.OverlayDatabase
+                    .OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                DreddOverlayComboBox.ItemsSource = overlays;
+                DreddOverlayComboBox.DisplayMemberPath = nameof(DreddOverlayEntry.Name);
+                DreddOverlayComboBox.SelectedValuePath = nameof(DreddOverlayEntry.Name);
+
+                string selectedName = SaveFile.Data.DreddBackgroundOverlayOverride.SelectedOverlayName?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(selectedName))
+                {
+                    DreddOverlayEntry? selectedEntry = overlays.FirstOrDefault(entry =>
+                        string.Equals(entry.Name, selectedName, StringComparison.OrdinalIgnoreCase));
+                    if (selectedEntry != null)
+                    {
+                        DreddOverlayComboBox.SelectedItem = selectedEntry;
+                    }
+                }
+            }
+            finally
+            {
+                isLoadingDreddOverlaySelection = false;
+            }
+        }
+
+        private DreddOverlayEntry? GetSelectedDreddOverlayEntry()
+        {
+            return DreddOverlayComboBox.SelectedItem as DreddOverlayEntry;
+        }
+
+        private void HookClientForDreddOverlay(AOClient client)
+        {
+            client.OnBGChange += (_) =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    HandleDreddFeatureContextChanged(client);
+                });
+            };
+
+            client.OnSideChange += (_) =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    HandleDreddFeatureContextChanged(client);
+                });
+            };
+        }
+
+        private void HandleDreddFeatureContextChanged(AOClient sourceClient)
+        {
+            if (!isDreddFeatureEnabled)
+            {
+                return;
+            }
+
+            if (currentClient == null || sourceClient != currentClient)
+            {
+                return;
+            }
+
+            if (DreddStickyOverlayCheckBox.IsChecked != true)
+            {
+                return;
+            }
+
+            TryApplySelectedDreddOverlayToCurrentContext(showFeedbackOnFailure: false);
+        }
+
+        private void TryApplySelectedDreddOverlayToCurrentContext(bool showFeedbackOnFailure)
+        {
+            if (!isDreddFeatureEnabled)
+            {
+                return;
+            }
+
+            DreddOverlayEntry? selectedOverlay = GetSelectedDreddOverlayEntry();
+            if (selectedOverlay == null || currentClient == null)
+            {
+                return;
+            }
+
+            bool applied = DreddBackgroundOverlayOverrideService.TryApplyOverlay(currentClient, selectedOverlay, out string error);
+            if (!applied && showFeedbackOnFailure && !string.IsNullOrWhiteSpace(error))
+            {
+                OceanyaMessageBox.Show(
+                    $"Could not apply overlay: {error}",
+                    "Overlay Apply Error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+        }
+
+        private void OpenDreddOverlayConfigDialog()
+        {
+            DreddOverlayDatabaseWindow window = new DreddOverlayDatabaseWindow
+            {
+                Owner = this
+            };
+            bool? result = window.ShowDialog();
+            if (result == true)
+            {
+                LoadDreddOverlayComboItems();
             }
         }
 
@@ -657,6 +807,7 @@ namespace OceanyaClient
             {
                 AOClient bot = new AOClient(Globals.GetSelectedServerEndpoint());
                 bot.clientName = clientName;
+                HookClientForDreddOverlay(bot);
 
                 if (useSingleInternalClient)
                 {
@@ -989,6 +1140,11 @@ namespace OceanyaClient
             OOCLogControl.SetCurrentClient(currentClient);
             ICLogControl.SetCurrentClient(currentClient);
             RefreshAreaNavigatorForCurrentClient();
+
+            if (isDreddFeatureEnabled && DreddStickyOverlayCheckBox.IsChecked == true)
+            {
+                TryApplySelectedDreddOverlayToCurrentContext(showFeedbackOnFailure: false);
+            }
         }
 
         private async void ConnectButton_Click(object sender, RoutedEventArgs e)
@@ -1447,6 +1603,73 @@ namespace OceanyaClient
                 SaveFile.Data.InvertICLog = checkBox.IsChecked == true;
                 SaveFile.Save();
             }
+        }
+
+        private void DreddOverlayComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (isLoadingDreddOverlaySelection)
+            {
+                return;
+            }
+
+            DreddOverlayEntry? selectedOverlay = GetSelectedDreddOverlayEntry();
+            SaveFile.Data.DreddBackgroundOverlayOverride.SelectedOverlayName = selectedOverlay?.Name?.Trim() ?? string.Empty;
+            SaveFile.Save();
+
+            TryApplySelectedDreddOverlayToCurrentContext(showFeedbackOnFailure: true);
+        }
+
+        private void DreddStickyOverlayCheckBox_Checked(object sender, RoutedEventArgs e)
+        {
+            bool sticky = DreddStickyOverlayCheckBox.IsChecked == true;
+            SaveFile.Data.DreddBackgroundOverlayOverride.StickyOverlay = sticky;
+            SaveFile.Save();
+
+            if (sticky)
+            {
+                TryApplySelectedDreddOverlayToCurrentContext(showFeedbackOnFailure: false);
+            }
+        }
+
+        private void DreddOverlayConfigButton_Click(object sender, RoutedEventArgs e)
+        {
+            OpenDreddOverlayConfigDialog();
+        }
+
+        private void DreddViewChangesButton_Click(object sender, RoutedEventArgs e)
+        {
+            DreddOverlayChangesWindow window = new DreddOverlayChangesWindow
+            {
+                Owner = this
+            };
+            window.ShowDialog();
+        }
+
+        private void DreddDiscardChangesButton_Click(object sender, RoutedEventArgs e)
+        {
+            MessageBoxResult confirmation = OceanyaMessageBox.Show(
+                "Discard all Dredd overlay override changes from modified design.ini files?",
+                "Discard Changes",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+
+            if (confirmation != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            bool success = DreddBackgroundOverlayOverrideService.TryDiscardAllChanges(out string message);
+            if (!success)
+            {
+                OceanyaMessageBox.Show(
+                    $"Some changes could not be restored:{Environment.NewLine}{message}",
+                    "Discard Changes Error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            OceanyaMessageBox.Show(message, "Discard Changes", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
         private void THEDINGBUTTON_Click(object sender, RoutedEventArgs e)

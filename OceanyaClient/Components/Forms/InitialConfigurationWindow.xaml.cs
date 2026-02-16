@@ -310,6 +310,15 @@ namespace OceanyaClient
             Close();
         }
 
+        private void AdvancedFeatureFlaggingText_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            AdvancedFeatureFlagsWindow window = new AdvancedFeatureFlagsWindow
+            {
+                Owner = this
+            };
+            window.ShowDialog();
+        }
+
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
         }
