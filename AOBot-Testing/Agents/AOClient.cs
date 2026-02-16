@@ -26,7 +26,18 @@ namespace AOBot_Testing.Agents
         /// </summary>
         Dictionary<string, bool> serverCharacterList = new Dictionary<string, bool>();
         public int iniPuppetID = -1;
-        public string iniPuppetName => iniPuppetID == -1 ? "" : serverCharacterList.ElementAt(iniPuppetID).Key;
+        public string iniPuppetName
+        {
+            get
+            {
+                if (iniPuppetID < 0 || iniPuppetID >= serverCharacterList.Count)
+                {
+                    return string.Empty;
+                }
+
+                return serverCharacterList.ElementAt(iniPuppetID).Key;
+            }
+        }
         public static string lastCharsCheck = string.Empty;
 
         string hdid;
@@ -328,9 +339,17 @@ namespace AOBot_Testing.Agents
             }
             else if (message.StartsWith("SC#"))
             {
-                var characters = message.Substring(3).TrimEnd('#', '%').Split('#');
-                foreach (var character in characters)
+                var characters = message.Substring(3).TrimEnd('#', '%').Split('#', StringSplitOptions.RemoveEmptyEntries);
+                foreach (var characterEntry in characters)
                 {
+                    // SC entries can include metadata after '&' (e.g. "Phoenix&Description").
+                    var character = characterEntry.Split('&')[0];
+                    character = Globals.ReplaceTextForSymbols(character).Trim();
+                    if (string.IsNullOrWhiteSpace(character))
+                    {
+                        continue;
+                    }
+
                     //Start every character as available to select
                     serverCharacterList[character] = true;
                 }
@@ -369,6 +388,12 @@ namespace AOBot_Testing.Agents
             else if (message.StartsWith("CT#"))
             {
                 var fields = message.Split("#");
+                if (fields.Length < 4)
+                {
+                    CustomConsole.Warning($"Malformed CT packet: {message}");
+                    return;
+                }
+
                 var showname = Globals.ReplaceTextForSymbols(fields[1]);
                 var messageText = Globals.ReplaceTextForSymbols(fields[2]);
                 var fromServer = fields[3].ToString() == "1";
@@ -407,6 +432,7 @@ namespace AOBot_Testing.Agents
         public async Task Connect(int betweenHandshakeAndSetArea = 0, int betweenSetAreas = 0, int betweenAreasAndIniPuppet = 1000, int finalDelay = 1000)
         {
             aliveTime.Reset();
+            lastCharsCheck = string.Empty;
             ws = new ClientWebSocket();
             // Add required headers (modify as needed)
             ws.Options.SetRequestHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
@@ -444,6 +470,7 @@ namespace AOBot_Testing.Agents
             catch (Exception ex)
             {
                 CustomConsole.Error($"Connection Error", ex);
+                throw;
             }
         }
         private async Task PerformHandshake()
@@ -461,13 +488,7 @@ namespace AOBot_Testing.Agents
             await SendPacket($"HI#{hdid}#%");
 
             // Step 2: Receive Server Version and Player Number
-            string response;
-            while (true)
-            {
-                response = await ReceiveMessageAsync();
-                if (response.StartsWith("ID#"))
-                    break;
-            }
+            string response = await WaitForPacketAsync(packet => packet.StartsWith("ID#"), "ID");
 
             var parts = response.Split('#');
             if (parts.Length >= 3)
@@ -484,26 +505,44 @@ namespace AOBot_Testing.Agents
             await SendPacket("RC#%");
 
             // Step 5: Receive Character List
-            while (true)
-            {
-                response = await ReceiveMessageAsync();
-                if (response.StartsWith("SC#"))
-                    break;
-            }
+            response = await WaitForPacketAsync(packet => packet.StartsWith("SC#"), "SC");
 
             // Step 8: Send Ready Signal
             await SendPacket("RD#%");
 
             // Step 9: Wait for final confirmation
-            while (true)
-            {
-                response = await ReceiveMessageAsync();
-                if (response.StartsWith("DONE#"))
-                    break;
-            }
+            response = await WaitForPacketAsync(packet => packet.StartsWith("DONE#"), "DONE");
 
             isHandshakeComplete = true;
             CustomConsole.Info("Handshake completed successfully!");
+        }
+
+        private async Task<string> WaitForPacketAsync(Func<string, bool> predicate, string expectedPacketHeader, int timeoutMs = 10000)
+        {
+            var timeoutAt = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+            while (DateTime.UtcNow < timeoutAt)
+            {
+                int remainingMs = (int)(timeoutAt - DateTime.UtcNow).TotalMilliseconds;
+                if (remainingMs <= 0)
+                {
+                    break;
+                }
+
+                var receiveTask = ReceiveMessageAsync();
+                var completedTask = await Task.WhenAny(receiveTask, Task.Delay(remainingMs));
+                if (completedTask != receiveTask)
+                {
+                    break;
+                }
+
+                string response = await receiveTask;
+                if (!string.IsNullOrEmpty(response) && predicate(response))
+                {
+                    return response;
+                }
+            }
+
+            throw new TimeoutException($"Timed out waiting for handshake packet: {expectedPacketHeader}");
         }
 
 
@@ -598,23 +637,44 @@ namespace AOBot_Testing.Agents
                 return;
             }
 
-            var parts = lastCharsCheck.Substring(11).TrimEnd('#', '%').Split('#');
-            for (int i = 0; i < parts.Length; i++)
+            if (!string.IsNullOrEmpty(lastCharsCheck) && lastCharsCheck.StartsWith("CharsCheck#"))
             {
-                if (parts[i] == "0")
+                var parts = lastCharsCheck.Substring(11).TrimEnd('#', '%').Split('#');
+                int maxIndex = Math.Min(parts.Length, serverCharacterList.Count);
+                for (int i = 0; i < maxIndex; i++)
                 {
-                    // Select the first available character
+                    if (parts[i] == "0")
+                    {
+                        // Select the first available character
+                        var characterName = serverCharacterList.ElementAt(i).Key;
+
+                        var ini = CharacterFolder.FullList.FirstOrDefault(c => c.Name == characterName);
+
+                        //if the ini is null, it means you dont have it in your pc, meaning keep looking for an available one you DO have.
+                        if (ini != null)
+                        {
+                            await SelectIniPuppet(i, iniswapToSelected);
+                            return;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // Some servers do not send CharsCheck in the same stage as before.
+                // Fallback to first server-listed character present locally.
+                for (int i = 0; i < serverCharacterList.Count; i++)
+                {
                     var characterName = serverCharacterList.ElementAt(i).Key;
-
                     var ini = CharacterFolder.FullList.FirstOrDefault(c => c.Name == characterName);
-
-                    //if the ini is null, it means you dont have it in your pc, meaning keep looking for an available one you DO have.
                     if (ini != null)
                     {
                         await SelectIniPuppet(i, iniswapToSelected);
                         return;
                     }
                 }
+
+                CustomConsole.Warning("Server did not provide CharsCheck during connect. Skipping automatic INI selection.");
             }
 
             CustomConsole.Warning("No available INI Puppets to select.");
@@ -647,6 +707,13 @@ namespace AOBot_Testing.Agents
         }
         public async Task SelectIniPuppet(int serverCharID, bool iniswapToSelected = true)
         {
+            if (serverCharID < 0 || serverCharID >= serverCharacterList.Count)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(serverCharID),
+                    $"Requested server character index {serverCharID} but available range is 0..{Math.Max(0, serverCharacterList.Count - 1)}.");
+            }
+
             await SendPacket($"CC#0#{serverCharID}#{hdid}#%");
 
             var characterName = serverCharacterList.ElementAt(serverCharID).Key;

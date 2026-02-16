@@ -1,6 +1,7 @@
-﻿using OceanyaClient.Utilities;
+using OceanyaClient.Utilities;
 using System.Configuration;
 using System.Data;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media;
 
@@ -47,6 +48,8 @@ public partial class App : Application
     public App()
     {
         this.DispatcherUnhandledException += App_DispatcherUnhandledException;
+        AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
+        TaskScheduler.UnobservedTaskException += TaskScheduler_UnobservedTaskException;
     }
 
 
@@ -105,15 +108,61 @@ public partial class App : Application
 
     private void App_DispatcherUnhandledException(object sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs e)
     {
-        OceanyaMessageBox.Show(e.Exception.Message, "Unhandled Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        string crashPath = CrashLogger.LogUnhandledException(
+            e.Exception,
+            "DispatcherUnhandledException",
+            isTerminating: true
+        );
+
+        string message = "An unhandled error occurred.";
+        if (!string.IsNullOrWhiteSpace(crashPath))
+        {
+            message += $"\n\nCrash log:\n{crashPath}";
+        }
+
+        OceanyaMessageBox.Show(message, "Unhandled Error", MessageBoxButton.OK, MessageBoxImage.Error);
+    }
+
+    private void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
+    {
+        Exception exception;
+        if (e.ExceptionObject is Exception castException)
+        {
+            exception = castException;
+        }
+        else
+        {
+            exception = new Exception($"Non-exception unhandled error object: {e.ExceptionObject}");
+        }
+
+        CrashLogger.LogUnhandledException(
+            exception,
+            "AppDomain.CurrentDomain.UnhandledException",
+            e.IsTerminating
+        );
+    }
+
+    private void TaskScheduler_UnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
+    {
+        CrashLogger.LogUnhandledException(
+            e.Exception,
+            "TaskScheduler.UnobservedTaskException",
+            isTerminating: false
+        );
+
+        // Prevent finalizer-thread escalation after logging.
+        e.SetObserved();
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
+        TaskScheduler.UnobservedTaskException -= TaskScheduler_UnobservedTaskException;
+        AppDomain.CurrentDomain.UnhandledException -= CurrentDomain_UnhandledException;
+        this.DispatcherUnhandledException -= App_DispatcherUnhandledException;
+
         // Ensure the WaitForm UI thread is properly shut down
         WaitForm.ShutdownThread();
 
         base.OnExit(e);
     }
 }
-

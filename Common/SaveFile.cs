@@ -9,6 +9,7 @@ namespace OceanyaClient
         //Initial Configuration
         public string ConfigIniPath { get; set; } = "";
         public string ConnectionPath { get; set; } = "";
+        public bool UseSingleInternalClient { get; set; } = true;
 
 
         public string OOCName { get; set; } = "";

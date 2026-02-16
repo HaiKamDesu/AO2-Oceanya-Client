@@ -9,11 +9,10 @@ This directory contains comprehensive unit tests for the AO2-Oceanya-Bot project
    - Tests for player list parsing from server messages
    - Tests for special character handling in JSON
 
-2. **BotTests.cs**
-   - Integration tests for the AOClient bot
-   - Tests for sending/receiving IC and OOC messages
-   - Tests for character selection and emotes
-   - Tests for various message modifiers (desk mods, emote mods, etc.)
+2. **LiveServerConnectionTests.cs**
+   - Real-server integration checks against the default configured endpoint
+   - Verifies real connection, multi-client connection, and OOC send flow
+   - Marked `RequiresConnection` and `Explicit` for manual execution
 
 3. **ChatLogManagerTests.cs**
    - Tests for chat log storage and retrieval
@@ -43,19 +42,17 @@ This directory contains comprehensive unit tests for the AO2-Oceanya-Bot project
 
 8. **NetworkTests.cs**
    - Tests for network communication with AO2 server
-   - Tests for WebSocket connections
+   - Deterministic packet-handler tests (no live sockets)
    - Tests for packet handling and protocol implementation
-   - Mock server implementation for offline testing
+   - Protocol parsing validation for SC/CharsCheck/CT/BN/SP
 
 9. **StructureTests.cs**
    - Tests for Emote class functionality
    - Tests for Background class functionality
    - Tests for game asset management
 
-10. **W2GTests.cs**
-    - Tests for Watch2Gether integration
-    - Tests for video playback control
-    - Tests for room creation and management
+10. **LiveServerConnectionTests.cs**
+    - Live external connectivity tests for AO2 server behavior
 
 ## Running the Tests
 
@@ -69,6 +66,15 @@ To run all tests that are specifically designed to NOT use real API calls:
 
 ```bash
 dotnet test UnitTests/UnitTests.csproj --filter "Category=NoAPICall"
+
+To run live server integration tests (manual only):
+
+```bash
+dotnet test UnitTests/UnitTests.csproj --filter "Category=RequiresConnection"
+```
+
+Live integration logs are written to:
+- `%TEMP%\\ao2_live_connection_YYYYMMDD.log`
 ```
 
 To run a specific test file:

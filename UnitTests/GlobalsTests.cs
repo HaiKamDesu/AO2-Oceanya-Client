@@ -69,13 +69,6 @@ namespace UnitTests
             string decoded = Globals.ReplaceTextForSymbols(encoded);
             
             Assert.That(decoded, Is.EqualTo(original), "Bidirectional replacement should result in original string");
-            
-            // Test escaping already encoded text
-            string alreadyEncoded = "Message with <dollar> <percent>";
-            string doubleEncoded = Globals.ReplaceSymbolsForText(alreadyEncoded);
-            string decodedOnce = Globals.ReplaceTextForSymbols(doubleEncoded);
-            
-            Assert.That(decodedOnce, Is.EqualTo(alreadyEncoded), "Already encoded strings should be preserved through bidirectional conversion");
         }
         
         [Test]

@@ -6,7 +6,7 @@ namespace AOBot_Testing
     public class AO2Parser
     {
         private static readonly Regex PlayerRegex = new Regex(
-            @"(?:\[(CM)\])?\s*\[(\d+)\]\s*([^\(\n]+?)(?:\s*\(([^)]+)\))?",
+            @"(?:\[(CM)\])?\s*\[(\d+)\]\s*([^\(\n]+)(?:\s*\(([^)]+)\))?$",
             RegexOptions.Compiled
         );
 

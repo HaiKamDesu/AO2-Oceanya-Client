@@ -1,91 +1,135 @@
-﻿using AOBot_Testing.Structures;
-using NUnit.Framework;
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using System.Reflection;
+using AOBot_Testing.Structures;
+using NUnit.Framework;
 
-namespace UnitTests
+namespace UnitTests;
+
+[TestFixture]
+public class INIParserTests
 {
-    [TestFixture]
-    public class INIParserTests
-    {
-        [OneTimeSetUp]
-        public void GatherAllINI()
-        {
-            CharacterFolder.RefreshCharacterList();
-        }
+    private string? tempRoot;
+    private List<string>? originalBaseFolders;
 
-        [Test]
-        public void Test_CharacterINILoading()
+    [SetUp]
+    public void SetUp()
+    {
+        originalBaseFolders = new List<string>(Globals.BaseFolders);
+        tempRoot = Path.Combine(Path.GetTempPath(), $"ini_parser_test_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+
+        CreateCharacter(tempRoot, "Franziska", "pro");
+        CreateCharacter(tempRoot, "Phoenix", "def");
+
+        Globals.BaseFolders = new List<string> { tempRoot };
+        ResetCharacterCache();
+        CharacterFolder.RefreshCharacterList();
+    }
+
+    [TearDown]
+    public void TearDown()
+    {
+        Globals.BaseFolders = originalBaseFolders ?? new List<string>();
+        ResetCharacterCache();
+
+        if (tempRoot != null && Directory.Exists(tempRoot))
         {
-            // Verify characters were loaded
-            Assert.That(CharacterFolder.FullList, Is.Not.Empty, "Character list should not be empty");
-            
-            // Check if at least one known character exists (Franziska is used in other tests)
-            var franziska = CharacterFolder.FullList.FirstOrDefault(c => c.Name == "Franziska");
-            Assert.That(franziska, Is.Not.Null, "Franziska character should exist in the character list");
-            
-            // Verify configuration was loaded properly
-            Assert.That(franziska.configINI, Is.Not.Null, "Character config should be loaded");
-            Assert.That(franziska.configINI.Emotions, Is.Not.Empty, "Character emotions should be loaded");
-        }
-        
-        [Test]
-        public void Test_CharacterEmotesLoading()
-        {
-            // Get a character with known emotes
-            var character = CharacterFolder.FullList.FirstOrDefault(c => c.Name == "Franziska");
-            Assert.That(character, Is.Not.Null, "Test character should exist");
-            
-            // Verify emotes collection
-            Assert.That(character.configINI.Emotions, Is.Not.Empty, "Character should have emotes");
-            
-            // Check emote properties
-            var firstEmote = character.configINI.Emotions.Values.First();
-            Assert.That(firstEmote.ID, Is.GreaterThan(0), "Emote ID should be greater than 0");
-            Assert.That(firstEmote.DisplayID, Is.Not.Empty, "Emote DisplayID should not be empty");
-        }
-        
-        [Test]
-        public void Test_CharacterConfigProperties()
-        {
-            // Test several characters to verify basic INI properties
-            foreach (var character in CharacterFolder.FullList.Take(5))
+            try
             {
-                Assert.Multiple(() =>
-                {
-                    Assert.That(character.Name, Is.Not.Empty, "Character name should not be empty");
-                    Assert.That(character.PathToConfigIni, Is.Not.Empty, "Character config path should not be empty");
-                    Assert.That(character.DirectoryPath, Is.Not.Empty, "Character directory path should not be empty");
-                    Assert.That(File.Exists(character.PathToConfigIni), Is.True, $"Character config file {character.PathToConfigIni} should exist");
-                    Assert.That(character.configINI, Is.Not.Null, "Character config INI should be loaded");
-                });
+                Directory.Delete(tempRoot, true);
+            }
+            catch
+            {
+                // Ignore cleanup errors in tests.
             }
         }
-        
-        [Test]
-        public void Test_CharacterUpdate()
+    }
+
+    [Test]
+    public void CharacterIniLoading_LoadsCharactersFromConfiguredBaseFolder()
+    {
+        Assert.That(CharacterFolder.FullList, Has.Count.EqualTo(2));
+        Assert.That(CharacterFolder.FullList.Exists(c => c.Name == "Franziska"), Is.True);
+    }
+
+    [Test]
+    public void CharacterConfig_ParsesEmotionsAndOptions()
+    {
+        CharacterFolder character = CharacterFolder.FullList.Find(c => c.Name == "Franziska")!;
+
+        Assert.Multiple(() =>
         {
-            // Get a character to test update functionality
-            var character = CharacterFolder.FullList.First();
-            
-            // Store original values
-            var originalName = character.Name;
-            var originalPath = character.PathToConfigIni;
-            
-            // Update the character (should reload from the same path)
-            character.Update(character.PathToConfigIni, true);
-            
-            // Verify update didn't change core properties
-            Assert.Multiple(() =>
+            Assert.That(character.configINI.ShowName, Is.EqualTo("Franziska"));
+            Assert.That(character.configINI.Side, Is.EqualTo("pro"));
+            Assert.That(character.configINI.Emotions, Has.Count.EqualTo(2));
+            Assert.That(character.configINI.Emotions[1].Name, Is.EqualTo("normal"));
+            Assert.That(character.configINI.Emotions[2].Name, Is.EqualTo("smirk"));
+        });
+    }
+
+    [Test]
+    public void CharacterUpdate_ReloadsDataWithoutChangingIdentity()
+    {
+        CharacterFolder character = CharacterFolder.FullList.Find(c => c.Name == "Phoenix")!;
+        string originalPath = character.PathToConfigIni;
+
+        character.Update(character.PathToConfigIni, true);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(character.Name, Is.EqualTo("Phoenix"));
+            Assert.That(character.PathToConfigIni, Is.EqualTo(originalPath));
+            Assert.That(character.configINI.Emotions[1].DisplayID, Does.Contain("normal"));
+        });
+    }
+
+    private static void CreateCharacter(string basePath, string name, string side)
+    {
+        string charDir = Path.Combine(basePath, "characters", name);
+        Directory.CreateDirectory(charDir);
+
+        string iniPath = Path.Combine(charDir, "char.ini");
+        string ini = "[Options]\n" +
+                     $"showname={name}\n" +
+                     "gender=unknown\n" +
+                     $"side={side}\n" +
+                     "[Time]\n" +
+                     "preanim=0\n" +
+                     "[Emotions]\n" +
+                     "number=2\n" +
+                     "1=normal#normal#normal#0#99\n" +
+                     "2=smirk#smirk_pre#smirk#1#1\n" +
+                     "[SoundN]\n" +
+                     "1=1\n" +
+                     "2=objection\n" +
+                     "[SoundT]\n" +
+                     "1=0\n" +
+                     "2=5\n";
+
+        File.WriteAllText(iniPath, ini);
+    }
+
+    private static void ResetCharacterCache()
+    {
+        Type type = typeof(CharacterFolder);
+        FieldInfo? configsField = type.GetField("characterConfigs", BindingFlags.NonPublic | BindingFlags.Static);
+        FieldInfo? cacheFileField = type.GetField("cacheFile", BindingFlags.NonPublic | BindingFlags.Static);
+
+        configsField?.SetValue(null, new List<CharacterFolder>());
+
+        string? cacheFile = cacheFileField?.GetValue(null) as string;
+        if (!string.IsNullOrWhiteSpace(cacheFile) && File.Exists(cacheFile))
+        {
+            try
             {
-                Assert.That(character.Name, Is.EqualTo(originalName), "Character name should remain the same after update");
-                Assert.That(character.PathToConfigIni, Is.EqualTo(originalPath), "Character path should remain the same after update");
-                Assert.That(character.configINI, Is.Not.Null, "Character config should still be loaded after update");
-            });
+                File.Delete(cacheFile);
+            }
+            catch
+            {
+                // Ignore cleanup errors in tests.
+            }
         }
     }
 }

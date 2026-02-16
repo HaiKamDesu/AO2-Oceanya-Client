@@ -21,6 +21,7 @@ using Path = System.IO.Path;
 using System.ComponentModel;
 using static OceanyaClient.Components.ImageComboBox;
 using System.Xml.Linq;
+using OceanyaClient.Utilities;
 
 namespace OceanyaClient.Components
 {
@@ -199,6 +200,12 @@ namespace OceanyaClient.Components
 
         public void SetClient(AOClient client)
         {
+            if (client == null)
+            {
+                ClearSettings();
+                return;
+            }
+
             if (this.curClient != null)
             {
                 curClient.OnSideChange -= UpdatePos;
@@ -206,7 +213,21 @@ namespace OceanyaClient.Components
             }
 
             this.curClient = client;
-            SetINI(client.currentINI);
+            CharacterFolder? iniToUse = client.currentINI;
+            if (iniToUse == null && CharacterFolder.FullList.Any())
+            {
+                client.SetCharacter(CharacterFolder.FullList.First());
+                iniToUse = client.currentINI;
+            }
+
+            if (iniToUse == null)
+            {
+                ClearSettings();
+                txtICShowname_Placeholder.Text = "No character data loaded";
+                return;
+            }
+
+            SetINI(iniToUse);
             txtICShowname.Text = client.ICShowname;
 
             chkPreanim.IsChecked = client.emoteMod == ICMessage.EmoteModifiers.PlayPreanimation;
@@ -214,7 +235,7 @@ namespace OceanyaClient.Components
             chkAdditive.IsChecked = client.Additive;
             chkImmediate.IsChecked = client.Immediate;
 
-            CharacterDropdown.SelectedText = client.currentINI.Name;
+            CharacterDropdown.SelectedText = iniToUse.Name;
             TextColorDropdown.SelectedText = client.textColor.ToString();
             EffectDropdown.SelectedText = client.effect.ToString();
 
@@ -276,34 +297,79 @@ namespace OceanyaClient.Components
         }
         private void SetINI(CharacterFolder ini)
         {
-            ini.configINI.Update();
-
-            txtICShowname_Placeholder.Text = ini.configINI.ShowName;
-
-            EmoteGrid.ClearGrid();
-            emotes.Clear();
-            EmoteDropdown.Clear();
-            foreach (var emote in ini.configINI.Emotions.Values)
+            if (ini == null || curClient == null)
             {
-                AddEmote(emote);
+                return;
             }
 
-            emotes.First(x => x.Key.DisplayID == curClient.currentEmote.DisplayID).Value.IsChecked = true;
-
-
-            sfxDropdown.Clear();
-            sfxDropdown.Add("Default", "");
-            sfxDropdown.Add("Nothing", "");
-            if (File.Exists(ini.SoundListPath))
+            try
             {
-                var sfxLines = File.ReadAllLines(ini.SoundListPath);
+                ini.configINI.Update();
 
-                foreach (var sfx in sfxLines)
+                txtICShowname_Placeholder.Text = ini.configINI.ShowName;
+
+                EmoteGrid.ClearGrid();
+                emotes.Clear();
+                EmoteDropdown.Clear();
+                foreach (var emote in ini.configINI.Emotions.Values)
                 {
-                    sfxDropdown.Add(sfx, "");
+                    AddEmote(emote);
                 }
+
+                string? selectedDisplayId = curClient.currentEmote?.DisplayID;
+                var selectedEmoteButton = string.IsNullOrWhiteSpace(selectedDisplayId)
+                    ? null
+                    : emotes.FirstOrDefault(x => x.Key.DisplayID == selectedDisplayId).Value;
+
+                if (selectedEmoteButton != null)
+                {
+                    selectedEmoteButton.IsChecked = true;
+                }
+                else if (emotes.Count > 0)
+                {
+                    var fallbackEmote = emotes.First();
+                    curClient.SetEmote(fallbackEmote.Key.DisplayID);
+                    fallbackEmote.Value.IsChecked = true;
+                }
+                else
+                {
+                    throw new InvalidOperationException(
+                        $"No emotes were loaded for INI '{ini?.Name ?? "unknown"}'.");
+                }
+
+
+                sfxDropdown.Clear();
+                sfxDropdown.Add("Default", "");
+                sfxDropdown.Add("Nothing", "");
+                if (File.Exists(ini.SoundListPath))
+                {
+                    var sfxLines = File.ReadAllLines(ini.SoundListPath);
+
+                    foreach (var sfx in sfxLines)
+                    {
+                        sfxDropdown.Add(sfx, "");
+                    }
+                }
+                sfxDropdown.SelectedText = "Default";
             }
-            sfxDropdown.SelectedText = "Default";
+            catch (Exception ex)
+            {
+                var context = new Dictionary<string, string>
+                {
+                    { "Method", "ICMessageSettings.SetINI" },
+                    { "IniName", ini?.Name ?? "null" },
+                    { "IniPath", ini?.PathToConfigIni ?? "null" },
+                    { "SoundListPath", ini?.SoundListPath ?? "null" },
+                    { "CurrentClientNull", (curClient == null).ToString() },
+                    { "CurrentClientName", curClient?.clientName ?? "null" },
+                    { "CurrentINI", curClient?.currentINI?.Name ?? "null" },
+                    { "CurrentEmote", curClient?.currentEmote?.DisplayID ?? "null" },
+                    { "EmotionsCount", ini?.configINI?.Emotions?.Count.ToString() ?? "null" }
+                };
+
+                CrashLogger.LogUnhandledException(ex, "SetINI", isTerminating: false, additionalContext: context);
+                throw;
+            }
         }
         private void AddEmote(Emote emote)
         {

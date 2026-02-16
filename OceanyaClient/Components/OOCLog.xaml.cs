@@ -15,6 +15,7 @@ namespace OceanyaClient.Components
     {
         public static int OOCShownameLengthLimit = 30;
         public Action<string, string> OnSendOOCMessage;
+        public Func<AOClient, AOClient> LogKeyResolver { get; set; }
 
         private Dictionary<AOClient, FlowDocument> clientLogs = new Dictionary<AOClient, FlowDocument>();
 
@@ -38,41 +39,83 @@ namespace OceanyaClient.Components
             ScrollViewer = GetScrollViewer(LogBox);
         }
 
+        private AOClient ResolveLogClient(AOClient client)
+        {
+            if (client == null)
+            {
+                return null;
+            }
+
+            if (LogKeyResolver == null)
+            {
+                return client;
+            }
+
+            AOClient resolvedClient = LogKeyResolver(client);
+            return resolvedClient ?? client;
+        }
+
+        private bool IsCurrentLogStream(AOClient client)
+        {
+            AOClient currentLogClient = ResolveLogClient(currentClient);
+            AOClient messageLogClient = ResolveLogClient(client);
+            return ReferenceEquals(currentLogClient, messageLogClient);
+        }
+
         public void SetCurrentClient(AOClient client)
         {
             currentClient = client;
+            AOClient logClient = ResolveLogClient(client);
 
-            if (!clientLogs.ContainsKey(client))
+            if (logClient == null)
             {
-                clientLogs[client] = new FlowDocument();
+                LogBox.Document = new FlowDocument();
+                UpdateStreamLabel(client);
+                return;
             }
 
-            LogBox.Document = clientLogs[client];
+            if (!clientLogs.ContainsKey(logClient))
+            {
+                clientLogs[logClient] = new FlowDocument();
+            }
+
+            LogBox.Document = clientLogs[logClient];
             UpdateStreamLabel(client);
             ScrollToBottom();
         }
 
         public void UpdateStreamLabel(AOClient client)
         {
-            lblStream.Content = client != null ? $"[{client.playerID}] {client.iniPuppetName} (\"{client.clientName}\")" : "[STREAM]";
+            if (client == null)
+            {
+                lblStream.Content = "[STREAM]";
+                return;
+            }
+
+            string characterName = string.IsNullOrWhiteSpace(client.iniPuppetName)
+                ? client.currentINI?.Name ?? "Unknown"
+                : client.iniPuppetName;
+
+            lblStream.Content = $"[{client.playerID}] {characterName} (\"{client.clientName}\")";
         }
 
         public void AddMessage(AOClient client, string showName, string message, bool isSentFromServer = false)
         {
-            if (client == null)
+            AOClient logClient = ResolveLogClient(client);
+            if (logClient == null)
             {
                 DisplayMessage("System", "No client selected. Message not stored.", true);
                 return;
             }
 
-            if (!clientLogs.ContainsKey(client))
+            if (!clientLogs.ContainsKey(logClient))
             {
-                clientLogs[client] = new FlowDocument();
+                clientLogs[logClient] = new FlowDocument();
             }
 
             bool shouldScroll = IsScrolledToBottom();
 
-            FlowDocument clientDoc = clientLogs[client];
+            FlowDocument clientDoc = clientLogs[logClient];
 
             Paragraph paragraph = new Paragraph
             {
@@ -92,7 +135,7 @@ namespace OceanyaClient.Components
 
             clientDoc.Blocks.Add(paragraph);
 
-            if (client == currentClient)
+            if (IsCurrentLogStream(client))
             {
                 LogBox.Document = clientDoc;
                 if (shouldScroll)
@@ -181,13 +224,14 @@ namespace OceanyaClient.Components
 
         public void ClearClientLog(AOClient client)
         {
-            if (clientLogs.ContainsKey(client))
+            AOClient logClient = ResolveLogClient(client);
+            if (logClient != null && clientLogs.ContainsKey(logClient))
             {
-                clientLogs[client] = new FlowDocument();
+                clientLogs[logClient] = new FlowDocument();
 
-                if (client == currentClient)
+                if (IsCurrentLogStream(client))
                 {
-                    LogBox.Document = clientLogs[client];
+                    LogBox.Document = clientLogs[logClient];
                 }
             }
         }

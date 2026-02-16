@@ -84,7 +84,7 @@ namespace OceanyaClient
             }
 
             // Save configuration to file
-            SaveConfiguration(configIniPath, connectionPath);
+            SaveConfiguration(configIniPath, connectionPath, UseSingleClientCheckBox.IsChecked != false);
 
             // Refresh character and background info if checkbox is checked
             if (RefreshInfoCheckBox.IsChecked == true)
@@ -120,6 +120,7 @@ namespace OceanyaClient
             {
                 ConfigINIPathTextBox.Text = SaveFile.Data.ConfigIniPath;
                 ConnectionPathTextBox.Text = SaveFile.Data.ConnectionPath;
+                UseSingleClientCheckBox.IsChecked = SaveFile.Data.UseSingleInternalClient;
             }
             catch (Exception ex)
             {
@@ -128,7 +129,7 @@ namespace OceanyaClient
             }
         }
 
-        private void SaveConfiguration(string configIniPath, string connectionPath)
+        private void SaveConfiguration(string configIniPath, string connectionPath, bool useSingleInternalClient)
         {
             // Implement your configuration saving logic here
             // This would replace the SaveConfiguration method from the original code
@@ -136,6 +137,7 @@ namespace OceanyaClient
             {
                 SaveFile.Data.ConfigIniPath = configIniPath;
                 SaveFile.Data.ConnectionPath = connectionPath;
+                SaveFile.Data.UseSingleInternalClient = useSingleInternalClient;
                 SaveFile.Save();
             }
             catch (Exception ex)
