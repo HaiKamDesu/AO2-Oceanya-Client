@@ -1,12 +1,10 @@
 ﻿using AOBot_Testing.Structures;
 using Microsoft.Win32;
-using OceanyaClient.Components;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Windows;
-using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media.Animation;
 
@@ -17,45 +15,8 @@ namespace OceanyaClient
     /// </summary>
     public partial class InitialConfigurationWindow : Window
     {
-        private sealed class ServerEndpointOption
-        {
-            private ServerEndpointOption(string name, string endpoint, string displayName, bool isPreset, bool isHeader)
-            {
-                Name = name;
-                Endpoint = endpoint;
-                DisplayName = displayName;
-                IsPreset = isPreset;
-                IsHeader = isHeader;
-            }
-
-            public static ServerEndpointOption Header(string displayName)
-            {
-                return new ServerEndpointOption(displayName, string.Empty, displayName, false, true);
-            }
-
-            public static ServerEndpointOption Entry(string name, string endpoint, bool isPreset)
-            {
-                string displayName = $"{name} ({endpoint})";
-                return new ServerEndpointOption(name, endpoint, displayName, isPreset, false);
-            }
-
-            public string Name { get; }
-            public string Endpoint { get; }
-            public string DisplayName { get; }
-            public bool IsPreset { get; }
-            public bool IsHeader { get; }
-            public bool IsSelectable => !IsHeader;
-
-            public override string ToString()
-            {
-                return DisplayName;
-            }
-        }
-
-        private readonly List<ServerEndpointOption> presetServerOptions = new List<ServerEndpointOption>();
-        private readonly List<ServerEndpointOption> customServerOptions = new List<ServerEndpointOption>();
-        private bool isUpdatingSelection;
-        private string lastSelectedEndpoint = string.Empty;
+        private ServerEndpointDefinition? selectedServer;
+        private bool hasMigratedLegacyCustomEntries;
 
         public InitialConfigurationWindow()
         {
@@ -80,21 +41,26 @@ namespace OceanyaClient
 
         private async void OkButton_Click(object sender, RoutedEventArgs e)
         {
-            string configIniPath = ConfigINIPathTextBox.Text;
-            ServerEndpointOption? selectedServerOption = ServerEndpointComboBox.SelectedItem as ServerEndpointOption;
-            string selectedServerEndpoint = selectedServerOption?.Endpoint ?? string.Empty;
+            string configIniPath = ConfigINIPathTextBox.Text?.Trim() ?? string.Empty;
+            string selectedServerEndpoint = selectedServer?.Endpoint?.Trim() ?? string.Empty;
 
             if (string.IsNullOrWhiteSpace(configIniPath))
             {
-                OceanyaMessageBox.Show("Please provide the config.ini path.",
-                                "Invalid Input", MessageBoxButton.OK, MessageBoxImage.Warning);
+                OceanyaMessageBox.Show(
+                    "Please provide the config.ini path.",
+                    "Invalid Input",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
                 return;
             }
 
             if (string.IsNullOrWhiteSpace(selectedServerEndpoint))
             {
-                OceanyaMessageBox.Show("Please select a server endpoint.",
-                                "Invalid Input", MessageBoxButton.OK, MessageBoxImage.Warning);
+                OceanyaMessageBox.Show(
+                    "Please select a server endpoint.",
+                    "Invalid Input",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
                 return;
             }
 
@@ -104,7 +70,7 @@ namespace OceanyaClient
                 return;
             }
 
-            if (Path.GetFileName(configIniPath).ToLower() != "config.ini")
+            if (!string.Equals(Path.GetFileName(configIniPath), "config.ini", StringComparison.OrdinalIgnoreCase))
             {
                 OceanyaMessageBox.Show("The filepath does not point to config.ini! " + configIniPath);
                 return;
@@ -117,8 +83,11 @@ namespace OceanyaClient
             }
             catch (Exception ex)
             {
-                OceanyaMessageBox.Show("Error updating base folders: " + ex.Message,
-                                "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                OceanyaMessageBox.Show(
+                    "Error updating base folders: " + ex.Message,
+                    "Error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
                 return;
             }
 
@@ -126,196 +95,77 @@ namespace OceanyaClient
                 configIniPath,
                 UseSingleClientCheckBox.IsChecked != false,
                 selectedServerEndpoint,
-                customServerOptions.Select(option => new CustomServerEntry
-                {
-                    Name = option.Name,
-                    Endpoint = option.Endpoint
-                }).ToList());
+                selectedServer?.Name ?? string.Empty);
 
             if (RefreshInfoCheckBox.IsChecked == true)
             {
                 await WaitForm.ShowFormAsync("Refreshing character and background info...", this);
-                CharacterFolder.RefreshCharacterList
-                    (
-                        onParsedCharacter:
-                        (ini) =>
-                        {
-                            WaitForm.SetSubtitle("Parsed Character: " + ini.Name);
-                        },
-                        onChangedMountPath:
-                        (path) =>
-                        {
-                            WaitForm.SetSubtitle("Changed mount path: " + path);
-                        }
-                    );
+                CharacterFolder.RefreshCharacterList(
+                    onParsedCharacter: (ini) =>
+                    {
+                        WaitForm.SetSubtitle("Parsed Character: " + ini.Name);
+                    },
+                    onChangedMountPath: (path) =>
+                    {
+                        WaitForm.SetSubtitle("Changed mount path: " + path);
+                    });
+
                 AOBot_Testing.Structures.Background.RefreshCache(
-                    onChangedMountPath:
-                    (path) =>
+                    onChangedMountPath: (path) =>
                     {
                         WaitForm.SetSubtitle("Indexed background mount path: " + path);
                     });
+
                 WaitForm.CloseForm();
             }
 
             MainWindow mainWindow = new MainWindow();
             mainWindow.Show();
-
-            this.Close();
+            Close();
         }
 
-        private void AddServerButton_Click(object sender, RoutedEventArgs e)
+        private void SelectServerButton_Click(object sender, RoutedEventArgs e)
         {
-            if (!AddServerDialog.ShowDialog(
-                    this,
-                    out string serverName,
-                    out string endpointInput,
-                    windowTitle: "Add Custom Server",
-                    actionText: "ADD SERVER"))
-            {
-                return;
-            }
-
-            if (string.IsNullOrWhiteSpace(serverName))
+            string configIniPath = ConfigINIPathTextBox.Text?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(configIniPath) || !File.Exists(configIniPath))
             {
                 OceanyaMessageBox.Show(
-                    "Please provide a server name.",
-                    "Invalid Name",
+                    "Select a valid config.ini path before opening server selection.",
+                    "Missing Config",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
                 return;
             }
 
-            string endpoint = endpointInput.Trim();
-            if (!IsValidServerEndpoint(endpoint))
+            if (!string.Equals(Path.GetFileName(configIniPath), "config.ini", StringComparison.OrdinalIgnoreCase))
             {
                 OceanyaMessageBox.Show(
-                    "Invalid endpoint format. Use ws:// or wss:// and include host/port.",
-                    "Invalid Endpoint",
+                    "The filepath does not point to config.ini! " + configIniPath,
+                    "Invalid Config",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
                 return;
             }
 
-            ServerEndpointOption? existingOption = FindServerOption(endpoint);
-            if (existingOption != null)
+            MigrateLegacyCustomEntriesToFavoritesIfNeeded(configIniPath);
+
+            string currentEndpoint = selectedServer?.Endpoint
+                ?? SaveFile.Data.SelectedServerEndpoint
+                ?? Globals.GetDefaultServerEndpoint();
+
+            ServerSelectionDialog dialog = new ServerSelectionDialog(configIniPath, currentEndpoint)
             {
-                SelectServerEndpoint(existingOption.Endpoint);
-                return;
-            }
+                Owner = this
+            };
 
-            ServerEndpointOption newOption = ServerEndpointOption.Entry(serverName, endpoint, isPreset: false);
-            customServerOptions.Add(newOption);
-            RefreshServerEndpointComboBox(endpoint);
-        }
-
-        private void EditServerButton_Click(object sender, RoutedEventArgs e)
-        {
-            ServerEndpointOption? selectedOption = ServerEndpointComboBox.SelectedItem as ServerEndpointOption;
-            if (selectedOption == null || selectedOption.IsPreset || selectedOption.IsHeader)
+            bool? result = dialog.ShowDialog();
+            if (result != true || dialog.SelectedServer == null)
             {
                 return;
             }
 
-            if (!AddServerDialog.ShowDialog(
-                    this,
-                    out string serverName,
-                    out string endpointInput,
-                    windowTitle: "Edit Custom Server",
-                    actionText: "SAVE",
-                    defaultName: selectedOption.Name,
-                    defaultEndpoint: selectedOption.Endpoint))
-            {
-                return;
-            }
-
-            if (string.IsNullOrWhiteSpace(serverName))
-            {
-                OceanyaMessageBox.Show(
-                    "Please provide a server name.",
-                    "Invalid Name",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning);
-                return;
-            }
-
-            string endpoint = endpointInput.Trim();
-            if (!IsValidServerEndpoint(endpoint))
-            {
-                OceanyaMessageBox.Show(
-                    "Invalid endpoint format. Use ws:// or wss:// and include host/port.",
-                    "Invalid Endpoint",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning);
-                return;
-            }
-
-            ServerEndpointOption? conflictOption = FindServerOption(endpoint);
-            if (conflictOption != null && !string.Equals(conflictOption.Endpoint, selectedOption.Endpoint, StringComparison.OrdinalIgnoreCase))
-            {
-                OceanyaMessageBox.Show(
-                    "That endpoint is already present in the list.",
-                    "Duplicate Endpoint",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning);
-                SelectServerEndpoint(conflictOption.Endpoint);
-                return;
-            }
-
-            int index = customServerOptions.FindIndex(option =>
-                string.Equals(option.Endpoint, selectedOption.Endpoint, StringComparison.OrdinalIgnoreCase));
-
-            if (index < 0)
-            {
-                return;
-            }
-
-            customServerOptions[index] = ServerEndpointOption.Entry(serverName.Trim(), endpoint, isPreset: false);
-            RefreshServerEndpointComboBox(endpoint);
-        }
-
-        private void RemoveServerButton_Click(object sender, RoutedEventArgs e)
-        {
-            ServerEndpointOption? selectedOption = ServerEndpointComboBox.SelectedItem as ServerEndpointOption;
-            if (selectedOption == null || selectedOption.IsPreset)
-            {
-                return;
-            }
-
-            customServerOptions.RemoveAll(option =>
-                string.Equals(option.Endpoint, selectedOption.Endpoint, StringComparison.OrdinalIgnoreCase));
-
-            RefreshServerEndpointComboBox(Globals.GetDefaultServerEndpoint());
-        }
-
-        private void ServerEndpointComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (isUpdatingSelection)
-            {
-                return;
-            }
-
-            ServerEndpointOption? selectedOption = ServerEndpointComboBox.SelectedItem as ServerEndpointOption;
-            if (selectedOption != null && selectedOption.IsHeader)
-            {
-                isUpdatingSelection = true;
-                if (!string.IsNullOrWhiteSpace(lastSelectedEndpoint))
-                {
-                    SelectServerEndpoint(lastSelectedEndpoint);
-                }
-                else
-                {
-                    SelectFirstSelectableOption();
-                }
-                isUpdatingSelection = false;
-                selectedOption = ServerEndpointComboBox.SelectedItem as ServerEndpointOption;
-            }
-
-            if (selectedOption != null && selectedOption.IsSelectable)
-            {
-                lastSelectedEndpoint = selectedOption.Endpoint;
-            }
-
-            UpdateServerActionButtonsState();
+            selectedServer = dialog.SelectedServer;
+            UpdateSelectedServerDisplay();
         }
 
         private void LoadSavefile()
@@ -325,168 +175,159 @@ namespace OceanyaClient
                 ConfigINIPathTextBox.Text = SaveFile.Data.ConfigIniPath;
                 UseSingleClientCheckBox.IsChecked = SaveFile.Data.UseSingleInternalClient;
 
-                InitializeServerEndpointOptions();
+                selectedServer = ResolveInitialSelectedServer();
+                if (selectedServer != null)
+                {
+                    Globals.SetSelectedServerEndpoint(selectedServer.Endpoint);
+                }
+
+                UpdateSelectedServerDisplay();
             }
             catch (Exception ex)
             {
-                OceanyaMessageBox.Show("Error loading configuration: " + ex.Message,
-                                "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                OceanyaMessageBox.Show(
+                    "Error loading configuration: " + ex.Message,
+                    "Error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
             }
         }
 
-        private void InitializeServerEndpointOptions()
+        private ServerEndpointDefinition? ResolveInitialSelectedServer()
         {
-            presetServerOptions.Clear();
-            customServerOptions.Clear();
+            string savedEndpoint = SaveFile.Data.SelectedServerEndpoint?.Trim() ?? string.Empty;
+            List<ServerEndpointDefinition> defaults = ServerEndpointCatalog.LoadDefaultServers();
+            string configIniPath = SaveFile.Data.ConfigIniPath?.Trim() ?? string.Empty;
 
-            HashSet<string> knownEndpoints = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (KeyValuePair<Globals.Servers, string> server in Globals.IPs.OrderBy(entry => entry.Key))
+            List<ServerEndpointDefinition> favorites = new List<ServerEndpointDefinition>();
+            if (!string.IsNullOrWhiteSpace(configIniPath) && File.Exists(configIniPath))
             {
-                if (string.IsNullOrWhiteSpace(server.Value))
+                favorites = ServerEndpointCatalog.LoadFavorites(configIniPath);
+            }
+
+            List<ServerEndpointDefinition> knownServers = new List<ServerEndpointDefinition>();
+            knownServers.AddRange(defaults);
+            knownServers.AddRange(favorites);
+
+            if (!string.IsNullOrWhiteSpace(savedEndpoint))
+            {
+                ServerEndpointDefinition? knownMatch = knownServers.FirstOrDefault(server =>
+                    string.Equals(server.Endpoint, savedEndpoint, StringComparison.OrdinalIgnoreCase));
+                if (knownMatch != null)
+                {
+                    return knownMatch;
+                }
+
+                string savedName = SaveFile.Data.SelectedServerName?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(savedName))
+                {
+                    savedName = savedEndpoint;
+                }
+
+                return new ServerEndpointDefinition
+                {
+                    Name = savedName,
+                    Endpoint = savedEndpoint,
+                    Description = "Previously selected endpoint.",
+                    Source = ServerEndpointSource.Defaults,
+                    IsLegacy = false
+                };
+            }
+
+            return defaults.FirstOrDefault();
+        }
+
+        private void MigrateLegacyCustomEntriesToFavoritesIfNeeded(string configIniPath)
+        {
+            if (hasMigratedLegacyCustomEntries)
+            {
+                return;
+            }
+
+            List<CustomServerEntry> legacyEntries = SaveFile.Data.CustomServerEntries ?? new List<CustomServerEntry>();
+            if (legacyEntries.Count == 0)
+            {
+                hasMigratedLegacyCustomEntries = true;
+                return;
+            }
+
+            List<FavoriteServerEntry> existingFavorites = FavoriteServerStore.LoadFavorites(
+                Path.Combine(Path.GetDirectoryName(configIniPath) ?? string.Empty, "favorite_servers.ini"));
+
+            foreach (CustomServerEntry legacyEntry in legacyEntries)
+            {
+                if (legacyEntry == null || string.IsNullOrWhiteSpace(legacyEntry.Endpoint))
                 {
                     continue;
                 }
 
-                string endpoint = server.Value.Trim();
-                if (!knownEndpoints.Add(endpoint))
+                if (!TryParseEndpoint(legacyEntry.Endpoint, out string address, out int port))
                 {
                     continue;
                 }
 
-                string presetName = GetPresetDisplayName(server.Key);
-                presetServerOptions.Add(ServerEndpointOption.Entry(presetName, endpoint, isPreset: true));
-            }
-
-            List<CustomServerEntry> savedCustomEntries = SaveFile.Data.CustomServerEntries ?? new List<CustomServerEntry>();
-            if (savedCustomEntries.Count == 0 && SaveFile.Data.CustomServerEndpoints != null)
-            {
-                int index = 1;
-                foreach (string legacyEndpoint in SaveFile.Data.CustomServerEndpoints)
-                {
-                    savedCustomEntries.Add(new CustomServerEntry
-                    {
-                        Name = $"Custom {index}",
-                        Endpoint = legacyEndpoint
-                    });
-                    index++;
-                }
-            }
-
-            foreach (CustomServerEntry customEntry in savedCustomEntries)
-            {
-                if (string.IsNullOrWhiteSpace(customEntry?.Endpoint))
+                bool alreadyExists = existingFavorites.Any(favorite =>
+                    string.Equals(favorite.Address, address, StringComparison.OrdinalIgnoreCase)
+                    && favorite.Port == port);
+                if (alreadyExists)
                 {
                     continue;
                 }
 
-                string endpoint = customEntry.Endpoint.Trim();
-                string name = string.IsNullOrWhiteSpace(customEntry.Name)
-                    ? "Custom Server"
-                    : customEntry.Name.Trim();
-
-                if (!knownEndpoints.Add(endpoint))
+                FavoriteServerEntry migratedEntry = new FavoriteServerEntry
                 {
-                    continue;
-                }
+                    Name = string.IsNullOrWhiteSpace(legacyEntry.Name) ? "Migrated Favorite" : legacyEntry.Name.Trim(),
+                    Address = address,
+                    Port = port,
+                    Description = "Migrated from Oceanya custom endpoint.",
+                    Legacy = false
+                };
 
-                customServerOptions.Add(ServerEndpointOption.Entry(name, endpoint, isPreset: false));
+                ServerEndpointCatalog.AddFavorite(configIniPath, migratedEntry);
+                existingFavorites.Add(migratedEntry);
             }
 
-            string savedSelectedEndpoint = SaveFile.Data.SelectedServerEndpoint?.Trim() ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(savedSelectedEndpoint))
-            {
-                savedSelectedEndpoint = Globals.GetDefaultServerEndpoint();
-            }
-
-            RefreshServerEndpointComboBox(savedSelectedEndpoint);
-
-            ServerEndpointOption? selectedOption = ServerEndpointComboBox.SelectedItem as ServerEndpointOption;
-            string activeEndpoint = selectedOption?.Endpoint ?? Globals.GetDefaultServerEndpoint();
-            Globals.SetSelectedServerEndpoint(activeEndpoint);
-            lastSelectedEndpoint = activeEndpoint;
+            hasMigratedLegacyCustomEntries = true;
         }
 
-        private void RefreshServerEndpointComboBox(string selectedEndpoint)
+        private void UpdateSelectedServerDisplay()
         {
-            List<ServerEndpointOption> options = new List<ServerEndpointOption>();
-            options.Add(ServerEndpointOption.Header("=== Default Servers ==="));
-            options.AddRange(presetServerOptions);
-            options.Add(ServerEndpointOption.Header("=== Custom Servers ==="));
-            options.AddRange(customServerOptions);
-
-            isUpdatingSelection = true;
-            ServerEndpointComboBox.ItemsSource = options;
-
-            if (!string.IsNullOrWhiteSpace(selectedEndpoint))
+            string serverNameText = selectedServer?.Name ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(serverNameText))
             {
-                SelectServerEndpoint(selectedEndpoint);
-            }
-            else
-            {
-                SelectFirstSelectableOption();
+                serverNameText = "No server selected.";
             }
 
-            ServerEndpointOption? currentSelection = ServerEndpointComboBox.SelectedItem as ServerEndpointOption;
-            if (currentSelection == null || !currentSelection.IsSelectable)
-            {
-                SelectFirstSelectableOption();
-                currentSelection = ServerEndpointComboBox.SelectedItem as ServerEndpointOption;
-            }
-            isUpdatingSelection = false;
-
-            if (currentSelection != null && currentSelection.IsSelectable)
-            {
-                lastSelectedEndpoint = currentSelection.Endpoint;
-            }
-
-            UpdateServerActionButtonsState();
+            SelectedServerTextBox.Text = serverNameText;
         }
 
-        private void SelectServerEndpoint(string endpoint)
+        private void SaveConfiguration(
+            string configIniPath,
+            bool useSingleInternalClient,
+            string selectedServerEndpoint,
+            string selectedServerName)
         {
-            ServerEndpointOption? optionToSelect = FindServerOption(endpoint);
-            if (optionToSelect != null)
+            try
             {
-                ServerEndpointComboBox.SelectedItem = optionToSelect;
+                SaveFile.Data.ConfigIniPath = configIniPath;
+                SaveFile.Data.UseSingleInternalClient = useSingleInternalClient;
+                SaveFile.Data.SelectedServerEndpoint = selectedServerEndpoint;
+                SaveFile.Data.SelectedServerName = selectedServerName?.Trim() ?? string.Empty;
+                SaveFile.Save();
+            }
+            catch (Exception ex)
+            {
+                OceanyaMessageBox.Show(
+                    "Error saving configuration: " + ex.Message,
+                    "Error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
             }
         }
 
-        private void SelectFirstSelectableOption()
+        public static bool IsValidServerEndpoint(string endpoint)
         {
-            ServerEndpointOption? selectableOption = (ServerEndpointComboBox.ItemsSource as IEnumerable<ServerEndpointOption>)
-                ?.FirstOrDefault(option => option.IsSelectable);
-            if (selectableOption != null)
-            {
-                ServerEndpointComboBox.SelectedItem = selectableOption;
-            }
-        }
-
-        private ServerEndpointOption? FindServerOption(string endpoint)
-        {
-            List<ServerEndpointOption> options = new List<ServerEndpointOption>();
-            options.AddRange(presetServerOptions);
-            options.AddRange(customServerOptions);
-
-            return options.FirstOrDefault(option =>
-                string.Equals(option.Endpoint, endpoint, StringComparison.OrdinalIgnoreCase));
-        }
-
-        private void UpdateServerActionButtonsState()
-        {
-            ServerEndpointOption? selectedOption = ServerEndpointComboBox.SelectedItem as ServerEndpointOption;
-            bool canEditOrRemove = selectedOption != null && selectedOption.IsSelectable && !selectedOption.IsPreset;
-            EditServerButton.IsEnabled = canEditOrRemove;
-            RemoveServerButton.IsEnabled = canEditOrRemove;
-        }
-
-        private static bool IsValidServerEndpoint(string endpoint)
-        {
-            if (!Uri.TryCreate(endpoint, UriKind.Absolute, out Uri? uri))
-            {
-                return false;
-            }
-
-            if (uri == null)
+            if (!Uri.TryCreate(endpoint, UriKind.Absolute, out Uri? uri) || uri == null)
             {
                 return false;
             }
@@ -497,40 +338,31 @@ namespace OceanyaClient
             return validScheme && !string.IsNullOrWhiteSpace(uri.Host);
         }
 
-        private static string GetPresetDisplayName(Globals.Servers server)
+        private static bool TryParseEndpoint(string endpoint, out string address, out int port)
         {
-            return server switch
-            {
-                Globals.Servers.ChillAndDices => "Chill and Dices",
-                Globals.Servers.CaseCafe => "Case Cafe",
-                Globals.Servers.Vanilla => "Vanilla",
-                _ => server.ToString()
-            };
-        }
+            address = string.Empty;
+            port = 0;
 
-        private void SaveConfiguration(
-            string configIniPath,
-            bool useSingleInternalClient,
-            string selectedServerEndpoint,
-            List<CustomServerEntry> customServerEntries)
-        {
-            try
+            if (!Uri.TryCreate(endpoint?.Trim(), UriKind.Absolute, out Uri? uri) || uri == null)
             {
-                SaveFile.Data.ConfigIniPath = configIniPath;
-                SaveFile.Data.UseSingleInternalClient = useSingleInternalClient;
-                SaveFile.Data.SelectedServerEndpoint = selectedServerEndpoint;
-                SaveFile.Data.CustomServerEntries = customServerEntries;
-                SaveFile.Data.CustomServerEndpoints = customServerEntries
-                    .Select(entry => entry.Endpoint)
-                    .Where(endpoint => !string.IsNullOrWhiteSpace(endpoint))
-                    .ToList();
-                SaveFile.Save();
+                return false;
             }
-            catch (Exception ex)
+
+            bool validScheme = string.Equals(uri.Scheme, "ws", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(uri.Scheme, "wss", StringComparison.OrdinalIgnoreCase);
+            if (!validScheme)
             {
-                OceanyaMessageBox.Show("Error saving configuration: " + ex.Message,
-                                "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                return false;
             }
+
+            if (string.IsNullOrWhiteSpace(uri.Host) || uri.Port <= 0)
+            {
+                return false;
+            }
+
+            address = uri.Host;
+            port = uri.Port;
+            return true;
         }
 
         private void DragWindow(object sender, MouseButtonEventArgs e)
@@ -543,32 +375,32 @@ namespace OceanyaClient
 
         private void CloseButton_Click(object sender, RoutedEventArgs e)
         {
-            this.Close();
+            Close();
         }
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
-            // The FadeIn animation is triggered automatically by the EventTrigger in XAML
         }
 
-        private bool _isClosing = false;
+        private bool isClosing;
+
         private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
         {
-            if (_isClosing)
+            if (isClosing)
             {
                 return;
             }
 
             e.Cancel = true;
-            _isClosing = true;
+            isClosing = true;
 
             Storyboard fadeOut = (Storyboard)FindResource("FadeOut");
-            fadeOut.Completed += (s, _) =>
+            fadeOut.Completed += (_, _) =>
             {
-                this.Dispatcher.Invoke(() =>
+                Dispatcher.Invoke(() =>
                 {
-                    _isClosing = true;
-                    this.Close();
+                    isClosing = true;
+                    Close();
                 });
             };
             fadeOut.Begin(this);

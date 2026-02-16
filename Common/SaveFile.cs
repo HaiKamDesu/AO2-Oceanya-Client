@@ -17,6 +17,7 @@ namespace OceanyaClient
         public string ConfigIniPath { get; set; } = "";
         public bool UseSingleInternalClient { get; set; } = true;
         public string SelectedServerEndpoint { get; set; } = "";
+        public string SelectedServerName { get; set; } = "";
         // Legacy list kept for migration from endpoint-only storage.
         public List<string> CustomServerEndpoints { get; set; } = new List<string>();
         public List<CustomServerEntry> CustomServerEntries { get; set; } = new List<CustomServerEntry>();
