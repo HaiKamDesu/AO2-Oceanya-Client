@@ -469,6 +469,11 @@ namespace AOBot_Testing.Agents
                         string parsedArea = areaMatch.Groups[1].Value.Trim();
                         if (!string.IsNullOrWhiteSpace(parsedArea))
                         {
+                            if (ShouldIgnoreAreaDowngrade(parsedArea))
+                            {
+                                return;
+                            }
+
                             SetCurrentArea(parsedArea);
                         }
                     }
@@ -661,6 +666,40 @@ namespace AOBot_Testing.Agents
             }
 
             OnAvailableAreaInfosUpdated?.Invoke(availableAreaInfos.AsReadOnly());
+        }
+
+        private bool ShouldIgnoreAreaDowngrade(string parsedArea)
+        {
+            if (string.IsNullOrWhiteSpace(currentArea) || string.IsNullOrWhiteSpace(parsedArea))
+            {
+                return false;
+            }
+
+            string normalizedCurrentArea = currentArea.Trim();
+            string normalizedParsedArea = parsedArea.Trim();
+
+            if (string.Equals(normalizedCurrentArea, normalizedParsedArea, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (!normalizedCurrentArea.Contains('/'))
+            {
+                return false;
+            }
+
+            if (normalizedParsedArea.Contains('/'))
+            {
+                return false;
+            }
+
+            string[] currentAreaPath = normalizedCurrentArea.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (currentAreaPath.Length == 0)
+            {
+                return false;
+            }
+
+            return string.Equals(currentAreaPath[0], normalizedParsedArea, StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool LooksLikeMusicEntry(string value)

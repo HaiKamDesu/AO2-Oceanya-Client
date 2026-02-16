@@ -430,10 +430,6 @@
                                 </ListBox.ItemTemplate>
                             </ListBox>
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                                <Button x:Name="btnRefreshAreas"
-                                        Content="Refresh"
-                                        Margin="0,0,6,0"
-                                        Click="btnRefreshAreas_Click"/>
                                 <Button x:Name="btnGoToArea"
                                         Content="Go"
                                         Click="btnGoToArea_Click"/>

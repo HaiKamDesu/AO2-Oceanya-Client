@@ -28,6 +28,7 @@ namespace OceanyaClient
         private AOClient? boundSingleClientProfile;
         private readonly bool useSingleInternalClient = SaveFile.Data.UseSingleInternalClient;
         private bool debug = false;
+        private readonly HashSet<AOClient> areaListBootstrapCompletedClients = new HashSet<AOClient>();
         private readonly Brush areaFreeBrush = new SolidColorBrush(Color.FromRgb(77, 77, 77));
         private readonly Brush areaLfpBrush = new SolidColorBrush(Color.FromRgb(76, 112, 63));
         private readonly Brush areaCasingBrush = new SolidColorBrush(Color.FromRgb(113, 92, 53));
@@ -284,20 +285,26 @@ namespace OceanyaClient
                 txtCurrentArea.Text = "Current: Unknown";
                 lstAreas.ItemsSource = null;
                 btnAreaNavigator.IsEnabled = false;
-                btnRefreshAreas.IsEnabled = false;
                 btnGoToArea.IsEnabled = false;
                 return;
             }
 
             btnAreaNavigator.IsEnabled = true;
-            btnRefreshAreas.IsEnabled = true;
             btnGoToArea.IsEnabled = true;
 
             string visibleArea = string.IsNullOrWhiteSpace(networkClient.CurrentArea) ? "Unknown" : networkClient.CurrentArea;
             txtCurrentArea.Text = $"Current: {visibleArea}";
-            lstAreas.ItemsSource = networkClient.AvailableAreaInfos
+            List<AreaNavigatorListItem> areaItems = networkClient.AvailableAreaInfos
                 .Select(areaInfo => CreateAreaNavigatorListItem(areaInfo))
                 .ToList();
+
+            if (!string.IsNullOrWhiteSpace(networkClient.CurrentArea)
+                && !areaItems.Any(item => string.Equals(item.Name, networkClient.CurrentArea, StringComparison.OrdinalIgnoreCase)))
+            {
+                areaItems.Insert(0, CreateCurrentAreaListItem(networkClient.CurrentArea));
+            }
+
+            lstAreas.ItemsSource = areaItems;
         }
 
         private AreaNavigatorListItem CreateAreaNavigatorListItem(AreaInfo areaInfo)
@@ -360,6 +367,36 @@ namespace OceanyaClient
             }
 
             return areaFreeBrush;
+        }
+
+        private AreaNavigatorListItem CreateCurrentAreaListItem(string areaName)
+        {
+            return new AreaNavigatorListItem
+            {
+                Name = areaName,
+                StatusAndCmLine = "CURRENT AREA",
+                PlayersAndLockLine = "Not listed by server area refresh",
+                RowBackground = areaFreeBrush,
+            };
+        }
+
+        private async Task BootstrapAreaNavigatorAsync(AOClient networkClient)
+        {
+            if (areaListBootstrapCompletedClients.Contains(networkClient))
+            {
+                return;
+            }
+
+            areaListBootstrapCompletedClients.Add(networkClient);
+
+            try
+            {
+                await networkClient.RequestAreaList();
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Warning("Failed to initialize area list on initial join.", ex);
+            }
         }
 
         private void ApplyProfileToSingleInternalClient(AOClient profileClient)
@@ -605,6 +642,7 @@ namespace OceanyaClient
 
             InitializeCommonClientEvents(singleInternalClient, singleInternalClient);
             await singleInternalClient.Connect();
+            await BootstrapAreaNavigatorAsync(singleInternalClient);
         }
         private void AddClient(string clientName)
         {
@@ -650,8 +688,6 @@ namespace OceanyaClient
                             OOCLogControl.AddMessage(bot, showName, message, isFromServer);
                         });
                     };
-
-                    await bot.Connect();
                 }
 
                 if (useSingleInternalClient)
@@ -852,6 +888,8 @@ namespace OceanyaClient
                 if (!useSingleInternalClient)
                 {
                     InitializeCommonClientEvents(bot, bot);
+                    await bot.Connect();
+                    await BootstrapAreaNavigatorAsync(bot);
                 }
 
                 bot.OnDisconnect += () =>
@@ -864,6 +902,7 @@ namespace OceanyaClient
                     Dispatcher.Invoke(() =>
                     {
                         var button = clients.FirstOrDefault(x => x.Value == bot).Key;
+                        areaListBootstrapCompletedClients.Remove(bot);
 
                         clients.Remove(button);
                         EmoteGrid.DeleteElement(button);
@@ -1218,6 +1257,7 @@ namespace OceanyaClient
             {
                 if (singleInternalClient != null)
                 {
+                    areaListBootstrapCompletedClients.Remove(singleInternalClient);
                     await singleInternalClient.Disconnect();
                     singleInternalClient = null;
                     boundSingleClientProfile = null;
@@ -1418,29 +1458,6 @@ namespace OceanyaClient
         {
             RefreshAreaNavigatorForCurrentClient();
             AreaNavigatorPopup.IsOpen = true;
-        }
-
-        private async void btnRefreshAreas_Click(object sender, RoutedEventArgs e)
-        {
-            AOClient? profileClient = currentClient;
-            if (profileClient == null)
-            {
-                return;
-            }
-
-            AOClient? networkClient = GetTargetClientForNetwork(profileClient);
-            if (networkClient == null)
-            {
-                return;
-            }
-
-            if (useSingleInternalClient)
-            {
-                ApplyProfileToSingleInternalClient(profileClient);
-            }
-
-            await networkClient.RequestAreaList();
-            RefreshAreaNavigatorForCurrentClient();
         }
 
         private async void btnGoToArea_Click(object sender, RoutedEventArgs e)
