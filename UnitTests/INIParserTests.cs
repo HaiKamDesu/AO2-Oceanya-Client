@@ -85,6 +85,50 @@ public class INIParserTests
         });
     }
 
+    [Test]
+    public void CharacterIcon_FallsBackToFirstEmoteIcon_WhenCharIconMissing()
+    {
+        string fallbackCharacterDir = Path.Combine(tempRoot!, "characters", "FallbackIcon");
+        Directory.CreateDirectory(Path.Combine(fallbackCharacterDir, "Emotions"));
+        File.WriteAllText(Path.Combine(fallbackCharacterDir, "char.ini"),
+            "[Options]\nshowname=FallbackIcon\ngender=unknown\nside=def\n[Emotions]\nnumber=2\n1=normal#normal#normal#0#99\n2=smirk#smirk#smirk#0#99\n");
+        File.WriteAllBytes(Path.Combine(fallbackCharacterDir, "Emotions", "button1_off.png"), new byte[] { 1, 2, 3, 4 });
+
+        ResetCharacterCache();
+        CharacterFolder.RefreshCharacterList();
+
+        CharacterFolder character = CharacterFolder.FullList.Find(c => c.Name == "FallbackIcon")!;
+        string expectedPath = Path.Combine(fallbackCharacterDir, "Emotions", "button1_off.png");
+        Assert.That(character.CharIconPath, Is.EqualTo(expectedPath));
+    }
+
+    [Test]
+    public void RefreshCharacterList_SkipsBrokenCharacterFolder_AndKeepsValidOnes()
+    {
+        string validCharacterDir = Path.Combine(tempRoot!, "characters", "GoodFolder");
+        Directory.CreateDirectory(validCharacterDir);
+        File.WriteAllText(Path.Combine(validCharacterDir, "char.ini"),
+            "[Options]\nshowname=GoodFolder\ngender=unknown\nside=pro\n[Emotions]\nnumber=1\n1=normal#normal#normal#0#99\n");
+
+        string brokenCharacterDir = Path.Combine(tempRoot!, "characters", "BrokenFolder");
+        Directory.CreateDirectory(brokenCharacterDir);
+        string brokenIniPath = Path.Combine(brokenCharacterDir, "char.ini");
+        File.WriteAllText(brokenIniPath,
+            "[Options]\nshowname=BrokenFolder\ngender=unknown\nside=pro\n[Emotions]\nnumber=1\n1=normal#normal#normal#0#99\n");
+
+        using FileStream lockStream = new FileStream(
+            brokenIniPath,
+            FileMode.Open,
+            FileAccess.ReadWrite,
+            FileShare.None);
+
+        ResetCharacterCache();
+        CharacterFolder.RefreshCharacterList();
+
+        Assert.That(CharacterFolder.FullList.Exists(c => c.Name == "GoodFolder"), Is.True);
+        Assert.That(CharacterFolder.FullList.Exists(c => c.Name == "BrokenFolder"), Is.False);
+    }
+
     private static void CreateCharacter(string basePath, string name, string side)
     {
         string charDir = Path.Combine(basePath, "characters", name);

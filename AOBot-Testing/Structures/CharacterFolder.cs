@@ -10,7 +10,7 @@ namespace AOBot_Testing.Structures
     public class CharacterFolder
     {
         #region Static methods
-        private const int CacheVersion = 1;
+        private const int CacheVersion = 2;
         public static List<string> CharacterFolders => Globals.BaseFolders.Select(x => Path.Combine(x, "characters")).ToList();
         static string cacheFile = Path.Combine(Path.GetTempPath(), "characters.json");
         static List<CharacterFolder> characterConfigs = new List<CharacterFolder>();
@@ -53,21 +53,45 @@ namespace AOBot_Testing.Structures
                     continue;
                 }
 
-                string[] directories = Directory.GetDirectories(characterFolder);
+                IEnumerable<string> directories;
+                try
+                {
+                    directories = Directory.EnumerateDirectories(characterFolder);
+                }
+                catch (Exception ex)
+                {
+                    CustomConsole.Warning($"Failed to enumerate character folder '{characterFolder}'.");
+                    CustomConsole.Error("Character folder enumeration error", ex);
+                    continue;
+                }
 
                 foreach (string directory in directories)
                 {
                     string iniFilePath = Path.Combine(directory, "char.ini");
-                    if (File.Exists(iniFilePath))
+                    if (!File.Exists(iniFilePath))
                     {
-                        string folderName = Path.GetFileName(directory);
-                        if (seenNames.Add(folderName))
-                        {
-                            var config = Structures.CharacterFolder.Create(iniFilePath);
-                            CustomConsole.Debug($"Parsed Character: {config.Name} ({characterFolder})");
-                            refreshedCharacters.Add(config);
-                            onParsedCharacter?.Invoke(config);
-                        }
+                        continue;
+                    }
+
+                    string folderName = Path.GetFileName(directory);
+                    if (seenNames.Contains(folderName))
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        CharacterFolder config = Structures.CharacterFolder.Create(iniFilePath);
+                        seenNames.Add(folderName);
+                        CustomConsole.Debug($"Parsed Character: {config.Name} ({characterFolder})");
+                        refreshedCharacters.Add(config);
+                        onParsedCharacter?.Invoke(config);
+                    }
+                    catch (Exception ex)
+                    {
+                        CustomConsole.Warning(
+                            $"Skipping broken character folder '{directory}' due to parse/validation failure.");
+                        CustomConsole.Error("Character parsing error", ex);
                     }
                 }
             }
@@ -173,6 +197,65 @@ namespace AOBot_Testing.Structures
 
             return true;
         }
+
+        private static string ResolveCharacterIconPath(string directoryPath, CharacterConfigINI? parsedConfig = null)
+        {
+            string explicitCharacterIcon = FindFirstExistingFile(directoryPath, "char_icon");
+            if (!string.IsNullOrWhiteSpace(explicitCharacterIcon))
+            {
+                return explicitCharacterIcon;
+            }
+
+            if (parsedConfig != null)
+            {
+                for (int i = 1; i <= parsedConfig.EmotionsCount; i++)
+                {
+                    if (!parsedConfig.Emotions.TryGetValue(i, out Emote? emote))
+                    {
+                        continue;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(emote.PathToImage_off))
+                    {
+                        return emote.PathToImage_off;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(emote.PathToImage_on))
+                    {
+                        return emote.PathToImage_on;
+                    }
+                }
+
+                foreach (Emote emote in parsedConfig.Emotions.Values)
+                {
+                    if (!string.IsNullOrWhiteSpace(emote.PathToImage_off))
+                    {
+                        return emote.PathToImage_off;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(emote.PathToImage_on))
+                    {
+                        return emote.PathToImage_on;
+                    }
+                }
+            }
+
+            return string.Empty;
+        }
+
+        private static string FindFirstExistingFile(string directoryPath, string baseFileName)
+        {
+            foreach (string extension in Globals.AllowedImageExtensions)
+            {
+                string curPath = Path.Combine(directoryPath, baseFileName + "." + extension);
+                if (File.Exists(curPath))
+                {
+                    return curPath;
+                }
+            }
+
+            return string.Empty;
+        }
         #endregion
 
 
@@ -198,20 +281,7 @@ namespace AOBot_Testing.Structures
         private void UpdatePaths(string configINIPath)
         {
             DirectoryPath = Path.GetDirectoryName(configINIPath) ?? string.Empty;
-
-            foreach (var extension in Globals.AllowedImageExtensions)
-            {
-                string curPath = Path.Combine(DirectoryPath, "char_icon." + extension);
-                if (File.Exists(curPath))
-                {
-                    CharIconPath = curPath;
-                }
-            }
-
-            if (string.IsNullOrEmpty(CharIconPath))
-            {
-                CharIconPath = Path.Combine(DirectoryPath, "char_icon.png");
-            }
+            CharIconPath = ResolveCharacterIconPath(DirectoryPath);
 
             SoundListPath = Path.Combine(DirectoryPath, "soundlist.ini");
             PathToConfigIni = configINIPath;
@@ -225,6 +295,7 @@ namespace AOBot_Testing.Structures
 
             folder.configINI = new CharacterConfigINI(configINIPath);
             folder.configINI.Update();
+            folder.CharIconPath = ResolveCharacterIconPath(folder.DirectoryPath, folder.configINI);
 
             return folder;
         }
@@ -323,7 +394,7 @@ namespace AOBot_Testing.Structures
             {
                 int id = item.Key;
 
-                foreach (var extension in Globals.AllowedImageExtensions)
+                foreach (string extension in Globals.AllowedImageExtensions)
                 {
                     string currentButtonPath_off = Path.Combine(buttonPath, $"button{id}_off." + extension);
                     if (File.Exists(currentButtonPath_off) && string.IsNullOrEmpty(item.Value.PathToImage_off))
@@ -335,6 +406,12 @@ namespace AOBot_Testing.Structures
                     if (File.Exists(currentButtonPath_on) && string.IsNullOrEmpty(item.Value.PathToImage_on))
                     {
                         item.Value.PathToImage_on = currentButtonPath_on;
+                    }
+
+                    if (!string.IsNullOrEmpty(item.Value.PathToImage_off) &&
+                        !string.IsNullOrEmpty(item.Value.PathToImage_on))
+                    {
+                        break;
                     }
                 }
             }
