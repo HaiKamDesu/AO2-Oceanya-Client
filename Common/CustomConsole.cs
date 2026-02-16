@@ -53,7 +53,6 @@ namespace Common
         public static void Log(string message, LogLevel level = LogLevel.Info, Exception? exception = null, 
             [CallerFilePath] string sourceFile = "", [CallerLineNumber] int sourceLine = 0)
         {
-            var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
             var levelPrefix = level switch
             {
                 LogLevel.Info => "ℹ️",
@@ -64,7 +63,7 @@ namespace Common
             };
 
             string fileName = Path.GetFileName(sourceFile);
-            string formattedMessage = $"[{timestamp}] {levelPrefix} {message}";
+            string formattedMessage = $"{levelPrefix} {message}";
             
             // Add source location for non-info messages
             if (level != LogLevel.Info)

@@ -231,6 +231,21 @@ namespace OceanyaClient
             return boundSingleClientProfile ?? currentClient;
         }
 
+        private AOClient GetSingleModeLogTarget(AOClient profileClient = null, AOClient networkClient = null)
+        {
+            if (!useSingleInternalClient)
+            {
+                return profileClient ?? currentClient;
+            }
+
+            return GetClientForIncomingMessages()
+                ?? boundSingleClientProfile
+                ?? currentClient
+                ?? singleInternalClient
+                ?? networkClient
+                ?? profileClient;
+        }
+
         private void ApplyProfileToSingleInternalClient(AOClient profileClient)
         {
             if (!useSingleInternalClient || singleInternalClient == null || profileClient == null)
@@ -291,7 +306,7 @@ namespace OceanyaClient
             {
                 Dispatcher.Invoke(() =>
                 {
-                    AOClient targetClient = useSingleInternalClient ? GetClientForIncomingMessages() : profileClient;
+                    AOClient targetClient = GetSingleModeLogTarget(profileClient, networkClient);
                     if (targetClient == null)
                     {
                         return;
@@ -312,7 +327,7 @@ namespace OceanyaClient
             {
                 Dispatcher.Invoke(() =>
                 {
-                    AOClient targetClient = useSingleInternalClient ? GetClientForIncomingMessages() : profileClient;
+                    AOClient targetClient = GetSingleModeLogTarget(profileClient, networkClient);
                     if (targetClient == null)
                     {
                         return;
@@ -328,7 +343,7 @@ namespace OceanyaClient
             {
                 Dispatcher.Invoke(() =>
                 {
-                    AOClient targetClient = useSingleInternalClient ? GetClientForIncomingMessages() : profileClient;
+                    AOClient targetClient = GetSingleModeLogTarget(profileClient, networkClient);
                     if (targetClient == null)
                     {
                         return;
@@ -344,7 +359,7 @@ namespace OceanyaClient
             {
                 Dispatcher.Invoke(() =>
                 {
-                    AOClient targetClient = useSingleInternalClient ? GetClientForIncomingMessages() : profileClient;
+                    AOClient targetClient = GetSingleModeLogTarget(profileClient, networkClient);
                     if (targetClient == null)
                     {
                         return;
@@ -361,7 +376,7 @@ namespace OceanyaClient
             {
                 Dispatcher.Invoke(() =>
                 {
-                    AOClient targetClient = useSingleInternalClient ? GetClientForIncomingMessages() : profileClient;
+                    AOClient targetClient = GetSingleModeLogTarget(profileClient, networkClient);
                     if (targetClient == null)
                     {
                         return;
@@ -386,13 +401,12 @@ namespace OceanyaClient
 
             singleInternalClient = new AOClient(Globals.IPs[Globals.Servers.ChillAndDices], Globals.ConnectionString);
             singleInternalClient.clientName = "InternalClient";
-            await singleInternalClient.Connect();
 
             singleInternalClient.OnICMessageReceived += (ICMessage icMessage) =>
             {
                 Dispatcher.Invoke(() =>
                 {
-                    AOClient targetClient = GetClientForIncomingMessages();
+                    AOClient targetClient = GetSingleModeLogTarget(singleInternalClient, singleInternalClient);
                     if (targetClient == null)
                     {
                         return;
@@ -410,7 +424,7 @@ namespace OceanyaClient
             {
                 Dispatcher.Invoke(() =>
                 {
-                    AOClient targetClient = GetClientForIncomingMessages();
+                    AOClient targetClient = GetSingleModeLogTarget(singleInternalClient, singleInternalClient);
                     if (targetClient == null)
                     {
                         return;
@@ -424,7 +438,7 @@ namespace OceanyaClient
             {
                 Dispatcher.Invoke(() =>
                 {
-                    AOClient targetClient = GetClientForIncomingMessages();
+                    AOClient targetClient = GetSingleModeLogTarget(singleInternalClient, singleInternalClient);
                     if (targetClient == null)
                     {
                         return;
@@ -439,7 +453,7 @@ namespace OceanyaClient
             {
                 Dispatcher.Invoke(() =>
                 {
-                    AOClient targetClient = GetClientForIncomingMessages();
+                    AOClient targetClient = GetSingleModeLogTarget(singleInternalClient, singleInternalClient);
                     if (targetClient == null)
                     {
                         return;
@@ -450,6 +464,7 @@ namespace OceanyaClient
             };
 
             InitializeCommonClientEvents(singleInternalClient, singleInternalClient);
+            await singleInternalClient.Connect();
         }
         private void AddClient(string clientName)
         {
@@ -467,6 +482,11 @@ namespace OceanyaClient
 
                 if (useSingleInternalClient)
                 {
+                    if (boundSingleClientProfile == null)
+                    {
+                        boundSingleClientProfile = bot;
+                    }
+
                     await EnsureSingleInternalClientConnectedAsync();
                 }
                 else
