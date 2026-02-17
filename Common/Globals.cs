@@ -1,4 +1,5 @@
-﻿using OceanyaClient;
+﻿using Common;
+using OceanyaClient;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -207,32 +208,67 @@ Each of these settings has predefined integer values. **If a change is requested
         }
         mountPaths.Reverse();
 
-        for (int i = 0; i < mountPaths.Count; i++)
+        string configParentDirectory = Path.GetDirectoryName(configDirectory) ?? string.Empty;
+        List<string> resolvedMountPaths = new List<string>();
+        HashSet<string> seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (string current in mountPaths)
         {
-            var current = mountPaths[i];
-
-            if (!Directory.Exists(current))
+            if (string.IsNullOrWhiteSpace(current))
             {
-                string? configParentDirectory = Path.GetDirectoryName(configDirectory);
-                if (string.IsNullOrWhiteSpace(configParentDirectory))
+                continue;
+            }
+
+            if (TryResolveExistingMountPath(current, configParentDirectory, out string resolvedPath))
+            {
+                if (seenPaths.Add(resolvedPath))
                 {
-                    throw new FileNotFoundException("Mount path base directory not found.");
+                    resolvedMountPaths.Add(resolvedPath);
+                }
+                continue;
+            }
+
+            CustomConsole.Warning($"Skipping missing mount path: {current}");
+        }
+
+        if (resolvedMountPaths.Count == 0 && Directory.Exists(configDirectory))
+        {
+            resolvedMountPaths.Add(configDirectory);
+            CustomConsole.Warning("No valid mount paths found. Falling back to config directory only.");
+        }
+
+        return resolvedMountPaths;
+    }
+
+    private static bool TryResolveExistingMountPath(string mountPath, string configParentDirectory, out string resolvedPath)
+    {
+        resolvedPath = string.Empty;
+        List<string> candidates = new List<string>() { mountPath };
+        if (!string.IsNullOrWhiteSpace(configParentDirectory))
+        {
+            candidates.Add(Path.Combine(configParentDirectory, mountPath));
+        }
+
+        foreach (string candidate in candidates)
+        {
+            try
+            {
+                string fullPath = Path.GetFullPath(candidate);
+                if (!Directory.Exists(fullPath))
+                {
+                    continue;
                 }
 
-                var newMountPath = Path.Combine(configParentDirectory, current);
-
-                if (!Directory.Exists(newMountPath))
-                {
-                    throw new FileNotFoundException("Mount path not found: " + current);
-                }
-                else
-                {
-                    mountPaths[i] = newMountPath;
-                }
+                resolvedPath = fullPath;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Warning($"Invalid mount path skipped: {candidate}", ex);
             }
         }
 
-        return mountPaths;
+        return false;
     }
 
     public static string ReplaceTextForSymbols(string message)

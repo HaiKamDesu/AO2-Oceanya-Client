@@ -82,6 +82,41 @@ namespace UnitTests
             // Check overall count to make sure all formats are present
             Assert.That(Globals.AllowedImageExtensions.Count, Is.GreaterThanOrEqualTo(5), "Should have at least 5 allowed image formats");
         }
+
+        [Test]
+        public void Test_GetBaseFolders_SkipsMissingMountPathWithoutThrowing()
+        {
+            string testRoot = Path.Combine(Path.GetTempPath(), $"globals_mount_test_{Guid.NewGuid()}");
+            string baseDirectory = Path.Combine(testRoot, "base");
+            string existingMount = Path.Combine(testRoot, "extra_base");
+            string configPath = Path.Combine(baseDirectory, "config.ini");
+
+            try
+            {
+                Directory.CreateDirectory(baseDirectory);
+                Directory.CreateDirectory(existingMount);
+
+                File.WriteAllText(
+                    configPath,
+                    $"mount_paths={existingMount},missing_mount_folder{Environment.NewLine}log_maximum=123");
+
+                Assert.That(() => Globals.GetBaseFolders(configPath), Throws.Nothing);
+
+                List<string> baseFolders = Globals.GetBaseFolders(configPath);
+
+                Assert.That(baseFolders, Does.Contain(Path.GetFullPath(existingMount)));
+                Assert.That(baseFolders, Does.Contain(Path.GetFullPath(baseDirectory)));
+                Assert.That(baseFolders.Any(path =>
+                    path.Contains("missing_mount_folder", StringComparison.OrdinalIgnoreCase)), Is.False);
+            }
+            finally
+            {
+                if (Directory.Exists(testRoot))
+                {
+                    Directory.Delete(testRoot, true);
+                }
+            }
+        }
     }
     
     [TestFixture]
