@@ -39,6 +39,18 @@ namespace OceanyaClient
         private readonly Brush areaLockedBrush = new SolidColorBrush(Color.FromRgb(106, 54, 54));
         private bool isLoadingDreddOverlaySelection;
         private bool isDreddFeatureEnabled;
+        private const string DreddNoneOverlayName = "none";
+        private string lastDreddOverlayContextKey = string.Empty;
+        private string lastUnknownOverlayPromptKey = string.Empty;
+
+        private sealed class DreddOverlaySelectionItem
+        {
+            public string Name { get; set; } = string.Empty;
+            public string DisplayText { get; set; } = string.Empty;
+            public string FilePath { get; set; } = string.Empty;
+            public bool IsNone { get; set; }
+            public bool IsTransient { get; set; }
+        }
 
         List<ToggleButton> objectionModifiers;
         public MainWindow()
@@ -411,8 +423,9 @@ namespace OceanyaClient
             imgScienceBlur.Height = isDreddFeatureEnabled ? 670 : 638;
             imgScienceBlur_darken.Height = isDreddFeatureEnabled ? 670 : 638;
 
-            LoadDreddOverlayComboItems();
+            RefreshDreddOverlayForCurrentContext(promptForUnknownOverlay: false);
             UpdateDreddFeatureVisibility();
+            UpdateDreddFeatureEnabledState();
         }
 
         private void UpdateDreddFeatureVisibility()
@@ -421,11 +434,10 @@ namespace OceanyaClient
             Visibility visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
             FeatureRowBackground.Visibility = visibility;
             DreddFeatureLabel.Visibility = visibility;
-            DreddOverlayComboBox.Visibility = visibility;
+            DreddOverlaySelector.Visibility = visibility;
             DreddStickyOverlayCheckBox.Visibility = visibility;
             DreddOverlayConfigButton.Visibility = visibility;
             DreddViewChangesButton.Visibility = visibility;
-            DreddDiscardChangesButton.Visibility = visibility;
 
             double verticalOffset = enabled ? 30 : 0;
             Canvas.SetTop(BottomStatusBar, 603 + verticalOffset);
@@ -435,32 +447,177 @@ namespace OceanyaClient
             Canvas.SetTop(btnDebug, 607 + verticalOffset);
             Canvas.SetTop(chkInvertLog, 607 + verticalOffset);
             Canvas.SetTop(btnAreaNavigator, 603 + verticalOffset);
+
+            UpdateDreddFeatureEnabledState();
         }
 
-        private void LoadDreddOverlayComboItems()
+        private void UpdateDreddFeatureEnabledState()
+        {
+            bool enabledForClient = isDreddFeatureEnabled && currentClient != null;
+            DreddOverlaySelector.IsEnabled = enabledForClient;
+            DreddOverlayDropButton.IsEnabled = enabledForClient;
+            DreddStickyOverlayCheckBox.IsEnabled = enabledForClient;
+            DreddFeatureLabel.Opacity = enabledForClient ? 1.0 : 0.65;
+
+            // Always keep these available for configuration/review.
+            DreddOverlayConfigButton.IsEnabled = isDreddFeatureEnabled;
+            DreddViewChangesButton.IsEnabled = isDreddFeatureEnabled;
+        }
+
+        private static string GetOverlayDisplayName(string overlayReference)
+        {
+            string value = overlayReference?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return DreddNoneOverlayName;
+            }
+
+            string normalized = value.Replace('\\', '/').TrimEnd('/');
+            string fileName = Path.GetFileNameWithoutExtension(normalized);
+            if (!string.IsNullOrWhiteSpace(fileName))
+            {
+                return fileName;
+            }
+
+            fileName = Path.GetFileName(normalized);
+            return string.IsNullOrWhiteSpace(fileName) ? value : fileName;
+        }
+
+        private void RefreshDreddOverlayForCurrentContext(bool promptForUnknownOverlay)
         {
             isLoadingDreddOverlaySelection = true;
             try
             {
-                DreddOverlayComboBox.ItemsSource = null;
-                List<DreddOverlayEntry> overlays = SaveFile.Data.DreddBackgroundOverlayOverride.OverlayDatabase
+                List<DreddOverlaySelectionItem> overlays = SaveFile.Data.DreddBackgroundOverlayOverride.OverlayDatabase
                     .OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
-                    .ToList();
-
-                DreddOverlayComboBox.ItemsSource = overlays;
-                DreddOverlayComboBox.DisplayMemberPath = nameof(DreddOverlayEntry.Name);
-                DreddOverlayComboBox.SelectedValuePath = nameof(DreddOverlayEntry.Name);
-
-                string selectedName = SaveFile.Data.DreddBackgroundOverlayOverride.SelectedOverlayName?.Trim() ?? string.Empty;
-                if (!string.IsNullOrWhiteSpace(selectedName))
-                {
-                    DreddOverlayEntry? selectedEntry = overlays.FirstOrDefault(entry =>
-                        string.Equals(entry.Name, selectedName, StringComparison.OrdinalIgnoreCase));
-                    if (selectedEntry != null)
+                    .Select(entry => new DreddOverlaySelectionItem
                     {
-                        DreddOverlayComboBox.SelectedItem = selectedEntry;
+                        Name = entry.Name,
+                        DisplayText = entry.Name,
+                        FilePath = entry.FilePath,
+                        IsNone = false
+                    })
+                    .ToList();
+                DreddOverlaySelectionItem noneItem = new DreddOverlaySelectionItem
+                {
+                    Name = DreddNoneOverlayName,
+                    DisplayText = DreddNoneOverlayName,
+                    IsNone = true,
+                    FilePath = string.Empty
+                };
+                overlays.Insert(0, noneItem);
+
+                DreddOverlaySelectionItem selectedItem = noneItem;
+
+                if (currentClient != null
+                    && DreddBackgroundOverlayOverrideService.TryGetCurrentOverlayValue(
+                        currentClient,
+                        out bool hasEntry,
+                        out string currentOverlayValue,
+                        out string designIniPath,
+                        out string positionKey,
+                        out string backgroundDirectory,
+                        out _))
+                {
+                    string currentContextKey = $"{designIniPath}|{positionKey}";
+                    if (!string.Equals(lastDreddOverlayContextKey, currentContextKey, StringComparison.OrdinalIgnoreCase))
+                    {
+                        lastDreddOverlayContextKey = currentContextKey;
+                        lastUnknownOverlayPromptKey = string.Empty;
+                    }
+
+                    if (hasEntry)
+                    {
+                        DreddOverlaySelectionItem? matched = overlays.FirstOrDefault(item =>
+                            !item.IsNone
+                            && DreddBackgroundOverlayOverrideService.OverlayReferencesMatch(
+                                designIniPath,
+                                backgroundDirectory,
+                                item.FilePath,
+                                currentOverlayValue));
+
+                        if (matched == null)
+                        {
+                            string unknownDisplayName = GetOverlayDisplayName(currentOverlayValue);
+                            string promptKey = $"{currentContextKey}|{currentOverlayValue}";
+                            bool shouldPrompt = promptForUnknownOverlay
+                                && !string.Equals(lastUnknownOverlayPromptKey, promptKey, StringComparison.OrdinalIgnoreCase);
+                            if (shouldPrompt)
+                            {
+                                MessageBoxResult addResult = OceanyaMessageBox.Show(
+                                    $"Current overlay '{unknownDisplayName}' is not in your database. Add it now?",
+                                    "Unknown Overlay",
+                                    MessageBoxButton.YesNo,
+                                    MessageBoxImage.Question);
+
+                                lastUnknownOverlayPromptKey = promptKey;
+                                if (addResult == MessageBoxResult.Yes)
+                                {
+                                    string overlayPathToStore = currentOverlayValue;
+                                    if (DreddBackgroundOverlayOverrideService.TryResolveOverlayPathToAbsolute(
+                                        currentOverlayValue,
+                                        designIniPath,
+                                        backgroundDirectory,
+                                        out string resolvedOverlayAbsolutePath))
+                                    {
+                                        overlayPathToStore = resolvedOverlayAbsolutePath;
+                                    }
+
+                                    SaveFile.Data.DreddBackgroundOverlayOverride.OverlayDatabase.Add(new DreddOverlayEntry
+                                    {
+                                        Name = unknownDisplayName,
+                                        FilePath = overlayPathToStore
+                                    });
+                                    SaveFile.Save();
+
+                                    // Rebuild once so newly added entry is included and selected.
+                                    RefreshDreddOverlayForCurrentContext(promptForUnknownOverlay: false);
+                                    return;
+                                }
+                            }
+
+                            matched = new DreddOverlaySelectionItem
+                            {
+                                Name = unknownDisplayName,
+                                DisplayText = unknownDisplayName,
+                                FilePath = currentOverlayValue,
+                                IsNone = false,
+                                IsTransient = true
+                            };
+                            overlays.Add(matched);
+                        }
+
+                        selectedItem = matched;
+                    }
+
+                    DreddBackgroundOverlayOverrideService.TryGetOriginalOverlayValue(
+                        designIniPath,
+                        positionKey,
+                        hasEntry,
+                        currentOverlayValue,
+                        out bool originalHasEntry,
+                        out string originalValue);
+
+                    DreddOverlaySelectionItem? originalItem = originalHasEntry
+                        ? overlays.FirstOrDefault(item =>
+                            !item.IsNone
+                            && DreddBackgroundOverlayOverrideService.OverlayReferencesMatch(
+                                designIniPath,
+                                backgroundDirectory,
+                                item.FilePath,
+                                originalValue))
+                        : noneItem;
+
+                    if (originalItem != null)
+                    {
+                        originalItem.DisplayText = $"{originalItem.DisplayText} (original)";
                     }
                 }
+
+                DreddOverlayListBox.ItemsSource = overlays;
+                DreddOverlayListBox.DisplayMemberPath = nameof(DreddOverlaySelectionItem.DisplayText);
+                DreddOverlayListBox.SelectedItem = selectedItem;
+                DreddOverlaySelectedText.Text = selectedItem.DisplayText;
             }
             finally
             {
@@ -468,9 +625,9 @@ namespace OceanyaClient
             }
         }
 
-        private DreddOverlayEntry? GetSelectedDreddOverlayEntry()
+        private DreddOverlaySelectionItem? GetSelectedDreddOverlayEntry()
         {
-            return DreddOverlayComboBox.SelectedItem as DreddOverlayEntry;
+            return DreddOverlayListBox.SelectedItem as DreddOverlaySelectionItem;
         }
 
         private void HookClientForDreddOverlay(AOClient client)
@@ -504,12 +661,58 @@ namespace OceanyaClient
                 return;
             }
 
-            if (DreddStickyOverlayCheckBox.IsChecked != true)
+            if (DreddStickyOverlayCheckBox.IsChecked == true)
+            {
+                ApplyStoredDreddStickyOverlay(showFeedbackOnFailure: false);
+            }
+
+            RefreshDreddOverlayForCurrentContext(promptForUnknownOverlay: true);
+            UpdateDreddFeatureEnabledState();
+        }
+
+        private void ApplyStoredDreddStickyOverlay(bool showFeedbackOnFailure)
+        {
+            if (currentClient == null)
             {
                 return;
             }
 
-            TryApplySelectedDreddOverlayToCurrentContext(showFeedbackOnFailure: false);
+            string stickySelectionName = SaveFile.Data.DreddBackgroundOverlayOverride.SelectedOverlayName?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(stickySelectionName))
+            {
+                return;
+            }
+
+            if (string.Equals(stickySelectionName, DreddNoneOverlayName, StringComparison.OrdinalIgnoreCase))
+            {
+                bool cleared = DreddBackgroundOverlayOverrideService.TryClearOverlay(currentClient, out string clearError);
+                if (!cleared && showFeedbackOnFailure && !string.IsNullOrWhiteSpace(clearError))
+                {
+                    OceanyaMessageBox.Show(
+                        $"Could not apply sticky overlay: {clearError}",
+                        "Overlay Apply Error",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                }
+                return;
+            }
+
+            DreddOverlayEntry? stickyEntry = SaveFile.Data.DreddBackgroundOverlayOverride.OverlayDatabase
+                .FirstOrDefault(entry => string.Equals(entry.Name, stickySelectionName, StringComparison.OrdinalIgnoreCase));
+            if (stickyEntry == null)
+            {
+                return;
+            }
+
+            bool applied = DreddBackgroundOverlayOverrideService.TryApplyOverlay(currentClient, stickyEntry, out string error);
+            if (!applied && showFeedbackOnFailure && !string.IsNullOrWhiteSpace(error))
+            {
+                OceanyaMessageBox.Show(
+                    $"Could not apply sticky overlay: {error}",
+                    "Overlay Apply Error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
         }
 
         private void TryApplySelectedDreddOverlayToCurrentContext(bool showFeedbackOnFailure)
@@ -519,13 +722,30 @@ namespace OceanyaClient
                 return;
             }
 
-            DreddOverlayEntry? selectedOverlay = GetSelectedDreddOverlayEntry();
+            DreddOverlaySelectionItem? selectedOverlay = GetSelectedDreddOverlayEntry();
             if (selectedOverlay == null || currentClient == null)
             {
                 return;
             }
 
-            bool applied = DreddBackgroundOverlayOverrideService.TryApplyOverlay(currentClient, selectedOverlay, out string error);
+            bool applied;
+            string error;
+            if (selectedOverlay.IsNone)
+            {
+                applied = DreddBackgroundOverlayOverrideService.TryClearOverlay(currentClient, out error);
+            }
+            else
+            {
+                applied = DreddBackgroundOverlayOverrideService.TryApplyOverlay(
+                    currentClient,
+                    new DreddOverlayEntry
+                    {
+                        Name = selectedOverlay.Name,
+                        FilePath = selectedOverlay.FilePath
+                    },
+                    out error);
+            }
+
             if (!applied && showFeedbackOnFailure && !string.IsNullOrWhiteSpace(error))
             {
                 OceanyaMessageBox.Show(
@@ -533,6 +753,11 @@ namespace OceanyaClient
                     "Overlay Apply Error",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
+            }
+
+            if (applied)
+            {
+                RefreshDreddOverlayForCurrentContext(promptForUnknownOverlay: false);
             }
         }
 
@@ -545,7 +770,7 @@ namespace OceanyaClient
             bool? result = window.ShowDialog();
             if (result == true)
             {
-                LoadDreddOverlayComboItems();
+                RefreshDreddOverlayForCurrentContext(promptForUnknownOverlay: false);
             }
         }
 
@@ -1070,6 +1295,10 @@ namespace OceanyaClient
                             ICLogControl.IsEnabled = false;
                             ICMessageSettingsControl.IsEnabled = false;
             OOCLogControl.UpdateStreamLabel(null);
+                            currentClient = null;
+                            RefreshAreaNavigatorForCurrentClient();
+                            RefreshDreddOverlayForCurrentContext(promptForUnknownOverlay: false);
+                            UpdateDreddFeatureEnabledState();
                         }
                         else
                         {
@@ -1143,8 +1372,11 @@ namespace OceanyaClient
 
             if (isDreddFeatureEnabled && DreddStickyOverlayCheckBox.IsChecked == true)
             {
-                TryApplySelectedDreddOverlayToCurrentContext(showFeedbackOnFailure: false);
+                ApplyStoredDreddStickyOverlay(showFeedbackOnFailure: false);
             }
+
+            RefreshDreddOverlayForCurrentContext(promptForUnknownOverlay: true);
+            UpdateDreddFeatureEnabledState();
         }
 
         private async void ConnectButton_Click(object sender, RoutedEventArgs e)
@@ -1428,6 +1660,8 @@ namespace OceanyaClient
                 OOCLogControl.UpdateStreamLabel(null);
                 currentClient = null;
                 RefreshAreaNavigatorForCurrentClient();
+                RefreshDreddOverlayForCurrentContext(promptForUnknownOverlay: false);
+                UpdateDreddFeatureEnabledState();
             }
             else
             {
@@ -1605,18 +1839,40 @@ namespace OceanyaClient
             }
         }
 
-        private void DreddOverlayComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private void DreddOverlayDropButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!DreddOverlaySelector.IsEnabled)
+            {
+                return;
+            }
+
+            DreddOverlayPopup.IsOpen = !DreddOverlayPopup.IsOpen;
+        }
+
+        private void DreddOverlayListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (isLoadingDreddOverlaySelection)
             {
                 return;
             }
 
-            DreddOverlayEntry? selectedOverlay = GetSelectedDreddOverlayEntry();
+            if (currentClient == null)
+            {
+                return;
+            }
+
+            DreddOverlaySelectionItem? selectedOverlay = GetSelectedDreddOverlayEntry();
+            if (selectedOverlay == null)
+            {
+                return;
+            }
+
+            DreddOverlaySelectedText.Text = selectedOverlay.DisplayText;
             SaveFile.Data.DreddBackgroundOverlayOverride.SelectedOverlayName = selectedOverlay?.Name?.Trim() ?? string.Empty;
             SaveFile.Save();
 
             TryApplySelectedDreddOverlayToCurrentContext(showFeedbackOnFailure: true);
+            DreddOverlayPopup.IsOpen = false;
         }
 
         private void DreddStickyOverlayCheckBox_Checked(object sender, RoutedEventArgs e)
@@ -1627,7 +1883,8 @@ namespace OceanyaClient
 
             if (sticky)
             {
-                TryApplySelectedDreddOverlayToCurrentContext(showFeedbackOnFailure: false);
+                ApplyStoredDreddStickyOverlay(showFeedbackOnFailure: false);
+                RefreshDreddOverlayForCurrentContext(promptForUnknownOverlay: false);
             }
         }
 
@@ -1643,33 +1900,6 @@ namespace OceanyaClient
                 Owner = this
             };
             window.ShowDialog();
-        }
-
-        private void DreddDiscardChangesButton_Click(object sender, RoutedEventArgs e)
-        {
-            MessageBoxResult confirmation = OceanyaMessageBox.Show(
-                "Discard all Dredd overlay override changes from modified design.ini files?",
-                "Discard Changes",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning);
-
-            if (confirmation != MessageBoxResult.Yes)
-            {
-                return;
-            }
-
-            bool success = DreddBackgroundOverlayOverrideService.TryDiscardAllChanges(out string message);
-            if (!success)
-            {
-                OceanyaMessageBox.Show(
-                    $"Some changes could not be restored:{Environment.NewLine}{message}",
-                    "Discard Changes Error",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning);
-                return;
-            }
-
-            OceanyaMessageBox.Show(message, "Discard Changes", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
         private void THEDINGBUTTON_Click(object sender, RoutedEventArgs e)

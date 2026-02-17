@@ -1,5 +1,6 @@
 using Microsoft.Win32;
 using System.Windows;
+using System.Windows.Input;
 
 namespace OceanyaClient
 {
@@ -53,6 +54,20 @@ namespace OceanyaClient
         }
 
         private void CancelButton_Click(object sender, RoutedEventArgs e)
+        {
+            DialogResult = false;
+            Close();
+        }
+
+        private void DragWindow(object sender, MouseButtonEventArgs e)
+        {
+            if (e.LeftButton == MouseButtonState.Pressed)
+            {
+                DragMove();
+            }
+        }
+
+        private void TitleCloseButton_Click(object sender, RoutedEventArgs e)
         {
             DialogResult = false;
             Close();

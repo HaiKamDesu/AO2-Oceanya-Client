@@ -185,6 +185,68 @@ namespace UnitTests
             Assert.That(SaveFile.Data.DreddBackgroundOverlayOverride.MutationCache, Is.Empty);
         }
 
+        [Test]
+        public void GetCachedChangesPreview_PrunesNoOpEntries()
+        {
+            string bgDir = Path.Combine(tempRoot, "background", "testbg");
+            Directory.CreateDirectory(bgDir);
+
+            string designIniPath = Path.Combine(bgDir, "design.ini");
+            File.WriteAllLines(designIniPath, new[]
+            {
+                "[Overlays]",
+                "def=overlay_same.png"
+            });
+
+            SaveFile.Data.DreddBackgroundOverlayOverride.MutationCache.Add(new DreddOverlayMutationRecord
+            {
+                DesignIniPath = designIniPath,
+                PositionKey = "def",
+                FileExisted = true,
+                OverlaysSectionExisted = true,
+                EntryExisted = true,
+                OriginalValue = "overlay_same.png"
+            });
+            SaveFile.Save();
+
+            var previews = DreddBackgroundOverlayOverrideService.GetCachedChangesPreview();
+
+            Assert.That(previews, Is.Empty);
+            Assert.That(SaveFile.Data.DreddBackgroundOverlayOverride.MutationCache, Is.Empty);
+        }
+
+        [Test]
+        public void TryKeepSingleChange_RemovesPendingRecordWithoutModifyingFile()
+        {
+            string bgDir = Path.Combine(tempRoot, "background", "testbg");
+            Directory.CreateDirectory(bgDir);
+
+            string designIniPath = Path.Combine(bgDir, "design.ini");
+            File.WriteAllLines(designIniPath, new[]
+            {
+                "[Overlays]",
+                "def=overlay_new.png"
+            });
+
+            SaveFile.Data.DreddBackgroundOverlayOverride.MutationCache.Add(new DreddOverlayMutationRecord
+            {
+                DesignIniPath = designIniPath,
+                PositionKey = "def",
+                FileExisted = true,
+                OverlaysSectionExisted = true,
+                EntryExisted = true,
+                OriginalValue = "overlay_old.png"
+            });
+            SaveFile.Save();
+
+            bool success = DreddBackgroundOverlayOverrideService.TryKeepSingleChange(designIniPath, "def", out string _);
+
+            Assert.That(success, Is.True);
+            string[] lines = File.ReadAllLines(designIniPath);
+            Assert.That(lines.Any(line => line.Trim().Equals("def=overlay_new.png", StringComparison.OrdinalIgnoreCase)), Is.True);
+            Assert.That(SaveFile.Data.DreddBackgroundOverlayOverride.MutationCache, Is.Empty);
+        }
+
         private static SaveData CloneSaveData(SaveData source)
         {
             string json = JsonSerializer.Serialize(source);

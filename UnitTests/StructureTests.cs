@@ -215,5 +215,60 @@ namespace UnitTests
             // Should return null
             Assert.That(background, Is.Null, "Non-existent background path should return null");
         }
+
+        [Test]
+        public void Test_Background_FromBGPath_ResolvesDotSegmentPath()
+        {
+            string customDir = Path.Combine(_tempDir, "background", "custom");
+            Directory.CreateDirectory(customDir);
+
+            var background = Background.FromBGPath("custom/../testbg");
+
+            Assert.That(background, Is.Not.Null);
+            Assert.That(background!.Name, Is.EqualTo("testbg"));
+            Assert.That(background.bgImages.Count, Is.GreaterThan(0));
+        }
+
+        [Test]
+        public void Test_Background_GetPossiblePositions_UsesDesignIniPositionsWhenPresent()
+        {
+            string testBgDir = Path.Combine(_tempDir, "background", "testbg");
+            File.WriteAllText(Path.Combine(testBgDir, "design.ini"), "positions=def,custom:123,hld");
+            CreateEmptyFile(Path.Combine(testBgDir, "custom.png"));
+            CreateEmptyFile(Path.Combine(testBgDir, "hld.png"));
+            Background.RefreshCache();
+
+            var background = Background.FromBGPath("testbg");
+            Assert.That(background, Is.Not.Null);
+
+            var positions = background!.GetPossiblePositions();
+
+            Assert.That(positions.Keys, Has.Count.EqualTo(3));
+            Assert.That(positions.ContainsKey("def"), Is.True);
+            Assert.That(positions.ContainsKey("custom:123"), Is.True);
+            Assert.That(positions.ContainsKey("hld"), Is.True);
+            Assert.That(positions.ContainsKey("wit"), Is.False);
+        }
+
+        [Test]
+        public void Test_Background_GetPossiblePositions_FallsBackToImagesWhenDesignIniMissing()
+        {
+            string testBgDir = Path.Combine(_tempDir, "background", "testbg");
+            string designPath = Path.Combine(testBgDir, "design.ini");
+            if (File.Exists(designPath))
+            {
+                File.Delete(designPath);
+            }
+            Background.RefreshCache();
+
+            var background = Background.FromBGPath("testbg");
+            Assert.That(background, Is.Not.Null);
+
+            var positions = background!.GetPossiblePositions();
+
+            Assert.That(positions.ContainsKey("def"), Is.True);
+            Assert.That(positions.ContainsKey("wit"), Is.True);
+            Assert.That(positions.ContainsKey("pro"), Is.True);
+        }
     }
 }

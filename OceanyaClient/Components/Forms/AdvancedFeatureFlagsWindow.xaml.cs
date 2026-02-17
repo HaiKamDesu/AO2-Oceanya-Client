@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 
 namespace OceanyaClient
 {
@@ -30,17 +31,33 @@ namespace OceanyaClient
                 rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
                 rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
+                StackPanel textPanel = new StackPanel
+                {
+                    Orientation = Orientation.Vertical
+                };
+
                 CheckBox checkBox = new CheckBox
                 {
                     Content = definition.DisplayName,
                     Foreground = System.Windows.Media.Brushes.White,
                     IsChecked = SaveFile.Data.AdvancedFeatures.IsEnabled(definition.FeatureId),
                     VerticalAlignment = VerticalAlignment.Center,
+                    FontSize = 13,
                     ToolTip = definition.FeatureId
                 };
+                textPanel.Children.Add(checkBox);
+                textPanel.Children.Add(new TextBlock
+                {
+                    Text = definition.Description,
+                    Foreground = System.Windows.Media.Brushes.Gainsboro,
+                    FontSize = 11,
+                    TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(22, 2, 0, 0)
+                });
+
                 featureCheckBoxes[definition.FeatureId] = checkBox;
-                Grid.SetColumn(checkBox, 0);
-                rowGrid.Children.Add(checkBox);
+                Grid.SetColumn(textPanel, 0);
+                rowGrid.Children.Add(textPanel);
 
                 Button configButton = new Button
                 {
@@ -48,7 +65,8 @@ namespace OceanyaClient
                     Width = 90,
                     Height = 26,
                     Margin = new Thickness(8, 0, 0, 0),
-                    IsEnabled = definition.SupportsConfiguration
+                    IsEnabled = definition.SupportsConfiguration,
+                    Style = (Style)FindResource("ModernButton")
                 };
                 configButton.Click += (_, _) => OpenFeatureConfiguration(definition.FeatureId);
                 Grid.SetColumn(configButton, 1);
@@ -85,6 +103,19 @@ namespace OceanyaClient
         private void CancelButton_Click(object sender, RoutedEventArgs e)
         {
             DialogResult = false;
+            Close();
+        }
+
+        private void DragWindow(object sender, MouseButtonEventArgs e)
+        {
+            if (e.LeftButton == MouseButtonState.Pressed)
+            {
+                DragMove();
+            }
+        }
+
+        private void CloseButton_Click(object sender, RoutedEventArgs e)
+        {
             Close();
         }
     }

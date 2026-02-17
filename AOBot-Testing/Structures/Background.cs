@@ -42,6 +42,23 @@ namespace AOBot_Testing.Structures
                 return cachedBackground.Clone();
             }
 
+            if (TryResolveBackgroundDirectory(curBG, out string backgroundDirectory))
+            {
+                Background resolvedBackground = CreateBackgroundFromDirectory(backgroundDirectory);
+                if (!string.IsNullOrWhiteSpace(curBG))
+                {
+                    backgroundsByName[curBG] = resolvedBackground;
+                }
+
+                if (!string.IsNullOrWhiteSpace(resolvedBackground.Name)
+                    && !backgroundsByName.ContainsKey(resolvedBackground.Name))
+                {
+                    backgroundsByName[resolvedBackground.Name] = resolvedBackground;
+                }
+
+                return resolvedBackground.Clone();
+            }
+
             return null;
         }
 
@@ -91,20 +108,125 @@ namespace AOBot_Testing.Structures
 
         public Dictionary<string, string> GetPossiblePositions()
         {
-            // Step 1: Iterate over bgImages  
-            return bgImages.GroupBy(f =>
+            Dictionary<string, string> imageByName = bgImages
+                .GroupBy(file => Path.GetFileNameWithoutExtension(file), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+
+            string designIniPath = Path.Combine(PathToFile, "design.ini");
+            if (File.Exists(designIniPath))
             {
-                // Step 2: Get the file name without extension and convert to lower case  
-                var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(f).ToLower();
+                Dictionary<string, string> positionsFromDesign = ParsePositionsFromDesignIni(designIniPath, imageByName);
+                if (positionsFromDesign.Count > 0)
+                {
+                    return positionsFromDesign;
+                }
+            }
 
-                // Step 3: Check if the file name is in the posToBGName dictionary  
-                var posKey = posToBGName.FirstOrDefault(p => fileNameWithoutExtension == p.Value).Key;
+            return bgImages.GroupBy(f =>
+                {
+                    string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(f).ToLowerInvariant();
+                    string? posKey = posToBGName.FirstOrDefault(p => fileNameWithoutExtension == p.Value).Key;
+                    return posKey ?? fileNameWithoutExtension;
+                })
+                .Where(group => group.Count() == 1)
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        }
 
-                // Step 4: If the key is found, return the key, otherwise return the file name  
-                return posKey ?? fileNameWithoutExtension;
-            })
-            .Where(g => g.Count() == 1) // Ignore repeated key values  
-            .ToDictionary(g => g.Key, g => g.First());
+        private static Dictionary<string, string> ParsePositionsFromDesignIni(
+            string designIniPath,
+            Dictionary<string, string> imageByName)
+        {
+            List<string> lines = File.ReadAllLines(designIniPath).ToList();
+            bool inGlobalScope = true;
+            string positionsRaw = string.Empty;
+
+            foreach (string rawLine in lines)
+            {
+                string line = rawLine.Trim();
+                if (string.IsNullOrWhiteSpace(line) || line.StartsWith(";") || line.StartsWith("#"))
+                {
+                    continue;
+                }
+
+                if (line.StartsWith("[") && line.EndsWith("]"))
+                {
+                    inGlobalScope = false;
+                    continue;
+                }
+
+                if (!inGlobalScope)
+                {
+                    continue;
+                }
+
+                int separator = line.IndexOf('=');
+                if (separator <= 0)
+                {
+                    continue;
+                }
+
+                string key = line.Substring(0, separator).Trim();
+                if (!string.Equals(key, "positions", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                positionsRaw = line.Substring(separator + 1).Trim();
+            }
+
+            Dictionary<string, string> result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(positionsRaw))
+            {
+                return result;
+            }
+
+            string[] configuredPositions = positionsRaw.Split(',', StringSplitOptions.RemoveEmptyEntries);
+            foreach (string configuredPositionRaw in configuredPositions)
+            {
+                string configuredPosition = configuredPositionRaw.Trim();
+                if (string.IsNullOrWhiteSpace(configuredPosition))
+                {
+                    continue;
+                }
+
+                string realPosition = configuredPosition.Split(':')[0].Trim();
+                if (string.IsNullOrWhiteSpace(realPosition))
+                {
+                    continue;
+                }
+
+                if (TryResolvePositionImage(realPosition, imageByName, out string imagePath))
+                {
+                    result[configuredPosition] = imagePath;
+                }
+            }
+
+            return result;
+        }
+
+        private static bool TryResolvePositionImage(
+            string position,
+            Dictionary<string, string> imageByName,
+            out string imagePath)
+        {
+            if (imageByName.TryGetValue(position, out string? directImagePath)
+                && !string.IsNullOrWhiteSpace(directImagePath))
+            {
+                imagePath = directImagePath;
+                return true;
+            }
+
+            if (posToBGName.TryGetValue(position, out string? mappedImageName)
+                && !string.IsNullOrWhiteSpace(mappedImageName)
+                && imageByName.TryGetValue(mappedImageName, out string? mappedImagePath)
+                && !string.IsNullOrWhiteSpace(mappedImagePath))
+            {
+                imagePath = mappedImagePath;
+                return true;
+            }
+
+            imagePath = string.Empty;
+            return false;
         }
 
         private static void EnsureCacheLoaded()
@@ -195,6 +317,56 @@ namespace AOBot_Testing.Structures
 
             newBackground.bgImages = bgFilesFiltered;
             return newBackground;
+        }
+
+        private static bool TryResolveBackgroundDirectory(string currentBackgroundValue, out string backgroundDirectory)
+        {
+            backgroundDirectory = string.Empty;
+            string raw = currentBackgroundValue?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return false;
+            }
+
+            string normalizedRaw = raw.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar);
+            string backgroundRelative = normalizedRaw;
+            string backgroundPrefix = $"background{Path.DirectorySeparatorChar}";
+            if (backgroundRelative.StartsWith(backgroundPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                backgroundRelative = backgroundRelative.Substring(backgroundPrefix.Length);
+            }
+
+            List<string> candidates = new List<string>();
+            if (Path.IsPathRooted(backgroundRelative))
+            {
+                candidates.Add(backgroundRelative);
+            }
+            else
+            {
+                foreach (string baseFolder in Globals.BaseFolders)
+                {
+                    candidates.Add(Path.Combine(baseFolder, "background", backgroundRelative));
+                }
+            }
+
+            foreach (string candidate in candidates)
+            {
+                try
+                {
+                    string fullCandidate = Path.GetFullPath(candidate);
+                    if (Directory.Exists(fullCandidate))
+                    {
+                        backgroundDirectory = fullCandidate;
+                        return true;
+                    }
+                }
+                catch
+                {
+                    // Ignore malformed paths and continue.
+                }
+            }
+
+            return false;
         }
 
         private static void SaveToJson(string filePath, List<Background> backgrounds)

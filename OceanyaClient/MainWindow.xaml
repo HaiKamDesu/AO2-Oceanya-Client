@@ -83,6 +83,39 @@
         <Storyboard x:Key="FadeOut">
             <DoubleAnimation Storyboard.TargetProperty="Opacity" From="1" To="0" Duration="0:0:0.3"/>
         </Storyboard>
+
+        <Style x:Key="DreddRowButtonStyle" TargetType="{x:Type Button}" BasedOn="{StaticResource ModernButton}">
+            <Setter Property="Height" Value="22"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="Padding" Value="8,2"/>
+            <Setter Property="Background" Value="#FF1F1F1F"/>
+            <Setter Property="BorderBrush" Value="#FF4A4A4A"/>
+        </Style>
+
+        <Style x:Key="DreddRowCheckBoxStyle" TargetType="{x:Type CheckBox}">
+            <Setter Property="Foreground" Value="#FFE5E5E5"/>
+            <Setter Property="FontFamily" Value="Arial"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Padding" Value="0"/>
+        </Style>
+
+        <Style x:Key="DreddRowListItemStyle" TargetType="{x:Type ListBoxItem}">
+            <Setter Property="Foreground" Value="#FFE8E8E8"/>
+            <Setter Property="Background" Value="#FF1E1E1E"/>
+            <Setter Property="Padding" Value="6,3"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#FF2D3C4A"/>
+                </Trigger>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="#FF36506A"/>
+                    <Setter Property="Foreground" Value="White"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
     </Window.Resources>
 
     <!-- Optional fade-in trigger (remove if not desired) -->
@@ -331,59 +364,87 @@
                 <components:ICMessageSettings x:Name="ICMessageSettingsControl" Canvas.Top="343" 
                                               Width="509" Height="260" HorizontalAlignment="Center" VerticalAlignment="Center"/>
 
-                <Rectangle x:Name="FeatureRowBackground" Height="30" Canvas.Top="603" Width="509" Fill="#FF303236" Visibility="Collapsed"/>
+                <Rectangle x:Name="FeatureRowBackground" Height="30" Canvas.Top="603" Width="509" Fill="#FF1B1C1F" Visibility="Collapsed"/>
                 <TextBlock x:Name="DreddFeatureLabel"
-                           Text="Dredd's Background Overlay Override"
+                           Text="Dredd's Background&#x0a;Overlay Override"
                            Canvas.Left="8"
-                           Canvas.Top="610"
-                           Width="152"
-                           TextTrimming="CharacterEllipsis"
+                           Canvas.Top="606"
+                           Width="108"
+                           TextWrapping="Wrap"
                            ToolTip="Dredd's Background Overlay Override"
-                           Foreground="White"
-                           FontSize="9"
+                           Foreground="#FFE8E8E8"
+                           FontSize="8.5"
                            VerticalAlignment="Center"
                            Visibility="Collapsed"/>
-                <ComboBox x:Name="DreddOverlayComboBox"
-                          Canvas.Left="165"
-                          Canvas.Top="607"
-                          Width="120"
-                          Height="22"
-                          SelectionChanged="DreddOverlayComboBox_SelectionChanged"
-                          Visibility="Collapsed"/>
+                <Grid x:Name="DreddOverlaySelector"
+                      Canvas.Left="120"
+                      Canvas.Top="607"
+                      Width="170"
+                      Height="22"
+                      Visibility="Collapsed">
+                    <Border Background="#FF1E1E1E" BorderBrush="#FF4A4A4A" BorderThickness="1" CornerRadius="2"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="20"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="DreddOverlaySelectedText"
+                                   Grid.Column="0"
+                                   Margin="6,0,2,0"
+                                   VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis"
+                                   Foreground="#FFE8E8E8"
+                                   FontSize="10"/>
+                        <Button x:Name="DreddOverlayDropButton"
+                                Grid.Column="1"
+                                Background="#00000000"
+                                BorderThickness="0"
+                                Foreground="#FFE8E8E8"
+                                FontSize="10"
+                                Content="▼"
+                                Click="DreddOverlayDropButton_Click"/>
+                    </Grid>
+                </Grid>
+                <Popup x:Name="DreddOverlayPopup"
+                       PlacementTarget="{Binding ElementName=DreddOverlaySelector}"
+                       Placement="Bottom"
+                       StaysOpen="False"
+                       AllowsTransparency="True">
+                    <Border Width="260" MaxHeight="220" Background="#FF1E1E1E" BorderBrush="#FF4A4A4A" BorderThickness="1" CornerRadius="2">
+                        <ListBox x:Name="DreddOverlayListBox"
+                                 Background="#FF1E1E1E"
+                                 BorderThickness="0"
+                                 Foreground="#FFE8E8E8"
+                                 FontSize="10"
+                                 SelectionChanged="DreddOverlayListBox_SelectionChanged"
+                                 ItemContainerStyle="{StaticResource DreddRowListItemStyle}"/>
+                    </Border>
+                </Popup>
                 <CheckBox x:Name="DreddStickyOverlayCheckBox"
                           Content="Sticky overlay"
-                          Canvas.Left="289"
-                          Canvas.Top="611"
-                          Foreground="White"
-                          FontFamily="Arial"
-                          FontSize="10"
+                          Canvas.Left="294"
+                          Canvas.Top="609"
+                          Style="{StaticResource DreddRowCheckBoxStyle}"
                           Checked="DreddStickyOverlayCheckBox_Checked"
                           Unchecked="DreddStickyOverlayCheckBox_Checked"
                           Visibility="Collapsed"/>
                 <Button x:Name="DreddOverlayConfigButton"
                         Content="Config"
-                        Canvas.Left="374"
+                        Canvas.Left="376"
                         Canvas.Top="607"
                         Width="40"
                         Height="22"
+                        Style="{StaticResource DreddRowButtonStyle}"
                         Click="DreddOverlayConfigButton_Click"
                         Visibility="Collapsed"/>
                 <Button x:Name="DreddViewChangesButton"
-                        Content="View"
-                        Canvas.Left="416"
+                        Content="View Changes"
+                        Canvas.Left="418"
                         Canvas.Top="607"
-                        Width="36"
+                        Width="87"
                         Height="22"
+                        Style="{StaticResource DreddRowButtonStyle}"
                         Click="DreddViewChangesButton_Click"
-                        Visibility="Collapsed"/>
-                <Button x:Name="DreddDiscardChangesButton"
-                        Content="Discard"
-                        Canvas.Left="454"
-                        Canvas.Top="607"
-                        Width="51"
-                        Height="22"
-                        FontSize="8"
-                        Click="DreddDiscardChangesButton_Click"
                         Visibility="Collapsed"/>
 
                 <Rectangle x:Name="BottomStatusBar" Height="24" Canvas.Top="603" Width="509" Fill="#FF36393F" HorizontalAlignment="Center" VerticalAlignment="Center"/>

@@ -19,6 +19,13 @@ namespace OceanyaClient.AdvancedFeatures
             public string Status { get; set; } = string.Empty;
         }
 
+        private sealed class RecordState
+        {
+            public bool EntryExists { get; set; }
+            public string EntryValue { get; set; } = string.Empty;
+            public string Status { get; set; } = "Modified";
+        }
+
         public static bool TryApplyOverlay(AOClient client, DreddOverlayEntry overlay, out string error)
         {
             error = string.Empty;
@@ -69,10 +76,192 @@ namespace OceanyaClient.AdvancedFeatures
             }
         }
 
+        public static bool TryGetOverlayContext(
+            AOClient client,
+            out string designIniPath,
+            out string positionKey,
+            out string backgroundDirectory,
+            out string error)
+        {
+            designIniPath = string.Empty;
+            positionKey = string.Empty;
+            backgroundDirectory = string.Empty;
+            error = string.Empty;
+
+            if (client == null)
+            {
+                error = "No client is currently selected.";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(client.curBG))
+            {
+                error = "Current background is unknown.";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(client.curPos))
+            {
+                error = "Current position is unknown.";
+                return false;
+            }
+
+            if (!TryResolveBackgroundDirectory(client.curBG, out backgroundDirectory))
+            {
+                error = $"Could not resolve background path for '{client.curBG}'.";
+                return false;
+            }
+
+            designIniPath = Path.Combine(backgroundDirectory, "design.ini");
+            positionKey = client.curPos.Trim();
+            return true;
+        }
+
+        public static bool TryGetCurrentOverlayValue(
+            AOClient client,
+            out bool hasEntry,
+            out string overlayValue,
+            out string designIniPath,
+            out string positionKey,
+            out string backgroundDirectory,
+            out string error)
+        {
+            hasEntry = false;
+            overlayValue = string.Empty;
+            designIniPath = string.Empty;
+            positionKey = string.Empty;
+            backgroundDirectory = string.Empty;
+            error = string.Empty;
+
+            if (!TryGetOverlayContext(client, out designIniPath, out positionKey, out backgroundDirectory, out error))
+            {
+                return false;
+            }
+
+            if (!TryGetOverlayValueFromDesignIni(designIniPath, positionKey, out overlayValue))
+            {
+                hasEntry = false;
+                overlayValue = string.Empty;
+                return true;
+            }
+
+            hasEntry = true;
+            return true;
+        }
+
+        public static bool TryGetOriginalOverlayValue(
+            string designIniPath,
+            string positionKey,
+            bool currentHasEntry,
+            string currentValue,
+            out bool hasOriginalEntry,
+            out string originalValue)
+        {
+            DreddOverlayMutationRecord? record = SaveFile.Data.DreddBackgroundOverlayOverride.MutationCache.FirstOrDefault(item =>
+                string.Equals(item.DesignIniPath, designIniPath, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(item.PositionKey, positionKey, StringComparison.OrdinalIgnoreCase));
+
+            if (record == null)
+            {
+                hasOriginalEntry = currentHasEntry;
+                originalValue = currentValue;
+                return true;
+            }
+
+            hasOriginalEntry = record.EntryExisted;
+            originalValue = record.OriginalValue ?? string.Empty;
+            return true;
+        }
+
+        public static bool OverlayReferencesMatch(
+            string designIniPath,
+            string backgroundDirectory,
+            string leftReference,
+            string rightReference)
+        {
+            string left = leftReference?.Trim() ?? string.Empty;
+            string right = rightReference?.Trim() ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
+            {
+                return false;
+            }
+
+            if (string.Equals(left, right, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            bool leftResolved = TryResolveOverlayPath(left, designIniPath, backgroundDirectory, out string leftAbsolute);
+            bool rightResolved = TryResolveOverlayPath(right, designIniPath, backgroundDirectory, out string rightAbsolute);
+            if (leftResolved && rightResolved)
+            {
+                return string.Equals(leftAbsolute, rightAbsolute, StringComparison.OrdinalIgnoreCase);
+            }
+
+            string normalizedLeft = NormalizeOverlayPathForDesignIni(left, designIniPath, backgroundDirectory);
+            string normalizedRight = NormalizeOverlayPathForDesignIni(right, designIniPath, backgroundDirectory);
+            return string.Equals(normalizedLeft, normalizedRight, StringComparison.OrdinalIgnoreCase);
+        }
+
+        public static bool TryResolveOverlayPathToAbsolute(
+            string overlayReference,
+            string designIniPath,
+            string backgroundDirectory,
+            out string absolutePath)
+        {
+            return TryResolveOverlayPath(overlayReference, designIniPath, backgroundDirectory, out absolutePath);
+        }
+
+        public static bool TryClearOverlay(AOClient client, out string error)
+        {
+            error = string.Empty;
+
+            if (client == null)
+            {
+                error = "No client is currently selected.";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(client.curBG))
+            {
+                error = "Current background is unknown.";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(client.curPos))
+            {
+                error = "Current position is unknown.";
+                return false;
+            }
+
+            if (!TryResolveBackgroundDirectory(client.curBG, out string backgroundDirectory))
+            {
+                error = $"Could not resolve background path for '{client.curBG}'.";
+                return false;
+            }
+
+            string designIniPath = Path.Combine(backgroundDirectory, "design.ini");
+            string positionKey = client.curPos.Trim();
+
+            try
+            {
+                RemoveOverlayEntryFromDesignIni(designIniPath, positionKey);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Error("Failed to clear Dredd overlay override.", ex);
+                error = ex.Message;
+                return false;
+            }
+        }
+
         public static bool TryDiscardAllChanges(out string message)
         {
             message = string.Empty;
             DreddBackgroundOverlayOverrideConfig config = SaveFile.Data.DreddBackgroundOverlayOverride;
+            PruneNoOpMutations(config);
             if (config.MutationCache.Count == 0)
             {
                 message = "No modified backgrounds were found in cache.";
@@ -108,51 +297,98 @@ namespace OceanyaClient.AdvancedFeatures
 
         public static List<DreddOverlayChangePreview> GetCachedChangesPreview()
         {
-            List<DreddOverlayChangePreview> previews = new List<DreddOverlayChangePreview>();
-            foreach (DreddOverlayMutationRecord record in SaveFile.Data.DreddBackgroundOverlayOverride.MutationCache)
-            {
-                string status = "Modified";
-                string currentValue = string.Empty;
+            DreddBackgroundOverlayOverrideConfig config = SaveFile.Data.DreddBackgroundOverlayOverride;
+            bool pruned = PruneNoOpMutations(config);
 
-                try
-                {
-                    if (!File.Exists(record.DesignIniPath))
-                    {
-                        status = "Missing design.ini";
-                    }
-                    else
-                    {
-                        List<string> lines = File.ReadAllLines(record.DesignIniPath).ToList();
-                        if (!TryFindSection(lines, "Overlays", out int sectionHeaderIndex, out int sectionEndExclusive))
-                        {
-                            status = "Missing [Overlays]";
-                        }
-                        else if (TryFindKeyInSection(lines, sectionHeaderIndex, sectionEndExclusive, record.PositionKey, out _, out string value))
-                        {
-                            currentValue = value;
-                        }
-                        else
-                        {
-                            status = "Entry removed";
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    status = $"Read error: {ex.Message}";
-                }
+            List<DreddOverlayChangePreview> previews = new List<DreddOverlayChangePreview>();
+            foreach (DreddOverlayMutationRecord record in config.MutationCache)
+            {
+                RecordState state = ReadRecordState(record);
 
                 previews.Add(new DreddOverlayChangePreview
                 {
                     DesignIniPath = record.DesignIniPath,
                     PositionKey = record.PositionKey,
                     OriginalValue = record.EntryExisted ? record.OriginalValue : "<missing>",
-                    CurrentValue = string.IsNullOrWhiteSpace(currentValue) ? "<missing>" : currentValue,
-                    Status = status
+                    CurrentValue = state.EntryExists
+                        ? (string.IsNullOrWhiteSpace(state.EntryValue) ? "<empty>" : state.EntryValue)
+                        : "<missing>",
+                    Status = state.Status
                 });
             }
 
+            if (pruned)
+            {
+                SaveFile.Save();
+            }
+
             return previews;
+        }
+
+        public static bool TryDiscardSingleChange(string designIniPath, string positionKey, out string message)
+        {
+            message = string.Empty;
+            DreddBackgroundOverlayOverrideConfig config = SaveFile.Data.DreddBackgroundOverlayOverride;
+            DreddOverlayMutationRecord? record = config.MutationCache.FirstOrDefault(item =>
+                string.Equals(item.DesignIniPath, designIniPath, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(item.PositionKey, positionKey, StringComparison.OrdinalIgnoreCase));
+
+            if (record == null)
+            {
+                message = "The selected change is no longer pending.";
+                return true;
+            }
+
+            try
+            {
+                RestoreMutation(record);
+                config.MutationCache.Remove(record);
+                SaveFile.Save();
+                message = "Change discarded.";
+                return true;
+            }
+            catch (Exception ex)
+            {
+                message = ex.Message;
+                return false;
+            }
+        }
+
+        public static bool TryKeepSingleChange(string designIniPath, string positionKey, out string message)
+        {
+            message = string.Empty;
+            DreddBackgroundOverlayOverrideConfig config = SaveFile.Data.DreddBackgroundOverlayOverride;
+            DreddOverlayMutationRecord? record = config.MutationCache.FirstOrDefault(item =>
+                string.Equals(item.DesignIniPath, designIniPath, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(item.PositionKey, positionKey, StringComparison.OrdinalIgnoreCase));
+
+            if (record == null)
+            {
+                message = "The selected change is no longer pending.";
+                return true;
+            }
+
+            config.MutationCache.Remove(record);
+            SaveFile.Save();
+            message = "Change kept as-is and removed from pending changes.";
+            return true;
+        }
+
+        public static bool TryKeepAllChanges(out string message)
+        {
+            message = string.Empty;
+            DreddBackgroundOverlayOverrideConfig config = SaveFile.Data.DreddBackgroundOverlayOverride;
+            PruneNoOpMutations(config);
+            if (config.MutationCache.Count == 0)
+            {
+                message = "No pending changes to apply.";
+                return true;
+            }
+
+            config.MutationCache.Clear();
+            SaveFile.Save();
+            message = "All pending changes were applied and are now the new baseline.";
+            return true;
         }
 
         private static void ApplyOverlayToDesignIni(
@@ -173,6 +409,44 @@ namespace OceanyaClient.AdvancedFeatures
 
             string overlayDesignValue = ResolveOverlayValueForDesignIni(overlayInputPath, fullDesignIniPath, backgroundDirectory);
             SetKeyInSection(lines, "Overlays", positionKey, overlayDesignValue);
+
+            Directory.CreateDirectory(Path.GetDirectoryName(fullDesignIniPath) ?? string.Empty);
+            File.WriteAllLines(fullDesignIniPath, lines);
+        }
+
+        private static void RemoveOverlayEntryFromDesignIni(string designIniPath, string positionKey)
+        {
+            string fullDesignIniPath = Path.GetFullPath(designIniPath);
+            bool fileExisted = File.Exists(fullDesignIniPath);
+            List<string> lines = fileExisted ? File.ReadAllLines(fullDesignIniPath).ToList() : new List<string>();
+
+            bool hadOverlaysSection = TryFindSection(lines, "Overlays", out int sectionHeaderIndex, out int sectionEndExclusive);
+            string originalValue = string.Empty;
+            bool hadPositionEntry = hadOverlaysSection && TryFindKeyInSection(lines, sectionHeaderIndex, sectionEndExclusive, positionKey, out _, out originalValue);
+
+            CacheOriginalState(fullDesignIniPath, positionKey, fileExisted, hadOverlaysSection, hadPositionEntry, originalValue);
+
+            if (!hadOverlaysSection)
+            {
+                return;
+            }
+
+            RemoveKeyInSection(lines, sectionHeaderIndex, sectionEndExclusive, positionKey);
+            if (TryFindSection(lines, "Overlays", out int refreshedHeader, out int refreshedEnd)
+                && !SectionContainsAnyKeys(lines, refreshedHeader, refreshedEnd))
+            {
+                RemoveSection(lines, refreshedHeader, refreshedEnd);
+            }
+
+            if (!fileExisted && IsEffectivelyEmpty(lines))
+            {
+                if (File.Exists(fullDesignIniPath))
+                {
+                    File.Delete(fullDesignIniPath);
+                }
+
+                return;
+            }
 
             Directory.CreateDirectory(Path.GetDirectoryName(fullDesignIniPath) ?? string.Empty);
             File.WriteAllLines(fullDesignIniPath, lines);
@@ -269,6 +543,65 @@ namespace OceanyaClient.AdvancedFeatures
             });
 
             SaveFile.Save();
+        }
+
+        private static bool PruneNoOpMutations(DreddBackgroundOverlayOverrideConfig config)
+        {
+            bool changed = false;
+            List<DreddOverlayMutationRecord> copy = config.MutationCache.ToList();
+            foreach (DreddOverlayMutationRecord record in copy)
+            {
+                RecordState state = ReadRecordState(record);
+                bool isNoOp = record.EntryExisted
+                    ? (state.EntryExists && string.Equals(state.EntryValue, record.OriginalValue, StringComparison.Ordinal))
+                    : !state.EntryExists;
+
+                if (!isNoOp)
+                {
+                    continue;
+                }
+
+                config.MutationCache.Remove(record);
+                changed = true;
+            }
+
+            return changed;
+        }
+
+        private static RecordState ReadRecordState(DreddOverlayMutationRecord record)
+        {
+            RecordState state = new RecordState();
+            try
+            {
+                if (!File.Exists(record.DesignIniPath))
+                {
+                    state.Status = "Missing design.ini";
+                    return state;
+                }
+
+                List<string> lines = File.ReadAllLines(record.DesignIniPath).ToList();
+                if (!TryFindSection(lines, "Overlays", out int sectionHeaderIndex, out int sectionEndExclusive))
+                {
+                    state.Status = "Missing [Overlays]";
+                    return state;
+                }
+
+                if (TryFindKeyInSection(lines, sectionHeaderIndex, sectionEndExclusive, record.PositionKey, out _, out string value))
+                {
+                    state.EntryExists = true;
+                    state.EntryValue = value;
+                    state.Status = "Modified";
+                    return state;
+                }
+
+                state.Status = "Entry removed";
+                return state;
+            }
+            catch (Exception ex)
+            {
+                state.Status = $"Read error: {ex.Message}";
+                return state;
+            }
         }
 
         private static string GetRelativeOverlayPath(string designIniPath, string overlayAbsolutePath)
@@ -484,6 +817,29 @@ namespace OceanyaClient.AdvancedFeatures
             }
 
             return false;
+        }
+
+        private static bool TryGetOverlayValueFromDesignIni(string designIniPath, string positionKey, out string overlayValue)
+        {
+            overlayValue = string.Empty;
+            if (!File.Exists(designIniPath))
+            {
+                return false;
+            }
+
+            List<string> lines = File.ReadAllLines(designIniPath).ToList();
+            if (!TryFindSection(lines, "Overlays", out int sectionHeaderIndex, out int sectionEndExclusive))
+            {
+                return false;
+            }
+
+            if (!TryFindKeyInSection(lines, sectionHeaderIndex, sectionEndExclusive, positionKey, out _, out string value))
+            {
+                return false;
+            }
+
+            overlayValue = value;
+            return true;
         }
 
         private static void SetKeyInSection(List<string> lines, string sectionName, string key, string value)
