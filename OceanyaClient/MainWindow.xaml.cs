@@ -40,6 +40,20 @@ namespace OceanyaClient
         private bool isLoadingDreddOverlaySelection;
         private bool isDreddFeatureEnabled;
         private const string DreddNoneOverlayName = "none";
+        private static readonly Key[] KonamiCodeSequence = new[]
+        {
+            Key.Up,
+            Key.Up,
+            Key.Down,
+            Key.Down,
+            Key.Left,
+            Key.Right,
+            Key.Left,
+            Key.Right,
+            Key.B,
+            Key.A
+        };
+        private int konamiProgress;
         private string lastDreddOverlayContextKey = string.Empty;
         private string lastUnknownOverlayPromptKey = string.Empty;
 
@@ -1964,6 +1978,8 @@ namespace OceanyaClient
 
         protected override void OnPreviewKeyDown(KeyEventArgs e)
         {
+            HandleKonamiCode(e);
+
             // When RightAlt is pressed, mark AltGr as active.
             if (e.Key == Key.RightAlt)
             {
@@ -2033,6 +2049,41 @@ namespace OceanyaClient
             }
 
             base.OnPreviewKeyDown(e);
+        }
+
+        private void HandleKonamiCode(KeyEventArgs e)
+        {
+            if (e.IsRepeat)
+            {
+                return;
+            }
+
+            Key key = e.Key == Key.System ? e.SystemKey : e.Key;
+            Key expectedKey = KonamiCodeSequence[konamiProgress];
+
+            if (key == expectedKey)
+            {
+                konamiProgress++;
+                if (konamiProgress >= KonamiCodeSequence.Length)
+                {
+                    konamiProgress = 0;
+                    OpenDoomWindow();
+                }
+
+                return;
+            }
+
+            konamiProgress = key == KonamiCodeSequence[0] ? 1 : 0;
+        }
+
+        private void OpenDoomWindow()
+        {
+            DoomWindow doomWindow = new DoomWindow
+            {
+                Owner = this
+            };
+            doomWindow.Show();
+            doomWindow.Activate();
         }
 
         protected override void OnPreviewKeyUp(KeyEventArgs e)
