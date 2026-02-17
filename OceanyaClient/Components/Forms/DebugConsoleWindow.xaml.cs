@@ -14,23 +14,22 @@ namespace OceanyaClient
 {
     public partial class DebugConsoleWindow : Window
     {
-        private static DebugConsoleWindow _instance;
+        private static DebugConsoleWindow? _instance;
         private static readonly object _instanceLock = new object();
-        private bool _isInitialized = false;
 
         // Use a concurrent queue to buffer messages during initialization
         private ConcurrentQueue<string> _pendingMessages = new ConcurrentQueue<string>();
 
         // Document objects
-        private FlowDocument _consoleDocument;
-        private Paragraph _currentParagraph;
+        private FlowDocument _consoleDocument = null!;
+        private Paragraph _currentParagraph = null!;
 
         // Buffer settings
         private const int MAX_DOCUMENT_LINES = 5000; // Adjust based on memory constraints
         private int _lineCount = 0;
 
         // Batch update control
-        private DispatcherTimer _updateTimer;
+        private DispatcherTimer? _updateTimer;
         private const int UPDATE_INTERVAL_MS = 100; // Adjust based on UI responsiveness needs
 
         public static void ShowWindow()
@@ -130,8 +129,6 @@ namespace OceanyaClient
                     ScrollToBottom();
                 }
 
-                _isInitialized = true;
-
                 // Process any messages that came in during initialization
                 ProcessPendingMessages();
             }
@@ -169,10 +166,13 @@ namespace OceanyaClient
             int batchSize = 100; // Process up to 100 messages per tick
             int processed = 0;
 
-            while (_pendingMessages.TryDequeue(out string message) && processed < batchSize)
+            while (_pendingMessages.TryDequeue(out string? message) && processed < batchSize)
             {
-                AddMessageToDocument(message);
-                processed++;
+                if (message != null)
+                {
+                    AddMessageToDocument(message);
+                    processed++;
+                }
             }
 
             // If we processed any messages and we're at the bottom, scroll down
@@ -232,7 +232,10 @@ namespace OceanyaClient
             {
                 for (int i = 0; i < removeCount; i++)
                 {
-                    _currentParagraph.Inlines.Remove(_currentParagraph.Inlines.FirstInline);
+                    if (_currentParagraph.Inlines.FirstInline != null)
+                    {
+                        _currentParagraph.Inlines.Remove(_currentParagraph.Inlines.FirstInline);
+                    }
                 }
 
                 _lineCount -= removeCount / 2; // Account for newlines in the count

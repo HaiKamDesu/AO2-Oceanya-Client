@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:components="clr-namespace:OceanyaClient.Components"
         Title="Oceanya Online"
-        Height="658" Width="510"
+        Height="690" Width="510"
         Icon="/Resources/OceanyaO.ico"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterScreen"
@@ -83,6 +83,39 @@
         <Storyboard x:Key="FadeOut">
             <DoubleAnimation Storyboard.TargetProperty="Opacity" From="1" To="0" Duration="0:0:0.3"/>
         </Storyboard>
+
+        <Style x:Key="DreddRowButtonStyle" TargetType="{x:Type Button}" BasedOn="{StaticResource ModernButton}">
+            <Setter Property="Height" Value="22"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="Padding" Value="8,2"/>
+            <Setter Property="Background" Value="#FF1F1F1F"/>
+            <Setter Property="BorderBrush" Value="#FF4A4A4A"/>
+        </Style>
+
+        <Style x:Key="DreddRowCheckBoxStyle" TargetType="{x:Type CheckBox}">
+            <Setter Property="Foreground" Value="#FFE5E5E5"/>
+            <Setter Property="FontFamily" Value="Arial"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Padding" Value="0"/>
+        </Style>
+
+        <Style x:Key="DreddRowListItemStyle" TargetType="{x:Type ListBoxItem}">
+            <Setter Property="Foreground" Value="#FFE8E8E8"/>
+            <Setter Property="Background" Value="#FF1E1E1E"/>
+            <Setter Property="Padding" Value="6,3"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#FF2D3C4A"/>
+                </Trigger>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="#FF36506A"/>
+                    <Setter Property="Foreground" Value="White"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
     </Window.Resources>
 
     <!-- Optional fade-in trigger (remove if not desired) -->
@@ -103,7 +136,7 @@
               replicate these rectangles. Otherwise, remove them.
             -->
             <Rectangle x:Name="imgScienceBlur" 
-                       HorizontalAlignment="Center" Width="527" Height="638" 
+                       HorizontalAlignment="Center" Width="527" Height="670" 
                        VerticalAlignment="Top" Margin="0,30,0,0">
                 <Rectangle.Fill>
                     <ImageBrush ImageSource="/Resources/scoienceblur.jpg" Opacity="0.5"/>
@@ -111,7 +144,7 @@
             </Rectangle>
 
             <Rectangle x:Name="imgScienceBlur_darken"
-                       HorizontalAlignment="Center" Width="527" Height="638" 
+                       HorizontalAlignment="Center" Width="527" Height="670" 
                        VerticalAlignment="Top" Margin="0,30,0,0" Fill="#7F000000"/>
 
             <Rectangle HorizontalAlignment="Center" Width="369" Height="276"
@@ -331,7 +364,90 @@
                 <components:ICMessageSettings x:Name="ICMessageSettingsControl" Canvas.Top="343" 
                                               Width="509" Height="260" HorizontalAlignment="Center" VerticalAlignment="Center"/>
 
-                <Rectangle Height="24" Canvas.Top="603" Width="509" Fill="#FF36393F" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                <Rectangle x:Name="FeatureRowBackground" Height="30" Canvas.Top="603" Width="509" Fill="#FF1B1C1F" Visibility="Collapsed"/>
+                <TextBlock x:Name="DreddFeatureLabel"
+                           Text="Dredd's Background&#x0a;Overlay Override"
+                           Canvas.Left="8"
+                           Canvas.Top="606"
+                           Width="108"
+                           TextWrapping="Wrap"
+                           ToolTip="Dredd's Background Overlay Override"
+                           Foreground="#FFE8E8E8"
+                           FontSize="8.5"
+                           VerticalAlignment="Center"
+                           Visibility="Collapsed"/>
+                <Grid x:Name="DreddOverlaySelector"
+                      Canvas.Left="120"
+                      Canvas.Top="607"
+                      Width="170"
+                      Height="22"
+                      Visibility="Collapsed">
+                    <Border Background="#FF1E1E1E" BorderBrush="#FF4A4A4A" BorderThickness="1" CornerRadius="2"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="20"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="DreddOverlaySelectedText"
+                                   Grid.Column="0"
+                                   Margin="6,0,2,0"
+                                   VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis"
+                                   Foreground="#FFE8E8E8"
+                                   FontSize="10"/>
+                        <Button x:Name="DreddOverlayDropButton"
+                                Grid.Column="1"
+                                Background="#00000000"
+                                BorderThickness="0"
+                                Foreground="#FFE8E8E8"
+                                FontSize="10"
+                                Content="▼"
+                                Click="DreddOverlayDropButton_Click"/>
+                    </Grid>
+                </Grid>
+                <Popup x:Name="DreddOverlayPopup"
+                       PlacementTarget="{Binding ElementName=DreddOverlaySelector}"
+                       Placement="Bottom"
+                       StaysOpen="False"
+                       AllowsTransparency="True">
+                    <Border Width="260" MaxHeight="220" Background="#FF1E1E1E" BorderBrush="#FF4A4A4A" BorderThickness="1" CornerRadius="2">
+                        <ListBox x:Name="DreddOverlayListBox"
+                                 Background="#FF1E1E1E"
+                                 BorderThickness="0"
+                                 Foreground="#FFE8E8E8"
+                                 FontSize="10"
+                                 SelectionChanged="DreddOverlayListBox_SelectionChanged"
+                                 ItemContainerStyle="{StaticResource DreddRowListItemStyle}"/>
+                    </Border>
+                </Popup>
+                <CheckBox x:Name="DreddStickyOverlayCheckBox"
+                          Content="Sticky overlay"
+                          Canvas.Left="294"
+                          Canvas.Top="609"
+                          Style="{StaticResource DreddRowCheckBoxStyle}"
+                          Checked="DreddStickyOverlayCheckBox_Checked"
+                          Unchecked="DreddStickyOverlayCheckBox_Checked"
+                          Visibility="Collapsed"/>
+                <Button x:Name="DreddOverlayConfigButton"
+                        Content="Config"
+                        Canvas.Left="376"
+                        Canvas.Top="607"
+                        Width="40"
+                        Height="22"
+                        Style="{StaticResource DreddRowButtonStyle}"
+                        Click="DreddOverlayConfigButton_Click"
+                        Visibility="Collapsed"/>
+                <Button x:Name="DreddViewChangesButton"
+                        Content="View Changes"
+                        Canvas.Left="418"
+                        Canvas.Top="607"
+                        Width="87"
+                        Height="22"
+                        Style="{StaticResource DreddRowButtonStyle}"
+                        Click="DreddViewChangesButton_Click"
+                        Visibility="Collapsed"/>
+
+                <Rectangle x:Name="BottomStatusBar" Height="24" Canvas.Top="603" Width="509" Fill="#FF36393F" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 <CheckBox x:Name="chkSticky" Content="Sticky Effects" 
                           Canvas.Top="607" Foreground="White" FontFamily="Arial" FontSize="10" 
                           Width="82" Height="16" BorderBrush="Black" 
@@ -379,6 +495,64 @@
                     Width="127" Height="16" BorderBrush="Black" 
                     Checked="chkInvertLog_Checked" Unchecked="chkInvertLog_Checked" 
                     Canvas.Left="229" Focusable="False" IsTabStop="False" VerticalContentAlignment="Center" HorizontalAlignment="Center" VerticalAlignment="Top"/>
+
+                <Button x:Name="btnAreaNavigator"
+                        Width="24"
+                        Height="24"
+                        Canvas.Left="458"
+                        Canvas.Top="603"
+                        Content="A"
+                        FontWeight="Bold"
+                        Click="btnAreaNavigator_Click"
+                        ToolTip="Area Navigator"/>
+
+                <Popup x:Name="AreaNavigatorPopup"
+                       PlacementTarget="{Binding ElementName=btnAreaNavigator}"
+                       Placement="Top"
+                       StaysOpen="False"
+                       AllowsTransparency="True">
+                    <Border Background="#FF202020"
+                            BorderBrush="#FF575757"
+                            BorderThickness="1"
+                            Padding="8">
+                        <StackPanel Width="260">
+                            <TextBlock Text="Area Navigator" Foreground="White" FontWeight="Bold" Margin="0,0,0,4"/>
+                            <TextBlock x:Name="txtCurrentArea" Text="Current: Unknown" Foreground="White" Margin="0,0,0,6"/>
+                            <ListBox x:Name="lstAreas" Height="210" Margin="0,0,0,6" MouseDoubleClick="lstAreas_MouseDoubleClick">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Margin="0,0,0,4"
+                                                Padding="6,4"
+                                                CornerRadius="2"
+                                                Background="{Binding RowBackground}">
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Name}"
+                                                           FontWeight="Bold"
+                                                           Foreground="#FFF2F2F2"
+                                                           TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding StatusAndCmLine}"
+                                                           Margin="0,2,0,0"
+                                                           Foreground="#FFE8E8E8"
+                                                           FontSize="11"
+                                                           TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding PlayersAndLockLine}"
+                                                           Margin="0,1,0,0"
+                                                           Foreground="#FFE8E8E8"
+                                                           FontSize="11"
+                                                           TextTrimming="CharacterEllipsis"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <Button x:Name="btnGoToArea"
+                                        Content="Go"
+                                        Click="btnGoToArea_Click"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </Popup>
                 <Button x:Name="THEDINGBUTTON" Height="12" Width="12" 
                     BorderBrush="{x:Null}" Foreground="{x:Null}" Padding="0"
                     Canvas.Left="322" Canvas.Top="532"

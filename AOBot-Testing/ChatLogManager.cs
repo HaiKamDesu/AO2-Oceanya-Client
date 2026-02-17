@@ -27,7 +27,7 @@ public class ChatLogManager(int MaxChatHistory)
             _chatHistory.RemoveAt(0); // Remove oldest message when limit is exceeded
         }
 
-        CustomConsole.WriteLine(formattedMessage);
+        CustomConsole.Info(formattedMessage);
     }
 
     /// <summary>

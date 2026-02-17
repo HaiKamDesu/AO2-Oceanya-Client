@@ -1,7 +1,7 @@
 # Oceanya Laboratories Client
 
 ### *a.k.a. The Multi-Attorney-Online Client*
-(Last version: 1.0.4)
+(Last version: 1.1.0)
 
 Welcome to the chaos-slaying, GM-saving, INI-wrangling tool you never knew you needed but now can’t live without: **The Oceanya Client (tm)**.
 
@@ -120,3 +120,10 @@ This is a ground-up project. That means:
 If you find differences between Oceanya and AO2 in terms of **base behavior**, that’s probably unintentional. Let me know.
 
 Got feature requests? Bug reports? Life advice? Toss 'em in. I might even do something about it maybe. Scorpio2#3602 on Discord.
+
+## Development
+
+### Branch Structure
+- `main`: Main development branch with the latest features
+- `release/X-Y`: Release branches (e.g., `release/1-1` for version 1.1)
+- `test/name`: Test branches for specific features or experiments

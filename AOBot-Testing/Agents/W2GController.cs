@@ -120,7 +120,7 @@ namespace AOBot_Testing.Agents
         }
 
         // Create a new room and return the room URL
-        public string CreateRoom(string roomName = "")
+        public string? CreateRoom(string roomName = "")
         {
             try
             {
@@ -144,7 +144,7 @@ namespace AOBot_Testing.Agents
                 string clipboardText = RunOnSTAThread(() =>
                 {
                     return Clipboard.GetText();
-                });
+                }) ?? string.Empty;
 
                 // Close the popup
                 var closeButton = wait.Until(ExpectedConditions.ElementIsVisible(
@@ -201,9 +201,9 @@ namespace AOBot_Testing.Agents
             }
         }
 
-        private T RunOnSTAThread<T>(Func<T> action)
+        private T? RunOnSTAThread<T>(Func<T> action)
         {
-            T result = default;
+            T? result = default;
             var thread = new Thread(() =>
             {
                 result = action();
@@ -638,8 +638,6 @@ namespace AOBot_Testing.Agents
                 return false;
             }
         }
-        // Class-level variable to cache the iframe element.
-        private IWebElement cachedFrame;
         public void YoutubeVideoLoader_FrameSwitch()
         {
 

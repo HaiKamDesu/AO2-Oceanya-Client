@@ -10,27 +10,54 @@ public static class Globals
 {
     public static string PathToConfigINI = "";
     public static List<string> BaseFolders = new List<string>();
-    public static string ConnectionString = "Basement/testing";
 
     public static int LogMaxMessages = 0;
 
 
     public enum Servers { ChillAndDices, Vanilla, CaseCafe }
+    public static readonly Servers DefaultServer = Servers.ChillAndDices;
     public static Dictionary<Servers, string> IPs = LoadServerIPs();
+    public static string SelectedServerEndpoint = "";
 
     private static Dictionary<Servers, string> LoadServerIPs()
     {
         try
         {
-            var filePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "server.json");
-            var json = File.ReadAllText(filePath);
-            return JsonSerializer.Deserialize<Dictionary<Servers, string>>(json);
+            string filePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "server.json");
+            string json = File.ReadAllText(filePath);
+            Dictionary<Servers, string>? parsed = JsonSerializer.Deserialize<Dictionary<Servers, string>>(json);
 
+            return parsed ?? new Dictionary<Servers, string>();
         }
         catch
         {
             return new Dictionary<Servers, string>();
         }
+    }
+
+    public static string GetDefaultServerEndpoint()
+    {
+        if (IPs.TryGetValue(DefaultServer, out string? endpoint) && !string.IsNullOrWhiteSpace(endpoint))
+        {
+            return endpoint;
+        }
+
+        return string.Empty;
+    }
+
+    public static string GetSelectedServerEndpoint()
+    {
+        if (!string.IsNullOrWhiteSpace(SelectedServerEndpoint))
+        {
+            return SelectedServerEndpoint;
+        }
+
+        return GetDefaultServerEndpoint();
+    }
+
+    public static void SetSelectedServerEndpoint(string endpoint)
+    {
+        SelectedServerEndpoint = endpoint?.Trim() ?? string.Empty;
     }
 
     public static string AI_SYSTEM_PROMPT = @"
@@ -171,7 +198,8 @@ Each of these settings has predefined integer values. **If a change is requested
             }
         }
 
-        List<string> mountPaths = new List<string>() { Path.GetDirectoryName(pathToConfigINI) };
+        string configDirectory = Path.GetDirectoryName(pathToConfigINI) ?? string.Empty;
+        List<string> mountPaths = new List<string>() { configDirectory };
 
         if (mountPathsRaw != "@Invalid()")
         {
@@ -185,7 +213,13 @@ Each of these settings has predefined integer values. **If a change is requested
 
             if (!Directory.Exists(current))
             {
-                var newMountPath = Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(pathToConfigINI)), current);
+                string? configParentDirectory = Path.GetDirectoryName(configDirectory);
+                if (string.IsNullOrWhiteSpace(configParentDirectory))
+                {
+                    throw new FileNotFoundException("Mount path base directory not found.");
+                }
+
+                var newMountPath = Path.Combine(configParentDirectory, current);
 
                 if (!Directory.Exists(newMountPath))
                 {

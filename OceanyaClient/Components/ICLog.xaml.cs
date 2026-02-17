@@ -14,9 +14,10 @@ namespace OceanyaClient.Components
     public partial class ICLog : UserControl
     {
         private static int LogMaxMessages => Globals.LogMaxMessages;
+        public Func<AOClient, AOClient?>? LogKeyResolver { get; set; }
 
         private Dictionary<AOClient, (FlowDocument log, bool inverted)> clientLogs = new();
-        private AOClient currentClient = null;
+        private AOClient? currentClient = null;
         static bool InvertICLog { get; set; } = false;
 
         private readonly List<FormatRule> formatRules = new()
@@ -35,7 +36,7 @@ namespace OceanyaClient.Components
             public ICMessage.TextColors Name { get; set; }
             public char Start { get; set; }
             public char End { get; set; }
-            public SolidColorBrush ColorBrush { get; set; }
+            public SolidColorBrush ColorBrush { get; set; } = new SolidColorBrush(Colors.White);
             public bool Remove { get; set; }
         }
         public ICLog()
@@ -44,27 +45,65 @@ namespace OceanyaClient.Components
             LogBox.Document.Blocks.Clear();
         }
 
-        public void SetCurrentClient(AOClient client)
+        private AOClient? ResolveLogClient(AOClient? client)
+        {
+            if (client == null)
+            {
+                return null;
+            }
+
+            if (LogKeyResolver == null)
+            {
+                return client;
+            }
+
+            AOClient? resolvedClient = LogKeyResolver(client);
+            return resolvedClient ?? client;
+        }
+
+        private bool IsCurrentLogStream(AOClient? client)
+        {
+            AOClient? currentLogClient = ResolveLogClient(currentClient);
+            AOClient? messageLogClient = ResolveLogClient(client);
+            return ReferenceEquals(currentLogClient, messageLogClient);
+        }
+
+        public void SetCurrentClient(AOClient? client)
         {
             currentClient = client;
+            AOClient? logClient = ResolveLogClient(client);
 
-            if (!clientLogs.ContainsKey(client))
-                clientLogs[client] = (new FlowDocument(), InvertICLog);
+            if (logClient == null)
+            {
+                LogBox.Document = new FlowDocument();
+                return;
+            }
 
-            LogBox.Document = clientLogs[client].log;
+            if (!clientLogs.ContainsKey(logClient))
+            {
+                clientLogs[logClient] = (new FlowDocument(), InvertICLog);
+            }
+
+            LogBox.Document = clientLogs[logClient].log;
             LogBox.ScrollToEnd();
         }
 
-        public void AddMessage(AOClient client, string showName, string message, bool isSentFromSelf = false, ICMessage.TextColors textColor = ICMessage.TextColors.White)
+        public void AddMessage(AOClient? client, string showName, string message, bool isSentFromSelf = false, ICMessage.TextColors textColor = ICMessage.TextColors.White)
         {
-            if (client == null) return;
+            AOClient? logClient = ResolveLogClient(client);
+            if (logClient == null)
+            {
+                return;
+            }
 
-            if (!clientLogs.ContainsKey(client))
-                clientLogs[client] = (new FlowDocument(), InvertICLog);
+            if (!clientLogs.ContainsKey(logClient))
+            {
+                clientLogs[logClient] = (new FlowDocument(), InvertICLog);
+            }
 
             bool shouldScroll = IsScrolledToBottom();
 
-            FlowDocument log = clientLogs[client].log;
+            FlowDocument log = clientLogs[logClient].log;
 
             Paragraph paragraph = new Paragraph
             {
@@ -92,7 +131,7 @@ namespace OceanyaClient.Components
             paragraph.Inlines.AddRange(FormatMessageText(message, textColor));
 
             // Add the new paragraph based on whether the log is inverted.
-            if (clientLogs[client].inverted)
+            if (clientLogs[logClient].inverted)
             {
                 if (log.Blocks.Count == 0)
                     log.Blocks.Add(paragraph);
@@ -122,7 +161,7 @@ namespace OceanyaClient.Components
                 }
             }
 
-            if (client == currentClient && shouldScroll)
+            if (IsCurrentLogStream(client) && shouldScroll)
             {
                 ScrollToEndRespectingInversion();
             }
@@ -274,14 +313,15 @@ namespace OceanyaClient.Components
             return formattedRuns;
         }
 
-        public void ClearClientLog(AOClient client)
+        public void ClearClientLog(AOClient? client)
         {
-            if (clientLogs.ContainsKey(client))
+            AOClient? logClient = ResolveLogClient(client);
+            if (logClient != null && clientLogs.ContainsKey(logClient))
             {
-                clientLogs[client] = (new FlowDocument(), InvertICLog);
+                clientLogs[logClient] = (new FlowDocument(), InvertICLog);
 
-                if (client == currentClient)
-                    LogBox.Document = clientLogs[client].log;
+                if (IsCurrentLogStream(client))
+                    LogBox.Document = clientLogs[logClient].log;
             }
         }
 
@@ -291,7 +331,7 @@ namespace OceanyaClient.Components
             LogBox.Document.Blocks.Clear();
         }
 
-        public AOClient GetCurrentClient()
+        public AOClient? GetCurrentClient()
         {
             return currentClient;
         }
@@ -312,7 +352,7 @@ namespace OceanyaClient.Components
 
                     clientLogs[client] = (log, isInverted);
 
-                    if (client == currentClient)
+                    if (IsCurrentLogStream(client))
                     {
                         LogBox.Document = log;
                         ScrollToEndRespectingInversion();

@@ -1,0 +1,3 @@
+[submodule "AO2-Client"]
+	path = AO2-Client
+	url = https://github.com/AttorneyOnline/AO2-Client.git

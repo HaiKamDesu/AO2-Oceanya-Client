@@ -3,22 +3,22 @@ using System;
 using System.Diagnostics;
 using System.Net.WebSockets;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Common;
 
 namespace AOBot_Testing.Agents
 {
-    public partial class AOClient(string serverAddress, string location)
+    public partial class AOClient(string serverAddress)
     {
         private const int textCrawlSpeed = 35;
         private readonly Uri serverUri = new Uri(serverAddress);
         private ClientWebSocket? ws; // WebSocket instance
         public Stopwatch aliveTime = new Stopwatch();
-        private CountdownTimer speakTimer;
+        private CountdownTimer? speakTimer;
         bool AbleToSpeak { get; set; } = true;
 
-        private bool isHandshakeComplete = false;
 
         /// <summary>
         /// Key: Name of the character
@@ -26,13 +26,26 @@ namespace AOBot_Testing.Agents
         /// </summary>
         Dictionary<string, bool> serverCharacterList = new Dictionary<string, bool>();
         public int iniPuppetID = -1;
-        public string iniPuppetName => iniPuppetID == -1 ? "" : serverCharacterList.ElementAt(iniPuppetID).Key;
+        public string iniPuppetName
+        {
+            get
+            {
+                if (iniPuppetID < 0 || iniPuppetID >= serverCharacterList.Count)
+                {
+                    return string.Empty;
+                }
+
+                return serverCharacterList.ElementAt(iniPuppetID).Key;
+            }
+        }
         public static string lastCharsCheck = string.Empty;
 
-        string hdid;
+        string hdid = string.Empty;
 
         public int playerID;
-        private string currentArea = location;
+        private string currentArea = string.Empty;
+        private readonly List<string> availableAreas = new List<string>();
+        private readonly List<AreaInfo> availableAreaInfos = new List<AreaInfo>();
         public CharacterFolder? currentINI;
         public Emote? currentEmote;
 
@@ -57,7 +70,7 @@ namespace AOBot_Testing.Agents
         public (int Horizontal, int Vertical) SelfOffset;
         public bool switchPosWhenChangingINI = false;
 
-        private CharacterFolder CurrentINI
+        private CharacterFolder? CurrentINI
         {
             get
             {
@@ -67,32 +80,59 @@ namespace AOBot_Testing.Agents
             {
                 currentINI = value;
 
-                if(currentINI != null)
+                if (currentINI != null)
                 {
-                    currentEmote = value.configINI.Emotions.Values.First();
+                    currentEmote = currentINI.configINI.Emotions.Values.FirstOrDefault();
                 }
             }
         }
 
-        public Action<string, string, string, string, int> OnMessageReceived;
-        public Action<ICMessage> OnICMessageReceived;
-        public Action<string, string, bool> OnOOCMessageReceived;
-        public Action<CharacterFolder> OnChangedCharacter;
-        public Action<string> OnBGChange;
-        public Action<string> OnSideChange;
-        public Action OnINIPuppetChange; 
-        public Action<int> OnReconnectionAttempt;
-        public Action<int> OnReconnectionAttemptFailed;
-        public Action OnReconnect;
-        public Action OnWebsocketDisconnect;
-        public Action OnDisconnect;
+        public Action<string, string, string, string, int>? OnMessageReceived;
+        public Action<ICMessage>? OnICMessageReceived;
+        public Action<string, string, bool>? OnOOCMessageReceived;
+        public Action<CharacterFolder>? OnChangedCharacter;
+        public Action<string>? OnBGChange;
+        public Action<string>? OnSideChange;
+        public Action? OnINIPuppetChange;
+        public Action<int>? OnReconnectionAttempt;
+        public Action<int>? OnReconnectionAttemptFailed;
+        public Action? OnReconnect;
+        public Action? OnWebsocketDisconnect;
+        public Action? OnDisconnect;
+        public Action<string>? OnCurrentAreaChanged;
+        public Action<IReadOnlyList<string>>? OnAvailableAreasUpdated;
+        public Action<IReadOnlyList<AreaInfo>>? OnAvailableAreaInfosUpdated;
+
+        public string CurrentArea
+        {
+            get
+            {
+                return currentArea;
+            }
+        }
+
+        public IReadOnlyList<string> AvailableAreas
+        {
+            get
+            {
+                return availableAreas.AsReadOnly();
+            }
+        }
+
+        public IReadOnlyList<AreaInfo> AvailableAreaInfos
+        {
+            get
+            {
+                return availableAreaInfos.AsReadOnly();
+            }
+        }
 
         private List<string> pendingMessages = new List<string>();
         #region Send Message Methods
         public async Task SendICMessage(string showname, string message, bool queueMessage = false)
         {
             SetICShowname(showname);
-            SendICMessage(message, queueMessage);
+            await SendICMessage(message, queueMessage);
         }
         private bool isProcessingMessages = false;
 
@@ -100,6 +140,12 @@ namespace AOBot_Testing.Agents
         {
             if (ws != null && ws.State == WebSocketState.Open)
             {
+                if (CurrentINI == null || currentEmote == null)
+                {
+                    CustomConsole.Error("Cannot send IC message without selected character/emote.");
+                    return;
+                }
+
                 ICMessage msg = new ICMessage();
                 msg.DeskMod = deskMod;
                 msg.PreAnim = currentEmote.PreAnimation;
@@ -166,7 +212,7 @@ namespace AOBot_Testing.Agents
             }
             else
             {
-                CustomConsole.WriteLine("WebSocket is not connected. Cannot send message.");
+                CustomConsole.Error("WebSocket is not connected. Cannot send message.");
             }
         }
 
@@ -174,7 +220,7 @@ namespace AOBot_Testing.Agents
         {
             while (true)
             {
-                string messageToSend = null;
+                string? messageToSend = null;
 
                 lock (pendingMessages)
                 {
@@ -193,9 +239,14 @@ namespace AOBot_Testing.Agents
                 {
                     if (Globals.DebugMode)
                     {
+                        if (speakTimer == null)
+                        {
+                            break;
+                        }
+
                         var remainingTime = speakTimer.GetRemainingTime();
                         var formattedTime = $"{remainingTime.Hours}h {remainingTime.Minutes}m {remainingTime.Seconds}s {remainingTime.Milliseconds}ms";
-                        CustomConsole.WriteLine($"Cannot speak yet, waiting for {formattedTime}...");
+                        CustomConsole.Debug($"Cannot speak yet, waiting for {formattedTime}...");
                     }
 
                     await Task.Delay(100);
@@ -209,7 +260,10 @@ namespace AOBot_Testing.Agents
                     }
                 }
 
-                await SendPacket(messageToSend);
+                if (!string.IsNullOrEmpty(messageToSend))
+                {
+                    await SendPacket(messageToSend);
+                }
                 await Task.Delay(500); // Wait for command to process server-side
             }
         }
@@ -217,7 +271,7 @@ namespace AOBot_Testing.Agents
 
         public async Task SendOOCMessage(string message)
         {
-            SendOOCMessage(OOCShowname, message);
+            await SendOOCMessage(OOCShowname, message);
         }
         public async Task SendOOCMessage(string showname, string message)
         {
@@ -230,7 +284,7 @@ namespace AOBot_Testing.Agents
             }
             else
             {
-                CustomConsole.WriteLine("WebSocket is not connected. Cannot send message.");
+                CustomConsole.Error("WebSocket is not connected. Cannot send message.");
             }
         }
         #endregion
@@ -245,34 +299,32 @@ namespace AOBot_Testing.Agents
                 {
                     string switchRoomCommand = $"MC#{area}#{playerID}#%";
                     await SendPacket(switchRoomCommand);
-                    CustomConsole.WriteLine($"Switched to room: {area}");
+                    CustomConsole.Info($"Switched to room: {area}");
                     // Allow some time between room switches  
                     await Task.Delay(delayBetweenAreas);
                 }
 
-                currentArea = areaName;
+                SetCurrentArea(areaName);
             }
             else
             {
-                CustomConsole.WriteLine("WebSocket is not connected. Cannot switch rooms.");
+                CustomConsole.Error("WebSocket is not connected. Cannot switch rooms.");
             }
         }
         public void SetCharacter(string characterName)
         {
-            var newChar = new CharacterFolder();
-            try
-            {
-                newChar = CharacterFolder.FullList.First(c => c.Name == characterName);
-            }
-            catch
-            {
-                newChar = CharacterFolder.FullList.First(c => c.Name.ToLower() == characterName.ToLower());
-            }
+            CharacterFolder? newChar = CharacterFolder.FullList.FirstOrDefault(c => c.Name == characterName)
+                ?? CharacterFolder.FullList.FirstOrDefault(c => c.Name.Equals(characterName, StringComparison.OrdinalIgnoreCase));
 
             SetCharacter(newChar);
         }
-        public void SetCharacter(CharacterFolder character)
+        public void SetCharacter(CharacterFolder? character)
         {
+            if (character == null)
+            {
+                return;
+            }
+
             CurrentINI = character;
             if (switchPosWhenChangingINI || string.IsNullOrEmpty(curPos))
             {
@@ -298,7 +350,16 @@ namespace AOBot_Testing.Agents
         }
         public void SetEmote(string emoteDisplayID)
         {
-            currentEmote = CurrentINI.configINI.Emotions.Values.First(e => e.DisplayID == emoteDisplayID);
+            if (CurrentINI == null)
+            {
+                return;
+            }
+
+            currentEmote = CurrentINI.configINI.Emotions.Values.FirstOrDefault(e => e.DisplayID == emoteDisplayID);
+            if (currentEmote == null)
+            {
+                return;
+            }
 
             deskMod = currentEmote.DeskMod;
             emoteMod = currentEmote.Modifier;
@@ -328,13 +389,21 @@ namespace AOBot_Testing.Agents
             }
             else if (message.StartsWith("SC#"))
             {
-                var characters = message.Substring(3).TrimEnd('#', '%').Split('#');
-                foreach (var character in characters)
+                var characters = message.Substring(3).TrimEnd('#', '%').Split('#', StringSplitOptions.RemoveEmptyEntries);
+                foreach (var characterEntry in characters)
                 {
+                    // SC entries can include metadata after '&' (e.g. "Phoenix&Description").
+                    var character = characterEntry.Split('&')[0];
+                    character = Globals.ReplaceTextForSymbols(character).Trim();
+                    if (string.IsNullOrWhiteSpace(character))
+                    {
+                        continue;
+                    }
+
                     //Start every character as available to select
                     serverCharacterList[character] = true;
                 }
-                CustomConsole.WriteLine("Server Character List updated.");
+                CustomConsole.Info("Server Character List updated.");
             }
             else if (message.StartsWith("MS#"))
             {
@@ -366,9 +435,27 @@ namespace AOBot_Testing.Agents
                     }
                 }
             }
+            else if (message.StartsWith("SM#"))
+            {
+                ParseAreaListFromSm(message);
+            }
+            else if (message.StartsWith("FA#"))
+            {
+                ParseAreaListFromFa(message);
+            }
+            else if (message.StartsWith("ARUP#"))
+            {
+                ParseAreaUpdate(message);
+            }
             else if (message.StartsWith("CT#"))
             {
                 var fields = message.Split("#");
+                if (fields.Length < 4)
+                {
+                    CustomConsole.Warning($"Malformed CT packet: {message}");
+                    return;
+                }
+
                 var showname = Globals.ReplaceTextForSymbols(fields[1]);
                 var messageText = Globals.ReplaceTextForSymbols(fields[2]);
                 var fromServer = fields[3].ToString() == "1";
@@ -376,6 +463,20 @@ namespace AOBot_Testing.Agents
                 if (messageText.ToLower().Contains("people in this area: ") && messageText.ToLower().Contains("===") && messageText.Split("\n").Length > 3)
                 {
                     List<Player> players = AO2Parser.ParseGetArea(messageText);
+                    Match areaMatch = Regex.Match(messageText, @"people in this area:\s*(.+?)\s*===", RegexOptions.IgnoreCase);
+                    if (areaMatch.Success)
+                    {
+                        string parsedArea = areaMatch.Groups[1].Value.Trim();
+                        if (!string.IsNullOrWhiteSpace(parsedArea))
+                        {
+                            if (ShouldIgnoreAreaDowngrade(parsedArea))
+                            {
+                                return;
+                            }
+
+                            SetCurrentArea(parsedArea);
+                        }
+                    }
                 }
 
                 // Handle OOC message
@@ -407,6 +508,7 @@ namespace AOBot_Testing.Agents
         public async Task Connect(int betweenHandshakeAndSetArea = 0, int betweenSetAreas = 0, int betweenAreasAndIniPuppet = 1000, int finalDelay = 1000)
         {
             aliveTime.Reset();
+            lastCharsCheck = string.Empty;
             ws = new ClientWebSocket();
             // Add required headers (modify as needed)
             ws.Options.SetRequestHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
@@ -415,24 +517,27 @@ namespace AOBot_Testing.Agents
             {
                 await ws.ConnectAsync(serverUri, CancellationToken.None);
                 aliveTime.Start();
-                CustomConsole.WriteLine("===========================");
-                CustomConsole.WriteLine("Connected to AO2's Server WebSocket!");
-                CustomConsole.WriteLine("===========================");
+                CustomConsole.Info("===========================");
+                CustomConsole.Info("Connected to AO2's Server WebSocket!");
+                CustomConsole.Info("===========================");
 
                 // Start the handshake process
                 await PerformHandshake();
-                CustomConsole.WriteLine("===========================");
+                CustomConsole.Info("===========================");
 
                 await Task.Delay(betweenHandshakeAndSetArea);
-                await SetArea(currentArea, betweenSetAreas);
-                CustomConsole.WriteLine("===========================");
+                if (!string.IsNullOrWhiteSpace(currentArea))
+                {
+                    await SetArea(currentArea, betweenSetAreas);
+                    CustomConsole.Info("===========================");
+                }
 
                 //Allow some time for server to update area info
 
                 await Task.Delay(betweenAreasAndIniPuppet);
 
                 await SelectFirstAvailableINIPuppet();
-                CustomConsole.WriteLine("===========================");
+                CustomConsole.Info("===========================");
 
                 // Start listening for messages
                 _ = Task.Run(() => ListenForMessages());
@@ -443,38 +548,196 @@ namespace AOBot_Testing.Agents
             }
             catch (Exception ex)
             {
-                CustomConsole.WriteLine($"Connection Error: {ex.Message}");
+                CustomConsole.Error($"Connection Error", ex);
+                throw;
             }
+        }
+
+        private void SetCurrentArea(string newArea)
+        {
+            if (string.IsNullOrWhiteSpace(newArea))
+            {
+                return;
+            }
+
+            if (string.Equals(currentArea, newArea, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            currentArea = newArea;
+            OnCurrentAreaChanged?.Invoke(currentArea);
+        }
+
+        private void ReplaceAvailableAreas(IEnumerable<string> areas)
+        {
+            availableAreas.Clear();
+            availableAreaInfos.Clear();
+
+            foreach (string area in areas)
+            {
+                if (string.IsNullOrWhiteSpace(area))
+                {
+                    continue;
+                }
+
+                string areaName = area.Trim();
+                availableAreas.Add(areaName);
+                availableAreaInfos.Add(new AreaInfo(areaName, 0, "Unknown", "Unknown", "Unknown"));
+            }
+
+            OnAvailableAreasUpdated?.Invoke(availableAreas.AsReadOnly());
+            OnAvailableAreaInfosUpdated?.Invoke(availableAreaInfos.AsReadOnly());
+        }
+
+        private void ParseAreaListFromFa(string message)
+        {
+            string[] content = message.Substring(3).TrimEnd('#', '%')
+                .Split('#', StringSplitOptions.RemoveEmptyEntries);
+
+            ReplaceAvailableAreas(content);
+        }
+
+        private void ParseAreaListFromSm(string message)
+        {
+            string[] content = message.Substring(3).TrimEnd('#', '%')
+                .Split('#', StringSplitOptions.RemoveEmptyEntries);
+
+            List<string> areas = new List<string>();
+            foreach (string entry in content)
+            {
+                if (LooksLikeMusicEntry(entry))
+                {
+                    break;
+                }
+
+                areas.Add(entry);
+            }
+
+            ReplaceAvailableAreas(areas);
+        }
+
+        private void ParseAreaUpdate(string message)
+        {
+            string[] content = message.Substring(5).TrimEnd('#', '%')
+                .Split('#', StringSplitOptions.RemoveEmptyEntries);
+
+            if (content.Length == 0)
+            {
+                return;
+            }
+
+            if (!int.TryParse(content[0], out int updateType))
+            {
+                CustomConsole.Warning($"Malformed ARUP packet type: {message}");
+                return;
+            }
+
+            for (int nElement = 1; nElement < content.Length; nElement++)
+            {
+                int areaIndex = nElement - 1;
+                if (areaIndex >= availableAreaInfos.Count)
+                {
+                    break;
+                }
+
+                string value = Globals.ReplaceTextForSymbols(content[nElement]).Trim();
+                AreaInfo targetArea = availableAreaInfos[areaIndex];
+
+                if (updateType == 0)
+                {
+                    if (int.TryParse(value, out int players))
+                    {
+                        targetArea.Players = players;
+                    }
+                }
+                else if (updateType == 1)
+                {
+                    targetArea.Status = value;
+                }
+                else if (updateType == 2)
+                {
+                    targetArea.CaseManager = value;
+                }
+                else if (updateType == 3)
+                {
+                    targetArea.LockState = value;
+                }
+            }
+
+            OnAvailableAreaInfosUpdated?.Invoke(availableAreaInfos.AsReadOnly());
+        }
+
+        private bool ShouldIgnoreAreaDowngrade(string parsedArea)
+        {
+            if (string.IsNullOrWhiteSpace(currentArea) || string.IsNullOrWhiteSpace(parsedArea))
+            {
+                return false;
+            }
+
+            string normalizedCurrentArea = currentArea.Trim();
+            string normalizedParsedArea = parsedArea.Trim();
+
+            if (string.Equals(normalizedCurrentArea, normalizedParsedArea, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (!normalizedCurrentArea.Contains('/'))
+            {
+                return false;
+            }
+
+            if (normalizedParsedArea.Contains('/'))
+            {
+                return false;
+            }
+
+            string[] currentAreaPath = normalizedCurrentArea.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (currentAreaPath.Length == 0)
+            {
+                return false;
+            }
+
+            return string.Equals(currentAreaPath[0], normalizedParsedArea, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool LooksLikeMusicEntry(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return false;
+            }
+
+            return value.EndsWith(".wav", StringComparison.OrdinalIgnoreCase)
+                || value.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase)
+                || value.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase)
+                || value.EndsWith(".ogg", StringComparison.OrdinalIgnoreCase)
+                || value.EndsWith(".opus", StringComparison.OrdinalIgnoreCase);
         }
         private async Task PerformHandshake()
         {
             if (ws == null || ws.State != WebSocketState.Open)
             {
-                CustomConsole.WriteLine("WebSocket is not connected. Cannot perform handshake.");
+                CustomConsole.Error("WebSocket is not connected. Cannot perform handshake.");
                 return;
             }
 
-            if (Globals.DebugMode) CustomConsole.WriteLine("Starting handshake...");
+            if (Globals.DebugMode) CustomConsole.Debug("Starting handshake...");
 
             // Step 1: Send Hard Drive ID (HDID) - Can be anything unique
             hdid = Guid.NewGuid().ToString(); // Generate a unique HDID
             await SendPacket($"HI#{hdid}#%");
 
             // Step 2: Receive Server Version and Player Number
-            string response;
-            while (true)
-            {
-                response = await ReceiveMessageAsync();
-                if (response.StartsWith("ID#"))
-                    break;
-            }
+            string response = await WaitForPacketAsync(packet => packet.StartsWith("ID#"), "ID");
 
             var parts = response.Split('#');
             if (parts.Length >= 3)
             {
                 playerID = int.Parse(parts[1]);
                 string serverVersion = parts[2];
-                CustomConsole.WriteLine($"Assigned Player ID: {playerID} | Server Version: {serverVersion}");
+                CustomConsole.Info($"Assigned Player ID: {playerID} | Server Version: {serverVersion}");
             }
 
             // Step 3: Send Client Version Info (Server doesn't really care)
@@ -484,26 +747,43 @@ namespace AOBot_Testing.Agents
             await SendPacket("RC#%");
 
             // Step 5: Receive Character List
-            while (true)
-            {
-                response = await ReceiveMessageAsync();
-                if (response.StartsWith("SC#"))
-                    break;
-            }
+            response = await WaitForPacketAsync(packet => packet.StartsWith("SC#"), "SC");
 
             // Step 8: Send Ready Signal
             await SendPacket("RD#%");
 
             // Step 9: Wait for final confirmation
-            while (true)
+            response = await WaitForPacketAsync(packet => packet.StartsWith("DONE#"), "DONE");
+
+            CustomConsole.Info("Handshake completed successfully!");
+        }
+
+        private async Task<string> WaitForPacketAsync(Func<string, bool> predicate, string expectedPacketHeader, int timeoutMs = 10000)
+        {
+            var timeoutAt = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+            while (DateTime.UtcNow < timeoutAt)
             {
-                response = await ReceiveMessageAsync();
-                if (response.StartsWith("DONE#"))
+                int remainingMs = (int)(timeoutAt - DateTime.UtcNow).TotalMilliseconds;
+                if (remainingMs <= 0)
+                {
                     break;
+                }
+
+                var receiveTask = ReceiveMessageAsync();
+                var completedTask = await Task.WhenAny(receiveTask, Task.Delay(remainingMs));
+                if (completedTask != receiveTask)
+                {
+                    break;
+                }
+
+                string response = await receiveTask;
+                if (!string.IsNullOrEmpty(response) && predicate(response))
+                {
+                    return response;
+                }
             }
 
-            isHandshakeComplete = true;
-            CustomConsole.WriteLine("Handshake completed successfully!");
+            throw new TimeoutException($"Timed out waiting for handshake packet: {expectedPacketHeader}");
         }
 
 
@@ -524,20 +804,20 @@ namespace AOBot_Testing.Agents
                         await Connect(0, 0, 5000, 2000);
                         if (ws != null && ws.State == WebSocketState.Open)
                         {
-                            CustomConsole.WriteLine("Reconnected to WebSocket!");
+                            CustomConsole.Info("Reconnected to WebSocket!");
                             return;
                         }
                     }
                     catch (Exception ex)
                     {
                         
-                        CustomConsole.WriteLine($"Reconnection attempt {retryCount + 1} failed: {ex.Message}");
+                        CustomConsole.Error($"Reconnection attempt {retryCount + 1} failed", ex);
                     }
                     OnReconnectionAttemptFailed?.Invoke(retryCount + 1);
                     retryCount++;
                     await Task.Delay(2000); // Delay before retrying this client
                 }
-                CustomConsole.WriteLine("Failed to reconnect after multiple attempts.");
+                CustomConsole.Error("Failed to reconnect after multiple attempts.");
                 await Disconnect();
             }
             finally
@@ -565,11 +845,11 @@ namespace AOBot_Testing.Agents
                 await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Disconnecting", CancellationToken.None);
                 ws.Dispose();
                 ws = null;
-                CustomConsole.WriteLine("Disconnected from WebSocket.");
+                CustomConsole.Info("Disconnected from WebSocket.");
             }
             else
             {
-                CustomConsole.WriteLine("WebSocket is not connected.");
+                CustomConsole.Info("WebSocket is not connected.");
             }
 
             OnDisconnect?.Invoke();
@@ -583,7 +863,7 @@ namespace AOBot_Testing.Agents
             }
             else
             {
-                CustomConsole.WriteLine("WebSocket is not connected.");
+                CustomConsole.Info("WebSocket is not connected.");
             }
         }
         #endregion
@@ -594,30 +874,51 @@ namespace AOBot_Testing.Agents
         {
             if (ws == null || ws.State != WebSocketState.Open)
             {
-                CustomConsole.WriteLine("WebSocket is not connected. Cannot select INI Puppet.");
+                CustomConsole.Error("WebSocket is not connected. Cannot select INI Puppet.");
                 return;
             }
 
-            var parts = lastCharsCheck.Substring(11).TrimEnd('#', '%').Split('#');
-            for (int i = 0; i < parts.Length; i++)
+            if (!string.IsNullOrEmpty(lastCharsCheck) && lastCharsCheck.StartsWith("CharsCheck#"))
             {
-                if (parts[i] == "0")
+                var parts = lastCharsCheck.Substring(11).TrimEnd('#', '%').Split('#');
+                int maxIndex = Math.Min(parts.Length, serverCharacterList.Count);
+                for (int i = 0; i < maxIndex; i++)
                 {
-                    // Select the first available character
+                    if (parts[i] == "0")
+                    {
+                        // Select the first available character
+                        var characterName = serverCharacterList.ElementAt(i).Key;
+
+                        var ini = CharacterFolder.FullList.FirstOrDefault(c => c.Name == characterName);
+
+                        //if the ini is null, it means you dont have it in your pc, meaning keep looking for an available one you DO have.
+                        if (ini != null)
+                        {
+                            await SelectIniPuppet(i, iniswapToSelected);
+                            return;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // Some servers do not send CharsCheck in the same stage as before.
+                // Fallback to first server-listed character present locally.
+                for (int i = 0; i < serverCharacterList.Count; i++)
+                {
                     var characterName = serverCharacterList.ElementAt(i).Key;
-
                     var ini = CharacterFolder.FullList.FirstOrDefault(c => c.Name == characterName);
-
-                    //if the ini is null, it means you dont have it in your pc, meaning keep looking for an available one you DO have.
                     if (ini != null)
                     {
                         await SelectIniPuppet(i, iniswapToSelected);
                         return;
                     }
                 }
+
+                CustomConsole.Warning("Server did not provide CharsCheck during connect. Skipping automatic INI selection.");
             }
 
-            CustomConsole.WriteLine("No available INI Puppets to select.");
+            CustomConsole.Warning("No available INI Puppets to select.");
         }
 
         public async Task SelectIniPuppet(string iniPuppetName, bool iniswapToSelected = true)
@@ -647,6 +948,13 @@ namespace AOBot_Testing.Agents
         }
         public async Task SelectIniPuppet(int serverCharID, bool iniswapToSelected = true)
         {
+            if (serverCharID < 0 || serverCharID >= serverCharacterList.Count)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(serverCharID),
+                    $"Requested server character index {serverCharID} but available range is 0..{Math.Max(0, serverCharacterList.Count - 1)}.");
+            }
+
             await SendPacket($"CC#0#{serverCharID}#{hdid}#%");
 
             var characterName = serverCharacterList.ElementAt(serverCharID).Key;
@@ -662,7 +970,7 @@ namespace AOBot_Testing.Agents
                     CurrentINI = ini;
                     ICShowname = CurrentINI?.configINI.ShowName ?? characterName;
                 }
-                CustomConsole.WriteLine($"Selected INI Puppet: \"{characterName}\" (Server Index: {serverCharID})");
+                CustomConsole.Info($"Selected INI Puppet: \"{characterName}\" (Server Index: {serverCharID})");
             }
         }
 
@@ -672,12 +980,17 @@ namespace AOBot_Testing.Agents
             {
                 byte[] messageBytes = Encoding.UTF8.GetBytes(packet);
                 await ws.SendAsync(new ArraySegment<byte>(messageBytes), WebSocketMessageType.Text, true, CancellationToken.None);
-                if (Globals.DebugMode) CustomConsole.WriteLine($"Sent: {packet}");
+                if (Globals.DebugMode) CustomConsole.Debug($"Sent: {packet}");
             }
             else
             {
-                CustomConsole.WriteLine("WebSocket is not connected. Cannot send message.");
+                CustomConsole.Error("WebSocket is not connected. Cannot send message.");
             }
+        }
+
+        public async Task RequestAreaList()
+        {
+            await SendPacket("RM#%");
         }
 
         private async Task<string> ReceiveMessageAsync()
@@ -689,7 +1002,7 @@ namespace AOBot_Testing.Agents
                 if (result.Count > 0)
                 {
                     string message = Encoding.UTF8.GetString(buffer, 0, result.Count);
-                    if (Globals.DebugMode) CustomConsole.WriteLine($"Received: {message}");
+                    if (Globals.DebugMode) CustomConsole.Debug($"Received: {message}");
 
                     await HandleMessage(message);
 
@@ -701,7 +1014,7 @@ namespace AOBot_Testing.Agents
 
         private async Task ListenForMessages()
         {
-            CustomConsole.WriteLine("Listening for messages...");
+            CustomConsole.Debug("Listening for messages...");
             try
             {
                 while (ws != null && ws.State == WebSocketState.Open)
@@ -715,11 +1028,9 @@ namespace AOBot_Testing.Agents
             }
             catch (Exception ex)
             {
-                CustomConsole.WriteLine("===========================");
-                CustomConsole.WriteLine("===========================");
-                CustomConsole.WriteLine($"Error in message listener: {ex.Message}");
-                CustomConsole.WriteLine("===========================");
-                CustomConsole.WriteLine("===========================");
+                CustomConsole.Error("===========================");
+                CustomConsole.Error("Message listener encountered an error", ex);
+                CustomConsole.Error("===========================");
             }
             finally
             {
@@ -730,8 +1041,8 @@ namespace AOBot_Testing.Agents
 
                     if (!dead)
                     {
-                        CustomConsole.WriteLine("WebSocket connection lost. Attempting to reconnect...");
-                        CustomConsole.WriteLine("===========================");
+                        CustomConsole.Warning("WebSocket connection lost. Attempting to reconnect...");
+                        CustomConsole.Info("===========================");
 
                         #region Save the state before reconnecting
                         var prevIni = currentINI;
@@ -773,9 +1084,12 @@ namespace AOBot_Testing.Agents
                             SelfOffset = prevSelfOffset;
 
                             SetCharacter(prevIni);
-                            SetEmote(prevEmote.DisplayID);
+                            if (prevEmote != null)
+                            {
+                                SetEmote(prevEmote.DisplayID);
+                            }
                             SetPos(prevCurPos);
-                            CustomConsole.WriteLine("State reapplied after reconnecting.");
+                            CustomConsole.Info("State reapplied after reconnecting.");
                             OnReconnect?.Invoke();
 
                             #endregion
@@ -783,7 +1097,7 @@ namespace AOBot_Testing.Agents
 
 
 
-                        CustomConsole.WriteLine("===========================");
+                        CustomConsole.Info("===========================");
                     }
 
                 }

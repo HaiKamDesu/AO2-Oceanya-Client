@@ -129,7 +129,7 @@ namespace OceanyaClient.Components
         /// <summary>
         /// Helper method to find a child of a specific type in the visual tree.
         /// </summary>
-        private static T FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
+        private static T? FindVisualChild<T>(DependencyObject? parent) where T : DependencyObject
         {
             if (parent == null) return null;
 
@@ -139,7 +139,7 @@ namespace OceanyaClient.Components
                 var child = VisualTreeHelper.GetChild(parent, i);
                 if (child is T typedChild) return typedChild;
 
-                T childOfChild = FindVisualChild<T>(child);
+                T? childOfChild = FindVisualChild<T>(child);
                 if (childOfChild != null) return childOfChild;
             }
 

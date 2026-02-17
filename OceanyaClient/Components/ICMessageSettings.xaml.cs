@@ -21,6 +21,7 @@ using Path = System.IO.Path;
 using System.ComponentModel;
 using static OceanyaClient.Components.ImageComboBox;
 using System.Xml.Linq;
+using OceanyaClient.Utilities;
 
 namespace OceanyaClient.Components
 {
@@ -32,10 +33,10 @@ namespace OceanyaClient.Components
         public static int ICShownameMaxLength = 22;
         public static int ICMessageMaxLength = 256;
         Dictionary<Emote, ToggleButton> emotes = new();
-        AOClient curClient;
+        AOClient? curClient;
         public bool stickyEffects;
 
-        public Action<string> OnSendICMessage;
+        public Action<string>? OnSendICMessage;
 
         public ICMessageSettings()
         {
@@ -92,6 +93,7 @@ namespace OceanyaClient.Components
         private void SfxDropdown_OnConfirm(object? sender, string sfx)
         {
             txtICMessage.Focus();
+            if (curClient == null) return;
             curClient.curSFX = sfx;
         }
 
@@ -132,6 +134,8 @@ namespace OceanyaClient.Components
 
         private void EffectDropdown_OnConfirm(object? sender, string newEffect)
         {
+            if (curClient == null) return;
+
             if (Enum.TryParse(newEffect, out ICMessage.Effects parsedEffect))
             {
                 curClient.effect = parsedEffect;
@@ -179,6 +183,8 @@ namespace OceanyaClient.Components
 
         private void CharacterDropdown_OnConfirm(object? sender, string iniName)
         {
+            if (curClient == null) return;
+
             var ini = CharacterFolder.FullList.FirstOrDefault(x => x.Name == iniName);
             if(ini != null)
             {
@@ -199,6 +205,12 @@ namespace OceanyaClient.Components
 
         public void SetClient(AOClient client)
         {
+            if (client == null)
+            {
+                ClearSettings();
+                return;
+            }
+
             if (this.curClient != null)
             {
                 curClient.OnSideChange -= UpdatePos;
@@ -206,7 +218,21 @@ namespace OceanyaClient.Components
             }
 
             this.curClient = client;
-            SetINI(client.currentINI);
+            CharacterFolder? iniToUse = client.currentINI;
+            if (iniToUse == null && CharacterFolder.FullList.Any())
+            {
+                client.SetCharacter(CharacterFolder.FullList.First());
+                iniToUse = client.currentINI;
+            }
+
+            if (iniToUse == null)
+            {
+                ClearSettings();
+                txtICShowname_Placeholder.Text = "No character data loaded";
+                return;
+            }
+
+            SetINI(iniToUse);
             txtICShowname.Text = client.ICShowname;
 
             chkPreanim.IsChecked = client.emoteMod == ICMessage.EmoteModifiers.PlayPreanimation;
@@ -214,7 +240,7 @@ namespace OceanyaClient.Components
             chkAdditive.IsChecked = client.Additive;
             chkImmediate.IsChecked = client.Immediate;
 
-            CharacterDropdown.SelectedText = client.currentINI.Name;
+            CharacterDropdown.SelectedText = iniToUse.Name;
             TextColorDropdown.SelectedText = client.textColor.ToString();
             EffectDropdown.SelectedText = client.effect.ToString();
 
@@ -226,6 +252,11 @@ namespace OceanyaClient.Components
 
         private void EventHandler_ClientOnBgChange(string newBG)
         {
+            if (this.curClient == null)
+            {
+                return;
+            }
+
             UpdatePosDropdown(this.curClient);
         }
 
@@ -247,7 +278,7 @@ namespace OceanyaClient.Components
                     {
                         PositionDropdown.SelectedText = client.curPos;
                     }
-                    else if (allPos.ContainsKey(client.currentINI.configINI.Side))
+                    else if (client.currentINI != null && allPos.ContainsKey(client.currentINI.configINI.Side))
                     {
                         PositionDropdown.SelectedText = client.currentINI.configINI.Side;
                     }
@@ -261,12 +292,17 @@ namespace OceanyaClient.Components
                 }
                 else
                 {
-                    PositionDropdown.SelectedText = client.currentINI.configINI.Side;
+                    PositionDropdown.SelectedText = client.currentINI?.configINI.Side ?? string.Empty;
                 }
             });
         }
         private void UpdatePos(string newPos)
         {
+            if (curClient == null)
+            {
+                return;
+            }
+
             PositionDropdown.Dispatcher.Invoke(() =>
             {
                 curClient.OnSideChange -= UpdatePos;
@@ -276,34 +312,77 @@ namespace OceanyaClient.Components
         }
         private void SetINI(CharacterFolder ini)
         {
-            ini.configINI.Update();
-
-            txtICShowname_Placeholder.Text = ini.configINI.ShowName;
-
-            EmoteGrid.ClearGrid();
-            emotes.Clear();
-            EmoteDropdown.Clear();
-            foreach (var emote in ini.configINI.Emotions.Values)
+            if (ini == null || curClient == null)
             {
-                AddEmote(emote);
+                return;
             }
 
-            emotes.First(x => x.Key.DisplayID == curClient.currentEmote.DisplayID).Value.IsChecked = true;
-
-
-            sfxDropdown.Clear();
-            sfxDropdown.Add("Default", "");
-            sfxDropdown.Add("Nothing", "");
-            if (File.Exists(ini.SoundListPath))
+            try
             {
-                var sfxLines = File.ReadAllLines(ini.SoundListPath);
+                txtICShowname_Placeholder.Text = ini.configINI.ShowName;
 
-                foreach (var sfx in sfxLines)
+                EmoteGrid.ClearGrid();
+                emotes.Clear();
+                EmoteDropdown.Clear();
+                foreach (var emote in ini.configINI.Emotions.Values)
                 {
-                    sfxDropdown.Add(sfx, "");
+                    AddEmote(emote);
                 }
+
+                string? selectedDisplayId = curClient.currentEmote?.DisplayID;
+                var selectedEmoteButton = string.IsNullOrWhiteSpace(selectedDisplayId)
+                    ? null
+                    : emotes.FirstOrDefault(x => x.Key.DisplayID == selectedDisplayId).Value;
+
+                if (selectedEmoteButton != null)
+                {
+                    selectedEmoteButton.IsChecked = true;
+                }
+                else if (emotes.Count > 0)
+                {
+                    var fallbackEmote = emotes.First();
+                    curClient.SetEmote(fallbackEmote.Key.DisplayID);
+                    fallbackEmote.Value.IsChecked = true;
+                }
+                else
+                {
+                    throw new InvalidOperationException(
+                        $"No emotes were loaded for INI '{ini?.Name ?? "unknown"}'.");
+                }
+
+
+                sfxDropdown.Clear();
+                sfxDropdown.Add("Default", "");
+                sfxDropdown.Add("Nothing", "");
+                if (File.Exists(ini.SoundListPath))
+                {
+                    var sfxLines = File.ReadAllLines(ini.SoundListPath);
+
+                    foreach (var sfx in sfxLines)
+                    {
+                        sfxDropdown.Add(sfx, "");
+                    }
+                }
+                sfxDropdown.SelectedText = "Default";
             }
-            sfxDropdown.SelectedText = "Default";
+            catch (Exception ex)
+            {
+                var context = new Dictionary<string, string>
+                {
+                    { "Method", "ICMessageSettings.SetINI" },
+                    { "IniName", ini?.Name ?? "null" },
+                    { "IniPath", ini?.PathToConfigIni ?? "null" },
+                    { "SoundListPath", ini?.SoundListPath ?? "null" },
+                    { "CurrentClientNull", (curClient == null).ToString() },
+                    { "CurrentClientName", curClient?.clientName ?? "null" },
+                    { "CurrentINI", curClient?.currentINI?.Name ?? "null" },
+                    { "CurrentEmote", curClient?.currentEmote?.DisplayID ?? "null" },
+                    { "EmotionsCount", ini?.configINI?.Emotions?.Count.ToString() ?? "null" }
+                };
+
+                CrashLogger.LogUnhandledException(ex, "SetINI", isTerminating: false, additionalContext: context);
+                throw;
+            }
         }
         private void AddEmote(Emote emote)
         {
@@ -465,7 +544,11 @@ namespace OceanyaClient.Components
 
         private void EmoteToggleBtn_Checked(object sender, RoutedEventArgs e)
         {
-            ToggleButton clickedButton = sender as ToggleButton;
+            ToggleButton? clickedButton = sender as ToggleButton;
+            if (clickedButton == null || curClient == null)
+            {
+                return;
+            }
 
             foreach (var button in emotes.Values)
             {
@@ -485,7 +568,11 @@ namespace OceanyaClient.Components
         }
         private void EmoteToggleBtn_Unchecked(object sender, RoutedEventArgs e)
         {
-            ToggleButton clickedButton = sender as ToggleButton;
+            ToggleButton? clickedButton = sender as ToggleButton;
+            if (clickedButton == null)
+            {
+                return;
+            }
 
             if (clickedButton.IsChecked == false)
             {
@@ -506,7 +593,7 @@ namespace OceanyaClient.Components
             }
         }
 
-        public Action OnResetMessageEffects;
+        public Action? OnResetMessageEffects;
         public void ResetMessageEffects()
         {
             btnRealization.IsChecked = false;
@@ -535,6 +622,7 @@ namespace OceanyaClient.Components
             if (sender is CheckBox checkBox)
             {
                 // Assuming 'currentClient' is an instance of AOBot
+                if (curClient == null) return;
                 curClient.emoteMod = checkBox.IsChecked == true ? ICMessage.EmoteModifiers.PlayPreanimation : ICMessage.EmoteModifiers.NoPreanimation;
                 txtICMessage.Focus();
             }
@@ -544,6 +632,7 @@ namespace OceanyaClient.Components
         {
             if (sender is CheckBox checkBox)
             {
+                if (curClient == null) return;
                 curClient.flip = checkBox.IsChecked == true;
                 txtICMessage.Focus();
             }
@@ -553,6 +642,7 @@ namespace OceanyaClient.Components
         {
             if (sender is CheckBox checkBox)
             {
+                if (curClient == null) return;
                 curClient.Additive = checkBox.IsChecked == true;
                 txtICMessage.Focus();
             }
@@ -562,6 +652,7 @@ namespace OceanyaClient.Components
         {
             if (sender is CheckBox checkBox)
             {
+                if (curClient == null) return;
                 curClient.Immediate = checkBox.IsChecked == true;
                 txtICMessage.Focus();
             }
@@ -594,6 +685,7 @@ namespace OceanyaClient.Components
             // Handle the checked state
             if (sender is ToggleButton toggleButton)
             {
+                if (curClient == null) return;
                 curClient.screenshake = true;
                 txtICMessage.Focus();
             }
@@ -604,6 +696,7 @@ namespace OceanyaClient.Components
             // Handle the unchecked state
             if (sender is ToggleButton toggleButton)
             {
+                if (curClient == null) return;
                 curClient.screenshake = false;
                 txtICMessage.Focus();
             }

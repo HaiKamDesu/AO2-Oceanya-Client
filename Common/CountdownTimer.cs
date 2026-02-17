@@ -7,11 +7,11 @@ public class CountdownTimer
 {
     private Stopwatch stopwatch;
     private TimeSpan duration;
-    private CancellationTokenSource cancellationTokenSource;
+    private CancellationTokenSource? cancellationTokenSource;
     private object lockObj = new object();
     private bool isResetting = false; // NEW: Flag to track resets
 
-    public event Action TimerElapsed;
+    public event Action? TimerElapsed;
 
     public CountdownTimer(TimeSpan duration)
     {

@@ -1,135 +1,159 @@
-﻿using Common;
-using NUnit.Framework;
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
+using AOBot_Testing.Structures;
+using Common;
+using NUnit.Framework;
+using static AOBot_Testing.Structures.ICMessage;
 
-namespace UnitTests
+namespace UnitTests;
+
+[TestFixture]
+public class ICMessageTests
 {
-    class CustomUnitTests
+    private static ICMessage CreateSampleMessage()
     {
-        //[Test]
-        public void GatherAllScriptsForChatGPT()
+        return new ICMessage
         {
-            string sourceDirectory = @"D:\Programs\Attorney Online\RPG\AO2-Oceanya-Bot";
-            string destinationDirectory = @"D:\Programs\Attorney Online\RPG\Temp";
+            DeskMod = DeskMods.Shown,
+            PreAnim = "happy",
+            Character = "Franziska",
+            Emote = "normal",
+            Message = "This is a test message",
+            Side = "wit",
+            SfxName = "whip1",
+            EmoteModifier = EmoteModifiers.PlayPreanimation,
+            CharId = 1,
+            SfxDelay = 0,
+            ShoutModifier = ShoutModifiers.Objection,
+            EvidenceID = "0",
+            Flip = false,
+            Realization = false,
+            TextColor = TextColors.White,
+            ShowName = "TestShowname",
+            OtherCharId = -1,
+            SelfOffset = (0, 0),
+            NonInterruptingPreAnim = false,
+            SfxLooping = false,
+            ScreenShake = false,
+            FramesShake = "happy^(b)normal^(a)normal^",
+            FramesRealization = "happy^(b)normal^(a)normal^",
+            FramesSfx = "happy^(b)normal^(a)normal^",
+            Additive = false,
+            Effect = Effects.None,
+            Blips = ""
+        };
+    }
 
-            var allowedExtensions = new string[] { ".cs", ".xaml", ".csproj" };
+    [Test]
+    public void GetCommand_ProducesMsPacketWithExpectedCoreFields()
+    {
+        ICMessage message = CreateSampleMessage();
+        string command = ICMessage.GetCommand(message);
 
-            var files = Directory.GetFiles(sourceDirectory, "*.*", SearchOption.AllDirectories)
-                                 .Where(file => allowedExtensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
-                                 .ToList();
-
-            foreach (var file in files)
-            {
-                // Get relative path from source directory
-                string relativePath = Path.GetRelativePath(sourceDirectory, file);
-                string destinationPath = Path.Combine(destinationDirectory, relativePath);
-
-                // Ensure the directory exists in the destination
-                Directory.CreateDirectory(Path.GetDirectoryName(destinationPath));
-
-                // Copy the file
-                File.Copy(file, destinationPath, true);
-                Console.WriteLine($"Copied: {file} -> {destinationPath}");
-            }
-
-            Console.WriteLine("File copy operation completed.");
-        }
-
-        [Test]
-        public static void AnalyzeLogs()
+        Assert.Multiple(() =>
         {
-            string logDirectory = @"D:\Programs\Attorney Online\logs";
-            var logs = new Dictionary<string, string>();
+            Assert.That(command, Does.StartWith("MS#"));
+            Assert.That(command, Does.EndWith("%"));
+            Assert.That(command, Does.Contain("#Franziska#"));
+            Assert.That(command, Does.Contain("#normal#"));
+            Assert.That(command, Does.Contain("#This is a test message#"));
+            Assert.That(command.Split('#').Length, Is.GreaterThanOrEqualTo(28));
+        });
+    }
 
-            // Fetch all .log and .txt files recursively
-            var files = Directory.GetFiles(logDirectory, "*.*", SearchOption.AllDirectories)
-                                 .Where(f => f.EndsWith(".log", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".txt", StringComparison.OrdinalIgnoreCase));
+    [Test]
+    public void FromConsoleLine_RoundTripsCompactPacket()
+    {
+        ICMessage originalMessage = CreateSampleMessage();
+        string command = ICMessage.GetCommand(originalMessage);
 
-            // Read content and populate dictionary
-            foreach (var file in files)
-            {
-                try
-                {
-                    string content = File.ReadAllText(file);
-                    logs[file] = content;
-                }
-                catch (Exception ex)
-                {
-                    CustomConsole.WriteLine($"Failed to read {file}: {ex.Message}");
-                }
-            }
+        ICMessage? parsedMessage = ICMessage.FromConsoleLine(command);
 
-            // Compute statistics
-            int totalCharacters = logs.Values.Sum(content => content.Length);
-            int totalWords = logs.Values.Sum(content => content.Split(new[] { ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries).Length);
-            int totalLines = logs.Values.Sum(content => content.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries).Length);
-            double avgCharacters = logs.Count > 0 ? (double)totalCharacters / logs.Count : 0;
-            double avgWords = logs.Count > 0 ? (double)totalWords / logs.Count : 0;
-            double avgLines = logs.Count > 0 ? (double)totalLines / logs.Count : 0;
-
-            // Estimate token count (GPT-4 typically considers ~4 characters per token)
-            int estimatedTokens = (int)(totalCharacters / 4.0);
-            double tokenCountInThousands = estimatedTokens / 1000.0; // Convert to thousands of tokens
-
-            // OpenAI fine-tuning pricing per 1K tokens
-            Dictionary<string, double> fineTuningCosts = new Dictionary<string, double>
-            {
-                { "GPT-3.5-Turbo", 0.008 },  // $0.008 per 1K tokens
-                { "GPT-4-Turbo", 0.06 },     // $0.06 per 1K tokens
-                { "GPT-4-Base", 0.03 }       // $0.03 per 1K tokens
-            };
-
-            // Calculate fine-tuning cost for each model
-            Dictionary<string, double> fineTuningPrices = fineTuningCosts.ToDictionary(
-                model => model.Key,
-                model => tokenCountInThousands * model.Value
-            );
-
-            // Log results using CustomConsole
-            CustomConsole.WriteLine($"Total Files Processed: {logs.Count}");
-            CustomConsole.WriteLine($"Total Characters: {totalCharacters}");
-            CustomConsole.WriteLine($"Total Words: {totalWords}");
-            CustomConsole.WriteLine($"Total Lines: {totalLines}");
-            CustomConsole.WriteLine($"Average Characters per File: {avgCharacters:F2}");
-            CustomConsole.WriteLine($"Average Words per File: {avgWords:F2}");
-            CustomConsole.WriteLine($"Average Lines per File: {avgLines:F2}");
-            CustomConsole.WriteLine($"Estimated Token Count (GPT-4): {estimatedTokens}");
-            CustomConsole.WriteLine("Fine-Tuning Cost Estimates:");
-
-            foreach (var model in fineTuningPrices)
-            {
-                CustomConsole.WriteLine($"  {model.Key}: ${model.Value:F2}");
-            }
-        }
-
-
-        CountdownTimer timer;
-        [Test]
-        public async Task TestM_INITesting()
+        Assert.That(parsedMessage, Is.Not.Null);
+        Assert.Multiple(() =>
         {
-            for (int i = 0; i < 3; i++)
-            {
-                CustomConsole.WriteLine("[[TIMER START]]");
-                if (timer == null)
-                {
-                    timer = new CountdownTimer(TimeSpan.FromSeconds(10));
-                    timer.TimerElapsed += () =>
-                    {
-                        CustomConsole.WriteLine("[[TIMER END]]");
-                        Assert.Fail("[[TIMER END]]");
-                    };
-                }
-                else
-                {
-                    timer.Reset(TimeSpan.FromSeconds(10));
-                }
+            Assert.That(parsedMessage!.Character, Is.EqualTo(originalMessage.Character));
+            Assert.That(parsedMessage.Emote, Is.EqualTo(originalMessage.Emote));
+            Assert.That(parsedMessage.Message, Is.EqualTo(originalMessage.Message));
+            Assert.That(parsedMessage.DeskMod, Is.EqualTo(originalMessage.DeskMod));
+            Assert.That(parsedMessage.EmoteModifier, Is.EqualTo(originalMessage.EmoteModifier));
+            Assert.That(parsedMessage.ShoutModifier, Is.EqualTo(originalMessage.ShoutModifier));
+            Assert.That(parsedMessage.SelfOffset.Horizontal, Is.EqualTo(originalMessage.SelfOffset.Horizontal));
+            Assert.That(parsedMessage.SelfOffset.Vertical, Is.EqualTo(originalMessage.SelfOffset.Vertical));
+            Assert.That(parsedMessage.Effect, Is.EqualTo(originalMessage.Effect));
+        });
+    }
 
-                await Task.Delay(2000);
-            }
+    [Test]
+    public void FromConsoleLine_ReturnsNullForInvalidHeaderOrTooFewFields()
+    {
+        ICMessage? invalidHeader = ICMessage.FromConsoleLine("INVALID#1#pre#char#emote#message#%");
+        ICMessage? tooFewFields = ICMessage.FromConsoleLine("MS#1#pre#char#emote#message#%");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(invalidHeader, Is.Null);
+            Assert.That(tooFewFields, Is.Null);
+        });
+    }
+
+    [Test]
+    public void GetColorFromTextColor_ReturnsColorForAllValues()
+    {
+        foreach (TextColors color in Enum.GetValues(typeof(TextColors)))
+        {
+            Assert.That(ICMessage.GetColorFromTextColor(color), Is.Not.EqualTo(default(System.Drawing.Color)));
         }
+    }
+}
+
+[TestFixture]
+public class CountdownTimerTests
+{
+    [Test]
+    public async Task CountdownTimer_BasicElapsedFlow()
+    {
+        var timer = new CountdownTimer(TimeSpan.FromMilliseconds(300));
+        bool elapsed = false;
+
+        timer.TimerElapsed += () => elapsed = true;
+        timer.Start();
+
+        await Task.Delay(450);
+        Assert.That(elapsed, Is.True);
+    }
+
+    [Test]
+    public async Task CountdownTimer_ResetDefersElapsed()
+    {
+        var timer = new CountdownTimer(TimeSpan.FromMilliseconds(400));
+        bool elapsed = false;
+
+        timer.TimerElapsed += () => elapsed = true;
+        timer.Start();
+
+        await Task.Delay(200);
+        timer.Reset(TimeSpan.FromMilliseconds(400));
+
+        await Task.Delay(250);
+        Assert.That(elapsed, Is.False);
+
+        await Task.Delay(250);
+        Assert.That(elapsed, Is.True);
+    }
+
+    [Test]
+    public async Task CountdownTimer_StopPreventsElapsed()
+    {
+        var timer = new CountdownTimer(TimeSpan.FromMilliseconds(300));
+        bool elapsed = false;
+
+        timer.TimerElapsed += () => elapsed = true;
+        timer.Start();
+        await Task.Delay(100);
+        timer.Stop();
+
+        await Task.Delay(300);
+        Assert.That(elapsed, Is.False);
     }
 }

@@ -15,8 +15,8 @@ namespace OceanyaClient.Components
         #region Nested Types
         public class DropdownItem
         {
-            public string Name { get; set; }
-            public string ImagePath { get; set; }
+            public string Name { get; set; } = string.Empty;
+            public string ImagePath { get; set; } = string.Empty;
         }
         #endregion
 
@@ -26,8 +26,8 @@ namespace OceanyaClient.Components
 
         #region Fields
         private ObservableCollection<DropdownItem> allItems = new();
-        private TextBox editableTextBox;
-        public event EventHandler<string> OnConfirm;
+        private TextBox? editableTextBox;
+        public event EventHandler<string>? OnConfirm;
         private bool isReadOnly = false;
         private bool isInternalUpdate = false;
         private string lastConfirmedText = string.Empty;
@@ -39,6 +39,13 @@ namespace OceanyaClient.Components
             get => cboINISelect.Text;
             set
             {
+                if (editableTextBox == null)
+                {
+                    cboINISelect.Text = value;
+                    ConfirmSelection(value);
+                    return;
+                }
+
                 var prevFocusable = editableTextBox.Focusable;
                 editableTextBox.Focusable = false;
                 cboINISelect.Text = value;
@@ -84,7 +91,7 @@ namespace OceanyaClient.Components
 
         private void cboINISelect_TextChanged(object sender, TextChangedEventArgs e)
         {
-            if (isReadOnly || isInternalUpdate)
+            if (isReadOnly || isInternalUpdate || editableTextBox == null)
                 return;
 
             int selectionStart = editableTextBox.SelectionStart;
@@ -108,8 +115,10 @@ namespace OceanyaClient.Components
         {
             if (e.AddedItems.Count > 0 && !isInternalUpdate && cboINISelect.IsDropDownOpen)
             {
-                var item = (DropdownItem)e.AddedItems[0];
-                ConfirmSelection(item.Name);
+                if (e.AddedItems[0] is DropdownItem item)
+                {
+                    ConfirmSelection(item.Name);
+                }
             }
         }
 
@@ -137,8 +146,10 @@ namespace OceanyaClient.Components
 
                 if (cboINISelect.SelectedItem != null)
                 {
-                    var selectedItem = (DropdownItem)cboINISelect.SelectedItem;
-                    ConfirmSelection(selectedItem.Name);
+                    if (cboINISelect.SelectedItem is DropdownItem selectedItem)
+                    {
+                        ConfirmSelection(selectedItem.Name);
+                    }
                 }
                 else
                 {
@@ -162,8 +173,10 @@ namespace OceanyaClient.Components
                 e.Handled = true;
                 if (cboINISelect.SelectedItem != null)
                 {
-                    var selectedItem = (DropdownItem)cboINISelect.SelectedItem;
-                    ConfirmSelection(selectedItem.Name);
+                    if (cboINISelect.SelectedItem is DropdownItem selectedItem)
+                    {
+                        ConfirmSelection(selectedItem.Name);
+                    }
                 }
                 else
                 {
@@ -315,8 +328,10 @@ namespace OceanyaClient.Components
         {
             if (cboINISelect.SelectedItem != null)
             {
-                var selectedItem = (DropdownItem)cboINISelect.SelectedItem;
-                ConfirmSelection(selectedItem.Name);
+                if (cboINISelect.SelectedItem is DropdownItem selectedItem)
+                {
+                    ConfirmSelection(selectedItem.Name);
+                }
             }
             else
             {

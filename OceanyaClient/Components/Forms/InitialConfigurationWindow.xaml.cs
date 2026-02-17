@@ -1,19 +1,12 @@
 ﻿using AOBot_Testing.Structures;
 using Microsoft.Win32;
-using OceanyaClient.Components;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Security.Policy;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Controls;
 using System.Windows.Input;
-using System.Windows.Media;
 using System.Windows.Media.Animation;
-
 
 namespace OceanyaClient
 {
@@ -22,6 +15,8 @@ namespace OceanyaClient
     /// </summary>
     public partial class InitialConfigurationWindow : Window
     {
+        private ServerEndpointDefinition? selectedServer;
+
         public InitialConfigurationWindow()
         {
             InitializeComponent();
@@ -45,104 +40,261 @@ namespace OceanyaClient
 
         private async void OkButton_Click(object sender, RoutedEventArgs e)
         {
-            // Validate inputs
-            string configIniPath = ConfigINIPathTextBox.Text;
-            string connectionPath = ConnectionPathTextBox.Text;
+            string configIniPath = ConfigINIPathTextBox.Text?.Trim() ?? string.Empty;
+            string selectedServerEndpoint = selectedServer?.Endpoint?.Trim() ?? string.Empty;
 
-            if (string.IsNullOrWhiteSpace(configIniPath) || string.IsNullOrWhiteSpace(connectionPath))
+            if (string.IsNullOrWhiteSpace(configIniPath))
             {
-                OceanyaMessageBox.Show("Please provide both the config.ini path and the connection path.",
-                                "Invalid Input", MessageBoxButton.OK, MessageBoxImage.Warning);
+                OceanyaMessageBox.Show(
+                    "Please provide the config.ini path.",
+                    "Invalid Input",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
                 return;
             }
 
+            if (string.IsNullOrWhiteSpace(selectedServerEndpoint))
+            {
+                OceanyaMessageBox.Show(
+                    "Please select a server endpoint.",
+                    "Invalid Input",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
 
             if (!File.Exists(configIniPath))
             {
                 OceanyaMessageBox.Show("File not found: " + configIniPath);
                 return;
             }
-            
-            if (Path.GetFileName(configIniPath).ToLower() != "config.ini")
+
+            if (!string.Equals(Path.GetFileName(configIniPath), "config.ini", StringComparison.OrdinalIgnoreCase))
             {
                 OceanyaMessageBox.Show("The filepath does not point to config.ini! " + configIniPath);
                 return;
             }
 
-
-            // Save to settings or use as needed
             try
             {
                 Globals.UpdateConfigINI(configIniPath);
-                Globals.ConnectionString = connectionPath;
+                Globals.SetSelectedServerEndpoint(selectedServerEndpoint);
             }
             catch (Exception ex)
             {
-                OceanyaMessageBox.Show("Error updating base folders: " + ex.Message,
-                                "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                OceanyaMessageBox.Show(
+                    "Error updating base folders: " + ex.Message,
+                    "Error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
                 return;
             }
 
-            // Save configuration to file
-            SaveConfiguration(configIniPath, connectionPath);
+            SaveConfiguration(
+                configIniPath,
+                UseSingleClientCheckBox.IsChecked != false,
+                selectedServerEndpoint,
+                selectedServer?.Name ?? string.Empty);
 
-            // Refresh character and background info if checkbox is checked
             if (RefreshInfoCheckBox.IsChecked == true)
             {
                 await WaitForm.ShowFormAsync("Refreshing character and background info...", this);
-                CharacterFolder.RefreshCharacterList
-                    ( 
-                        onParsedCharacter:
-                        (ini) =>
-                        {
-                            WaitForm.SetSubtitle("Parsed Character: " + ini.Name);
-                        },
-                        onChangedMountPath:
-                        (path) =>
-                        {
-                            WaitForm.SetSubtitle("Changed mount path: " + path);
-                        }
-                    );
+                CharacterFolder.RefreshCharacterList(
+                    onParsedCharacter: (ini) =>
+                    {
+                        WaitForm.SetSubtitle("Parsed Character: " + ini.Name);
+                    },
+                    onChangedMountPath: (path) =>
+                    {
+                        WaitForm.SetSubtitle("Changed mount path: " + path);
+                    });
+
+                AOBot_Testing.Structures.Background.RefreshCache(
+                    onChangedMountPath: (path) =>
+                    {
+                        WaitForm.SetSubtitle("Indexed background mount path: " + path);
+                    });
+
                 WaitForm.CloseForm();
             }
 
             MainWindow mainWindow = new MainWindow();
             mainWindow.Show();
-            
-            this.Close();
+            Close();
+        }
+
+        private void SelectServerButton_Click(object sender, RoutedEventArgs e)
+        {
+            string configIniPath = ConfigINIPathTextBox.Text?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(configIniPath) || !File.Exists(configIniPath))
+            {
+                OceanyaMessageBox.Show(
+                    "Select a valid config.ini path before opening server selection.",
+                    "Missing Config",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            if (!string.Equals(Path.GetFileName(configIniPath), "config.ini", StringComparison.OrdinalIgnoreCase))
+            {
+                OceanyaMessageBox.Show(
+                    "The filepath does not point to config.ini! " + configIniPath,
+                    "Invalid Config",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            string currentEndpoint = selectedServer?.Endpoint
+                ?? SaveFile.Data.SelectedServerEndpoint
+                ?? Globals.GetDefaultServerEndpoint();
+
+            ServerSelectionDialog dialog = new ServerSelectionDialog(configIniPath, currentEndpoint)
+            {
+                Owner = this
+            };
+
+            bool? result = dialog.ShowDialog();
+            if (result != true || dialog.SelectedServer == null)
+            {
+                return;
+            }
+
+            selectedServer = dialog.SelectedServer;
+            UpdateSelectedServerDisplay();
         }
 
         private void LoadSavefile()
         {
-            // Implement your configuration loading logic here
-            // This would replace the LoadConfiguration method from the original code
             try
             {
                 ConfigINIPathTextBox.Text = SaveFile.Data.ConfigIniPath;
-                ConnectionPathTextBox.Text = SaveFile.Data.ConnectionPath;
+                UseSingleClientCheckBox.IsChecked = SaveFile.Data.UseSingleInternalClient;
+                CleanupLegacyCustomServerData();
+
+                selectedServer = ResolveInitialSelectedServer();
+                if (selectedServer != null)
+                {
+                    Globals.SetSelectedServerEndpoint(selectedServer.Endpoint);
+                }
+
+                UpdateSelectedServerDisplay();
             }
             catch (Exception ex)
             {
-                OceanyaMessageBox.Show("Error loading configuration: " + ex.Message,
-                                "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                OceanyaMessageBox.Show(
+                    "Error loading configuration: " + ex.Message,
+                    "Error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
             }
         }
 
-        private void SaveConfiguration(string configIniPath, string connectionPath)
+        private ServerEndpointDefinition? ResolveInitialSelectedServer()
         {
-            // Implement your configuration saving logic here
-            // This would replace the SaveConfiguration method from the original code
+            string savedEndpoint = SaveFile.Data.SelectedServerEndpoint?.Trim() ?? string.Empty;
+            List<ServerEndpointDefinition> defaults = ServerEndpointCatalog.LoadDefaultServers();
+            string configIniPath = SaveFile.Data.ConfigIniPath?.Trim() ?? string.Empty;
+
+            List<ServerEndpointDefinition> favorites = new List<ServerEndpointDefinition>();
+            if (!string.IsNullOrWhiteSpace(configIniPath) && File.Exists(configIniPath))
+            {
+                favorites = ServerEndpointCatalog.LoadFavorites(configIniPath);
+            }
+
+            List<ServerEndpointDefinition> knownServers = new List<ServerEndpointDefinition>();
+            knownServers.AddRange(defaults);
+            knownServers.AddRange(favorites);
+
+            if (!string.IsNullOrWhiteSpace(savedEndpoint))
+            {
+                ServerEndpointDefinition? knownMatch = knownServers.FirstOrDefault(server =>
+                    string.Equals(server.Endpoint, savedEndpoint, StringComparison.OrdinalIgnoreCase));
+                if (knownMatch != null)
+                {
+                    return knownMatch;
+                }
+
+                string savedName = SaveFile.Data.SelectedServerName?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(savedName))
+                {
+                    savedName = savedEndpoint;
+                }
+
+                return new ServerEndpointDefinition
+                {
+                    Name = savedName,
+                    Endpoint = savedEndpoint,
+                    Description = "Previously selected endpoint.",
+                    Source = ServerEndpointSource.Defaults,
+                    IsLegacy = false
+                };
+            }
+
+            return defaults.FirstOrDefault();
+        }
+
+        private static void CleanupLegacyCustomServerData()
+        {
+            bool hadLegacyCustomServers = (SaveFile.Data.CustomServerEntries?.Count ?? 0) > 0
+                || (SaveFile.Data.CustomServerEndpoints?.Count ?? 0) > 0;
+            if (!hadLegacyCustomServers)
+            {
+                return;
+            }
+
+            SaveFile.Data.CustomServerEntries = new List<CustomServerEntry>();
+            SaveFile.Data.CustomServerEndpoints = new List<string>();
+            SaveFile.Save();
+        }
+
+        private void UpdateSelectedServerDisplay()
+        {
+            string serverNameText = selectedServer?.Name ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(serverNameText))
+            {
+                serverNameText = "No server selected.";
+            }
+
+            SelectedServerTextBox.Text = serverNameText;
+        }
+
+        private void SaveConfiguration(
+            string configIniPath,
+            bool useSingleInternalClient,
+            string selectedServerEndpoint,
+            string selectedServerName)
+        {
             try
             {
                 SaveFile.Data.ConfigIniPath = configIniPath;
-                SaveFile.Data.ConnectionPath = connectionPath;
+                SaveFile.Data.UseSingleInternalClient = useSingleInternalClient;
+                SaveFile.Data.SelectedServerEndpoint = selectedServerEndpoint;
+                SaveFile.Data.SelectedServerName = selectedServerName?.Trim() ?? string.Empty;
                 SaveFile.Save();
             }
             catch (Exception ex)
             {
-                OceanyaMessageBox.Show("Error saving configuration: " + ex.Message,
-                                "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                OceanyaMessageBox.Show(
+                    "Error saving configuration: " + ex.Message,
+                    "Error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
             }
+        }
+
+        public static bool IsValidServerEndpoint(string endpoint)
+        {
+            if (!Uri.TryCreate(endpoint, UriKind.Absolute, out Uri? uri) || uri == null)
+            {
+                return false;
+            }
+
+            bool validScheme = string.Equals(uri.Scheme, "ws", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(uri.Scheme, "wss", StringComparison.OrdinalIgnoreCase);
+
+            return validScheme && !string.IsNullOrWhiteSpace(uri.Host);
         }
 
         private void DragWindow(object sender, MouseButtonEventArgs e)
@@ -155,37 +307,41 @@ namespace OceanyaClient
 
         private void CloseButton_Click(object sender, RoutedEventArgs e)
         {
-            this.Close();
+            Close();
+        }
+
+        private void AdvancedFeatureFlaggingText_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            AdvancedFeatureFlagsWindow window = new AdvancedFeatureFlagsWindow
+            {
+                Owner = this
+            };
+            window.ShowDialog();
         }
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
-            // The FadeIn animation is triggered automatically by the EventTrigger in XAML
         }
 
-        private bool _isClosing = false;
+        private bool isClosing;
+
         private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
         {
-            // If we're already in the process of closing with animation, allow the close
-            if (_isClosing)
+            if (isClosing)
             {
                 return;
             }
 
-            // Otherwise, cancel the default closing and animate first
             e.Cancel = true;
-            _isClosing = true;
+            isClosing = true;
 
-            // Play the fade out animation
             Storyboard fadeOut = (Storyboard)FindResource("FadeOut");
-            fadeOut.Completed += (s, _) =>
+            fadeOut.Completed += (_, _) =>
             {
-                // When animation completes, actually close the window
-                this.Dispatcher.Invoke(() =>
+                Dispatcher.Invoke(() =>
                 {
-                    // Set a flag to bypass this handler and close just this window
-                    _isClosing = true;
-                    this.Close();
+                    isClosing = true;
+                    Close();
                 });
             };
             fadeOut.Begin(this);

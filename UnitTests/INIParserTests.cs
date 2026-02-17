@@ -1,26 +1,179 @@
-﻿using AOBot_Testing.Structures;
-using NUnit.Framework;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using System.IO;
+using System.Reflection;
+using AOBot_Testing.Structures;
+using NUnit.Framework;
 
-namespace UnitTests
+namespace UnitTests;
+
+[TestFixture]
+public class INIParserTests
 {
-    [TestFixture]
-    public class INIParserTests
+    private string? tempRoot;
+    private List<string>? originalBaseFolders;
+
+    [SetUp]
+    public void SetUp()
     {
-        [OneTimeSetUp]
-        public void GatherAllINI()
+        originalBaseFolders = new List<string>(Globals.BaseFolders);
+        tempRoot = Path.Combine(Path.GetTempPath(), $"ini_parser_test_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+
+        CreateCharacter(tempRoot, "Franziska", "pro");
+        CreateCharacter(tempRoot, "Phoenix", "def");
+
+        Globals.BaseFolders = new List<string> { tempRoot };
+        ResetCharacterCache();
+        CharacterFolder.RefreshCharacterList();
+    }
+
+    [TearDown]
+    public void TearDown()
+    {
+        Globals.BaseFolders = originalBaseFolders ?? new List<string>();
+        ResetCharacterCache();
+
+        if (tempRoot != null && Directory.Exists(tempRoot))
         {
-            CharacterFolder.RefreshCharacterList();
+            try
+            {
+                Directory.Delete(tempRoot, true);
+            }
+            catch
+            {
+                // Ignore cleanup errors in tests.
+            }
         }
+    }
 
-        [Test]
-        public void CustomTestINI() 
+    [Test]
+    public void CharacterIniLoading_LoadsCharactersFromConfiguredBaseFolder()
+    {
+        Assert.That(CharacterFolder.FullList, Has.Count.EqualTo(2));
+        Assert.That(CharacterFolder.FullList.Exists(c => c.Name == "Franziska"), Is.True);
+    }
+
+    [Test]
+    public void CharacterConfig_ParsesEmotionsAndOptions()
+    {
+        CharacterFolder character = CharacterFolder.FullList.Find(c => c.Name == "Franziska")!;
+
+        Assert.Multiple(() =>
         {
+            Assert.That(character.configINI.ShowName, Is.EqualTo("Franziska"));
+            Assert.That(character.configINI.Side, Is.EqualTo("pro"));
+            Assert.That(character.configINI.Emotions, Has.Count.EqualTo(2));
+            Assert.That(character.configINI.Emotions[1].Name, Is.EqualTo("normal"));
+            Assert.That(character.configINI.Emotions[2].Name, Is.EqualTo("smirk"));
+        });
+    }
 
+    [Test]
+    public void CharacterUpdate_ReloadsDataWithoutChangingIdentity()
+    {
+        CharacterFolder character = CharacterFolder.FullList.Find(c => c.Name == "Phoenix")!;
+        string originalPath = character.PathToConfigIni;
+
+        character.Update(character.PathToConfigIni, true);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(character.Name, Is.EqualTo("Phoenix"));
+            Assert.That(character.PathToConfigIni, Is.EqualTo(originalPath));
+            Assert.That(character.configINI.Emotions[1].DisplayID, Does.Contain("normal"));
+        });
+    }
+
+    [Test]
+    public void CharacterIcon_FallsBackToFirstEmoteIcon_WhenCharIconMissing()
+    {
+        string fallbackCharacterDir = Path.Combine(tempRoot!, "characters", "FallbackIcon");
+        Directory.CreateDirectory(Path.Combine(fallbackCharacterDir, "Emotions"));
+        File.WriteAllText(Path.Combine(fallbackCharacterDir, "char.ini"),
+            "[Options]\nshowname=FallbackIcon\ngender=unknown\nside=def\n[Emotions]\nnumber=2\n1=normal#normal#normal#0#99\n2=smirk#smirk#smirk#0#99\n");
+        File.WriteAllBytes(Path.Combine(fallbackCharacterDir, "Emotions", "button1_off.png"), new byte[] { 1, 2, 3, 4 });
+
+        ResetCharacterCache();
+        CharacterFolder.RefreshCharacterList();
+
+        CharacterFolder character = CharacterFolder.FullList.Find(c => c.Name == "FallbackIcon")!;
+        string expectedPath = Path.Combine(fallbackCharacterDir, "Emotions", "button1_off.png");
+        Assert.That(character.CharIconPath, Is.EqualTo(expectedPath));
+    }
+
+    [Test]
+    public void RefreshCharacterList_SkipsBrokenCharacterFolder_AndKeepsValidOnes()
+    {
+        string validCharacterDir = Path.Combine(tempRoot!, "characters", "GoodFolder");
+        Directory.CreateDirectory(validCharacterDir);
+        File.WriteAllText(Path.Combine(validCharacterDir, "char.ini"),
+            "[Options]\nshowname=GoodFolder\ngender=unknown\nside=pro\n[Emotions]\nnumber=1\n1=normal#normal#normal#0#99\n");
+
+        string brokenCharacterDir = Path.Combine(tempRoot!, "characters", "BrokenFolder");
+        Directory.CreateDirectory(brokenCharacterDir);
+        string brokenIniPath = Path.Combine(brokenCharacterDir, "char.ini");
+        File.WriteAllText(brokenIniPath,
+            "[Options]\nshowname=BrokenFolder\ngender=unknown\nside=pro\n[Emotions]\nnumber=1\n1=normal#normal#normal#0#99\n");
+
+        using FileStream lockStream = new FileStream(
+            brokenIniPath,
+            FileMode.Open,
+            FileAccess.ReadWrite,
+            FileShare.None);
+
+        ResetCharacterCache();
+        CharacterFolder.RefreshCharacterList();
+
+        Assert.That(CharacterFolder.FullList.Exists(c => c.Name == "GoodFolder"), Is.True);
+        Assert.That(CharacterFolder.FullList.Exists(c => c.Name == "BrokenFolder"), Is.False);
+    }
+
+    private static void CreateCharacter(string basePath, string name, string side)
+    {
+        string charDir = Path.Combine(basePath, "characters", name);
+        Directory.CreateDirectory(charDir);
+
+        string iniPath = Path.Combine(charDir, "char.ini");
+        string ini = "[Options]\n" +
+                     $"showname={name}\n" +
+                     "gender=unknown\n" +
+                     $"side={side}\n" +
+                     "[Time]\n" +
+                     "preanim=0\n" +
+                     "[Emotions]\n" +
+                     "number=2\n" +
+                     "1=normal#normal#normal#0#99\n" +
+                     "2=smirk#smirk_pre#smirk#1#1\n" +
+                     "[SoundN]\n" +
+                     "1=1\n" +
+                     "2=objection\n" +
+                     "[SoundT]\n" +
+                     "1=0\n" +
+                     "2=5\n";
+
+        File.WriteAllText(iniPath, ini);
+    }
+
+    private static void ResetCharacterCache()
+    {
+        Type type = typeof(CharacterFolder);
+        FieldInfo? configsField = type.GetField("characterConfigs", BindingFlags.NonPublic | BindingFlags.Static);
+        FieldInfo? cacheFileField = type.GetField("cacheFile", BindingFlags.NonPublic | BindingFlags.Static);
+
+        configsField?.SetValue(null, new List<CharacterFolder>());
+
+        string? cacheFile = cacheFileField?.GetValue(null) as string;
+        if (!string.IsNullOrWhiteSpace(cacheFile) && File.Exists(cacheFile))
+        {
+            try
+            {
+                File.Delete(cacheFile);
+            }
+            catch
+            {
+                // Ignore cleanup errors in tests.
+            }
         }
     }
 }

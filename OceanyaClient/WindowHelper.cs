@@ -33,7 +33,7 @@ public static class WindowHelper
             return;
         }
 
-        Window ownerWindow = null;
+        Window? ownerWindow = null;
 
         // Retrieve ownerWindow safely
         ownerWindow = windows[index - 1];
@@ -45,7 +45,6 @@ public static class WindowHelper
         }
 
         // Safely retrieve ownerWindow visibility and position
-        bool ownerVisible = false;
         double ownerLeft = 0;
         double ownerTop = 0;
         double ownerWidth = 0;
