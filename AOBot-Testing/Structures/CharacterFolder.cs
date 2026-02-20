@@ -320,6 +320,9 @@ namespace AOBot_Testing.Structures
         public void Update()
         {
             string configINIPath = PathToConfigINI;
+            EmotionsCount = 0;
+            Emotions.Clear();
+            int maxEmotionEntryId = 0;
 
             #region Config Parsing
             var lines = File.ReadAllLines(configINIPath);
@@ -358,6 +361,7 @@ namespace AOBot_Testing.Structures
                             EmotionsCount = emotionCount;
                         else if (int.TryParse(key, out int emotionId))
                         {
+                            maxEmotionEntryId = Math.Max(maxEmotionEntryId, emotionId);
                             if (!Emotions.ContainsKey(emotionId))
                                 Emotions[emotionId] = new Emote(emotionId);
                             Emotions[emotionId] = Emote.ParseEmoteLine(value);
@@ -418,6 +422,14 @@ namespace AOBot_Testing.Structures
             #endregion
 
             #region Correct emotes based on config file
+            if (EmotionsCount <= 0 && maxEmotionEntryId > 0)
+            {
+                EmotionsCount = maxEmotionEntryId;
+                CustomConsole.Warning(
+                    $"Character INI '{configINIPath}' has missing/invalid [Emotions] number. " +
+                    $"Inferred emotion count as {EmotionsCount} from highest emotion entry.");
+            }
+
             if (EmotionsCount != Emotions.Count)
             {
                 for (int i = 1; i <= EmotionsCount; i++)
@@ -429,7 +441,10 @@ namespace AOBot_Testing.Structures
                     }
                 }
 
-                Emotions = Emotions.Take(EmotionsCount).ToDictionary(x => x.Key, x => x.Value);
+                Emotions = Emotions
+                    .OrderBy(x => x.Key)
+                    .Take(EmotionsCount)
+                    .ToDictionary(x => x.Key, x => x.Value);
             }
             #endregion
         }

@@ -70,6 +70,52 @@ public class INIParserTests
     }
 
     [Test]
+    public void CharacterConfig_BlankEmotionNumber_InferCountFromHighestEmotionEntry()
+    {
+        string inferredCharacterDir = Path.Combine(tempRoot!, "characters", "InferredEmotions");
+        Directory.CreateDirectory(inferredCharacterDir);
+        File.WriteAllText(
+            Path.Combine(inferredCharacterDir, "char.ini"),
+            "[Options]\nshowname=InferredEmotions\ngender=unknown\nside=def\n" +
+            "[Emotions]\nnumber=\n1=normal#-#normal#0#99\n2=smirk#-#smirk#0#99\n");
+
+        ResetCharacterCache();
+        CharacterFolder.RefreshCharacterList();
+
+        CharacterFolder character = CharacterFolder.FullList.Find(c => c.Name == "InferredEmotions")!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(character.configINI.EmotionsCount, Is.EqualTo(2));
+            Assert.That(character.configINI.Emotions, Has.Count.EqualTo(2));
+            Assert.That(character.configINI.Emotions[1].Name, Is.EqualTo("normal"));
+            Assert.That(character.configINI.Emotions[2].Name, Is.EqualTo("smirk"));
+        });
+    }
+
+    [Test]
+    public void CharacterConfig_BlankEmotionNumber_DoesNotUseSoundSectionsForInference()
+    {
+        string inferredCharacterDir = Path.Combine(tempRoot!, "characters", "InferredFromEmotionsOnly");
+        Directory.CreateDirectory(inferredCharacterDir);
+        File.WriteAllText(
+            Path.Combine(inferredCharacterDir, "char.ini"),
+            "[Options]\nshowname=InferredFromEmotionsOnly\ngender=unknown\nside=def\n" +
+            "[Emotions]\nnumber=\n1=normal#-#normal#0#99\n2=smirk#-#smirk#0#99\n" +
+            "[SoundT]\n99=0\n");
+
+        ResetCharacterCache();
+        CharacterFolder.RefreshCharacterList();
+
+        CharacterFolder character = CharacterFolder.FullList.Find(c => c.Name == "InferredFromEmotionsOnly")!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(character.configINI.EmotionsCount, Is.EqualTo(2));
+            Assert.That(character.configINI.Emotions.ContainsKey(99), Is.False);
+            Assert.That(character.configINI.Emotions, Has.Count.EqualTo(2));
+        });
+    }
+
+    [Test]
     public void CharacterUpdate_ReloadsDataWithoutChangingIdentity()
     {
         CharacterFolder character = CharacterFolder.FullList.Find(c => c.Name == "Phoenix")!;

@@ -346,8 +346,22 @@ namespace OceanyaClient.Components
                 }
                 else
                 {
-                    throw new InvalidOperationException(
-                        $"No emotes were loaded for INI '{ini?.Name ?? "unknown"}'.");
+                    CustomConsole.Warning(
+                        $"No emotes were loaded for INI '{ini?.Name ?? "unknown"}'. " +
+                        "Using fallback synthetic emote to keep UI functional.");
+
+                    var syntheticFallbackEmote = new Emote(1)
+                    {
+                        Name = "normal",
+                        PreAnimation = "-",
+                        Animation = "normal",
+                        Modifier = ICMessage.EmoteModifiers.NoPreanimation,
+                        DeskMod = ICMessage.DeskMods.Chat
+                    };
+
+                    AddEmote(syntheticFallbackEmote);
+                    curClient.SetEmote(syntheticFallbackEmote.DisplayID);
+                    emotes[syntheticFallbackEmote].IsChecked = true;
                 }
 
 
