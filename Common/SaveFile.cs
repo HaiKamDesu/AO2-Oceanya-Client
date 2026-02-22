@@ -210,6 +210,11 @@ namespace OceanyaClient
         public bool ViewFolderIntegrityVerifierResults { get; set; }
         public Dictionary<string, int> CharacterFolderPreviewEmoteOverrides { get; set; } =
             new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, List<string>> CharacterFolderTags { get; set; } =
+            new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        public List<string> CharacterFolderActiveTagFilters { get; set; } = new List<string>();
+        public double CharacterFolderTagPanelWidth { get; set; } = 260;
+        public bool CharacterFolderTagPanelCollapsed { get; set; }
     }
 
     public static class SaveFile
@@ -326,6 +331,21 @@ namespace OceanyaClient
                     pair => pair.Key.Trim(),
                     pair => pair.Value,
                     StringComparer.OrdinalIgnoreCase);
+            data.CharacterFolderTags ??= new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            data.CharacterFolderTags = data.CharacterFolderTags
+                .Where(pair => !string.IsNullOrWhiteSpace(pair.Key))
+                .ToDictionary(
+                    pair => pair.Key.Trim(),
+                    pair => NormalizeTagList(pair.Value),
+                    StringComparer.OrdinalIgnoreCase);
+            data.CharacterFolderTags = data.CharacterFolderTags
+                .Where(pair => pair.Value.Count > 0)
+                .ToDictionary(
+                    pair => pair.Key,
+                    pair => pair.Value,
+                    StringComparer.OrdinalIgnoreCase);
+            data.CharacterFolderActiveTagFilters = NormalizeTagList(data.CharacterFolderActiveTagFilters);
+            data.CharacterFolderTagPanelWidth = Math.Clamp(data.CharacterFolderTagPanelWidth, 180, 520);
 
             data.FolderVisualizer ??= new FolderVisualizerConfig();
             data.FolderVisualizer.Presets ??= new List<FolderVisualizerViewPreset>();
@@ -361,7 +381,7 @@ namespace OceanyaClient
                     preferredByName
                     ??
                     data.FolderVisualizer.Presets.FirstOrDefault(p =>
-                        string.Equals(p.Name, "Medium", StringComparison.OrdinalIgnoreCase))
+                        string.Equals(p.Name, "Grid", StringComparison.OrdinalIgnoreCase))
                     ?? data.FolderVisualizer.Presets[0];
                 data.FolderVisualizer.SelectedPresetId = preferred.Id;
                 data.FolderVisualizer.SelectedPresetName = preferred.Name;
@@ -407,7 +427,7 @@ namespace OceanyaClient
                     preferredByName
                     ??
                     data.EmoteVisualizer.Presets.FirstOrDefault(p =>
-                        string.Equals(p.Name, "Detailed", StringComparison.OrdinalIgnoreCase))
+                        string.Equals(p.Name, "Normal", StringComparison.OrdinalIgnoreCase))
                     ?? data.EmoteVisualizer.Presets[0];
                 data.EmoteVisualizer.SelectedPresetId = preferred.Id;
                 data.EmoteVisualizer.SelectedPresetName = preferred.Name;
@@ -556,10 +576,21 @@ namespace OceanyaClient
                     Id = "details",
                     Name = "Details",
                     Mode = FolderVisualizerLayoutMode.Table,
+                    Normal = new FolderVisualizerNormalViewConfig
+                    {
+                        TileWidth = 170,
+                        TileHeight = 182,
+                        IconSize = 18,
+                        NameFontSize = 12,
+                        InternalTilePadding = 2,
+                        ScrollWheelStep = 90,
+                        TilePadding = 8,
+                        TileMargin = 4
+                    },
                     Table = new FolderVisualizerTableViewConfig
                     {
-                        RowHeight = 34,
-                        FontSize = 13,
+                        RowHeight = 49.66765578635016,
+                        FontSize = 17.29970326409495,
                         Columns = new List<FolderVisualizerTableColumnConfig>
                         {
                             new FolderVisualizerTableColumnConfig
@@ -567,14 +598,14 @@ namespace OceanyaClient
                                 Key = FolderVisualizerTableColumnKey.Icon,
                                 IsVisible = true,
                                 Order = 0,
-                                Width = 30
+                                Width = 61
                             },
                             new FolderVisualizerTableColumnConfig
                             {
                                 Key = FolderVisualizerTableColumnKey.Name,
                                 IsVisible = true,
                                 Order = 1,
-                                Width = 380
+                                Width = 311.4083086053413
                             },
                             new FolderVisualizerTableColumnConfig
                             {
@@ -592,31 +623,31 @@ namespace OceanyaClient
                             },
                             new FolderVisualizerTableColumnConfig
                             {
-                                Key = FolderVisualizerTableColumnKey.LastModified,
+                                Key = FolderVisualizerTableColumnKey.EmoteCount,
                                 IsVisible = true,
                                 Order = 4,
-                                Width = 170
+                                Width = 93
                             },
                             new FolderVisualizerTableColumnConfig
                             {
-                                Key = FolderVisualizerTableColumnKey.EmoteCount,
+                                Key = FolderVisualizerTableColumnKey.Size,
                                 IsVisible = true,
                                 Order = 5,
                                 Width = 110
                             },
                             new FolderVisualizerTableColumnConfig
                             {
-                                Key = FolderVisualizerTableColumnKey.Size,
+                                Key = FolderVisualizerTableColumnKey.LastModified,
                                 IsVisible = true,
                                 Order = 6,
-                                Width = 110
+                                Width = 170
                             },
                             new FolderVisualizerTableColumnConfig
                             {
                                 Key = FolderVisualizerTableColumnKey.IntegrityFailures,
                                 IsVisible = true,
                                 Order = 7,
-                                Width = 420
+                                Width = 900
                             },
                             new FolderVisualizerTableColumnConfig
                             {
@@ -637,53 +668,37 @@ namespace OceanyaClient
                 },
                 new FolderVisualizerViewPreset
                 {
-                    Id = "small",
-                    Name = "Small",
-                    Mode = FolderVisualizerLayoutMode.Normal,
-                    Normal = new FolderVisualizerNormalViewConfig
-                    {
-                        TileWidth = 138,
-                        TileHeight = 140,
-                        IconSize = 16,
-                        NameFontSize = 11,
-                        InternalTilePadding = 0,
-                        ScrollWheelStep = 90,
-                        TilePadding = 8,
-                        TileMargin = 4
-                    }
-                },
-                new FolderVisualizerViewPreset
-                {
-                    Id = "medium",
-                    Name = "Medium",
-                    Mode = FolderVisualizerLayoutMode.Normal,
-                    Normal = new FolderVisualizerNormalViewConfig
-                    {
-                        TileWidth = 170,
-                        TileHeight = 182,
-                        IconSize = 18,
-                        NameFontSize = 12,
-                        InternalTilePadding = 0,
-                        ScrollWheelStep = 90,
-                        TilePadding = 8,
-                        TileMargin = 4
-                    }
-                },
-                new FolderVisualizerViewPreset
-                {
                     Id = "large",
-                    Name = "Large",
+                    Name = "Grid",
                     Mode = FolderVisualizerLayoutMode.Normal,
                     Normal = new FolderVisualizerNormalViewConfig
                     {
-                        TileWidth = 222,
-                        TileHeight = 246,
-                        IconSize = 20,
-                        NameFontSize = 13,
+                        TileWidth = 299.8635014836795,
+                        TileHeight = 295.1394658753709,
+                        IconSize = 39.76261127596439,
+                        NameFontSize = 14.80712166172107,
                         InternalTilePadding = 0,
-                        ScrollWheelStep = 90,
+                        ScrollWheelStep = 200.385756676558,
                         TilePadding = 10,
                         TileMargin = 4
+                    },
+                    Table = new FolderVisualizerTableViewConfig
+                    {
+                        RowHeight = 34,
+                        FontSize = 13,
+                        Columns = new List<FolderVisualizerTableColumnConfig>
+                        {
+                            new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.Icon, IsVisible = true, Order = 0, Width = 42 },
+                            new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.Name, IsVisible = true, Order = 1, Width = 320 },
+                            new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.DirectoryPath, IsVisible = false, Order = 2, Width = 460 },
+                            new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.PreviewPath, IsVisible = false, Order = 3, Width = 460 },
+                            new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.LastModified, IsVisible = true, Order = 4, Width = 170 },
+                            new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.EmoteCount, IsVisible = true, Order = 5, Width = 110 },
+                            new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.Size, IsVisible = true, Order = 6, Width = 110 },
+                            new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.IntegrityFailures, IsVisible = true, Order = 7, Width = 120 },
+                            new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.OpenCharIni, IsVisible = true, Order = 8, Width = 120 },
+                            new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.Readme, IsVisible = true, Order = 9, Width = 120 }
+                        }
                     }
                 }
             };
@@ -765,19 +780,30 @@ namespace OceanyaClient
                     Id = "detailed",
                     Name = "Detailed",
                     Mode = FolderVisualizerLayoutMode.Table,
+                    Normal = new FolderVisualizerNormalViewConfig
+                    {
+                        TileWidth = 170,
+                        TileHeight = 182,
+                        IconSize = 18,
+                        NameFontSize = 12,
+                        InternalTilePadding = 2,
+                        ScrollWheelStep = 90,
+                        TilePadding = 8,
+                        TileMargin = 4
+                    },
                     Table = new EmoteVisualizerTableViewConfig
                     {
-                        RowHeight = 58,
-                        FontSize = 13,
+                        RowHeight = 69.19881305637982,
+                        FontSize = 24.952522255192875,
                         Columns = new List<EmoteVisualizerTableColumnConfig>
                         {
-                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.Icon, IsVisible = true, Order = 0, Width = 34 },
-                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.Id, IsVisible = true, Order = 1, Width = 54 },
-                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.Name, IsVisible = true, Order = 2, Width = 230 },
-                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.IconDimensions, IsVisible = true, Order = 3, Width = 96 },
-                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.PreAnimationPreview, IsVisible = true, Order = 4, Width = 110 },
-                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.PreAnimationDimensions, IsVisible = true, Order = 5, Width = 110 },
-                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.AnimationPreview, IsVisible = true, Order = 6, Width = 110 },
+                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.Id, IsVisible = true, Order = 0, Width = 59.831157270029664 },
+                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.Icon, IsVisible = true, Order = 1, Width = 81 },
+                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.Name, IsVisible = true, Order = 2, Width = 367.53234421364976 },
+                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.IconDimensions, IsVisible = true, Order = 3, Width = 86 },
+                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.PreAnimationPreview, IsVisible = true, Order = 4, Width = 101 },
+                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.PreAnimationDimensions, IsVisible = false, Order = 5, Width = 320 },
+                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.AnimationPreview, IsVisible = false, Order = 6, Width = 320 },
                             new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.AnimationDimensions, IsVisible = true, Order = 7, Width = 110 },
                             new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.PreAnimationPath, IsVisible = false, Order = 8, Width = 320 },
                             new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.AnimationPath, IsVisible = false, Order = 9, Width = 320 }
@@ -791,14 +817,32 @@ namespace OceanyaClient
                     Mode = FolderVisualizerLayoutMode.Normal,
                     Normal = new FolderVisualizerNormalViewConfig
                     {
-                        TileWidth = 235,
-                        TileHeight = 210,
-                        IconSize = 18,
-                        NameFontSize = 12,
+                        TileWidth = 400.2225519287834,
+                        TileHeight = 357.15133531157267,
+                        IconSize = 48,
+                        NameFontSize = 18.293768545994062,
                         InternalTilePadding = 0,
                         ScrollWheelStep = 90,
-                        TilePadding = 8,
+                        TilePadding = 2,
                         TileMargin = 4
+                    },
+                    Table = new EmoteVisualizerTableViewConfig
+                    {
+                        RowHeight = 58,
+                        FontSize = 13,
+                        Columns = new List<EmoteVisualizerTableColumnConfig>
+                        {
+                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.Icon, IsVisible = true, Order = 0, Width = 40 },
+                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.Id, IsVisible = true, Order = 1, Width = 230 },
+                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.Name, IsVisible = true, Order = 2, Width = 110 },
+                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.IconDimensions, IsVisible = true, Order = 3, Width = 110 },
+                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.PreAnimationPreview, IsVisible = false, Order = 4, Width = 320 },
+                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.PreAnimationDimensions, IsVisible = false, Order = 5, Width = 320 },
+                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.AnimationPreview, IsVisible = false, Order = 6, Width = 320 },
+                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.AnimationDimensions, IsVisible = true, Order = 7, Width = 110 },
+                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.PreAnimationPath, IsVisible = false, Order = 8, Width = 320 },
+                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.AnimationPath, IsVisible = false, Order = 9, Width = 320 }
+                        }
                     }
                 }
             };
@@ -808,6 +852,21 @@ namespace OceanyaClient
         {
             state.Width = Math.Clamp(state.Width, 760, 6000);
             state.Height = Math.Clamp(state.Height, 520, 4000);
+        }
+
+        private static List<string> NormalizeTagList(IEnumerable<string>? values)
+        {
+            if (values == null)
+            {
+                return new List<string>();
+            }
+
+            return values
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
     }
 

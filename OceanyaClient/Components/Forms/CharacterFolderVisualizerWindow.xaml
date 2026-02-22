@@ -69,6 +69,36 @@
             <Setter Property="VerticalContentAlignment" Value="Center"/>
         </Style>
 
+        <Style x:Key="TagChipButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="#2E4A5F"/>
+            <Setter Property="Foreground" Value="#FFECECEC"/>
+            <Setter Property="BorderBrush" Value="#4C86AE"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="6,2"/>
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="3">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#3A6281" TargetName="ButtonBorder"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter Property="Background" Value="#23445D" TargetName="ButtonBorder"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="CloseButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
@@ -157,13 +187,24 @@
                                 </ToggleButton.Template>
                             </ToggleButton>
 
-                            <ContentPresenter Margin="{TemplateBinding Padding}"
+                            <ContentPresenter x:Name="SelectionBoxPresenter"
+                                              Margin="{TemplateBinding Padding}"
                                               VerticalAlignment="Center"
                                               HorizontalAlignment="Stretch"
                                               IsHitTestVisible="False"
                                               Content="{TemplateBinding SelectionBoxItem}"
                                               ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
                                               TextElement.Foreground="{TemplateBinding Foreground}"/>
+
+                            <TextBox x:Name="PART_EditableTextBox"
+                                     Margin="{TemplateBinding Padding}"
+                                     VerticalContentAlignment="Center"
+                                     HorizontalContentAlignment="Left"
+                                     Foreground="{TemplateBinding Foreground}"
+                                     Background="Transparent"
+                                     BorderThickness="0"
+                                     Visibility="Hidden"
+                                     Focusable="True"/>
 
                             <Path HorizontalAlignment="Right"
                                   VerticalAlignment="Center"
@@ -191,6 +232,10 @@
                             </Popup>
                         </Grid>
                         <ControlTemplate.Triggers>
+                            <Trigger Property="IsEditable" Value="True">
+                                <Setter TargetName="PART_EditableTextBox" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="SelectionBoxPresenter" Property="Visibility" Value="Hidden"/>
+                            </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="MainBorder" Property="Background" Value="#FF2A2A2A"/>
                             </Trigger>
@@ -492,6 +537,8 @@
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
 
@@ -523,7 +570,23 @@
                             Style="{StaticResource ModernButton}"
                             Click="RefreshAssetsButton_Click"/>
 
-                    <CheckBox Grid.Column="5"
+                    <Button Grid.Column="5"
+                            x:Name="SelectTagsButton"
+                            Content="Select Tags"
+                            Width="110"
+                            Margin="10,0,0,0"
+                            Style="{StaticResource ModernButton}"
+                            Click="SelectTagsButton_Click"/>
+
+                    <Button Grid.Column="6"
+                            x:Name="ToggleTagPanelTopButton"
+                            Content="Hide Tags"
+                            Width="95"
+                            Margin="10,0,0,0"
+                            Style="{StaticResource ModernButton}"
+                            Click="ToggleTagPanelButton_Click"/>
+
+                    <CheckBox Grid.Column="7"
                               x:Name="ViewIntegrityVerifierResultsCheckBox"
                               Content="View Integrity Verifier Results"
                               VerticalAlignment="Center"
@@ -533,20 +596,166 @@
                               Unchecked="ViewIntegrityVerifierResultsCheckBox_Changed"/>
                 </Grid>
 
-                <Border Grid.Row="1" Background="#14000000" BorderBrush="#4AFFFFFF" BorderThickness="1">
-                    <ListView x:Name="FolderListView"
-                              Style="{StaticResource VisualizerListViewStyle}"
-                              BorderThickness="0"
-                              Background="#00000000"
-                              ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                              ScrollViewer.VerticalScrollBarVisibility="Auto"
-                              VirtualizingPanel.IsVirtualizing="True"
-                              VirtualizingPanel.VirtualizationMode="Recycling"
-                              PreviewMouseWheel="FolderListView_PreviewMouseWheel"
-                              MouseDoubleClick="FolderListView_MouseDoubleClick"
-                              PreviewMouseRightButtonDown="FolderListView_PreviewMouseRightButtonDown"
-                              ContextMenuOpening="FolderListView_ContextMenuOpening"/>
-                </Border>
+                <Grid Grid.Row="1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition x:Name="TagPanelColumn" Width="260" MinWidth="180"/>
+                        <ColumnDefinition x:Name="TagPanelSplitterColumn" Width="5"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0" Background="#20000000" BorderBrush="#4AFFFFFF" BorderThickness="1" Padding="8,8,8,6">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <Grid Grid.Row="0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Grid.Column="0"
+                                           Text="Tags"
+                                           Foreground="#FFE8E8E8"
+                                           FontWeight="Bold"
+                                           VerticalAlignment="Center"/>
+                                <ToggleButton Grid.Column="1"
+                                              x:Name="ToggleTagPanelButton"
+                                              Width="26"
+                                              Height="24"
+                                              Margin="8,0,0,0"
+                                              Content="◀"
+                                              ToolTip="Collapse tag panel"
+                                              Background="#FF262626"
+                                              Foreground="White"
+                                              BorderBrush="#444444"
+                                              BorderThickness="1"
+                                              Click="ToggleTagPanelButton_Click"/>
+                            </Grid>
+
+                            <TextBlock Grid.Row="1"
+                                       x:Name="SelectedFolderLabel"
+                                       Margin="0,8,0,4"
+                                       Foreground="#FFD8D8D8"
+                                       Text="No folder selected"
+                                       TextTrimming="CharacterEllipsis"/>
+
+                            <ComboBox Grid.Row="2"
+                                      x:Name="TagInputComboBox"
+                                      Style="{StaticResource DarkComboBoxStyle}"
+                                      IsEditable="True"
+                                      IsTextSearchEnabled="False"
+                                      StaysOpenOnEdit="True"
+                                      Height="30"
+                                      Margin="0,0,0,8"
+                                      PreviewKeyDown="TagInputComboBox_PreviewKeyDown"
+                                      TextBoxBase.TextChanged="TagInputComboBox_TextChanged"
+                                      ToolTip="Type tag name and press Enter"/>
+
+                            <ListBox Grid.Row="3"
+                                     x:Name="SelectedFolderTagsListBox"
+                                     Background="#12000000"
+                                     Foreground="#FFF0F0F0"
+                                     BorderBrush="#3AFFFFFF"
+                                     BorderThickness="1"
+                                     SelectionMode="Single"
+                                     MouseDoubleClick="SelectedFolderTagsListBox_MouseDoubleClick">
+                                <ListBox.ItemContainerStyle>
+                                    <Style TargetType="ListBoxItem">
+                                        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                        <Setter Property="Padding" Value="2,1"/>
+                                    </Style>
+                                </ListBox.ItemContainerStyle>
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,1,0,1">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0"
+                                                       FontFamily="Segoe MDL2 Assets"
+                                                       Text="&#xE8EC;"
+                                                       Margin="2,0,6,0"
+                                                       Foreground="#FF9FD0F5"
+                                                       VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding}"
+                                                       VerticalAlignment="Center"
+                                                       Foreground="#FFF2F2F2"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                            <Button Content="✕"
+                                                    Grid.Column="2"
+                                                    Width="24"
+                                                    Height="22"
+                                                    Margin="6,0,0,0"
+                                                    Style="{StaticResource TagChipButtonStyle}"
+                                                    Click="RemoveTagButton_Click"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+
+                            <Grid Grid.Row="4" Margin="0,8,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Button x:Name="RenameTagButton"
+                                        Grid.Column="0"
+                                        Content="Rename"
+                                        HorizontalAlignment="Stretch"
+                                        Style="{StaticResource ModernButton}"
+                                        Click="RenameTagButton_Click"/>
+                                <Button x:Name="RemoveSelectedTagButton"
+                                        Grid.Column="1"
+                                        Content="Remove"
+                                        HorizontalAlignment="Stretch"
+                                        Margin="6,0,0,0"
+                                        Style="{StaticResource ModernButton}"
+                                        Click="RemoveSelectedTagButton_Click"/>
+                                <Button x:Name="ClearFolderTagsButton"
+                                        Grid.Column="2"
+                                        Content="Clear"
+                                        HorizontalAlignment="Stretch"
+                                        Margin="6,0,0,0"
+                                        Style="{StaticResource ModernButton}"
+                                        Click="ClearFolderTagsButton_Click"/>
+                            </Grid>
+                        </Grid>
+                    </Border>
+
+                    <GridSplitter Grid.Column="1"
+                                  x:Name="TagPanelSplitter"
+                                  ResizeDirection="Columns"
+                                  HorizontalAlignment="Stretch"
+                                  VerticalAlignment="Stretch"
+                                  Background="#4090A7BF"
+                                  ShowsPreview="True"/>
+
+                    <Border Grid.Column="2" Background="#14000000" BorderBrush="#4AFFFFFF" BorderThickness="1">
+                        <ListView x:Name="FolderListView"
+                                  Style="{StaticResource VisualizerListViewStyle}"
+                                  BorderThickness="0"
+                                  Background="#00000000"
+                                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                  ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                  VirtualizingPanel.IsVirtualizing="True"
+                                  VirtualizingPanel.VirtualizationMode="Recycling"
+                                  PreviewMouseWheel="FolderListView_PreviewMouseWheel"
+                                  MouseDoubleClick="FolderListView_MouseDoubleClick"
+                                  PreviewMouseRightButtonDown="FolderListView_PreviewMouseRightButtonDown"
+                                  ContextMenuOpening="FolderListView_ContextMenuOpening"
+                                  SelectionChanged="FolderListView_SelectionChanged"/>
+                    </Border>
+                </Grid>
 
                 <Grid Grid.Row="2" Margin="0,8,0,0">
                     <Grid.ColumnDefinitions>
@@ -556,7 +765,13 @@
                     </Grid.ColumnDefinitions>
 
                     <Border Grid.Column="0" Background="#AA000000" BorderBrush="#33FFFFFF" BorderThickness="1" Padding="8,6">
-                        <TextBlock x:Name="SummaryText" Foreground="#FFDADADA" FontSize="12"/>
+                        <StackPanel Orientation="Vertical">
+                            <TextBlock x:Name="SummaryText" Foreground="#FFDADADA" FontSize="12"/>
+                            <TextBlock x:Name="ActiveTagFiltersText"
+                                       Foreground="#FFBBD5EA"
+                                       FontSize="11"
+                                       Margin="0,2,0,0"/>
+                        </StackPanel>
                     </Border>
 
                     <Button Grid.Column="1"

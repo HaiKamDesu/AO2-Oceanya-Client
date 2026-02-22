@@ -1,4 +1,5 @@
 using System;
+using System.Collections.ObjectModel;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -35,12 +36,17 @@ namespace OceanyaClient
 
         private static readonly ImageSource FallbackFolderImage = LoadEmbeddedImage(FallbackFolderPackUri);
         private const int VisualizerDiskCacheVersion = 1;
+        private const int FolderTagCacheVersion = 1;
+        private const string UntaggedFilterToken = "(none)";
         private static readonly JsonSerializerOptions CacheJsonOptions = new JsonSerializerOptions { WriteIndented = false };
+        private static readonly JsonSerializerOptions FolderTagCacheJsonOptions = new JsonSerializerOptions { WriteIndented = true };
 
         private static string cachedSignature = string.Empty;
         private static List<FolderVisualizerItem> cachedItems = new List<FolderVisualizerItem>();
         private static string diskCacheFilePath = string.Empty;
         private static bool diskCachePathInitialized;
+        private static string folderTagCacheFilePath = string.Empty;
+        private static bool folderTagCachePathInitialized;
 
         private readonly Action? onAssetsRefreshed;
         private readonly Func<FolderVisualizerItem, bool>? canSetCharacterInClient;
@@ -59,7 +65,25 @@ namespace OceanyaClient
         private string searchText = string.Empty;
         private string pendingSearchText = string.Empty;
         private readonly DispatcherTimer searchDebounceTimer;
+        private readonly DispatcherTimer tagSaveDebounceTimer;
+        private bool hasPendingTagSave;
         private FolderVisualizerItem? contextMenuTargetItem;
+        private FolderVisualizerItem? selectedItemForTagging;
+        private bool suppressTagInputAutocomplete;
+        private readonly Dictionary<string, HashSet<string>> folderTagsByDirectory =
+            new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> activeIncludeTagFilters = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> activeExcludeTagFilters = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly ObservableCollection<string> selectedFolderTags = new ObservableCollection<string>();
+        private readonly ObservableCollection<string> allKnownTags = new ObservableCollection<string>();
+        private readonly VisualizerWindowState tagFilterWindowState = new VisualizerWindowState
+        {
+            Width = 500,
+            Height = 560,
+            IsMaximized = false
+        };
+        private double savedTagPanelWidth = 260;
+        private bool tagPanelCollapsed;
         private double normalScrollWheelStep = 90;
         private FolderVisualizerTableColumnKey? currentSortColumnKey;
         private ListSortDirection currentSortDirection = ListSortDirection.Ascending;
@@ -166,11 +190,22 @@ namespace OceanyaClient
                 Interval = TimeSpan.FromMilliseconds(140)
             };
             searchDebounceTimer.Tick += SearchDebounceTimer_Tick;
+            tagSaveDebounceTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(320)
+            };
+            tagSaveDebounceTimer.Tick += TagSaveDebounceTimer_Tick;
 
             visualizerConfig = CloneConfig(SaveFile.Data.FolderVisualizer);
             ShowIntegrityVerifierResults = SaveFile.Data.ViewFolderIntegrityVerifierResults;
             ViewIntegrityVerifierResultsCheckBox.IsChecked = ShowIntegrityVerifierResults;
+            SelectedFolderTagsListBox.ItemsSource = selectedFolderTags;
+            TagInputComboBox.ItemsSource = allKnownTags;
+            LoadTagStateFromCache();
             ApplySavedWindowState();
+            ApplyTagPanelState();
+            UpdateActiveTagFiltersText();
+            RefreshSelectedFolderTagPanel();
             BindViewPresets();
         }
 
@@ -242,6 +277,301 @@ namespace OceanyaClient
                 Height = Math.Max(MinHeight, capturedHeight),
                 IsMaximized = WindowState == WindowState.Maximized
             };
+        }
+
+        private void LoadTagStateFromCache()
+        {
+            folderTagsByDirectory.Clear();
+            activeIncludeTagFilters.Clear();
+            activeExcludeTagFilters.Clear();
+            savedTagPanelWidth = 260;
+            tagPanelCollapsed = false;
+            tagFilterWindowState.Width = 500;
+            tagFilterWindowState.Height = 560;
+            tagFilterWindowState.IsMaximized = false;
+
+            FolderTagCacheFileData cacheData = TryLoadFolderTagCacheFromDisk() ?? new FolderTagCacheFileData();
+            MergeLegacySaveFileTags(cacheData);
+
+            foreach (KeyValuePair<string, List<string>> pair in cacheData.FolderTags)
+            {
+                string key = NormalizeTagAssignmentKey(pair.Key);
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    continue;
+                }
+
+                HashSet<string> tags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (string tag in pair.Value ?? new List<string>())
+                {
+                    string normalizedTag = NormalizeTag(tag);
+                    if (!string.IsNullOrWhiteSpace(normalizedTag))
+                    {
+                        tags.Add(normalizedTag);
+                    }
+                }
+
+                if (tags.Count > 0)
+                {
+                    folderTagsByDirectory[key] = tags;
+                }
+            }
+
+            foreach (string tag in cacheData.ActiveIncludeTagFilters ?? new List<string>())
+            {
+                string normalizedTag = NormalizeTag(tag);
+                if (!string.IsNullOrWhiteSpace(normalizedTag))
+                {
+                    activeIncludeTagFilters.Add(normalizedTag);
+                }
+            }
+            foreach (string tag in cacheData.ActiveExcludeTagFilters ?? new List<string>())
+            {
+                string normalizedTag = NormalizeTag(tag);
+                if (!string.IsNullOrWhiteSpace(normalizedTag))
+                {
+                    activeExcludeTagFilters.Add(normalizedTag);
+                }
+            }
+
+            savedTagPanelWidth = Math.Clamp(cacheData.TagPanelWidth, 180, 520);
+            tagPanelCollapsed = cacheData.TagPanelCollapsed;
+            if (cacheData.TagFilterWindowState != null)
+            {
+                tagFilterWindowState.Width = Math.Max(380, cacheData.TagFilterWindowState.Width);
+                tagFilterWindowState.Height = Math.Max(420, cacheData.TagFilterWindowState.Height);
+                tagFilterWindowState.IsMaximized = cacheData.TagFilterWindowState.IsMaximized;
+            }
+
+            RefreshKnownTagsCollection();
+            PersistTagState(saveToDisk: true);
+        }
+
+        private FolderTagCacheFileData? TryLoadFolderTagCacheFromDisk()
+        {
+            EnsureFolderTagCacheFilePath();
+            if (!File.Exists(folderTagCacheFilePath))
+            {
+                return null;
+            }
+
+            try
+            {
+                string json = File.ReadAllText(folderTagCacheFilePath);
+                FolderTagCacheFileData? loaded = JsonSerializer.Deserialize<FolderTagCacheFileData>(json, FolderTagCacheJsonOptions);
+                if (loaded == null)
+                {
+                    return null;
+                }
+
+                loaded.FolderTags ??= new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+                loaded.ActiveIncludeTagFilters ??= new List<string>();
+                loaded.ActiveExcludeTagFilters ??= new List<string>();
+                if (loaded.ActiveIncludeTagFilters.Count == 0 && loaded.ActiveTagFilters != null)
+                {
+                    loaded.ActiveIncludeTagFilters = loaded.ActiveTagFilters;
+                }
+                loaded.TagFilterWindowState ??= new VisualizerWindowState
+                {
+                    Width = 500,
+                    Height = 560,
+                    IsMaximized = false
+                };
+
+                return loaded;
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Warning("Unable to load folder tag cache from disk.", ex);
+                return null;
+            }
+        }
+
+        private void MergeLegacySaveFileTags(FolderTagCacheFileData cacheData)
+        {
+            if (cacheData == null)
+            {
+                return;
+            }
+
+            Dictionary<string, List<string>> legacyTarget = cacheData.FolderTags
+                ?? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            cacheData.FolderTags = legacyTarget;
+            cacheData.ActiveIncludeTagFilters ??= new List<string>();
+            cacheData.ActiveExcludeTagFilters ??= new List<string>();
+            bool hasCacheEntries = legacyTarget.Count > 0;
+            if (hasCacheEntries)
+            {
+                return;
+            }
+
+            foreach (KeyValuePair<string, List<string>> pair in SaveFile.Data.CharacterFolderTags ?? new Dictionary<string, List<string>>())
+            {
+                string key = NormalizeTagAssignmentKey(pair.Key);
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    continue;
+                }
+
+                legacyTarget[key] = (pair.Value ?? new List<string>())
+                    .Select(NormalizeTag)
+                    .Where(tag => !string.IsNullOrWhiteSpace(tag))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(tag => tag, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+
+            if (cacheData.ActiveIncludeTagFilters.Count == 0)
+            {
+                cacheData.ActiveIncludeTagFilters = (SaveFile.Data.CharacterFolderActiveTagFilters ?? new List<string>())
+                    .Select(NormalizeTag)
+                    .Where(tag => !string.IsNullOrWhiteSpace(tag))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(tag => tag, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+
+            if (Math.Abs(cacheData.TagPanelWidth) < 0.1)
+            {
+                cacheData.TagPanelWidth = SaveFile.Data.CharacterFolderTagPanelWidth <= 0
+                    ? 260
+                    : SaveFile.Data.CharacterFolderTagPanelWidth;
+                cacheData.TagPanelCollapsed = SaveFile.Data.CharacterFolderTagPanelCollapsed;
+            }
+        }
+
+        private void PersistTagState(bool saveToDisk)
+        {
+            tagPanelCollapsed = TagPanelColumn.Width.Value < 10;
+            if (!tagPanelCollapsed)
+            {
+                savedTagPanelWidth = Math.Clamp(TagPanelColumn.ActualWidth, 180, 520);
+            }
+
+            if (!saveToDisk)
+            {
+                return;
+            }
+
+            EnsureFolderTagCacheFilePath();
+            try
+            {
+                FolderTagCacheFileData data = new FolderTagCacheFileData
+                {
+                    Version = FolderTagCacheVersion,
+                    FolderTags = folderTagsByDirectory
+                        .Where(pair => pair.Value.Count > 0)
+                        .ToDictionary(
+                            pair => pair.Key,
+                            pair => pair.Value.OrderBy(tag => tag, StringComparer.OrdinalIgnoreCase).ToList(),
+                            StringComparer.OrdinalIgnoreCase),
+                    ActiveIncludeTagFilters = activeIncludeTagFilters
+                        .OrderBy(tag => tag, StringComparer.OrdinalIgnoreCase)
+                        .ToList(),
+                    ActiveExcludeTagFilters = activeExcludeTagFilters
+                        .OrderBy(tag => tag, StringComparer.OrdinalIgnoreCase)
+                        .ToList(),
+                    TagPanelWidth = savedTagPanelWidth,
+                    TagPanelCollapsed = tagPanelCollapsed,
+                    TagFilterWindowState = new VisualizerWindowState
+                    {
+                        Width = Math.Max(380, tagFilterWindowState.Width),
+                        Height = Math.Max(420, tagFilterWindowState.Height),
+                        IsMaximized = tagFilterWindowState.IsMaximized
+                    }
+                };
+
+                string json = JsonSerializer.Serialize(data, FolderTagCacheJsonOptions);
+                File.WriteAllText(folderTagCacheFilePath, json);
+                hasPendingTagSave = false;
+                tagSaveDebounceTimer.Stop();
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Warning("Unable to persist folder tag cache.", ex);
+            }
+        }
+
+        private void QueueTagStateSave()
+        {
+            PersistTagState(saveToDisk: false);
+            hasPendingTagSave = true;
+            tagSaveDebounceTimer.Stop();
+            tagSaveDebounceTimer.Start();
+        }
+
+        private void TagSaveDebounceTimer_Tick(object? sender, EventArgs e)
+        {
+            tagSaveDebounceTimer.Stop();
+            if (!hasPendingTagSave)
+            {
+                return;
+            }
+
+            PersistTagState(saveToDisk: true);
+        }
+
+        private void ApplyTagPanelState()
+        {
+            bool isCollapsed = tagPanelCollapsed;
+            double width = Math.Clamp(savedTagPanelWidth, 180, 520);
+            TagPanelColumn.Width = isCollapsed ? new GridLength(0) : new GridLength(width);
+            TagPanelSplitterColumn.Width = isCollapsed ? new GridLength(0) : new GridLength(5);
+            TagPanelSplitter.Visibility = isCollapsed ? Visibility.Collapsed : Visibility.Visible;
+            ToggleTagPanelButton.Content = isCollapsed ? "▶" : "◀";
+            ToggleTagPanelButton.ToolTip = isCollapsed ? "Expand tag panel" : "Collapse tag panel";
+            ToggleTagPanelTopButton.Content = isCollapsed ? "Show Tags" : "Hide Tags";
+        }
+
+        private static string NormalizeTag(string? rawTag)
+        {
+            string value = rawTag?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            return value;
+        }
+
+        private static void EnsureFolderTagCacheFilePath()
+        {
+            string cacheRoot = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "OceanyaClient",
+                "cache");
+            Directory.CreateDirectory(cacheRoot);
+            string desiredPath = Path.Combine(cacheRoot, "character_folder_tags.json");
+            if (!folderTagCachePathInitialized || !string.Equals(folderTagCacheFilePath, desiredPath, StringComparison.OrdinalIgnoreCase))
+            {
+                folderTagCacheFilePath = desiredPath;
+                folderTagCachePathInitialized = true;
+            }
+        }
+
+        private static string NormalizeTagAssignmentKey(string? pathOrFolderName)
+        {
+            string value = pathOrFolderName?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            try
+            {
+                string trimmedPath = value.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                string folderName = Path.GetFileName(trimmedPath);
+                if (!string.IsNullOrWhiteSpace(folderName))
+                {
+                    return folderName.Trim();
+                }
+            }
+            catch
+            {
+                // ignored
+            }
+
+            return value;
         }
 
         private void ApplyWorkAreaMaxBounds()
@@ -354,7 +684,9 @@ namespace OceanyaClient
                 allItems.Clear();
                 allItems.AddRange(cachedItems);
                 itemsView = null;
-                SummaryText.Text = $"Characters indexed: {allItems.Count}";
+                UpdateSummaryText();
+                PruneTagAssignmentsToExistingItems();
+                RefreshSelectedFolderTagPanel();
 
                 WaitForm.SetSubtitle("Rendering selected view...");
                 await Dispatcher.Yield(DispatcherPriority.Background);
@@ -381,7 +713,9 @@ namespace OceanyaClient
                     allItems.Clear();
                     allItems.AddRange(diskCachedItems);
                     itemsView = null;
-                    SummaryText.Text = $"Characters indexed: {allItems.Count}";
+                    UpdateSummaryText();
+                    PruneTagAssignmentsToExistingItems();
+                    RefreshSelectedFolderTagPanel();
 
                     WaitForm.SetSubtitle("Rendering selected view...");
                     await Dispatcher.Yield(DispatcherPriority.Background);
@@ -409,7 +743,9 @@ namespace OceanyaClient
                 allItems.Clear();
                 allItems.AddRange(projected);
                 itemsView = null;
-                SummaryText.Text = $"Characters indexed: {allItems.Count}";
+                UpdateSummaryText();
+                PruneTagAssignmentsToExistingItems();
+                RefreshSelectedFolderTagPanel();
                 WaitForm.SetSubtitle("Rendering selected view...");
                 await Dispatcher.Yield(DispatcherPriority.Background);
                 ApplySelectedViewPreset();
@@ -596,6 +932,7 @@ namespace OceanyaClient
             ScrollViewer.SetHorizontalScrollBarVisibility(FolderListView, ScrollBarVisibility.Disabled);
             FolderListView.ItemsSource = null;
             FolderListView.ItemsSource = GetOrCreateItemsView();
+            UpdateSummaryText();
         }
 
         private void ApplyTablePreset(FolderVisualizerViewPreset preset)
@@ -609,6 +946,7 @@ namespace OceanyaClient
             FolderListView.ItemsSource = null;
             FolderListView.ItemsSource = GetOrCreateItemsView();
             ApplySortToCurrentView();
+            UpdateSummaryText();
         }
 
         private ICollectionView GetOrCreateItemsView()
@@ -627,6 +965,35 @@ namespace OceanyaClient
             if (obj is not FolderVisualizerItem item)
             {
                 return false;
+            }
+
+            if (activeIncludeTagFilters.Count > 0 || activeExcludeTagFilters.Count > 0)
+            {
+                HashSet<string> itemTagSet = GetTagsForItem(item).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                bool includesUntaggedOnly = activeIncludeTagFilters.Contains(UntaggedFilterToken);
+                if (includesUntaggedOnly)
+                {
+                    if (itemTagSet.Count != 0)
+                    {
+                        return false;
+                    }
+                }
+                else
+                {
+                    List<string> requiredTags = activeIncludeTagFilters.ToList();
+                    if (requiredTags.Count > 0 && !requiredTags.All(tag => itemTagSet.Contains(tag)))
+                    {
+                        return false;
+                    }
+                }
+
+                List<string> excludedTags = activeExcludeTagFilters
+                    .Where(tag => !string.Equals(tag, UntaggedFilterToken, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                if (excludedTags.Any(tag => itemTagSet.Contains(tag)))
+                {
+                    return false;
+                }
             }
 
             string query = searchText.Trim();
@@ -656,6 +1023,10 @@ namespace OceanyaClient
                 yield return item.DirectoryPath;
                 yield return item.PreviewPath;
                 yield return item.IntegrityFailureMessages;
+                foreach (string tag in GetTagsForItem(item))
+                {
+                    yield return tag;
+                }
                 yield break;
             }
 
@@ -677,6 +1048,10 @@ namespace OceanyaClient
                 {
                     yield return value;
                 }
+            }
+            foreach (string tag in GetTagsForItem(item))
+            {
+                yield return tag;
             }
         }
 
@@ -703,6 +1078,55 @@ namespace OceanyaClient
             {
                 yield return column.Key;
             }
+        }
+
+        private IEnumerable<string> GetTagsForItem(FolderVisualizerItem item)
+        {
+            if (item == null)
+            {
+                return Enumerable.Empty<string>();
+            }
+
+            HashSet<string> resolvedTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string key in GetTagLookupKeysForItem(item))
+            {
+                if (!folderTagsByDirectory.TryGetValue(key, out HashSet<string>? tags) || tags.Count == 0)
+                {
+                    continue;
+                }
+
+                foreach (string tag in tags)
+                {
+                    resolvedTags.Add(tag);
+                }
+            }
+
+            return resolvedTags;
+        }
+
+        private static IEnumerable<string> GetTagLookupKeysForItem(FolderVisualizerItem item)
+        {
+            string directoryKey = NormalizeTagAssignmentKey(item.DirectoryPath);
+            if (!string.IsNullOrWhiteSpace(directoryKey))
+            {
+                yield return directoryKey;
+            }
+
+            string nameKey = NormalizeTagAssignmentKey(item.Name);
+            if (!string.IsNullOrWhiteSpace(nameKey) && !string.Equals(nameKey, directoryKey, StringComparison.OrdinalIgnoreCase))
+            {
+                yield return nameKey;
+            }
+        }
+
+        private static string GetPrimaryTagKeyForItem(FolderVisualizerItem item)
+        {
+            foreach (string key in GetTagLookupKeysForItem(item))
+            {
+                return key;
+            }
+
+            return string.Empty;
         }
 
         private Style BuildDetailsContainerStyle(FolderVisualizerTableViewConfig table)
@@ -1144,7 +1568,454 @@ namespace OceanyaClient
             {
                 ICollectionView view = GetOrCreateItemsView();
                 view.Refresh();
+                UpdateSummaryText();
             }));
+        }
+
+        private void FolderListView_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            selectedItemForTagging = FolderListView.SelectedItem as FolderVisualizerItem;
+            RefreshSelectedFolderTagPanel();
+        }
+
+        private void ToggleTagPanelButton_Click(object sender, RoutedEventArgs e)
+        {
+            bool currentlyCollapsed = TagPanelColumn.Width.Value < 10;
+            if (currentlyCollapsed)
+            {
+                double width = Math.Clamp(savedTagPanelWidth, 180, 520);
+                TagPanelColumn.Width = new GridLength(width);
+                TagPanelSplitterColumn.Width = new GridLength(5);
+                TagPanelSplitter.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                savedTagPanelWidth = Math.Clamp(TagPanelColumn.ActualWidth, 180, 520);
+                TagPanelColumn.Width = new GridLength(0);
+                TagPanelSplitterColumn.Width = new GridLength(0);
+                TagPanelSplitter.Visibility = Visibility.Collapsed;
+            }
+
+            bool isCollapsed = TagPanelColumn.Width.Value < 10;
+            ToggleTagPanelButton.Content = isCollapsed ? "▶" : "◀";
+            ToggleTagPanelButton.ToolTip = isCollapsed ? "Expand tag panel" : "Collapse tag panel";
+            ToggleTagPanelTopButton.Content = isCollapsed ? "Show Tags" : "Hide Tags";
+            PersistTagState(saveToDisk: true);
+        }
+
+        private void TagInputComboBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (suppressTagInputAutocomplete)
+            {
+                return;
+            }
+
+            TextBox? editableTextBox = FindEditableTagInputTextBox();
+            if (editableTextBox == null || !editableTextBox.IsKeyboardFocusWithin)
+            {
+                return;
+            }
+
+            string input = editableTextBox.Text ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(input))
+            {
+                return;
+            }
+
+            string? match = allKnownTags.FirstOrDefault(tag =>
+                tag.StartsWith(input, StringComparison.OrdinalIgnoreCase));
+            if (string.IsNullOrWhiteSpace(match) || string.Equals(match, input, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            suppressTagInputAutocomplete = true;
+            editableTextBox.Text = match;
+            editableTextBox.SelectionStart = input.Length;
+            editableTextBox.SelectionLength = match.Length - input.Length;
+            suppressTagInputAutocomplete = false;
+        }
+
+        private void TagInputComboBox_PreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Enter)
+            {
+                e.Handled = true;
+                AddTagFromInput();
+            }
+        }
+
+        private async void SelectTagsButton_Click(object sender, RoutedEventArgs e)
+        {
+            List<string> selectableFilters = new List<string> { UntaggedFilterToken };
+            selectableFilters.AddRange(allKnownTags);
+
+            TagFilterSelectionWindow selectionWindow = new TagFilterSelectionWindow(
+                selectableFilters,
+                activeIncludeTagFilters,
+                activeExcludeTagFilters,
+                tagFilterWindowState)
+            {
+                Owner = this
+            };
+
+            bool? result = selectionWindow.ShowDialog();
+            VisualizerWindowState capturedState = selectionWindow.CaptureWindowState();
+            tagFilterWindowState.Width = capturedState.Width;
+            tagFilterWindowState.Height = capturedState.Height;
+            tagFilterWindowState.IsMaximized = capturedState.IsMaximized;
+            QueueTagStateSave();
+            if (result != true)
+            {
+                return;
+            }
+
+            activeIncludeTagFilters.Clear();
+            activeExcludeTagFilters.Clear();
+            foreach (string tag in selectionWindow.IncludedTags)
+            {
+                activeIncludeTagFilters.Add(tag);
+            }
+            foreach (string tag in selectionWindow.ExcludedTags)
+            {
+                activeExcludeTagFilters.Add(tag);
+            }
+
+            await RefreshItemsAfterTagFilterChangeAsync();
+        }
+
+        private void SelectedFolderTagsListBox_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            if (SelectedFolderTagsListBox.SelectedItem is not string selectedTag)
+            {
+                return;
+            }
+
+            TagInputComboBox.Text = selectedTag;
+            TagInputComboBox.Focus();
+            TextBox? editable = FindEditableTagInputTextBox();
+            if (editable != null)
+            {
+                editable.SelectionStart = selectedTag.Length;
+                editable.SelectionLength = 0;
+            }
+        }
+
+        private void RemoveTagButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button button || button.DataContext is not string tag)
+            {
+                return;
+            }
+
+            RemoveTagFromSelectedItem(tag);
+        }
+
+        private void RenameTagButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (SelectedFolderTagsListBox.SelectedItem is not string existingTag)
+            {
+                return;
+            }
+
+            string replacementRaw = TagInputComboBox.Text ?? string.Empty;
+            string replacementTag = NormalizeTag(replacementRaw);
+            if (string.IsNullOrWhiteSpace(replacementTag))
+            {
+                return;
+            }
+
+            if (string.Equals(existingTag, replacementTag, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            if (selectedItemForTagging == null)
+            {
+                return;
+            }
+
+            string primaryKey = GetPrimaryTagKeyForItem(selectedItemForTagging);
+            if (string.IsNullOrWhiteSpace(primaryKey))
+            {
+                return;
+            }
+
+            bool removedExisting = false;
+            foreach (string lookupKey in GetTagLookupKeysForItem(selectedItemForTagging))
+            {
+                if (!folderTagsByDirectory.TryGetValue(lookupKey, out HashSet<string>? lookupTags))
+                {
+                    continue;
+                }
+
+                if (lookupTags.Remove(existingTag))
+                {
+                    removedExisting = true;
+                    if (lookupTags.Count == 0)
+                    {
+                        folderTagsByDirectory.Remove(lookupKey);
+                    }
+                }
+            }
+
+            if (!folderTagsByDirectory.TryGetValue(primaryKey, out HashSet<string>? tags))
+            {
+                tags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                folderTagsByDirectory[primaryKey] = tags;
+            }
+
+            if (removedExisting || !tags.Contains(replacementTag))
+            {
+                tags.Add(replacementTag);
+            }
+
+            RefreshAfterTagMutation(refreshKnownTags: true);
+            TagInputComboBox.Text = string.Empty;
+        }
+
+        private void RemoveSelectedTagButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (SelectedFolderTagsListBox.SelectedItem is not string selectedTag)
+            {
+                return;
+            }
+
+            RemoveTagFromSelectedItem(selectedTag);
+        }
+
+        private void ClearFolderTagsButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (selectedItemForTagging == null)
+            {
+                return;
+            }
+
+            bool changed = false;
+            foreach (string lookupKey in GetTagLookupKeysForItem(selectedItemForTagging).ToList())
+            {
+                changed |= folderTagsByDirectory.Remove(lookupKey);
+            }
+
+            if (changed)
+            {
+                RefreshAfterTagMutation(refreshKnownTags: true);
+            }
+        }
+
+        private void AddTagFromInput()
+        {
+            if (selectedItemForTagging == null)
+            {
+                return;
+            }
+
+            string rawInput = TagInputComboBox.Text ?? string.Empty;
+            string normalizedInput = NormalizeTag(rawInput);
+            if (string.IsNullOrWhiteSpace(normalizedInput))
+            {
+                return;
+            }
+
+            string resolvedTag = allKnownTags.FirstOrDefault(tag =>
+                string.Equals(tag, normalizedInput, StringComparison.OrdinalIgnoreCase))
+                ?? normalizedInput;
+
+            string key = GetPrimaryTagKeyForItem(selectedItemForTagging);
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                return;
+            }
+
+            if (!folderTagsByDirectory.TryGetValue(key, out HashSet<string>? tags))
+            {
+                tags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                folderTagsByDirectory[key] = tags;
+            }
+
+            if (tags.Add(resolvedTag))
+            {
+                RefreshAfterTagMutation(refreshKnownTags: true);
+            }
+
+            suppressTagInputAutocomplete = true;
+            TagInputComboBox.Text = string.Empty;
+            suppressTagInputAutocomplete = false;
+            TagInputComboBox.IsDropDownOpen = false;
+            TagInputComboBox.Focus();
+        }
+
+        private void RemoveTagFromSelectedItem(string tag)
+        {
+            if (selectedItemForTagging == null)
+            {
+                return;
+            }
+
+            bool removed = false;
+            foreach (string lookupKey in GetTagLookupKeysForItem(selectedItemForTagging))
+            {
+                if (!folderTagsByDirectory.TryGetValue(lookupKey, out HashSet<string>? tags))
+                {
+                    continue;
+                }
+
+                if (!tags.Remove(tag))
+                {
+                    continue;
+                }
+
+                removed = true;
+                if (tags.Count == 0)
+                {
+                    folderTagsByDirectory.Remove(lookupKey);
+                }
+            }
+
+            if (!removed)
+            {
+                return;
+            }
+
+            RefreshAfterTagMutation(refreshKnownTags: true);
+        }
+
+        private void RefreshAfterTagMutation(bool refreshKnownTags)
+        {
+            if (refreshKnownTags)
+            {
+                RefreshKnownTagsCollection();
+            }
+
+            RefreshSelectedFolderTagPanel();
+            QueueTagStateSave();
+
+            bool shouldRefreshView = activeIncludeTagFilters.Count > 0
+                || activeExcludeTagFilters.Count > 0
+                || !string.IsNullOrWhiteSpace(searchText)
+                || !string.IsNullOrWhiteSpace(pendingSearchText);
+            if (!shouldRefreshView)
+            {
+                return;
+            }
+
+            ICollectionView view = GetOrCreateItemsView();
+            view.Refresh();
+            UpdateSummaryText();
+        }
+
+        private async Task RefreshItemsAfterTagFilterChangeAsync()
+        {
+            UpdateActiveTagFiltersText();
+            QueueTagStateSave();
+            await WaitForm.ShowFormAsync("Applying tag filters...", this);
+            try
+            {
+                WaitForm.SetSubtitle("Refreshing visible folders...");
+                await Dispatcher.Yield(DispatcherPriority.Background);
+                ICollectionView view = GetOrCreateItemsView();
+                view.Refresh();
+                UpdateSummaryText();
+                await Dispatcher.Yield(DispatcherPriority.Background);
+            }
+            finally
+            {
+                WaitForm.CloseForm();
+            }
+        }
+
+        private void RefreshSelectedFolderTagPanel()
+        {
+            selectedFolderTags.Clear();
+            if (selectedItemForTagging == null)
+            {
+                SelectedFolderLabel.Text = "No folder selected";
+                RenameTagButton.IsEnabled = false;
+                RemoveSelectedTagButton.IsEnabled = false;
+                ClearFolderTagsButton.IsEnabled = false;
+                return;
+            }
+
+            SelectedFolderLabel.Text = selectedItemForTagging.Name;
+            IEnumerable<string> lookupKeys = GetTagLookupKeysForItem(selectedItemForTagging).ToList();
+            HashSet<string> combinedTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string lookupKey in lookupKeys)
+            {
+                if (!folderTagsByDirectory.TryGetValue(lookupKey, out HashSet<string>? existingTags))
+                {
+                    continue;
+                }
+
+                foreach (string tag in existingTags)
+                {
+                    combinedTags.Add(tag);
+                }
+            }
+
+            if (combinedTags.Count == 0)
+            {
+                RenameTagButton.IsEnabled = false;
+                RemoveSelectedTagButton.IsEnabled = false;
+                ClearFolderTagsButton.IsEnabled = false;
+                return;
+            }
+
+            foreach (string tag in combinedTags.OrderBy(tag => tag, StringComparer.OrdinalIgnoreCase))
+            {
+                selectedFolderTags.Add(tag);
+            }
+
+            bool hasTags = selectedFolderTags.Count > 0;
+            RenameTagButton.IsEnabled = hasTags;
+            RemoveSelectedTagButton.IsEnabled = hasTags;
+            ClearFolderTagsButton.IsEnabled = hasTags;
+        }
+
+        private void RefreshKnownTagsCollection()
+        {
+            allKnownTags.Clear();
+            IEnumerable<string> orderedTags = folderTagsByDirectory.Values
+                .SelectMany(value => value)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase);
+
+            foreach (string tag in orderedTags)
+            {
+                allKnownTags.Add(tag);
+            }
+        }
+
+        private void PruneTagAssignmentsToExistingItems()
+        {
+            RefreshKnownTagsCollection();
+        }
+
+        private void UpdateActiveTagFiltersText()
+        {
+            if (activeIncludeTagFilters.Count == 0 && activeExcludeTagFilters.Count == 0)
+            {
+                ActiveTagFiltersText.Text = "Active tags: none";
+                return;
+            }
+            string includeText = activeIncludeTagFilters.Count == 0
+                ? "none"
+                : string.Join(", ", activeIncludeTagFilters.OrderBy(tag => tag, StringComparer.OrdinalIgnoreCase));
+            string excludeText = activeExcludeTagFilters.Count == 0
+                ? "none"
+                : string.Join(", ", activeExcludeTagFilters.OrderBy(tag => tag, StringComparer.OrdinalIgnoreCase));
+            ActiveTagFiltersText.Text = $"Include: {includeText} | Exclude: {excludeText}";
+        }
+
+        private void UpdateSummaryText()
+        {
+            int total = allItems.Count;
+            int visible = FolderListView.Items.Count;
+            SummaryText.Text = $"Characters indexed: {total} | Showing: {visible}";
+        }
+
+        private TextBox? FindEditableTagInputTextBox()
+        {
+            return TagInputComboBox.Template?.FindName("PART_EditableTextBox", TagInputComboBox) as TextBox;
         }
 
         private async void ViewIntegrityVerifierResultsCheckBox_Changed(object sender, RoutedEventArgs e)
@@ -1180,6 +2051,7 @@ namespace OceanyaClient
             ICollectionView view = GetOrCreateItemsView();
             view.Refresh();
             FolderListView.Items.Refresh();
+            UpdateSummaryText();
         }
 
         private void FolderListView_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
@@ -1573,8 +2445,10 @@ namespace OceanyaClient
         protected override void OnClosed(EventArgs e)
         {
             progressiveImageLoadCancellation?.Cancel();
+            tagSaveDebounceTimer.Stop();
             UntrackTableColumnWidth();
             PersistVisualizerConfig();
+            PersistTagState(saveToDisk: true);
             if (!applyingSavedWindowState)
             {
                 SaveFile.Data.FolderVisualizerWindowState = CaptureWindowState();
@@ -2150,7 +3024,9 @@ namespace OceanyaClient
             List<FolderVisualizerItem> projectedItems = BuildCharacterItems(CharacterFolder.FullList);
             allItems.Clear();
             allItems.AddRange(projectedItems);
-            SummaryText.Text = $"Characters indexed: {allItems.Count}";
+            UpdateSummaryText();
+            PruneTagAssignmentsToExistingItems();
+            RefreshSelectedFolderTagPanel();
             ApplySelectedViewPreset();
         }
 
@@ -2389,6 +3265,24 @@ namespace OceanyaClient
         public bool IntegrityHasFailures { get; set; }
         public int IntegrityFailureCount { get; set; }
         public string IntegrityFailureMessages { get; set; } = string.Empty;
+    }
+
+    internal sealed class FolderTagCacheFileData
+    {
+        public int Version { get; set; } = 1;
+        public Dictionary<string, List<string>> FolderTags { get; set; } =
+            new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        public List<string>? ActiveTagFilters { get; set; } // legacy v0/v1 include-only field
+        public List<string> ActiveIncludeTagFilters { get; set; } = new List<string>();
+        public List<string> ActiveExcludeTagFilters { get; set; } = new List<string>();
+        public double TagPanelWidth { get; set; } = 260;
+        public bool TagPanelCollapsed { get; set; }
+        public VisualizerWindowState? TagFilterWindowState { get; set; } = new VisualizerWindowState
+        {
+            Width = 500,
+            Height = 560,
+            IsMaximized = false
+        };
     }
 
     [StructLayout(LayoutKind.Sequential)]
