@@ -102,7 +102,8 @@ namespace OceanyaClient
         public double TileHeight { get; set; } = 182;
         public double IconSize { get; set; } = 18;
         public double NameFontSize { get; set; } = 12;
-        public double InternalTilePadding { get; set; } = 2;
+        public double InternalTilePadding { get; set; } = 0;
+        public double ScrollWheelStep { get; set; } = 90;
         public double TilePadding { get; set; } = 8;
         public double TileMargin { get; set; } = 4;
     }
@@ -202,6 +203,8 @@ namespace OceanyaClient
         public VisualizerWindowState FolderVisualizerWindowState { get; set; } = new VisualizerWindowState();
         public VisualizerWindowState EmoteVisualizerWindowState { get; set; } = new VisualizerWindowState();
         public bool LoopEmoteVisualizerAnimations { get; set; } = true;
+        public Dictionary<string, int> CharacterFolderPreviewEmoteOverrides { get; set; } =
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
     }
 
     public static class SaveFile
@@ -311,6 +314,13 @@ namespace OceanyaClient
             data.EmoteVisualizerWindowState ??= new VisualizerWindowState();
             ClampWindowState(data.FolderVisualizerWindowState);
             ClampWindowState(data.EmoteVisualizerWindowState);
+            data.CharacterFolderPreviewEmoteOverrides ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            data.CharacterFolderPreviewEmoteOverrides = data.CharacterFolderPreviewEmoteOverrides
+                .Where(pair => !string.IsNullOrWhiteSpace(pair.Key) && pair.Value > 0)
+                .ToDictionary(
+                    pair => pair.Key.Trim(),
+                    pair => pair.Value,
+                    StringComparer.OrdinalIgnoreCase);
 
             data.FolderVisualizer ??= new FolderVisualizerConfig();
             data.FolderVisualizer.Presets ??= new List<FolderVisualizerViewPreset>();
@@ -412,6 +422,7 @@ namespace OceanyaClient
             preset.Normal.IconSize = Math.Clamp(preset.Normal.IconSize, 12, 48);
             preset.Normal.NameFontSize = Math.Clamp(preset.Normal.NameFontSize, 9, 30);
             preset.Normal.InternalTilePadding = Math.Clamp(preset.Normal.InternalTilePadding, 0, 24);
+            preset.Normal.ScrollWheelStep = Math.Clamp(preset.Normal.ScrollWheelStep, 20, 420);
             preset.Normal.TilePadding = Math.Clamp(preset.Normal.TilePadding, 2, 28);
             preset.Normal.TileMargin = Math.Clamp(preset.Normal.TileMargin, 0, 20);
 
@@ -616,7 +627,8 @@ namespace OceanyaClient
                         TileHeight = 140,
                         IconSize = 16,
                         NameFontSize = 11,
-                        InternalTilePadding = 2,
+                        InternalTilePadding = 0,
+                        ScrollWheelStep = 90,
                         TilePadding = 8,
                         TileMargin = 4
                     }
@@ -632,7 +644,8 @@ namespace OceanyaClient
                         TileHeight = 182,
                         IconSize = 18,
                         NameFontSize = 12,
-                        InternalTilePadding = 2,
+                        InternalTilePadding = 0,
+                        ScrollWheelStep = 90,
                         TilePadding = 8,
                         TileMargin = 4
                     }
@@ -648,7 +661,8 @@ namespace OceanyaClient
                         TileHeight = 246,
                         IconSize = 20,
                         NameFontSize = 13,
-                        InternalTilePadding = 3,
+                        InternalTilePadding = 0,
+                        ScrollWheelStep = 90,
                         TilePadding = 10,
                         TileMargin = 4
                     }
@@ -663,6 +677,7 @@ namespace OceanyaClient
             preset.Normal.IconSize = Math.Clamp(preset.Normal.IconSize, 12, 48);
             preset.Normal.NameFontSize = Math.Clamp(preset.Normal.NameFontSize, 9, 30);
             preset.Normal.InternalTilePadding = Math.Clamp(preset.Normal.InternalTilePadding, 0, 24);
+            preset.Normal.ScrollWheelStep = Math.Clamp(preset.Normal.ScrollWheelStep, 20, 420);
             preset.Normal.TilePadding = Math.Clamp(preset.Normal.TilePadding, 2, 28);
             preset.Normal.TileMargin = Math.Clamp(preset.Normal.TileMargin, 0, 20);
 
@@ -755,7 +770,8 @@ namespace OceanyaClient
                         TileHeight = 210,
                         IconSize = 18,
                         NameFontSize = 12,
-                        InternalTilePadding = 2,
+                        InternalTilePadding = 0,
+                        ScrollWheelStep = 90,
                         TilePadding = 8,
                         TileMargin = 4
                     }

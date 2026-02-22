@@ -13,7 +13,8 @@
         AllowsTransparency="True"
         Background="Transparent"
         Loaded="Window_Loaded"
-        StateChanged="Window_StateChanged">
+        StateChanged="Window_StateChanged"
+        KeyDown="Window_KeyDown">
     <shell:WindowChrome.WindowChrome>
         <shell:WindowChrome CaptionHeight="30"
                             ResizeBorderThickness="6"
@@ -593,6 +594,9 @@
                               ScrollViewer.VerticalScrollBarVisibility="Auto"
                               VirtualizingPanel.IsVirtualizing="True"
                               VirtualizingPanel.VirtualizationMode="Recycling"
+                              PreviewMouseWheel="EmoteListView_PreviewMouseWheel"
+                              PreviewMouseRightButtonDown="EmoteListView_PreviewMouseRightButtonDown"
+                              ContextMenuOpening="EmoteListView_ContextMenuOpening"
                               PreviewMouseLeftButtonUp="EmoteListView_PreviewMouseLeftButtonUp"
                               SelectionChanged="EmoteListView_SelectionChanged"/>
                 </Border>

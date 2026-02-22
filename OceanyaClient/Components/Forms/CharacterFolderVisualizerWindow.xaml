@@ -13,7 +13,8 @@
         AllowsTransparency="True"
         Background="Transparent"
         Loaded="Window_Loaded"
-        StateChanged="Window_StateChanged">
+        StateChanged="Window_StateChanged"
+        KeyDown="Window_KeyDown">
     <shell:WindowChrome.WindowChrome>
         <shell:WindowChrome CaptionHeight="30"
                             ResizeBorderThickness="6"
@@ -374,8 +375,8 @@
 
                     <Viewbox Grid.Row="0"
                              Stretch="Uniform"
-                             HorizontalAlignment="Center"
-                             VerticalAlignment="Center"
+                             HorizontalAlignment="Stretch"
+                             VerticalAlignment="Stretch"
                              Margin="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=InternalTileRowPadding}">
                         <Image Source="{Binding PreviewImage}" Stretch="Uniform"/>
                     </Viewbox>
@@ -502,6 +503,7 @@
                               ScrollViewer.VerticalScrollBarVisibility="Auto"
                               VirtualizingPanel.IsVirtualizing="True"
                               VirtualizingPanel.VirtualizationMode="Recycling"
+                              PreviewMouseWheel="FolderListView_PreviewMouseWheel"
                               MouseDoubleClick="FolderListView_MouseDoubleClick"
                               PreviewMouseRightButtonDown="FolderListView_PreviewMouseRightButtonDown"
                               ContextMenuOpening="FolderListView_ContextMenuOpening"/>

@@ -331,6 +331,7 @@
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
                                 </Grid.RowDefinitions>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="190"/>
@@ -363,6 +364,10 @@
                                 <TextBlock Grid.Row="6" Grid.Column="0" Text="Tile Padding" Style="{StaticResource LabelText}"/>
                                 <Slider Grid.Row="6" Grid.Column="1" x:Name="TilePaddingSlider" Minimum="2" Maximum="28" ValueChanged="NormalSlider_ValueChanged" Style="{StaticResource ConfigSliderStyle}"/>
                                 <TextBlock Grid.Row="6" Grid.Column="2" x:Name="TilePaddingValueText" Style="{StaticResource ConfigValueTextStyle}"/>
+
+                                <TextBlock Grid.Row="7" Grid.Column="0" Text="Scroll Speed" Style="{StaticResource LabelText}"/>
+                                <Slider Grid.Row="7" Grid.Column="1" x:Name="ScrollSpeedSlider" Minimum="20" Maximum="420" ValueChanged="NormalSlider_ValueChanged" Style="{StaticResource ConfigSliderStyle}"/>
+                                <TextBlock Grid.Row="7" Grid.Column="2" x:Name="ScrollSpeedValueText" Style="{StaticResource ConfigValueTextStyle}"/>
                             </Grid>
 
                             <Grid x:Name="TablePanel" Visibility="Collapsed">

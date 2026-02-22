@@ -58,6 +58,8 @@ namespace OceanyaClient
         private EmoteVisualizerConfig visualizerConfig = new EmoteVisualizerConfig();
         private EmoteVisualizerTableColumnKey? currentSortColumnKey;
         private ListSortDirection currentSortDirection = ListSortDirection.Ascending;
+        private EmoteVisualizerItem? contextMenuTargetItem;
+        private double normalScrollWheelStep = 90;
 
         internal IReadOnlyList<EmoteVisualizerItem> EmoteItems => allItems;
 
@@ -74,7 +76,7 @@ namespace OceanyaClient
             nameof(TileNameFontSize), typeof(double), typeof(CharacterEmoteVisualizerWindow), new PropertyMetadata(12d));
 
         public static readonly DependencyProperty InternalTileRowPaddingProperty = DependencyProperty.Register(
-            nameof(InternalTileRowPadding), typeof(Thickness), typeof(CharacterEmoteVisualizerWindow), new PropertyMetadata(new Thickness(0, 2, 0, 2)));
+            nameof(InternalTileRowPadding), typeof(Thickness), typeof(CharacterEmoteVisualizerWindow), new PropertyMetadata(new Thickness(0)));
 
         public static readonly DependencyProperty TilePaddingProperty = DependencyProperty.Register(
             nameof(TilePadding), typeof(Thickness), typeof(CharacterEmoteVisualizerWindow), new PropertyMetadata(new Thickness(8)));
@@ -182,6 +184,15 @@ namespace OceanyaClient
         private void Window_StateChanged(object? sender, EventArgs e)
         {
             ApplyWorkAreaMaxBounds();
+        }
+
+        private void Window_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Escape)
+            {
+                e.Handled = true;
+                Close();
+            }
         }
 
         private void ApplySavedWindowState()
@@ -434,6 +445,7 @@ namespace OceanyaClient
             IconSize = normal.IconSize;
             TileNameFontSize = normal.NameFontSize;
             InternalTileRowPadding = new Thickness(0, normal.InternalTilePadding, 0, normal.InternalTilePadding);
+            normalScrollWheelStep = normal.ScrollWheelStep;
             TilePadding = new Thickness(normal.TilePadding);
             TileMargin = new Thickness(normal.TileMargin);
 
@@ -966,6 +978,53 @@ namespace OceanyaClient
             item.AnimationPlayer?.Restart();
         }
 
+        private void EmoteListView_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            contextMenuTargetItem = ResolveItemFromOriginalSource(e.OriginalSource as DependencyObject);
+            if (contextMenuTargetItem != null)
+            {
+                EmoteListView.SelectedItem = contextMenuTargetItem;
+                EmoteListView.ContextMenu = BuildContextMenuForItem(contextMenuTargetItem);
+                EmoteListView.ContextMenu.PlacementTarget = EmoteListView;
+                EmoteListView.ContextMenu.IsOpen = true;
+                e.Handled = true;
+            }
+        }
+
+        private void EmoteListView_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+        {
+            DependencyObject? originalSource = e.OriginalSource as DependencyObject ?? Mouse.DirectlyOver as DependencyObject;
+            EmoteVisualizerItem? target = contextMenuTargetItem
+                ?? ResolveItemFromOriginalSource(originalSource)
+                ?? EmoteListView.SelectedItem as EmoteVisualizerItem;
+            if (target == null)
+            {
+                e.Handled = true;
+                return;
+            }
+
+            EmoteListView.ContextMenu = BuildContextMenuForItem(target);
+        }
+
+        private void EmoteListView_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+        {
+            if (EmoteListView.View != null)
+            {
+                return;
+            }
+
+            ScrollViewer? scrollViewer = FindDescendant<ScrollViewer>(EmoteListView);
+            if (scrollViewer == null)
+            {
+                return;
+            }
+
+            double delta = e.Delta > 0 ? -normalScrollWheelStep : normalScrollWheelStep;
+            double targetOffset = Math.Clamp(scrollViewer.VerticalOffset + delta, 0, scrollViewer.ScrollableHeight);
+            scrollViewer.ScrollToVerticalOffset(targetOffset);
+            e.Handled = true;
+        }
+
         private void UpdateTopButtonsAvailability()
         {
             string charIniPath = character.PathToConfigIni?.Trim() ?? string.Empty;
@@ -991,6 +1050,166 @@ namespace OceanyaClient
 
             string extension = Path.GetExtension(path).ToLowerInvariant();
             return extension == ".gif" || extension == ".apng" || extension == ".webp";
+        }
+
+        private EmoteVisualizerItem? ResolveItemFromOriginalSource(DependencyObject? source)
+        {
+            if (source != null)
+            {
+                ListViewItem? container = ItemsControl.ContainerFromElement(EmoteListView, source) as ListViewItem;
+                if (container?.DataContext is EmoteVisualizerItem directItem)
+                {
+                    return directItem;
+                }
+            }
+
+            DependencyObject? current = source;
+            while (current != null)
+            {
+                if (current is FrameworkElement element && element.DataContext is EmoteVisualizerItem item)
+                {
+                    return item;
+                }
+
+                current = VisualTreeHelper.GetParent(current);
+            }
+
+            return null;
+        }
+
+        private static TChild? FindDescendant<TChild>(DependencyObject? root)
+            where TChild : DependencyObject
+        {
+            if (root == null)
+            {
+                return null;
+            }
+
+            int count = VisualTreeHelper.GetChildrenCount(root);
+            for (int i = 0; i < count; i++)
+            {
+                DependencyObject child = VisualTreeHelper.GetChild(root, i);
+                if (child is TChild typedChild)
+                {
+                    return typedChild;
+                }
+
+                TChild? nested = FindDescendant<TChild>(child);
+                if (nested != null)
+                {
+                    return nested;
+                }
+            }
+
+            return null;
+        }
+
+        private ContextMenu BuildContextMenuForItem(EmoteVisualizerItem item)
+        {
+            ContextMenu menu = new ContextMenu();
+
+            AddContextCategoryHeader(menu, "Character", addLeadingSeparator: false);
+
+            MenuItem refreshCharacterItem = new MenuItem
+            {
+                Header = "Refresh Character",
+                IsEnabled = RefreshCharacterButton.IsEnabled
+            };
+            refreshCharacterItem.Click += (_, _) => RefreshCharacterButton_Click(RefreshCharacterButton, new RoutedEventArgs(Button.ClickEvent));
+            menu.Items.Add(refreshCharacterItem);
+
+            MenuItem openCharIniItem = new MenuItem
+            {
+                Header = "Open char.ini",
+                IsEnabled = OpenCharacterIniButton.IsEnabled
+            };
+            openCharIniItem.Click += (_, _) => OpenCharacterIniButton_Click(OpenCharacterIniButton, new RoutedEventArgs(Button.ClickEvent));
+            menu.Items.Add(openCharIniItem);
+
+            MenuItem openReadmeItem = new MenuItem
+            {
+                Header = "Open readme",
+                IsEnabled = OpenReadmeButton.IsEnabled
+            };
+            openReadmeItem.Click += (_, _) => OpenReadmeButton_Click(OpenReadmeButton, new RoutedEventArgs(Button.ClickEvent));
+            menu.Items.Add(openReadmeItem);
+
+            AddContextCategoryHeader(menu, "Emote", addLeadingSeparator: true);
+
+            MenuItem setAsFolderDisplayItem = new MenuItem
+            {
+                Header = "Set as folder display",
+                IsCheckable = true,
+                IsChecked = IsFolderDisplayOverride(item),
+                IsEnabled = item.Id > 0
+            };
+            setAsFolderDisplayItem.Click += (_, _) =>
+            {
+                ApplyFolderDisplayOverride(item, setAsFolderDisplayItem.IsChecked);
+            };
+            menu.Items.Add(setAsFolderDisplayItem);
+
+            return menu;
+        }
+
+        private static void AddContextCategoryHeader(ContextMenu menu, string text, bool addLeadingSeparator)
+        {
+            if (addLeadingSeparator && menu.Items.Count > 0)
+            {
+                menu.Items.Add(new Separator());
+            }
+
+            TextBlock label = new TextBlock
+            {
+                Text = text,
+                Foreground = Brushes.Black,
+                FontWeight = FontWeights.Bold,
+                FontSize = 11,
+                Margin = new Thickness(4, 2, 4, 1)
+            };
+
+            MenuItem header = new MenuItem
+            {
+                Header = label,
+                IsEnabled = false,
+                StaysOpenOnClick = true
+            };
+
+            menu.Items.Add(header);
+        }
+
+        private bool IsFolderDisplayOverride(EmoteVisualizerItem item)
+        {
+            string key = CharacterFolderVisualizerWindow.NormalizeFolderOverrideKey(character.DirectoryPath);
+            return !string.IsNullOrWhiteSpace(key)
+                && SaveFile.Data.CharacterFolderPreviewEmoteOverrides.TryGetValue(key, out int overrideId)
+                && overrideId == item.Id;
+        }
+
+        private void ApplyFolderDisplayOverride(EmoteVisualizerItem item, bool shouldSetOverride)
+        {
+            string key = CharacterFolderVisualizerWindow.NormalizeFolderOverrideKey(character.DirectoryPath);
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                return;
+            }
+
+            if (shouldSetOverride)
+            {
+                SaveFile.Data.CharacterFolderPreviewEmoteOverrides[key] = item.Id;
+            }
+            else if (SaveFile.Data.CharacterFolderPreviewEmoteOverrides.TryGetValue(key, out int currentId)
+                && currentId == item.Id)
+            {
+                SaveFile.Data.CharacterFolderPreviewEmoteOverrides.Remove(key);
+            }
+
+            SaveFile.Save();
+            CharacterFolderVisualizerWindow.InvalidateCachedItems();
+            if (Owner is CharacterFolderVisualizerWindow folderWindow)
+            {
+                _ = folderWindow.ApplyPreviewOverrideForCharacterDirectoryAsync(character.DirectoryPath);
+            }
         }
 
         private void OpenCharacterIniButton_Click(object sender, RoutedEventArgs e)
@@ -1200,7 +1419,8 @@ namespace OceanyaClient
                     TileHeight = preset?.Normal?.TileHeight ?? 210,
                     IconSize = preset?.Normal?.IconSize ?? 18,
                     NameFontSize = preset?.Normal?.NameFontSize ?? 12,
-                    InternalTilePadding = preset?.Normal?.InternalTilePadding ?? 2,
+                    InternalTilePadding = preset?.Normal?.InternalTilePadding ?? 0,
+                    ScrollWheelStep = preset?.Normal?.ScrollWheelStep ?? 90,
                     TilePadding = preset?.Normal?.TilePadding ?? 8,
                     TileMargin = preset?.Normal?.TileMargin ?? 4
                 },

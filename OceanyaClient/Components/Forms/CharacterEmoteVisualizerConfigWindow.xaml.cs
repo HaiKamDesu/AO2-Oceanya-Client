@@ -77,6 +77,7 @@ namespace OceanyaClient
             IconSizeSlider.Value = selected.Normal.IconSize;
             NameFontSizeSlider.Value = selected.Normal.NameFontSize;
             TilePaddingSlider.Value = selected.Normal.TilePadding;
+            ScrollSpeedSlider.Value = selected.Normal.ScrollWheelStep;
 
             TableRowHeightSlider.Value = selected.Table.RowHeight;
             TableFontSizeSlider.Value = selected.Table.FontSize;
@@ -263,6 +264,7 @@ namespace OceanyaClient
             selected.Normal.IconSize = IconSizeSlider.Value;
             selected.Normal.NameFontSize = NameFontSizeSlider.Value;
             selected.Normal.TilePadding = TilePaddingSlider.Value;
+            selected.Normal.ScrollWheelStep = ScrollSpeedSlider.Value;
 
             RefreshNormalValueText();
         }
@@ -275,6 +277,7 @@ namespace OceanyaClient
             IconSizeValueText.Text = ((int)Math.Round(IconSizeSlider.Value)).ToString(CultureInfo.InvariantCulture);
             NameFontSizeValueText.Text = ((int)Math.Round(NameFontSizeSlider.Value)).ToString(CultureInfo.InvariantCulture);
             TilePaddingValueText.Text = ((int)Math.Round(TilePaddingSlider.Value)).ToString(CultureInfo.InvariantCulture);
+            ScrollSpeedValueText.Text = ((int)Math.Round(ScrollSpeedSlider.Value)).ToString(CultureInfo.InvariantCulture);
         }
 
         private void TableSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
