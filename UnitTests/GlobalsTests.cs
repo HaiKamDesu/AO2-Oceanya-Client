@@ -183,6 +183,24 @@ namespace UnitTests
             Assert.Pass("Debug message test skipped in Release mode");
             #endif
         }
+
+        [Test]
+        public void Test_SaveFile_FolderVisualizerDefaults()
+        {
+            var data = OceanyaClient.SaveFile.Data;
+
+            Assert.That(data.FolderVisualizer, Is.Not.Null);
+            Assert.That(data.FolderVisualizer.Presets, Is.Not.Null);
+            Assert.That(data.FolderVisualizer.Presets.Count, Is.GreaterThanOrEqualTo(1));
+            Assert.That(data.FolderVisualizer.Presets.Any(p => p.Mode == OceanyaClient.FolderVisualizerLayoutMode.Table), Is.True);
+            Assert.That(data.FolderVisualizer.Presets.Any(p => p.Mode == OceanyaClient.FolderVisualizerLayoutMode.Normal), Is.True);
+
+            foreach (var preset in data.FolderVisualizer.Presets)
+            {
+                Assert.That(preset.Table.Columns.Any(c => c.Key == OceanyaClient.FolderVisualizerTableColumnKey.Name), Is.True);
+                Assert.That(preset.Table.Columns.Any(c => c.Key == OceanyaClient.FolderVisualizerTableColumnKey.Icon), Is.True);
+            }
+        }
     }
     
     [TestFixture]

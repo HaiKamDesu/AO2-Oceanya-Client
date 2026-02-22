@@ -1,5 +1,4 @@
-﻿using AOBot_Testing.Structures;
-using Microsoft.Win32;
+﻿using Microsoft.Win32;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -98,24 +97,7 @@ namespace OceanyaClient
 
             if (RefreshInfoCheckBox.IsChecked == true)
             {
-                await WaitForm.ShowFormAsync("Refreshing character and background info...", this);
-                CharacterFolder.RefreshCharacterList(
-                    onParsedCharacter: (ini) =>
-                    {
-                        WaitForm.SetSubtitle("Parsed Character: " + ini.Name);
-                    },
-                    onChangedMountPath: (path) =>
-                    {
-                        WaitForm.SetSubtitle("Changed mount path: " + path);
-                    });
-
-                AOBot_Testing.Structures.Background.RefreshCache(
-                    onChangedMountPath: (path) =>
-                    {
-                        WaitForm.SetSubtitle("Indexed background mount path: " + path);
-                    });
-
-                WaitForm.CloseForm();
+                await ClientAssetRefreshService.RefreshCharactersAndBackgroundsAsync(this);
             }
 
             MainWindow mainWindow = new MainWindow();

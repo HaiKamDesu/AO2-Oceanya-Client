@@ -264,6 +264,7 @@ namespace AOBot_Testing.Structures
         public string DirectoryPath { get; set; } = string.Empty;
         public string PathToConfigIni { get; set; } = string.Empty;
         public string CharIconPath { get; set; } = string.Empty;
+        public string ViewportIdleSpritePath { get; set; } = string.Empty;
         public string SoundListPath { get; set; } = string.Empty;
 
         public CharacterConfigINI configINI { get; set; } = new CharacterConfigINI(string.Empty);
@@ -282,6 +283,7 @@ namespace AOBot_Testing.Structures
         {
             DirectoryPath = Path.GetDirectoryName(configINIPath) ?? string.Empty;
             CharIconPath = ResolveCharacterIconPath(DirectoryPath);
+            ViewportIdleSpritePath = string.Empty;
 
             SoundListPath = Path.Combine(DirectoryPath, "soundlist.ini");
             PathToConfigIni = configINIPath;
@@ -296,8 +298,98 @@ namespace AOBot_Testing.Structures
             folder.configINI = new CharacterConfigINI(configINIPath);
             folder.configINI.Update();
             folder.CharIconPath = ResolveCharacterIconPath(folder.DirectoryPath, folder.configINI);
+            folder.ViewportIdleSpritePath = ResolveViewportIdleSpritePath(folder.DirectoryPath, folder.configINI);
 
             return folder;
+        }
+
+        private static string ResolveViewportIdleSpritePath(string directoryPath, CharacterConfigINI? parsedConfig)
+        {
+            if (parsedConfig == null)
+            {
+                return string.Empty;
+            }
+
+            for (int i = 1; i <= parsedConfig.EmotionsCount; i++)
+            {
+                if (!parsedConfig.Emotions.TryGetValue(i, out Emote? emote))
+                {
+                    continue;
+                }
+
+                string resolved = ResolveIdleSpritePath(directoryPath, emote.Animation);
+                if (!string.IsNullOrWhiteSpace(resolved))
+                {
+                    return resolved;
+                }
+            }
+
+            foreach (var pair in parsedConfig.Emotions.OrderBy(x => x.Key))
+            {
+                string resolved = ResolveIdleSpritePath(directoryPath, pair.Value.Animation);
+                if (!string.IsNullOrWhiteSpace(resolved))
+                {
+                    return resolved;
+                }
+            }
+
+            return string.Empty;
+        }
+
+        private static string ResolveIdleSpritePath(string directoryPath, string animationName)
+        {
+            string normalizedAnimationName = animationName?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(normalizedAnimationName) || normalizedAnimationName == "-")
+            {
+                return string.Empty;
+            }
+
+            string[] candidateNames =
+            {
+                "(a)" + normalizedAnimationName,
+                "(a)/" + normalizedAnimationName,
+                normalizedAnimationName,
+                "placeholder"
+            };
+
+            foreach (string candidate in candidateNames)
+            {
+                string resolved = ResolveCharacterAssetPath(directoryPath, candidate);
+                if (!string.IsNullOrWhiteSpace(resolved))
+                {
+                    return resolved;
+                }
+            }
+
+            return string.Empty;
+        }
+
+        private static string ResolveCharacterAssetPath(string directoryPath, string candidateName)
+        {
+            string candidate = candidateName?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(candidate))
+            {
+                return string.Empty;
+            }
+
+            string relativeCandidate = candidate.Replace('/', Path.DirectorySeparatorChar);
+            string pathWithoutExtension = Path.Combine(directoryPath, relativeCandidate);
+
+            if (Path.HasExtension(relativeCandidate))
+            {
+                return File.Exists(pathWithoutExtension) ? pathWithoutExtension : string.Empty;
+            }
+
+            foreach (string extension in Globals.AllowedImageExtensions)
+            {
+                string withExtension = pathWithoutExtension + "." + extension;
+                if (File.Exists(withExtension))
+                {
+                    return withExtension;
+                }
+            }
+
+            return string.Empty;
         }
     }
 

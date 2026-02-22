@@ -66,6 +66,67 @@ namespace OceanyaClient
         public string Endpoint { get; set; } = "";
     }
 
+    public enum FolderVisualizerLayoutMode
+    {
+        Normal,
+        Table
+    }
+
+    public enum FolderVisualizerTableColumnKey
+    {
+        Icon,
+        Name,
+        DirectoryPath,
+        PreviewPath,
+        LastModified,
+        EmoteCount,
+        Size,
+        OpenCharIni,
+        Readme
+    }
+
+    public class FolderVisualizerNormalViewConfig
+    {
+        public double TileWidth { get; set; } = 170;
+        public double TileHeight { get; set; } = 182;
+        public double PreviewSize { get; set; } = 104;
+        public double IconSize { get; set; } = 18;
+        public double NameFontSize { get; set; } = 12;
+        public double TilePadding { get; set; } = 8;
+        public double TileMargin { get; set; } = 4;
+    }
+
+    public class FolderVisualizerTableColumnConfig
+    {
+        public FolderVisualizerTableColumnKey Key { get; set; } = FolderVisualizerTableColumnKey.Name;
+        public bool IsVisible { get; set; } = true;
+        public int Order { get; set; }
+        public double Width { get; set; } = 200;
+    }
+
+    public class FolderVisualizerTableViewConfig
+    {
+        public double RowHeight { get; set; } = 34;
+        public double FontSize { get; set; } = 13;
+        public List<FolderVisualizerTableColumnConfig> Columns { get; set; } = new List<FolderVisualizerTableColumnConfig>();
+    }
+
+    public class FolderVisualizerViewPreset
+    {
+        public string Id { get; set; } = Guid.NewGuid().ToString("N");
+        public string Name { get; set; } = "New View";
+        public FolderVisualizerLayoutMode Mode { get; set; } = FolderVisualizerLayoutMode.Normal;
+        public FolderVisualizerNormalViewConfig Normal { get; set; } = new FolderVisualizerNormalViewConfig();
+        public FolderVisualizerTableViewConfig Table { get; set; } = new FolderVisualizerTableViewConfig();
+    }
+
+    public class FolderVisualizerConfig
+    {
+        public string SelectedPresetId { get; set; } = string.Empty;
+        public string SelectedPresetName { get; set; } = string.Empty;
+        public List<FolderVisualizerViewPreset> Presets { get; set; } = new List<FolderVisualizerViewPreset>();
+    }
+
     public class SaveData
     {
         //Initial Configuration
@@ -87,6 +148,7 @@ namespace OceanyaClient
         public bool SwitchPosOnIniSwap { get; set; } = false;
         public bool InvertICLog { get; set; } = false;
         public int LogMaxMessages { get; set; } = 0;
+        public FolderVisualizerConfig FolderVisualizer { get; set; } = new FolderVisualizerConfig();
     }
 
     public static class SaveFile
@@ -191,6 +253,303 @@ namespace OceanyaClient
                     OriginalValue = record.OriginalValue ?? string.Empty
                 })
                 .ToList();
+
+            data.FolderVisualizer ??= new FolderVisualizerConfig();
+            data.FolderVisualizer.Presets ??= new List<FolderVisualizerViewPreset>();
+
+            if (data.FolderVisualizer.Presets.Count == 0)
+            {
+                data.FolderVisualizer.Presets = CreateDefaultVisualizerPresets();
+            }
+
+            for (int i = 0; i < data.FolderVisualizer.Presets.Count; i++)
+            {
+                FolderVisualizerViewPreset preset = data.FolderVisualizer.Presets[i] ?? new FolderVisualizerViewPreset();
+                preset.Id = string.IsNullOrWhiteSpace(preset.Id) ? Guid.NewGuid().ToString("N") : preset.Id.Trim();
+                preset.Name = string.IsNullOrWhiteSpace(preset.Name) ? $"View {i + 1}" : preset.Name.Trim();
+                preset.Normal ??= new FolderVisualizerNormalViewConfig();
+                preset.Table ??= new FolderVisualizerTableViewConfig();
+                preset.Table.Columns ??= new List<FolderVisualizerTableColumnConfig>();
+                EnsureDefaultTableColumns(preset.Table.Columns);
+                ClampPresetValues(preset);
+                data.FolderVisualizer.Presets[i] = preset;
+            }
+
+            bool selectedIdValid = !string.IsNullOrWhiteSpace(data.FolderVisualizer.SelectedPresetId)
+                && data.FolderVisualizer.Presets.Any(p =>
+                    string.Equals(p.Id, data.FolderVisualizer.SelectedPresetId, StringComparison.OrdinalIgnoreCase));
+            if (!selectedIdValid)
+            {
+                FolderVisualizerViewPreset? preferredByName = data.FolderVisualizer.Presets.FirstOrDefault(p =>
+                    !string.IsNullOrWhiteSpace(data.FolderVisualizer.SelectedPresetName)
+                    && string.Equals(p.Name, data.FolderVisualizer.SelectedPresetName, StringComparison.OrdinalIgnoreCase));
+
+                FolderVisualizerViewPreset preferred =
+                    preferredByName
+                    ??
+                    data.FolderVisualizer.Presets.FirstOrDefault(p =>
+                        string.Equals(p.Name, "Medium", StringComparison.OrdinalIgnoreCase))
+                    ?? data.FolderVisualizer.Presets[0];
+                data.FolderVisualizer.SelectedPresetId = preferred.Id;
+                data.FolderVisualizer.SelectedPresetName = preferred.Name;
+            }
+            else
+            {
+                FolderVisualizerViewPreset selected = data.FolderVisualizer.Presets.First(p =>
+                    string.Equals(p.Id, data.FolderVisualizer.SelectedPresetId, StringComparison.OrdinalIgnoreCase));
+                data.FolderVisualizer.SelectedPresetName = selected.Name;
+            }
+        }
+
+        private static void ClampPresetValues(FolderVisualizerViewPreset preset)
+        {
+            preset.Normal.TileWidth = Math.Clamp(preset.Normal.TileWidth, 100, 420);
+            preset.Normal.TileHeight = Math.Clamp(preset.Normal.TileHeight, 120, 480);
+            preset.Normal.PreviewSize = Math.Clamp(preset.Normal.PreviewSize, 32, 340);
+            preset.Normal.IconSize = Math.Clamp(preset.Normal.IconSize, 12, 48);
+            preset.Normal.NameFontSize = Math.Clamp(preset.Normal.NameFontSize, 9, 30);
+            preset.Normal.TilePadding = Math.Clamp(preset.Normal.TilePadding, 2, 28);
+            preset.Normal.TileMargin = Math.Clamp(preset.Normal.TileMargin, 0, 20);
+
+            preset.Table.RowHeight = Math.Clamp(preset.Table.RowHeight, 22, 96);
+            preset.Table.FontSize = Math.Clamp(preset.Table.FontSize, 9, 30);
+
+            foreach (FolderVisualizerTableColumnConfig column in preset.Table.Columns)
+            {
+                column.Width = Math.Clamp(column.Width, 40, 900);
+            }
+        }
+
+        private static void EnsureDefaultTableColumns(List<FolderVisualizerTableColumnConfig> existingColumns)
+        {
+            existingColumns.RemoveAll(column => column == null);
+
+            var defaults = new List<FolderVisualizerTableColumnConfig>
+            {
+                new FolderVisualizerTableColumnConfig
+                {
+                    Key = FolderVisualizerTableColumnKey.Icon,
+                    IsVisible = true,
+                    Order = 0,
+                    Width = 30
+                },
+                new FolderVisualizerTableColumnConfig
+                {
+                    Key = FolderVisualizerTableColumnKey.Name,
+                    IsVisible = true,
+                    Order = 1,
+                    Width = 320
+                },
+                new FolderVisualizerTableColumnConfig
+                {
+                    Key = FolderVisualizerTableColumnKey.DirectoryPath,
+                    IsVisible = false,
+                    Order = 2,
+                    Width = 460
+                },
+                new FolderVisualizerTableColumnConfig
+                {
+                    Key = FolderVisualizerTableColumnKey.PreviewPath,
+                    IsVisible = false,
+                    Order = 3,
+                    Width = 460
+                },
+                new FolderVisualizerTableColumnConfig
+                {
+                    Key = FolderVisualizerTableColumnKey.LastModified,
+                    IsVisible = true,
+                    Order = 4,
+                    Width = 170
+                },
+                new FolderVisualizerTableColumnConfig
+                {
+                    Key = FolderVisualizerTableColumnKey.EmoteCount,
+                    IsVisible = true,
+                    Order = 5,
+                    Width = 110
+                },
+                new FolderVisualizerTableColumnConfig
+                {
+                    Key = FolderVisualizerTableColumnKey.Size,
+                    IsVisible = true,
+                    Order = 6,
+                    Width = 110
+                },
+                new FolderVisualizerTableColumnConfig
+                {
+                    Key = FolderVisualizerTableColumnKey.OpenCharIni,
+                    IsVisible = true,
+                    Order = 7,
+                    Width = 120
+                },
+                new FolderVisualizerTableColumnConfig
+                {
+                    Key = FolderVisualizerTableColumnKey.Readme,
+                    IsVisible = true,
+                    Order = 8,
+                    Width = 120
+                }
+            };
+
+            foreach (FolderVisualizerTableColumnConfig defaultColumn in defaults)
+            {
+                FolderVisualizerTableColumnConfig? existing = existingColumns.FirstOrDefault(column => column.Key == defaultColumn.Key);
+                if (existing == null)
+                {
+                    existingColumns.Add(defaultColumn);
+                    continue;
+                }
+
+                if (existing.Width <= 0)
+                {
+                    existing.Width = defaultColumn.Width;
+                }
+            }
+
+            List<FolderVisualizerTableColumnConfig> ordered = existingColumns
+                .OrderBy(column => column.Order)
+                .ThenBy(column => column.Key)
+                .ToList();
+
+            for (int i = 0; i < ordered.Count; i++)
+            {
+                ordered[i].Order = i;
+            }
+
+            existingColumns.Clear();
+            existingColumns.AddRange(ordered);
+        }
+
+        private static List<FolderVisualizerViewPreset> CreateDefaultVisualizerPresets()
+        {
+            return new List<FolderVisualizerViewPreset>
+            {
+                new FolderVisualizerViewPreset
+                {
+                    Id = "details",
+                    Name = "Details",
+                    Mode = FolderVisualizerLayoutMode.Table,
+                    Table = new FolderVisualizerTableViewConfig
+                    {
+                        RowHeight = 34,
+                        FontSize = 13,
+                        Columns = new List<FolderVisualizerTableColumnConfig>
+                        {
+                            new FolderVisualizerTableColumnConfig
+                            {
+                                Key = FolderVisualizerTableColumnKey.Icon,
+                                IsVisible = true,
+                                Order = 0,
+                                Width = 30
+                            },
+                            new FolderVisualizerTableColumnConfig
+                            {
+                                Key = FolderVisualizerTableColumnKey.Name,
+                                IsVisible = true,
+                                Order = 1,
+                                Width = 380
+                            },
+                            new FolderVisualizerTableColumnConfig
+                            {
+                                Key = FolderVisualizerTableColumnKey.DirectoryPath,
+                                IsVisible = false,
+                                Order = 2,
+                                Width = 480
+                            },
+                            new FolderVisualizerTableColumnConfig
+                            {
+                                Key = FolderVisualizerTableColumnKey.PreviewPath,
+                                IsVisible = false,
+                                Order = 3,
+                                Width = 480
+                            },
+                            new FolderVisualizerTableColumnConfig
+                            {
+                                Key = FolderVisualizerTableColumnKey.LastModified,
+                                IsVisible = true,
+                                Order = 4,
+                                Width = 170
+                            },
+                            new FolderVisualizerTableColumnConfig
+                            {
+                                Key = FolderVisualizerTableColumnKey.EmoteCount,
+                                IsVisible = true,
+                                Order = 5,
+                                Width = 110
+                            },
+                            new FolderVisualizerTableColumnConfig
+                            {
+                                Key = FolderVisualizerTableColumnKey.Size,
+                                IsVisible = true,
+                                Order = 6,
+                                Width = 110
+                            },
+                            new FolderVisualizerTableColumnConfig
+                            {
+                                Key = FolderVisualizerTableColumnKey.OpenCharIni,
+                                IsVisible = true,
+                                Order = 7,
+                                Width = 120
+                            },
+                            new FolderVisualizerTableColumnConfig
+                            {
+                                Key = FolderVisualizerTableColumnKey.Readme,
+                                IsVisible = true,
+                                Order = 8,
+                                Width = 120
+                            }
+                        }
+                    }
+                },
+                new FolderVisualizerViewPreset
+                {
+                    Id = "small",
+                    Name = "Small",
+                    Mode = FolderVisualizerLayoutMode.Normal,
+                    Normal = new FolderVisualizerNormalViewConfig
+                    {
+                        TileWidth = 138,
+                        TileHeight = 140,
+                        PreviewSize = 72,
+                        IconSize = 16,
+                        NameFontSize = 11,
+                        TilePadding = 8,
+                        TileMargin = 4
+                    }
+                },
+                new FolderVisualizerViewPreset
+                {
+                    Id = "medium",
+                    Name = "Medium",
+                    Mode = FolderVisualizerLayoutMode.Normal,
+                    Normal = new FolderVisualizerNormalViewConfig
+                    {
+                        TileWidth = 170,
+                        TileHeight = 182,
+                        PreviewSize = 104,
+                        IconSize = 18,
+                        NameFontSize = 12,
+                        TilePadding = 8,
+                        TileMargin = 4
+                    }
+                },
+                new FolderVisualizerViewPreset
+                {
+                    Id = "large",
+                    Name = "Large",
+                    Mode = FolderVisualizerLayoutMode.Normal,
+                    Normal = new FolderVisualizerNormalViewConfig
+                    {
+                        TileWidth = 222,
+                        TileHeight = 246,
+                        PreviewSize = 152,
+                        IconSize = 20,
+                        NameFontSize = 13,
+                        TilePadding = 10,
+                        TileMargin = 4
+                    }
+                }
+            };
         }
     }
 

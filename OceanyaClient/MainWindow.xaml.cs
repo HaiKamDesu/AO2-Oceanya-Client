@@ -1758,39 +1758,76 @@ namespace OceanyaClient
         }
         
 
-        private async void btnRefreshCharacters_Click(object sender, RoutedEventArgs e)
+        private void btnCharacterFolderVisualizer_Click(object sender, RoutedEventArgs e)
         {
-            var result = OceanyaMessageBox.Show("Are you sure you want to refresh your client assets? (This process may take a while)", "Refresh all Assets", MessageBoxButton.YesNo, MessageBoxImage.Information);
+            CharacterFolderVisualizerWindow visualizerWindow = new CharacterFolderVisualizerWindow(
+                OnAssetsRefreshedFromVisualizer,
+                CanSetVisualizerCharacter,
+                SetVisualizerCharacterInClient)
+            {
+                Owner = this
+            };
+            visualizerWindow.ShowDialog();
+        }
 
-            if (result != MessageBoxResult.Yes) return;
-            
-            await WaitForm.ShowFormAsync("Refreshing character and background info...", this);
+        private bool CanSetVisualizerCharacter(FolderVisualizerItem item)
+        {
+            if (currentClient == null || !ICMessageSettingsControl.IsEnabled)
+            {
+                return false;
+            }
 
-            Globals.UpdateConfigINI(Globals.PathToConfigINI);
-            CharacterFolder.RefreshCharacterList
-                (
-                    onParsedCharacter:
-                    (ini) =>
-                    {
-                        WaitForm.SetSubtitle("Parsed Character: " + ini.Name);
-                    },
-                    onChangedMountPath:
-                    (path) =>
-                    {
-                        WaitForm.SetSubtitle("Changed mount path: " + path);
-                    }
-                );
-            AOBot_Testing.Structures.Background.RefreshCache(
-                onChangedMountPath: (path) =>
-                {
-                    WaitForm.SetSubtitle("Indexed background mount path: " + path);
-                });
-            WaitForm.CloseForm();
+            CharacterFolder? target = ResolveCharacterForVisualizerItem(item);
+            if (target == null)
+            {
+                return false;
+            }
+
+            return currentClient.currentINI != target;
+        }
+
+        private void SetVisualizerCharacterInClient(FolderVisualizerItem item)
+        {
+            if (currentClient == null)
+            {
+                return;
+            }
+
+            CharacterFolder? target = ResolveCharacterForVisualizerItem(item);
+            if (target == null)
+            {
+                return;
+            }
+
+            currentClient.SetCharacter(target);
+            ICMessageSettingsControl.SetClient(currentClient);
+            UpdateClientTooltip(currentClient);
+        }
+
+        private static CharacterFolder? ResolveCharacterForVisualizerItem(FolderVisualizerItem item)
+        {
+            string targetDirectory = item.DirectoryPath?.Trim() ?? string.Empty;
+            string targetName = item.Name?.Trim() ?? string.Empty;
+
+            CharacterFolder? byDirectory = CharacterFolder.FullList.FirstOrDefault(character =>
+                string.Equals(character.DirectoryPath, targetDirectory, StringComparison.OrdinalIgnoreCase));
+            if (byDirectory != null)
+            {
+                return byDirectory;
+            }
+
+            return CharacterFolder.FullList.FirstOrDefault(character =>
+                string.Equals(character.Name, targetName, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private void OnAssetsRefreshedFromVisualizer()
+        {
             ICMessageSettingsControl.ReinitializeSettings();
             if (currentClient == null)
             {
                 return;
             }
+
             SelectClient(currentClient);
         }
 

@@ -457,7 +457,8 @@
                 <Button x:Name="btnRefreshCharacters" Height="24" Width="24" 
                         BorderBrush="{x:Null}" Foreground="{x:Null}" Padding="0"
                         Canvas.Left="485" Canvas.Top="603"
-                        Click="btnRefreshCharacters_Click">
+                        Click="btnCharacterFolderVisualizer_Click"
+                        ToolTip="Character Folder Visualizer">
                     <Button.Style>
                         <Style TargetType="{x:Type Button}">
                             <Setter Property="Template">

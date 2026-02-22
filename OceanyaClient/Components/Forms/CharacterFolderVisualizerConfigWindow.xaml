@@ -1,0 +1,453 @@
+<Window x:Class="OceanyaClient.CharacterFolderVisualizerConfigWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Configure Folder Views"
+        Height="640"
+        Width="920"
+        MinHeight="580"
+        MinWidth="860"
+        ResizeMode="CanResize"
+        WindowStartupLocation="CenterOwner"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent">
+
+    <Window.Resources>
+        <Style x:Key="ModernButton" TargetType="Button">
+            <Setter Property="Background" Value="#FF262626"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#444444"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="12,5"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="3">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#FF3D3D3D" TargetName="ButtonBorder"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter Property="Background" Value="#FF171717" TargetName="ButtonBorder"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="CloseButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#FFE81123" TargetName="ButtonBorder"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter Property="Background" Value="#FFC41E3A" TargetName="ButtonBorder"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ModernTextBox" TargetType="TextBox">
+            <Setter Property="Background" Value="#FF262626"/>
+            <Setter Property="Foreground" Value="#FFF2F2F2"/>
+            <Setter Property="BorderBrush" Value="#444444"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,5"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+
+        <Style x:Key="ModernCheckBox" TargetType="CheckBox">
+            <Setter Property="Foreground" Value="#FFE6E6E6"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+
+        <Style x:Key="DarkComboBoxItemStyle" TargetType="ComboBoxItem">
+            <Setter Property="Foreground" Value="#FFECECEC"/>
+            <Setter Property="Background" Value="#FF1F1F1F"/>
+            <Setter Property="Padding" Value="10,4"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="ItemBorder" Background="{TemplateBinding Background}">
+                            <ContentPresenter VerticalAlignment="Center"
+                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#FF36506A"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#FF3D5E7F"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="DarkComboBoxStyle" TargetType="ComboBox">
+            <Setter Property="Foreground" Value="#FFF0F0F0"/>
+            <Setter Property="Background" Value="#FF262626"/>
+            <Setter Property="BorderBrush" Value="#FF444444"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="10,0,28,0"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="ItemContainerStyle" Value="{StaticResource DarkComboBoxItemStyle}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid SnapsToDevicePixels="True">
+                            <Border x:Name="MainBorder"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="3"/>
+
+                            <ToggleButton x:Name="DropdownToggle"
+                                          Focusable="False"
+                                          ClickMode="Press"
+                                          HorizontalAlignment="Stretch"
+                                          VerticalAlignment="Stretch"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                          Background="Transparent"
+                                          BorderThickness="0">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border Background="Transparent"/>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+
+                            <ContentPresenter Margin="{TemplateBinding Padding}"
+                                              VerticalAlignment="Center"
+                                              HorizontalAlignment="Stretch"
+                                              IsHitTestVisible="False"
+                                              Content="{TemplateBinding SelectionBoxItem}"
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                              TextElement.Foreground="{TemplateBinding Foreground}"/>
+
+                            <Path HorizontalAlignment="Right"
+                                  VerticalAlignment="Center"
+                                  Margin="0,0,10,0"
+                                  IsHitTestVisible="False"
+                                  Fill="#FFDCDCDC"
+                                  Data="M 0 0 L 8 0 L 4 5 Z"/>
+
+                            <Popup x:Name="PART_Popup"
+                                   Placement="Bottom"
+                                   IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   AllowsTransparency="True"
+                                   Focusable="False"
+                                   PopupAnimation="Fade">
+                                <Border Margin="0,2,0,0"
+                                        MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
+                                        Background="#FF1F1F1F"
+                                        BorderBrush="#FF4A4A4A"
+                                        BorderThickness="1"
+                                        CornerRadius="3">
+                                    <ScrollViewer CanContentScroll="True" MaxHeight="320">
+                                        <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="MainBorder" Property="Background" Value="#FF2A2A2A"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                <Setter TargetName="MainBorder" Property="BorderBrush" Value="#FF6E93BB"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="MainBorder" Property="Background" Value="#FF1A1A1A"/>
+                                <Setter Property="Foreground" Value="#FF7A7A7A"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="LabelText" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#CCCCCC"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Margin" Value="0,8,0,4"/>
+        </Style>
+    </Window.Resources>
+
+    <Border BorderBrush="#222222" BorderThickness="1" CornerRadius="5">
+        <Grid Margin="0,0,-1,-1">
+            <Rectangle HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Margin="0,30,0,0">
+                <Rectangle.Fill>
+                    <ImageBrush ImageSource="pack://application:,,,/OceanyaClient;component/Resources/scoienceblur.jpg"
+                                Stretch="UniformToFill"
+                                Opacity="0.5"/>
+                </Rectangle.Fill>
+            </Rectangle>
+            <Rectangle HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Margin="0,30,0,0" Fill="#7F000000"/>
+
+            <Border Height="30" VerticalAlignment="Top" Background="#CC000000" MouseLeftButtonDown="DragWindow">
+                <Grid>
+                    <Rectangle HorizontalAlignment="Left" Width="129" Height="30" VerticalAlignment="Center">
+                        <Rectangle.Fill>
+                            <ImageBrush ImageSource="pack://application:,,,/OceanyaClient;component/Resources/Logo_Oceanya.png"/>
+                        </Rectangle.Fill>
+                    </Rectangle>
+                    <Button Content="✕" HorizontalAlignment="Right" Width="30" Style="{StaticResource CloseButtonStyle}" Click="CloseButton_Click"/>
+                    <Rectangle HorizontalAlignment="Left" Width="157" Height="23" VerticalAlignment="Top" Margin="129,6,0,0">
+                        <Rectangle.Fill>
+                            <ImageBrush ImageSource="pack://application:,,,/OceanyaClient;component/Resources/Logo_Laboratories.png" Stretch="Uniform"/>
+                        </Rectangle.Fill>
+                    </Rectangle>
+                    <TextBlock Text="CONFIGURE VISUALIZER VIEWS"
+                               Foreground="#FFEAEAEA"
+                               FontSize="12"
+                               FontWeight="Bold"
+                               VerticalAlignment="Center"
+                               HorizontalAlignment="Center"/>
+                </Grid>
+            </Border>
+
+            <Grid Margin="12,42,12,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="235"/>
+                    <ColumnDefinition Width="10"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <Border Grid.Column="0" Grid.Row="0" BorderBrush="#444444" BorderThickness="1" Background="#CC262626" Padding="8">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Text="View Presets" Foreground="#FFE7E7E7" FontWeight="Bold" FontSize="14"/>
+
+                        <ListBox x:Name="PresetListBox"
+                                 Grid.Row="1"
+                                 Margin="0,8,0,8"
+                                 Background="#FF1F1F1F"
+                                 Foreground="#FFECECEC"
+                                 BorderBrush="#444444"
+                                 BorderThickness="1"
+                                 DisplayMemberPath="Name"
+                                 SelectionChanged="PresetListBox_SelectionChanged"/>
+
+                        <Grid Grid.Row="2">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <Button Grid.Column="0" Margin="0,0,6,0" Content="Add" Style="{StaticResource ModernButton}" Click="AddPresetButton_Click"/>
+                            <Button Grid.Column="1" Margin="6,0,0,0" Content="Remove" Style="{StaticResource ModernButton}" Click="RemovePresetButton_Click"/>
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <Border Grid.Column="2" Grid.Row="0" BorderBrush="#444444" BorderThickness="1" Background="#CC262626" Padding="10">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <Grid Grid.Row="0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="180"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" Margin="0,0,10,0">
+                                <TextBlock Text="View Name" Style="{StaticResource LabelText}"/>
+                                <TextBox x:Name="PresetNameTextBox" Style="{StaticResource ModernTextBox}" TextChanged="PresetNameTextBox_TextChanged"/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Text="View Mode" Style="{StaticResource LabelText}"/>
+                                <ComboBox x:Name="PresetModeCombo"
+                                          Style="{StaticResource DarkComboBoxStyle}"
+                                          SelectionChanged="PresetModeCombo_SelectionChanged">
+                                    <ComboBoxItem Content="Normal" Tag="Normal"/>
+                                    <ComboBoxItem Content="Table" Tag="Table"/>
+                                </ComboBox>
+                            </StackPanel>
+                        </Grid>
+
+                        <Grid Grid.Row="1" Margin="0,12,0,0">
+                            <Grid x:Name="NormalPanel">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="190"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="90"/>
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Grid.Row="0" Grid.ColumnSpan="3" Text="Normal View Settings" Foreground="#FFE6E6E6" FontWeight="Bold" FontSize="14" Margin="0,0,0,8"/>
+
+                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Tile Width" Style="{StaticResource LabelText}"/>
+                                <Slider Grid.Row="1" Grid.Column="1" x:Name="TileWidthSlider" Minimum="100" Maximum="420" ValueChanged="NormalSlider_ValueChanged"/>
+                                <TextBlock Grid.Row="1" Grid.Column="2" x:Name="TileWidthValueText" Foreground="#FFD8D8D8" VerticalAlignment="Center" HorizontalAlignment="Right"/>
+
+                                <TextBlock Grid.Row="2" Grid.Column="0" Text="Tile Height" Style="{StaticResource LabelText}"/>
+                                <Slider Grid.Row="2" Grid.Column="1" x:Name="TileHeightSlider" Minimum="120" Maximum="480" ValueChanged="NormalSlider_ValueChanged"/>
+                                <TextBlock Grid.Row="2" Grid.Column="2" x:Name="TileHeightValueText" Foreground="#FFD8D8D8" VerticalAlignment="Center" HorizontalAlignment="Right"/>
+
+                                <TextBlock Grid.Row="3" Grid.Column="0" Text="Preview Size" Style="{StaticResource LabelText}"/>
+                                <Slider Grid.Row="3" Grid.Column="1" x:Name="PreviewSizeSlider" Minimum="32" Maximum="340" ValueChanged="NormalSlider_ValueChanged"/>
+                                <TextBlock Grid.Row="3" Grid.Column="2" x:Name="PreviewSizeValueText" Foreground="#FFD8D8D8" VerticalAlignment="Center" HorizontalAlignment="Right"/>
+
+                                <TextBlock Grid.Row="4" Grid.Column="0" Text="Folder Icon Size" Style="{StaticResource LabelText}"/>
+                                <Slider Grid.Row="4" Grid.Column="1" x:Name="IconSizeSlider" Minimum="12" Maximum="48" ValueChanged="NormalSlider_ValueChanged"/>
+                                <TextBlock Grid.Row="4" Grid.Column="2" x:Name="IconSizeValueText" Foreground="#FFD8D8D8" VerticalAlignment="Center" HorizontalAlignment="Right"/>
+
+                                <TextBlock Grid.Row="5" Grid.Column="0" Text="Name Text Size" Style="{StaticResource LabelText}"/>
+                                <Slider Grid.Row="5" Grid.Column="1" x:Name="NameFontSizeSlider" Minimum="9" Maximum="30" ValueChanged="NormalSlider_ValueChanged"/>
+                                <TextBlock Grid.Row="5" Grid.Column="2" x:Name="NameFontSizeValueText" Foreground="#FFD8D8D8" VerticalAlignment="Center" HorizontalAlignment="Right"/>
+
+                                <TextBlock Grid.Row="6" Grid.Column="0" Text="Tile Padding" Style="{StaticResource LabelText}"/>
+                                <Slider Grid.Row="6" Grid.Column="1" x:Name="TilePaddingSlider" Minimum="2" Maximum="28" ValueChanged="NormalSlider_ValueChanged"/>
+                                <TextBlock Grid.Row="6" Grid.Column="2" x:Name="TilePaddingValueText" Foreground="#FFD8D8D8" VerticalAlignment="Center" HorizontalAlignment="Right"/>
+                            </Grid>
+
+                            <Grid x:Name="TablePanel" Visibility="Collapsed">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="190"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="90"/>
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Grid.Row="0" Grid.ColumnSpan="3" Text="Table View Settings" Foreground="#FFE6E6E6" FontWeight="Bold" FontSize="14" Margin="0,0,0,8"/>
+
+                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Row Height" Style="{StaticResource LabelText}"/>
+                                <Slider Grid.Row="1" Grid.Column="1" x:Name="TableRowHeightSlider" Minimum="22" Maximum="96" ValueChanged="TableSlider_ValueChanged"/>
+                                <TextBlock Grid.Row="1" Grid.Column="2" x:Name="TableRowHeightValueText" Foreground="#FFD8D8D8" VerticalAlignment="Center" HorizontalAlignment="Right"/>
+
+                                <Grid Grid.Row="2" Grid.ColumnSpan="3" Margin="0,12,0,0">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="*"/>
+                                    </Grid.RowDefinitions>
+
+                                    <Grid Grid.Row="0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="190"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="90"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <TextBlock Grid.Column="0" Text="Name Text Size" Style="{StaticResource LabelText}" Margin="0,0,0,4"/>
+                                        <Slider Grid.Column="1" x:Name="TableFontSizeSlider" Minimum="9" Maximum="30" ValueChanged="TableSlider_ValueChanged"/>
+                                        <TextBlock Grid.Column="2" x:Name="TableFontSizeValueText" Foreground="#FFD8D8D8" VerticalAlignment="Center" HorizontalAlignment="Right"/>
+                                    </Grid>
+
+                                    <Grid Grid.Row="1" Margin="0,10,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <Border Grid.Column="0" BorderBrush="#444444" BorderThickness="1" Background="#FF1F1F1F">
+                                            <ListBox x:Name="ColumnsListBox"
+                                                     Background="#00000000"
+                                                     Foreground="#FFECECEC"
+                                                     BorderThickness="0"
+                                                     SelectionChanged="ColumnsListBox_SelectionChanged">
+                                                <ListBox.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Grid Margin="4,2">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                                <ColumnDefinition Width="*"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <CheckBox Grid.Column="0"
+                                                                      Margin="0,0,8,0"
+                                                                      IsChecked="{Binding IsVisible, Mode=TwoWay}"
+                                                                      Style="{StaticResource ModernCheckBox}"
+                                                                      Checked="ColumnVisibilityCheckBox_Changed"
+                                                                      Unchecked="ColumnVisibilityCheckBox_Changed"/>
+                                                            <TextBlock Grid.Column="1" Text="{Binding DisplayName}" VerticalAlignment="Center" Foreground="#FFE8E8E8"/>
+                                                        </Grid>
+                                                    </DataTemplate>
+                                                </ListBox.ItemTemplate>
+                                            </ListBox>
+                                        </Border>
+
+                                        <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                                            <Button Width="88" Margin="0,0,0,6" Content="Move Up" Style="{StaticResource ModernButton}" Click="MoveColumnUpButton_Click"/>
+                                            <Button Width="88" Content="Move Down" Style="{StaticResource ModernButton}" Click="MoveColumnDownButton_Click"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </Grid>
+                            </Grid>
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <Grid Grid.Column="0" Grid.ColumnSpan="3" Grid.Row="1" Margin="0,10,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Column="0"
+                               Text="Changes are applied when you click Save."
+                               Foreground="#FFB8B8B8"
+                               VerticalAlignment="Center"/>
+
+                    <Button Grid.Column="1" Margin="0,0,8,0" Width="100" Content="Cancel" Style="{StaticResource ModernButton}" Click="CancelButton_Click"/>
+                    <Button Grid.Column="2" Width="120" Content="Save" Style="{StaticResource ModernButton}" Click="SaveButton_Click"/>
+                </Grid>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>
