@@ -442,7 +442,6 @@ namespace OceanyaClient
 
         private void PersistTagState(bool saveToDisk)
         {
-            tagPanelCollapsed = TagPanelColumn.Width.Value < 10;
             if (!tagPanelCollapsed)
             {
                 savedTagPanelWidth = Math.Clamp(TagPanelColumn.ActualWidth, 180, 520);
@@ -515,6 +514,7 @@ namespace OceanyaClient
         {
             bool isCollapsed = tagPanelCollapsed;
             double width = Math.Clamp(savedTagPanelWidth, 180, 520);
+            TagPanelColumn.MinWidth = isCollapsed ? 0 : 180;
             TagPanelColumn.Width = isCollapsed ? new GridLength(0) : new GridLength(width);
             TagPanelSplitterColumn.Width = isCollapsed ? new GridLength(0) : new GridLength(5);
             TagPanelSplitter.Visibility = isCollapsed ? Visibility.Collapsed : Visibility.Visible;
@@ -1580,23 +1580,27 @@ namespace OceanyaClient
 
         private void ToggleTagPanelButton_Click(object sender, RoutedEventArgs e)
         {
-            bool currentlyCollapsed = TagPanelColumn.Width.Value < 10;
+            bool currentlyCollapsed = tagPanelCollapsed;
             if (currentlyCollapsed)
             {
                 double width = Math.Clamp(savedTagPanelWidth, 180, 520);
+                TagPanelColumn.MinWidth = 180;
                 TagPanelColumn.Width = new GridLength(width);
                 TagPanelSplitterColumn.Width = new GridLength(5);
                 TagPanelSplitter.Visibility = Visibility.Visible;
+                tagPanelCollapsed = false;
             }
             else
             {
                 savedTagPanelWidth = Math.Clamp(TagPanelColumn.ActualWidth, 180, 520);
+                TagPanelColumn.MinWidth = 0;
                 TagPanelColumn.Width = new GridLength(0);
                 TagPanelSplitterColumn.Width = new GridLength(0);
                 TagPanelSplitter.Visibility = Visibility.Collapsed;
+                tagPanelCollapsed = true;
             }
 
-            bool isCollapsed = TagPanelColumn.Width.Value < 10;
+            bool isCollapsed = tagPanelCollapsed;
             ToggleTagPanelButton.Content = isCollapsed ? "▶" : "◀";
             ToggleTagPanelButton.ToolTip = isCollapsed ? "Expand tag panel" : "Collapse tag panel";
             ToggleTagPanelTopButton.Content = isCollapsed ? "Show Tags" : "Hide Tags";
@@ -1684,21 +1688,24 @@ namespace OceanyaClient
             await RefreshItemsAfterTagFilterChangeAsync();
         }
 
-        private void SelectedFolderTagsListBox_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        private async void SelectedFolderTagsListBox_MouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
             if (SelectedFolderTagsListBox.SelectedItem is not string selectedTag)
             {
                 return;
             }
 
-            TagInputComboBox.Text = selectedTag;
-            TagInputComboBox.Focus();
-            TextBox? editable = FindEditableTagInputTextBox();
-            if (editable != null)
+            string normalizedTag = NormalizeTag(selectedTag);
+            if (string.IsNullOrWhiteSpace(normalizedTag))
             {
-                editable.SelectionStart = selectedTag.Length;
-                editable.SelectionLength = 0;
+                return;
             }
+
+            activeIncludeTagFilters.Clear();
+            activeExcludeTagFilters.Clear();
+            activeIncludeTagFilters.Add(normalizedTag);
+
+            await RefreshItemsAfterTagFilterChangeAsync();
         }
 
         private void RemoveTagButton_Click(object sender, RoutedEventArgs e)
