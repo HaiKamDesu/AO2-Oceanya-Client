@@ -60,6 +60,7 @@ namespace OceanyaClient
         private ListSortDirection currentSortDirection = ListSortDirection.Ascending;
         private EmoteVisualizerItem? contextMenuTargetItem;
         private double normalScrollWheelStep = 90;
+        private CharacterIntegrityReport? integrityReport;
 
         internal IReadOnlyList<EmoteVisualizerItem> EmoteItems => allItems;
 
@@ -309,6 +310,8 @@ namespace OceanyaClient
                 StopAndClearAnimationPlayers();
                 allItems.Clear();
                 allItems.AddRange(BuildEmoteItems(character));
+                integrityReport = await Task.Run(() => CharacterIntegrityVerifier.RunAndPersist(character));
+                ApplyIntegrityReportToEmoteItems();
 
                 itemsView = null;
                 SummaryText.Text = $"{character.Name} - Emotes indexed: {allItems.Count}";
@@ -1058,6 +1061,26 @@ namespace OceanyaClient
             LoopAnimationsCheckBox.Visibility = hasAnimatedAssets ? Visibility.Visible : Visibility.Collapsed;
         }
 
+        private void ApplyIntegrityReportToEmoteItems()
+        {
+            HashSet<int> failedEmoteIds = new HashSet<int>();
+            if (integrityReport != null)
+            {
+                foreach (CharacterIntegrityIssue issue in integrityReport.Results)
+                {
+                    if (!issue.Passed && issue.EmoteId.HasValue && issue.EmoteId.Value > 0)
+                    {
+                        failedEmoteIds.Add(issue.EmoteId.Value);
+                    }
+                }
+            }
+
+            foreach (EmoteVisualizerItem item in allItems)
+            {
+                item.IntegrityHasFailures = failedEmoteIds.Contains(item.Id);
+            }
+        }
+
         private static bool IsPotentialAnimatedPath(string path)
         {
             if (string.IsNullOrWhiteSpace(path))
@@ -1174,6 +1197,24 @@ namespace OceanyaClient
             };
             menu.Items.Add(setAsFolderDisplayItem);
 
+            AddContextCategoryHeader(menu, "Integrity verifier", addLeadingSeparator: true);
+
+            MenuItem runVerifierItem = new MenuItem
+            {
+                Header = "Run Verifier",
+                IsEnabled = Directory.Exists(character.DirectoryPath ?? string.Empty)
+            };
+            runVerifierItem.Click += async (_, _) => await RunIntegrityVerifierAsync(openResultsAfterRun: false);
+            menu.Items.Add(runVerifierItem);
+
+            MenuItem viewResultsItem = new MenuItem
+            {
+                Header = "View Results",
+                IsEnabled = Directory.Exists(character.DirectoryPath ?? string.Empty)
+            };
+            viewResultsItem.Click += async (_, _) => await OpenIntegrityVerifierResultsAsync();
+            menu.Items.Add(viewResultsItem);
+
             return menu;
         }
 
@@ -1201,6 +1242,69 @@ namespace OceanyaClient
             };
 
             menu.Items.Add(header);
+        }
+
+        private async Task RunIntegrityVerifierAsync(bool openResultsAfterRun)
+        {
+            string directoryPath = character.DirectoryPath?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(directoryPath) || !Directory.Exists(directoryPath))
+            {
+                return;
+            }
+
+            await WaitForm.ShowFormAsync("Running integrity verifier...", this);
+            try
+            {
+                WaitForm.SetSubtitle("Verifying folder: " + character.Name);
+                integrityReport = await Task.Run(() => CharacterIntegrityVerifier.RunAndPersist(character));
+                ApplyIntegrityReportToEmoteItems();
+                ICollectionView view = GetOrCreateItemsView();
+                view.Refresh();
+                EmoteListView.Items.Refresh();
+            }
+            finally
+            {
+                WaitForm.CloseForm();
+            }
+
+            if (openResultsAfterRun && integrityReport != null)
+            {
+                OpenIntegrityResultsWindow(integrityReport);
+            }
+        }
+
+        private async Task OpenIntegrityVerifierResultsAsync()
+        {
+            string directoryPath = character.DirectoryPath?.Trim() ?? string.Empty;
+            CharacterIntegrityReport? report = integrityReport;
+            if (report == null
+                && (!CharacterIntegrityVerifier.TryLoadPersistedReport(directoryPath, out report) || report == null))
+            {
+                await RunIntegrityVerifierAsync(openResultsAfterRun: true);
+                return;
+            }
+
+            OpenIntegrityResultsWindow(report);
+        }
+
+        private void OpenIntegrityResultsWindow(CharacterIntegrityReport report)
+        {
+            CharacterIntegrityVerifierResultsWindow resultsWindow = new CharacterIntegrityVerifierResultsWindow(
+                report,
+                character.DirectoryPath ?? string.Empty,
+                character.Name,
+                updatedReport =>
+                {
+                    integrityReport = updatedReport;
+                    ApplyIntegrityReportToEmoteItems();
+                    ICollectionView view = GetOrCreateItemsView();
+                    view.Refresh();
+                    EmoteListView.Items.Refresh();
+                })
+            {
+                Owner = this
+            };
+            resultsWindow.ShowDialog();
         }
 
         private bool IsFolderDisplayOverride(EmoteVisualizerItem item)
@@ -1554,6 +1658,7 @@ namespace OceanyaClient
             "pack://application:,,,/OceanyaClient;component/Resources/Buttons/smallFolder.png");
         private ImageSource animationImage = CharacterFolderVisualizerWindow.LoadEmbeddedImage(
             "pack://application:,,,/OceanyaClient;component/Resources/Buttons/smallFolder.png");
+        private bool integrityHasFailures;
 
         public int Id { get; set; }
         public string IdText { get; set; } = string.Empty;
@@ -1599,6 +1704,20 @@ namespace OceanyaClient
         }
         public IAnimationPlayer? PreAnimationPlayer { get; set; }
         public IAnimationPlayer? AnimationPlayer { get; set; }
+        public bool IntegrityHasFailures
+        {
+            get => integrityHasFailures;
+            set
+            {
+                if (integrityHasFailures == value)
+                {
+                    return;
+                }
+
+                integrityHasFailures = value;
+                OnPropertyChanged();
+            }
+        }
 
         public event PropertyChangedEventHandler? PropertyChanged;
 

@@ -240,6 +240,11 @@
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IntegrityHasFailures}" Value="True">
+                    <Setter Property="Background" Value="#26FF5B5B"/>
+                </DataTrigger>
+            </Style.Triggers>
         </Style>
 
         <Style x:Key="VisualizerIconItemStyle" TargetType="ListViewItem">
@@ -273,6 +278,11 @@
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IntegrityHasFailures}" Value="True">
+                    <Setter Property="Background" Value="#26FF5B5B"/>
+                </DataTrigger>
+            </Style.Triggers>
         </Style>
 
         <Style x:Key="VisualizerGridHeaderStyle" TargetType="GridViewColumnHeader">
@@ -381,7 +391,8 @@
         </DataTemplate>
 
         <DataTemplate x:Key="IconTileTemplate">
-            <Border Width="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=TileWidth}"
+            <Border x:Name="TileRootBorder"
+                    Width="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=TileWidth}"
                     Height="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=TileHeight}"
                     Margin="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=TileMargin}"
                     Background="#1E262D38"
@@ -452,6 +463,10 @@
                 </Grid>
             </Border>
             <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding IntegrityHasFailures}" Value="True">
+                    <Setter TargetName="TileRootBorder" Property="Background" Value="#2CFF5B5B"/>
+                    <Setter TargetName="TileRootBorder" Property="BorderBrush" Value="#50FF8E8E"/>
+                </DataTrigger>
                 <DataTrigger Binding="{Binding HasPreAnimation}" Value="False">
                     <Setter TargetName="WithPreanimGrid" Property="Visibility" Value="Collapsed"/>
                     <Setter TargetName="NoPreanimGrid" Property="Visibility" Value="Visible"/>

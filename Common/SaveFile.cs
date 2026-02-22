@@ -81,6 +81,7 @@ namespace OceanyaClient
         LastModified,
         EmoteCount,
         Size,
+        IntegrityFailures,
         OpenCharIni,
         Readme
     }
@@ -206,6 +207,7 @@ namespace OceanyaClient
         public VisualizerWindowState FolderVisualizerWindowState { get; set; } = new VisualizerWindowState();
         public VisualizerWindowState EmoteVisualizerWindowState { get; set; } = new VisualizerWindowState();
         public bool LoopEmoteVisualizerAnimations { get; set; } = true;
+        public bool ViewFolderIntegrityVerifierResults { get; set; }
         public Dictionary<string, int> CharacterFolderPreviewEmoteOverrides { get; set; } =
             new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
     }
@@ -495,16 +497,23 @@ namespace OceanyaClient
                 },
                 new FolderVisualizerTableColumnConfig
                 {
-                    Key = FolderVisualizerTableColumnKey.OpenCharIni,
+                    Key = FolderVisualizerTableColumnKey.IntegrityFailures,
                     IsVisible = true,
                     Order = 7,
+                    Width = 420
+                },
+                new FolderVisualizerTableColumnConfig
+                {
+                    Key = FolderVisualizerTableColumnKey.OpenCharIni,
+                    IsVisible = true,
+                    Order = 8,
                     Width = 120
                 },
                 new FolderVisualizerTableColumnConfig
                 {
                     Key = FolderVisualizerTableColumnKey.Readme,
                     IsVisible = true,
-                    Order = 8,
+                    Order = 9,
                     Width = 120
                 }
             };
@@ -604,16 +613,23 @@ namespace OceanyaClient
                             },
                             new FolderVisualizerTableColumnConfig
                             {
-                                Key = FolderVisualizerTableColumnKey.OpenCharIni,
+                                Key = FolderVisualizerTableColumnKey.IntegrityFailures,
                                 IsVisible = true,
                                 Order = 7,
+                                Width = 420
+                            },
+                            new FolderVisualizerTableColumnConfig
+                            {
+                                Key = FolderVisualizerTableColumnKey.OpenCharIni,
+                                IsVisible = true,
+                                Order = 8,
                                 Width = 120
                             },
                             new FolderVisualizerTableColumnConfig
                             {
                                 Key = FolderVisualizerTableColumnKey.Readme,
                                 IsVisible = true,
-                                Order = 8,
+                                Order = 9,
                                 Width = 120
                             }
                         }

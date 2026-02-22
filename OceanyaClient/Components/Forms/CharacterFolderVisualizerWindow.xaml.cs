@@ -98,6 +98,8 @@ namespace OceanyaClient
 
         public static readonly DependencyProperty TileMarginProperty = DependencyProperty.Register(
             nameof(TileMargin), typeof(Thickness), typeof(CharacterFolderVisualizerWindow), new PropertyMetadata(new Thickness(4)));
+        public static readonly DependencyProperty ShowIntegrityVerifierResultsProperty = DependencyProperty.Register(
+            nameof(ShowIntegrityVerifierResults), typeof(bool), typeof(CharacterFolderVisualizerWindow), new PropertyMetadata(false));
 
         public double TileWidth
         {
@@ -141,6 +143,12 @@ namespace OceanyaClient
             set => SetValue(TileMarginProperty, value);
         }
 
+        public bool ShowIntegrityVerifierResults
+        {
+            get => (bool)GetValue(ShowIntegrityVerifierResultsProperty);
+            set => SetValue(ShowIntegrityVerifierResultsProperty, value);
+        }
+
         /// <summary>
         /// Initializes a new visualizer window.
         /// </summary>
@@ -160,6 +168,8 @@ namespace OceanyaClient
             searchDebounceTimer.Tick += SearchDebounceTimer_Tick;
 
             visualizerConfig = CloneConfig(SaveFile.Data.FolderVisualizer);
+            ShowIntegrityVerifierResults = SaveFile.Data.ViewFolderIntegrityVerifierResults;
+            ViewIntegrityVerifierResultsCheckBox.IsChecked = ShowIntegrityVerifierResults;
             ApplySavedWindowState();
             BindViewPresets();
         }
@@ -460,6 +470,9 @@ namespace OceanyaClient
                 int emoteCount = characterFolder.configINI?.EmotionsCount ?? 0;
                 long sizeBytes = GetDirectorySizeSafe(characterFolder.DirectoryPath ?? string.Empty);
                 string readmePath = ResolveCharacterReadmePath(characterFolder.DirectoryPath ?? string.Empty);
+                CharacterIntegrityReport? integrityReport = null;
+                CharacterIntegrityVerifier.TryLoadPersistedReport(characterFolder.DirectoryPath ?? string.Empty, out integrityReport);
+                string integrityFailureMessages = BuildIntegrityFailureMessages(integrityReport);
 
                 items.Add(new FolderVisualizerItem
                 {
@@ -476,6 +489,9 @@ namespace OceanyaClient
                     SizeText = FormatBytes(sizeBytes),
                     ReadmePath = readmePath,
                     HasReadme = !string.IsNullOrWhiteSpace(readmePath),
+                    IntegrityHasFailures = integrityReport?.HasFailures == true,
+                    IntegrityFailureCount = integrityReport?.FailureCount ?? 0,
+                    IntegrityFailureMessages = integrityFailureMessages,
                     IconImage = FallbackFolderImage,
                     PreviewImage = FallbackFolderImage
                 });
@@ -619,9 +635,74 @@ namespace OceanyaClient
                 return true;
             }
 
-            return item.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
-                || item.DirectoryPath.Contains(query, StringComparison.OrdinalIgnoreCase)
-                || item.PreviewPath.Contains(query, StringComparison.OrdinalIgnoreCase);
+            IEnumerable<string> searchableValues = GetSearchableValues(item);
+            foreach (string value in searchableValues)
+            {
+                if (!string.IsNullOrWhiteSpace(value)
+                    && value.Contains(query, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private IEnumerable<string> GetSearchableValues(FolderVisualizerItem item)
+        {
+            if (FolderListView.View == null)
+            {
+                yield return item.Name;
+                yield return item.DirectoryPath;
+                yield return item.PreviewPath;
+                yield return item.IntegrityFailureMessages;
+                yield break;
+            }
+
+            foreach (FolderVisualizerTableColumnKey key in GetVisibleSearchColumnKeys())
+            {
+                string value = key switch
+                {
+                    FolderVisualizerTableColumnKey.Name => item.Name,
+                    FolderVisualizerTableColumnKey.DirectoryPath => item.DirectoryPath,
+                    FolderVisualizerTableColumnKey.PreviewPath => item.PreviewPath,
+                    FolderVisualizerTableColumnKey.LastModified => item.LastModifiedText,
+                    FolderVisualizerTableColumnKey.EmoteCount => item.EmoteCountText,
+                    FolderVisualizerTableColumnKey.Size => item.SizeText,
+                    FolderVisualizerTableColumnKey.IntegrityFailures => item.IntegrityFailureMessages,
+                    _ => string.Empty
+                };
+
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    yield return value;
+                }
+            }
+        }
+
+        private IEnumerable<FolderVisualizerTableColumnKey> GetVisibleSearchColumnKeys()
+        {
+            FolderVisualizerViewPreset? selectedPreset = ViewModeCombo.SelectedItem as FolderVisualizerViewPreset;
+            if (selectedPreset == null || selectedPreset.Mode != FolderVisualizerLayoutMode.Table)
+            {
+                yield return FolderVisualizerTableColumnKey.Name;
+                yield break;
+            }
+
+            List<FolderVisualizerTableColumnConfig> columns = selectedPreset.Table.Columns
+                .Where(column => column.IsVisible)
+                .OrderBy(column => column.Order)
+                .ToList();
+
+            if (ShowIntegrityVerifierResults && columns.All(column => column.Key != FolderVisualizerTableColumnKey.IntegrityFailures))
+            {
+                yield return FolderVisualizerTableColumnKey.IntegrityFailures;
+            }
+
+            foreach (FolderVisualizerTableColumnConfig column in columns)
+            {
+                yield return column.Key;
+            }
         }
 
         private Style BuildDetailsContainerStyle(FolderVisualizerTableViewConfig table)
@@ -649,6 +730,28 @@ namespace OceanyaClient
                 .Where(column => column.IsVisible)
                 .OrderBy(column => column.Order)
                 .ToList();
+
+            if (ShowIntegrityVerifierResults)
+            {
+                FolderVisualizerTableColumnConfig? integrityColumn = table.Columns.FirstOrDefault(
+                    column => column.Key == FolderVisualizerTableColumnKey.IntegrityFailures);
+                if (integrityColumn == null)
+                {
+                    integrityColumn = new FolderVisualizerTableColumnConfig
+                    {
+                        Key = FolderVisualizerTableColumnKey.IntegrityFailures,
+                        IsVisible = true,
+                        Order = orderedColumns.Count,
+                        Width = 420
+                    };
+                }
+
+                if (orderedColumns.All(column => column.Key != FolderVisualizerTableColumnKey.IntegrityFailures))
+                {
+                    orderedColumns.Add(integrityColumn);
+                    orderedColumns = orderedColumns.OrderBy(column => column.Order).ToList();
+                }
+            }
 
             if (orderedColumns.Count == 0)
             {
@@ -721,6 +824,7 @@ namespace OceanyaClient
                 FolderVisualizerTableColumnKey.LastModified => "Last Modified",
                 FolderVisualizerTableColumnKey.EmoteCount => "Emotes",
                 FolderVisualizerTableColumnKey.Size => "Size",
+                FolderVisualizerTableColumnKey.IntegrityFailures => "Integrity Failures",
                 FolderVisualizerTableColumnKey.OpenCharIni => "Open Char INI",
                 FolderVisualizerTableColumnKey.Readme => "Readme",
                 _ => "Column"
@@ -744,6 +848,7 @@ namespace OceanyaClient
                 FolderVisualizerTableColumnKey.LastModified => nameof(FolderVisualizerItem.LastModifiedText),
                 FolderVisualizerTableColumnKey.EmoteCount => nameof(FolderVisualizerItem.EmoteCountText),
                 FolderVisualizerTableColumnKey.Size => nameof(FolderVisualizerItem.SizeText),
+                FolderVisualizerTableColumnKey.IntegrityFailures => nameof(FolderVisualizerItem.IntegrityFailureMessages),
                 _ => nameof(FolderVisualizerItem.Name)
             };
         }
@@ -819,6 +924,14 @@ namespace OceanyaClient
             {
                 width = 108;
             }
+            else if (key == FolderVisualizerTableColumnKey.IntegrityFailures)
+            {
+                width = Math.Max(width, 320);
+                foreach (FolderVisualizerItem item in allItems)
+                {
+                    width = Math.Max(width, EstimateTextWidth(item.IntegrityFailureMessages) + 20);
+                }
+            }
             else
             {
                 foreach (FolderVisualizerItem item in allItems)
@@ -831,6 +944,7 @@ namespace OceanyaClient
                         FolderVisualizerTableColumnKey.LastModified => item.LastModifiedText,
                         FolderVisualizerTableColumnKey.EmoteCount => item.EmoteCountText,
                         FolderVisualizerTableColumnKey.Size => item.SizeText,
+                        FolderVisualizerTableColumnKey.IntegrityFailures => item.IntegrityFailureMessages,
                         _ => item.Name
                     };
 
@@ -901,6 +1015,7 @@ namespace OceanyaClient
                 FolderVisualizerTableColumnKey.LastModified => nameof(FolderVisualizerItem.LastModified),
                 FolderVisualizerTableColumnKey.EmoteCount => nameof(FolderVisualizerItem.EmoteCount),
                 FolderVisualizerTableColumnKey.Size => nameof(FolderVisualizerItem.SizeBytes),
+                FolderVisualizerTableColumnKey.IntegrityFailures => nameof(FolderVisualizerItem.IntegrityFailureMessages),
                 _ => string.Empty
             };
         }
@@ -1030,6 +1145,41 @@ namespace OceanyaClient
                 ICollectionView view = GetOrCreateItemsView();
                 view.Refresh();
             }));
+        }
+
+        private async void ViewIntegrityVerifierResultsCheckBox_Changed(object sender, RoutedEventArgs e)
+        {
+            ShowIntegrityVerifierResults = ViewIntegrityVerifierResultsCheckBox.IsChecked == true;
+            SaveFile.Data.ViewFolderIntegrityVerifierResults = ShowIntegrityVerifierResults;
+            SaveFile.Save();
+
+            if (FolderListView.View != null)
+            {
+                await WaitForm.ShowFormAsync("Applying integrity verifier view...", this);
+                try
+                {
+                    WaitForm.SetSubtitle("Refreshing columns and row styling...");
+                    await Dispatcher.Yield(DispatcherPriority.Background);
+                    ApplySelectedViewPreset();
+                    await Dispatcher.Yield(DispatcherPriority.Background);
+                    RefreshVisibleItems();
+                }
+                finally
+                {
+                    WaitForm.CloseForm();
+                }
+
+                return;
+            }
+
+            FolderListView.InvalidateVisual();
+        }
+
+        private void RefreshVisibleItems()
+        {
+            ICollectionView view = GetOrCreateItemsView();
+            view.Refresh();
+            FolderListView.Items.Refresh();
         }
 
         private void FolderListView_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
@@ -1231,6 +1381,24 @@ namespace OceanyaClient
             showInExplorerMenuItem.Click += (_, _) => ShowInExplorer(item.DirectoryPath);
             menu.Items.Add(showInExplorerMenuItem);
 
+            AddContextCategoryHeader(menu, "Integrity verifier", addLeadingSeparator: true);
+
+            MenuItem runVerifierMenuItem = new MenuItem
+            {
+                Header = "Run Verifier",
+                IsEnabled = !string.IsNullOrWhiteSpace(item.DirectoryPath) && Directory.Exists(item.DirectoryPath)
+            };
+            runVerifierMenuItem.Click += async (_, _) => await RunIntegrityVerifierForItemAsync(item, openResultsAfterRun: false);
+            menu.Items.Add(runVerifierMenuItem);
+
+            MenuItem viewVerifierResultsMenuItem = new MenuItem
+            {
+                Header = "View Results",
+                IsEnabled = !string.IsNullOrWhiteSpace(item.DirectoryPath) && Directory.Exists(item.DirectoryPath)
+            };
+            viewVerifierResultsMenuItem.Click += async (_, _) => await OpenIntegrityVerifierResultsAsync(item);
+            menu.Items.Add(viewVerifierResultsMenuItem);
+
             AddContextCategoryHeader(menu, "Attorney Online", addLeadingSeparator: true);
 
             MenuItem deleteCharacterFolderMenuItem = new MenuItem
@@ -1268,6 +1436,98 @@ namespace OceanyaClient
             };
 
             menu.Items.Add(header);
+        }
+
+        private async Task RunIntegrityVerifierForItemAsync(FolderVisualizerItem item, bool openResultsAfterRun)
+        {
+            if (item == null)
+            {
+                return;
+            }
+
+            string directoryPath = item.DirectoryPath?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(directoryPath) || !Directory.Exists(directoryPath))
+            {
+                return;
+            }
+
+            await WaitForm.ShowFormAsync("Running integrity verifier...", this);
+            CharacterIntegrityReport report;
+            try
+            {
+                WaitForm.SetSubtitle("Verifying folder: " + item.Name);
+                report = await Task.Run(() =>
+                    CharacterIntegrityVerifier.RunAndPersist(directoryPath, item.CharIniPath, item.Name));
+            }
+            finally
+            {
+                WaitForm.CloseForm();
+            }
+
+            ApplyIntegrityReportToItem(item, report);
+            RefreshVisibleItems();
+
+            if (openResultsAfterRun)
+            {
+                OpenIntegrityResultsWindow(item, report);
+            }
+        }
+
+        private async Task OpenIntegrityVerifierResultsAsync(FolderVisualizerItem item)
+        {
+            if (item == null)
+            {
+                return;
+            }
+
+            CharacterIntegrityReport? report;
+            if (!CharacterIntegrityVerifier.TryLoadPersistedReport(item.DirectoryPath, out report) || report == null)
+            {
+                await RunIntegrityVerifierForItemAsync(item, openResultsAfterRun: true);
+                return;
+            }
+
+            OpenIntegrityResultsWindow(item, report);
+        }
+
+        private void OpenIntegrityResultsWindow(FolderVisualizerItem item, CharacterIntegrityReport report)
+        {
+            CharacterIntegrityVerifierResultsWindow resultsWindow = new CharacterIntegrityVerifierResultsWindow(
+                report,
+                item.DirectoryPath,
+                item.Name,
+                updatedReport =>
+                {
+                    ApplyIntegrityReportToItem(item, updatedReport);
+                    RefreshVisibleItems();
+                })
+            {
+                Owner = this
+            };
+            resultsWindow.ShowDialog();
+        }
+
+        private static void ApplyIntegrityReportToItem(FolderVisualizerItem item, CharacterIntegrityReport report)
+        {
+            item.IntegrityHasFailures = report.HasFailures;
+            item.IntegrityFailureCount = report.FailureCount;
+            item.IntegrityFailureMessages = BuildIntegrityFailureMessages(report);
+        }
+
+        private static string BuildIntegrityFailureMessages(CharacterIntegrityReport? report)
+        {
+            if (report == null)
+            {
+                return string.Empty;
+            }
+
+            List<string> messages = report.Results
+                .Where(result => !result.Passed && !string.IsNullOrWhiteSpace(result.Message))
+                .Select(result => result.Message.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            return string.Join(" | ", messages);
         }
 
         internal async Task ApplyPreviewOverrideForCharacterDirectoryAsync(string? directoryPath)
@@ -1602,6 +1862,9 @@ namespace OceanyaClient
                     SizeText = item.SizeText ?? string.Empty,
                     ReadmePath = item.ReadmePath ?? string.Empty,
                     HasReadme = item.HasReadme,
+                    IntegrityHasFailures = item.IntegrityHasFailures,
+                    IntegrityFailureCount = item.IntegrityFailureCount,
+                    IntegrityFailureMessages = item.IntegrityFailureMessages ?? string.Empty,
                     IconImage = LoadImage(item.IconPath ?? string.Empty, 48),
                     PreviewImage = LoadImage(item.PreviewPath ?? string.Empty, 220)
                 }).ToList();
@@ -1639,7 +1902,10 @@ namespace OceanyaClient
                         SizeBytes = item.SizeBytes,
                         SizeText = item.SizeText,
                         ReadmePath = item.ReadmePath,
-                        HasReadme = item.HasReadme
+                        HasReadme = item.HasReadme,
+                        IntegrityHasFailures = item.IntegrityHasFailures,
+                        IntegrityFailureCount = item.IntegrityFailureCount,
+                        IntegrityFailureMessages = item.IntegrityFailureMessages
                     }).ToList()
                 };
 
@@ -1961,6 +2227,9 @@ namespace OceanyaClient
     public sealed class FolderVisualizerItem : INotifyPropertyChanged
     {
         private string previewPath = string.Empty;
+        private bool integrityHasFailures;
+        private int integrityFailureCount;
+        private string integrityFailureMessages = string.Empty;
         private ImageSource iconImage = CharacterFolderVisualizerWindow.LoadEmbeddedImage(
             "pack://application:,,,/OceanyaClient;component/Resources/Buttons/smallFolder.png");
         private ImageSource previewImage = CharacterFolderVisualizerWindow.LoadEmbeddedImage(
@@ -1992,6 +2261,51 @@ namespace OceanyaClient
         public string SizeText { get; set; } = string.Empty;
         public string ReadmePath { get; set; } = string.Empty;
         public bool HasReadme { get; set; }
+        public bool IntegrityHasFailures
+        {
+            get => integrityHasFailures;
+            set
+            {
+                if (integrityHasFailures == value)
+                {
+                    return;
+                }
+
+                integrityHasFailures = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public int IntegrityFailureCount
+        {
+            get => integrityFailureCount;
+            set
+            {
+                if (integrityFailureCount == value)
+                {
+                    return;
+                }
+
+                integrityFailureCount = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public string IntegrityFailureMessages
+        {
+            get => integrityFailureMessages;
+            set
+            {
+                string safeValue = value ?? string.Empty;
+                if (string.Equals(integrityFailureMessages, safeValue, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                integrityFailureMessages = safeValue;
+                OnPropertyChanged();
+            }
+        }
 
         public ImageSource IconImage
         {
@@ -2072,6 +2386,9 @@ namespace OceanyaClient
         public string SizeText { get; set; } = string.Empty;
         public string ReadmePath { get; set; } = string.Empty;
         public bool HasReadme { get; set; }
+        public bool IntegrityHasFailures { get; set; }
+        public int IntegrityFailureCount { get; set; }
+        public string IntegrityFailureMessages { get; set; } = string.Empty;
     }
 
     [StructLayout(LayoutKind.Sequential)]

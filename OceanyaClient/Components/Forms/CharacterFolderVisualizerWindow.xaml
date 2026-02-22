@@ -240,6 +240,15 @@
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+            <Style.Triggers>
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding IntegrityHasFailures}" Value="True"/>
+                        <Condition Binding="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=ShowIntegrityVerifierResults}" Value="True"/>
+                    </MultiDataTrigger.Conditions>
+                    <Setter Property="Background" Value="#26FF5B5B"/>
+                </MultiDataTrigger>
+            </Style.Triggers>
         </Style>
 
         <Style x:Key="VisualizerIconItemStyle" TargetType="ListViewItem">
@@ -273,6 +282,15 @@
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+            <Style.Triggers>
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding IntegrityHasFailures}" Value="True"/>
+                        <Condition Binding="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=ShowIntegrityVerifierResults}" Value="True"/>
+                    </MultiDataTrigger.Conditions>
+                    <Setter Property="Background" Value="#26FF5B5B"/>
+                </MultiDataTrigger>
+            </Style.Triggers>
         </Style>
 
         <Style x:Key="VisualizerGridHeaderStyle" TargetType="GridViewColumnHeader">
@@ -359,7 +377,8 @@
         </DataTemplate>
 
         <DataTemplate x:Key="IconTileTemplate">
-            <Border Width="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=TileWidth}"
+            <Border x:Name="TileRootBorder"
+                    Width="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=TileWidth}"
                     Height="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=TileHeight}"
                     Margin="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=TileMargin}"
                     Background="#1E262D38"
@@ -398,6 +417,16 @@
                     </StackPanel>
                 </Grid>
             </Border>
+            <DataTemplate.Triggers>
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding IntegrityHasFailures}" Value="True"/>
+                        <Condition Binding="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=ShowIntegrityVerifierResults}" Value="True"/>
+                    </MultiDataTrigger.Conditions>
+                    <Setter TargetName="TileRootBorder" Property="Background" Value="#2CFF5B5B"/>
+                    <Setter TargetName="TileRootBorder" Property="BorderBrush" Value="#50FF8E8E"/>
+                </MultiDataTrigger>
+            </DataTemplate.Triggers>
         </DataTemplate>
     </Window.Resources>
 
@@ -462,6 +491,7 @@
                         <ColumnDefinition Width="260"/>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
 
@@ -492,6 +522,15 @@
                             Margin="10,0,0,0"
                             Style="{StaticResource ModernButton}"
                             Click="RefreshAssetsButton_Click"/>
+
+                    <CheckBox Grid.Column="5"
+                              x:Name="ViewIntegrityVerifierResultsCheckBox"
+                              Content="View Integrity Verifier Results"
+                              VerticalAlignment="Center"
+                              Margin="12,0,0,0"
+                              Foreground="#FFE2E2E2"
+                              Checked="ViewIntegrityVerifierResultsCheckBox_Changed"
+                              Unchecked="ViewIntegrityVerifierResultsCheckBox_Changed"/>
                 </Grid>
 
                 <Border Grid.Row="1" Background="#14000000" BorderBrush="#4AFFFFFF" BorderThickness="1">

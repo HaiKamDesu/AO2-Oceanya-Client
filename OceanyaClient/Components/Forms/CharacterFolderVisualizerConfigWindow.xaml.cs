@@ -121,6 +121,7 @@ namespace OceanyaClient
                 FolderVisualizerTableColumnKey.LastModified => "Last Modified",
                 FolderVisualizerTableColumnKey.EmoteCount => "Emote Count",
                 FolderVisualizerTableColumnKey.Size => "Folder Size",
+                FolderVisualizerTableColumnKey.IntegrityFailures => "Integrity Failures",
                 FolderVisualizerTableColumnKey.OpenCharIni => "Open char.ini",
                 FolderVisualizerTableColumnKey.Readme => "Readme",
                 _ => key.ToString()
@@ -164,8 +165,9 @@ namespace OceanyaClient
                         new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.LastModified, IsVisible = true, Order = 4, Width = 170 },
                         new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.EmoteCount, IsVisible = true, Order = 5, Width = 110 },
                         new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.Size, IsVisible = true, Order = 6, Width = 110 },
-                        new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.OpenCharIni, IsVisible = true, Order = 7, Width = 120 },
-                        new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.Readme, IsVisible = true, Order = 8, Width = 120 }
+                        new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.IntegrityFailures, IsVisible = true, Order = 7, Width = 420 },
+                        new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.OpenCharIni, IsVisible = true, Order = 8, Width = 120 },
+                        new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.Readme, IsVisible = true, Order = 9, Width = 120 }
                     }
                 }
             };

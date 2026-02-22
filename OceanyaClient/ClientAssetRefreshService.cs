@@ -33,6 +33,12 @@ namespace OceanyaClient
                         WaitForm.SetSubtitle("Changed mount path: " + path);
                     });
 
+                foreach (CharacterFolder character in CharacterFolder.FullList)
+                {
+                    WaitForm.SetSubtitle("Integrity verify: " + character.Name);
+                    _ = CharacterIntegrityVerifier.RunAndPersist(character);
+                }
+
                 Background.RefreshCache(
                     onChangedMountPath: (string path) =>
                     {
