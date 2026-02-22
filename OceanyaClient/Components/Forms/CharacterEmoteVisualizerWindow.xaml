@@ -1,8 +1,8 @@
-<Window x:Class="OceanyaClient.CharacterFolderVisualizerWindow"
+<Window x:Class="OceanyaClient.CharacterEmoteVisualizerWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
-        Title="Character Folder Visualizer"
+        Title="Character Visualizer"
         Height="690"
         Width="980"
         MinHeight="520"
@@ -338,23 +338,45 @@
             </Border>
         </DataTemplate>
 
-        <DataTemplate x:Key="OpenCharIniTemplate">
-            <Button Content="Open"
-                    Style="{StaticResource ModernButton}"
-                    Padding="8,2"
-                    Height="24"
-                    Width="70"
-                    Click="OpenCharIniButton_Click"/>
+        <DataTemplate x:Key="DetailsPrePreviewTemplate">
+            <Border Background="Transparent" Padding="1">
+                <Grid Width="76" Height="46">
+                    <Image Source="{Binding PreAnimationImage}" Stretch="Uniform">
+                        <Image.Style>
+                            <Style TargetType="Image">
+                                <Setter Property="Visibility" Value="Visible"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HasPreAnimation}" Value="False">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Image.Style>
+                    </Image>
+                    <TextBlock Text="No preanim"
+                               Foreground="#FFC6C6C6"
+                               FontSize="10"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HasPreAnimation}" Value="False">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Grid>
+            </Border>
         </DataTemplate>
 
-        <DataTemplate x:Key="OpenReadmeTemplate">
-            <Button Content="Open"
-                    Style="{StaticResource ModernButton}"
-                    Padding="8,2"
-                    Height="24"
-                    Width="70"
-                    IsEnabled="{Binding HasReadme}"
-                    Click="OpenReadmeButton_Click"/>
+        <DataTemplate x:Key="DetailsAnimationPreviewTemplate">
+            <Border Background="Transparent" Padding="1">
+                <Image Source="{Binding AnimationImage}" Stretch="Uniform" Height="46" Width="76"/>
+            </Border>
         </DataTemplate>
 
         <DataTemplate x:Key="IconTileTemplate">
@@ -368,19 +390,50 @@
                     Padding="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=TilePadding}">
                 <Grid>
                     <Grid.RowDefinitions>
+                        <RowDefinition Height="16"/>
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <Viewbox Grid.Row="0"
-                             Stretch="Uniform"
-                             HorizontalAlignment="Center"
-                             VerticalAlignment="Center"
-                             Margin="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=InternalTileRowPadding}">
-                        <Image Source="{Binding PreviewImage}" Stretch="Uniform"/>
-                    </Viewbox>
+                    <TextBlock x:Name="NoPreanimTopLabel"
+                               Grid.Row="0"
+                               Text="No preanim"
+                               Foreground="#FFC6C6C6"
+                               FontSize="10"
+                               VerticalAlignment="Top"
+                               HorizontalAlignment="Left"
+                               Visibility="Collapsed"/>
 
-                    <StackPanel Grid.Row="1"
+                    <Grid Grid.Row="1"
+                          x:Name="WithPreanimGrid"
+                          Margin="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=InternalTileRowPadding}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Viewbox Grid.Column="0" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Image Source="{Binding PreAnimationImage}" Stretch="Uniform"/>
+                        </Viewbox>
+
+                        <TextBlock Grid.Column="1" Text="→" Foreground="#FFDADADA" Margin="8,0" VerticalAlignment="Center"/>
+
+                        <Viewbox Grid.Column="2" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Image Source="{Binding AnimationImage}" Stretch="Uniform"/>
+                        </Viewbox>
+                    </Grid>
+
+                    <Grid Grid.Row="1"
+                          x:Name="NoPreanimGrid"
+                          Margin="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=InternalTileRowPadding}"
+                          Visibility="Collapsed">
+                        <Viewbox Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Image Source="{Binding AnimationImage}" Stretch="Uniform"/>
+                        </Viewbox>
+                    </Grid>
+
+                    <StackPanel Grid.Row="2"
                                 Orientation="Horizontal"
                                 VerticalAlignment="Bottom"
                                 Margin="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=InternalTileRowPadding}">
@@ -397,6 +450,13 @@
                     </StackPanel>
                 </Grid>
             </Border>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding HasPreAnimation}" Value="False">
+                    <Setter TargetName="WithPreanimGrid" Property="Visibility" Value="Collapsed"/>
+                    <Setter TargetName="NoPreanimGrid" Property="Visibility" Value="Visible"/>
+                    <Setter TargetName="NoPreanimTopLabel" Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+            </DataTemplate.Triggers>
         </DataTemplate>
     </Window.Resources>
 
@@ -439,7 +499,7 @@
                             <ImageBrush ImageSource="pack://application:,,,/OceanyaClient;component/Resources/Logo_Laboratories.png" Stretch="Uniform"/>
                         </Rectangle.Fill>
                     </Rectangle>
-                    <TextBlock Text="CHARACTER FOLDER VISUALIZER"
+                    <TextBlock Text="CHARACTER VISUALIZER"
                                Foreground="#FFEAEAEA"
                                FontSize="12"
                                FontWeight="Bold"
@@ -459,6 +519,10 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="260"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
@@ -484,17 +548,44 @@
                     </ComboBox>
 
                     <Button Grid.Column="4"
-                            x:Name="RefreshAssetsButton"
-                            Content="Refresh Assets"
-                            Width="120"
+                            x:Name="RefreshCharacterButton"
+                            Content="Refresh Character"
+                            Width="130"
                             HorizontalAlignment="Left"
                             Margin="10,0,0,0"
                             Style="{StaticResource ModernButton}"
-                            Click="RefreshAssetsButton_Click"/>
+                            Click="RefreshCharacterButton_Click"/>
+
+                    <Button Grid.Column="5"
+                            x:Name="OpenCharacterIniButton"
+                            Content="Open char.ini"
+                            Width="120"
+                            HorizontalAlignment="Left"
+                            Margin="8,0,0,0"
+                            Style="{StaticResource ModernButton}"
+                            Click="OpenCharacterIniButton_Click"/>
+
+                    <Button Grid.Column="6"
+                            x:Name="OpenReadmeButton"
+                            Content="Open Readme"
+                            Width="110"
+                            HorizontalAlignment="Left"
+                            Margin="8,0,0,0"
+                            Style="{StaticResource ModernButton}"
+                            Click="OpenReadmeButton_Click"/>
+
+                    <CheckBox Grid.Column="7"
+                              x:Name="LoopAnimationsCheckBox"
+                              Content="Loop animations"
+                              VerticalAlignment="Center"
+                              Margin="12,0,0,0"
+                              Foreground="#FFE2E2E2"
+                              Checked="LoopAnimationsCheckBox_Changed"
+                              Unchecked="LoopAnimationsCheckBox_Changed"/>
                 </Grid>
 
                 <Border Grid.Row="1" Background="#14000000" BorderBrush="#4AFFFFFF" BorderThickness="1">
-                    <ListView x:Name="FolderListView"
+                    <ListView x:Name="EmoteListView"
                               Style="{StaticResource VisualizerListViewStyle}"
                               BorderThickness="0"
                               Background="#00000000"
@@ -502,9 +593,8 @@
                               ScrollViewer.VerticalScrollBarVisibility="Auto"
                               VirtualizingPanel.IsVirtualizing="True"
                               VirtualizingPanel.VirtualizationMode="Recycling"
-                              MouseDoubleClick="FolderListView_MouseDoubleClick"
-                              PreviewMouseRightButtonDown="FolderListView_PreviewMouseRightButtonDown"
-                              ContextMenuOpening="FolderListView_ContextMenuOpening"/>
+                              PreviewMouseLeftButtonUp="EmoteListView_PreviewMouseLeftButtonUp"
+                              SelectionChanged="EmoteListView_SelectionChanged"/>
                 </Border>
 
                 <Grid Grid.Row="2" Margin="0,8,0,0">
@@ -527,7 +617,6 @@
                             Click="ConfigureViewsButton_Click"/>
 
                     <Button Grid.Column="2"
-                            x:Name="CloseBottomButton"
                             Content="Close"
                             Width="90"
                             Margin="8,0,0,0"

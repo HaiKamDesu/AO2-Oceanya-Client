@@ -317,7 +317,7 @@ namespace AOBot_Testing.Structures
                     continue;
                 }
 
-                string resolved = ResolveIdleSpritePath(directoryPath, emote.Animation);
+                string resolved = CharacterAssetPathResolver.ResolveIdleSpritePath(directoryPath, emote.Animation);
                 if (!string.IsNullOrWhiteSpace(resolved))
                 {
                     return resolved;
@@ -326,66 +326,10 @@ namespace AOBot_Testing.Structures
 
             foreach (var pair in parsedConfig.Emotions.OrderBy(x => x.Key))
             {
-                string resolved = ResolveIdleSpritePath(directoryPath, pair.Value.Animation);
+                string resolved = CharacterAssetPathResolver.ResolveIdleSpritePath(directoryPath, pair.Value.Animation);
                 if (!string.IsNullOrWhiteSpace(resolved))
                 {
                     return resolved;
-                }
-            }
-
-            return string.Empty;
-        }
-
-        private static string ResolveIdleSpritePath(string directoryPath, string animationName)
-        {
-            string normalizedAnimationName = animationName?.Trim() ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(normalizedAnimationName) || normalizedAnimationName == "-")
-            {
-                return string.Empty;
-            }
-
-            string[] candidateNames =
-            {
-                "(a)" + normalizedAnimationName,
-                "(a)/" + normalizedAnimationName,
-                normalizedAnimationName,
-                "placeholder"
-            };
-
-            foreach (string candidate in candidateNames)
-            {
-                string resolved = ResolveCharacterAssetPath(directoryPath, candidate);
-                if (!string.IsNullOrWhiteSpace(resolved))
-                {
-                    return resolved;
-                }
-            }
-
-            return string.Empty;
-        }
-
-        private static string ResolveCharacterAssetPath(string directoryPath, string candidateName)
-        {
-            string candidate = candidateName?.Trim() ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(candidate))
-            {
-                return string.Empty;
-            }
-
-            string relativeCandidate = candidate.Replace('/', Path.DirectorySeparatorChar);
-            string pathWithoutExtension = Path.Combine(directoryPath, relativeCandidate);
-
-            if (Path.HasExtension(relativeCandidate))
-            {
-                return File.Exists(pathWithoutExtension) ? pathWithoutExtension : string.Empty;
-            }
-
-            foreach (string extension in Globals.AllowedImageExtensions)
-            {
-                string withExtension = pathWithoutExtension + "." + extension;
-                if (File.Exists(withExtension))
-                {
-                    return withExtension;
                 }
             }
 

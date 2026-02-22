@@ -10,25 +10,24 @@ using Common;
 namespace OceanyaClient
 {
     /// <summary>
-    /// Configures view presets for the character folder visualizer.
+    /// Configures view presets for the character emote visualizer.
     /// </summary>
-    public partial class CharacterFolderVisualizerConfigWindow : Window
+    public partial class CharacterEmoteVisualizerConfigWindow : Window
     {
-        private readonly FolderVisualizerConfig workingConfig;
-        private readonly List<ColumnEditorItem> columnEditorItems = new List<ColumnEditorItem>();
+        private readonly EmoteVisualizerConfig workingConfig;
+        private readonly List<EmoteColumnEditorItem> columnEditorItems = new List<EmoteColumnEditorItem>();
 
         private bool suppressControlEvents;
 
         /// <summary>
         /// Gets the resulting config if the dialog returns true.
         /// </summary>
-        public FolderVisualizerConfig ResultConfig { get; private set; } = new FolderVisualizerConfig();
+        public EmoteVisualizerConfig ResultConfig { get; private set; } = new EmoteVisualizerConfig();
 
-        public CharacterFolderVisualizerConfigWindow(FolderVisualizerConfig sourceConfig)
+        public CharacterEmoteVisualizerConfigWindow(EmoteVisualizerConfig sourceConfig)
         {
             InitializeComponent();
             workingConfig = CloneConfig(sourceConfig);
-
             BindPresetList();
         }
 
@@ -39,7 +38,7 @@ namespace OceanyaClient
             PresetListBox.ItemsSource = null;
             PresetListBox.ItemsSource = workingConfig.Presets;
 
-            FolderVisualizerViewPreset? selected = workingConfig.Presets.FirstOrDefault(p =>
+            EmoteVisualizerViewPreset? selected = workingConfig.Presets.FirstOrDefault(p =>
                 string.Equals(p.Id, workingConfig.SelectedPresetId, StringComparison.OrdinalIgnoreCase));
 
             selected ??= workingConfig.Presets.FirstOrDefault();
@@ -54,14 +53,14 @@ namespace OceanyaClient
             UpdateEditorForSelection();
         }
 
-        private FolderVisualizerViewPreset? GetSelectedPreset()
+        private EmoteVisualizerViewPreset? GetSelectedPreset()
         {
-            return PresetListBox.SelectedItem as FolderVisualizerViewPreset;
+            return PresetListBox.SelectedItem as EmoteVisualizerViewPreset;
         }
 
         private void UpdateEditorForSelection()
         {
-            FolderVisualizerViewPreset? selected = GetSelectedPreset();
+            EmoteVisualizerViewPreset? selected = GetSelectedPreset();
             if (selected == null)
             {
                 return;
@@ -90,13 +89,13 @@ namespace OceanyaClient
             suppressControlEvents = false;
         }
 
-        private void RebuildColumnsEditor(FolderVisualizerViewPreset preset)
+        private void RebuildColumnsEditor(EmoteVisualizerViewPreset preset)
         {
             columnEditorItems.Clear();
 
-            foreach (FolderVisualizerTableColumnConfig column in preset.Table.Columns.OrderBy(c => c.Order))
+            foreach (EmoteVisualizerTableColumnConfig column in preset.Table.Columns.OrderBy(c => c.Order))
             {
-                columnEditorItems.Add(new ColumnEditorItem
+                columnEditorItems.Add(new EmoteColumnEditorItem
                 {
                     Key = column.Key,
                     DisplayName = GetColumnDisplayName(column.Key),
@@ -109,19 +108,17 @@ namespace OceanyaClient
             ColumnsListBox.SelectedIndex = columnEditorItems.Count > 0 ? 0 : -1;
         }
 
-        private static string GetColumnDisplayName(FolderVisualizerTableColumnKey key)
+        private static string GetColumnDisplayName(EmoteVisualizerTableColumnKey key)
         {
             return key switch
             {
-                FolderVisualizerTableColumnKey.Icon => "Folder Icon",
-                FolderVisualizerTableColumnKey.Name => "Character Name",
-                FolderVisualizerTableColumnKey.DirectoryPath => "Folder Path",
-                FolderVisualizerTableColumnKey.PreviewPath => "Idle Sprite Path",
-                FolderVisualizerTableColumnKey.LastModified => "Last Modified",
-                FolderVisualizerTableColumnKey.EmoteCount => "Emote Count",
-                FolderVisualizerTableColumnKey.Size => "Folder Size",
-                FolderVisualizerTableColumnKey.OpenCharIni => "Open char.ini",
-                FolderVisualizerTableColumnKey.Readme => "Readme",
+                EmoteVisualizerTableColumnKey.Icon => "Emote Icon",
+                EmoteVisualizerTableColumnKey.Id => "ID",
+                EmoteVisualizerTableColumnKey.Name => "Emote Name",
+                EmoteVisualizerTableColumnKey.PreAnimationPreview => "Pre Animation Preview",
+                EmoteVisualizerTableColumnKey.AnimationPreview => "Final Animation Preview",
+                EmoteVisualizerTableColumnKey.PreAnimationPath => "Pre Animation Path",
+                EmoteVisualizerTableColumnKey.AnimationPath => "Final Animation Path",
                 _ => key.ToString()
             };
         }
@@ -133,7 +130,7 @@ namespace OceanyaClient
                 return;
             }
 
-            FolderVisualizerViewPreset? selected = GetSelectedPreset();
+            EmoteVisualizerViewPreset? selected = GetSelectedPreset();
             if (selected != null)
             {
                 workingConfig.SelectedPresetId = selected.Id;
@@ -146,25 +143,23 @@ namespace OceanyaClient
         private void AddPresetButton_Click(object sender, RoutedEventArgs e)
         {
             int next = workingConfig.Presets.Count + 1;
-            FolderVisualizerViewPreset newPreset = new FolderVisualizerViewPreset
+            EmoteVisualizerViewPreset newPreset = new EmoteVisualizerViewPreset
             {
                 Id = Guid.NewGuid().ToString("N"),
                 Name = $"Custom {next}",
                 Mode = FolderVisualizerLayoutMode.Normal,
                 Normal = new FolderVisualizerNormalViewConfig(),
-                Table = new FolderVisualizerTableViewConfig
+                Table = new EmoteVisualizerTableViewConfig
                 {
-                    Columns = new List<FolderVisualizerTableColumnConfig>
+                    Columns = new List<EmoteVisualizerTableColumnConfig>
                     {
-                        new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.Icon, IsVisible = true, Order = 0, Width = 30 },
-                        new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.Name, IsVisible = true, Order = 1, Width = 320 },
-                        new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.DirectoryPath, IsVisible = false, Order = 2, Width = 460 },
-                        new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.PreviewPath, IsVisible = false, Order = 3, Width = 460 },
-                        new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.LastModified, IsVisible = true, Order = 4, Width = 170 },
-                        new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.EmoteCount, IsVisible = true, Order = 5, Width = 110 },
-                        new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.Size, IsVisible = true, Order = 6, Width = 110 },
-                        new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.OpenCharIni, IsVisible = true, Order = 7, Width = 120 },
-                        new FolderVisualizerTableColumnConfig { Key = FolderVisualizerTableColumnKey.Readme, IsVisible = true, Order = 8, Width = 120 }
+                        new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.Icon, IsVisible = true, Order = 0, Width = 34 },
+                        new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.Id, IsVisible = true, Order = 1, Width = 54 },
+                        new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.Name, IsVisible = true, Order = 2, Width = 230 },
+                        new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.PreAnimationPreview, IsVisible = true, Order = 3, Width = 110 },
+                        new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.AnimationPreview, IsVisible = true, Order = 4, Width = 110 },
+                        new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.PreAnimationPath, IsVisible = false, Order = 5, Width = 320 },
+                        new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.AnimationPath, IsVisible = false, Order = 6, Width = 320 }
                     }
                 }
             };
@@ -176,7 +171,7 @@ namespace OceanyaClient
 
         private void RemovePresetButton_Click(object sender, RoutedEventArgs e)
         {
-            FolderVisualizerViewPreset? selected = GetSelectedPreset();
+            EmoteVisualizerViewPreset? selected = GetSelectedPreset();
             if (selected == null)
             {
                 return;
@@ -209,7 +204,7 @@ namespace OceanyaClient
                 return;
             }
 
-            FolderVisualizerViewPreset? selected = GetSelectedPreset();
+            EmoteVisualizerViewPreset? selected = GetSelectedPreset();
             if (selected == null)
             {
                 return;
@@ -229,7 +224,7 @@ namespace OceanyaClient
                 return;
             }
 
-            FolderVisualizerViewPreset? selected = GetSelectedPreset();
+            EmoteVisualizerViewPreset? selected = GetSelectedPreset();
             if (selected == null)
             {
                 return;
@@ -256,7 +251,7 @@ namespace OceanyaClient
                 return;
             }
 
-            FolderVisualizerViewPreset? selected = GetSelectedPreset();
+            EmoteVisualizerViewPreset? selected = GetSelectedPreset();
             if (selected == null)
             {
                 return;
@@ -289,7 +284,7 @@ namespace OceanyaClient
                 return;
             }
 
-            FolderVisualizerViewPreset? selected = GetSelectedPreset();
+            EmoteVisualizerViewPreset? selected = GetSelectedPreset();
             if (selected == null)
             {
                 return;
@@ -314,7 +309,7 @@ namespace OceanyaClient
 
         private void ColumnsListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            // No-op: just used by move buttons.
+            // No-op.
         }
 
         private void MoveColumnUpButton_Click(object sender, RoutedEventArgs e)
@@ -352,13 +347,13 @@ namespace OceanyaClient
                 return;
             }
 
-            FolderVisualizerViewPreset? selected = GetSelectedPreset();
+            EmoteVisualizerViewPreset? selected = GetSelectedPreset();
             if (selected == null)
             {
                 return;
             }
 
-            Dictionary<FolderVisualizerTableColumnKey, double> widthByColumn = selected.Table.Columns
+            Dictionary<EmoteVisualizerTableColumnKey, double> widthByColumn = selected.Table.Columns
                 .GroupBy(column => column.Key)
                 .ToDictionary(group => group.Key, group => group.First().Width);
 
@@ -366,9 +361,9 @@ namespace OceanyaClient
 
             for (int i = 0; i < columnEditorItems.Count; i++)
             {
-                ColumnEditorItem editor = columnEditorItems[i];
+                EmoteColumnEditorItem editor = columnEditorItems[i];
 
-                selected.Table.Columns.Add(new FolderVisualizerTableColumnConfig
+                selected.Table.Columns.Add(new EmoteVisualizerTableColumnConfig
                 {
                     Key = editor.Key,
                     IsVisible = editor.IsVisible,
@@ -382,7 +377,7 @@ namespace OceanyaClient
 
         private void SaveButton_Click(object sender, RoutedEventArgs e)
         {
-            foreach (FolderVisualizerViewPreset preset in workingConfig.Presets)
+            foreach (EmoteVisualizerViewPreset preset in workingConfig.Presets)
             {
                 preset.Name = string.IsNullOrWhiteSpace(preset.Name)
                     ? "View"
@@ -414,23 +409,23 @@ namespace OceanyaClient
             }
         }
 
-        private static FolderVisualizerConfig CloneConfig(FolderVisualizerConfig source)
+        private static EmoteVisualizerConfig CloneConfig(EmoteVisualizerConfig source)
         {
-            FolderVisualizerConfig clone = new FolderVisualizerConfig
+            EmoteVisualizerConfig clone = new EmoteVisualizerConfig
             {
                 SelectedPresetId = source.SelectedPresetId,
                 SelectedPresetName = source.SelectedPresetName,
-                Presets = new List<FolderVisualizerViewPreset>()
+                Presets = new List<EmoteVisualizerViewPreset>()
             };
 
-            foreach (FolderVisualizerViewPreset preset in source.Presets)
+            foreach (EmoteVisualizerViewPreset preset in source.Presets)
             {
-                clone.Presets.Add(CharacterFolderVisualizerWindow.ClonePreset(preset));
+                clone.Presets.Add(CharacterEmoteVisualizerWindow.ClonePreset(preset));
             }
 
             if (clone.Presets.Count == 0)
             {
-                clone.Presets.Add(new FolderVisualizerViewPreset { Name = "View" });
+                clone.Presets.Add(new EmoteVisualizerViewPreset { Name = "View" });
                 clone.SelectedPresetId = clone.Presets[0].Id;
             }
 
@@ -442,7 +437,7 @@ namespace OceanyaClient
             }
             else
             {
-                FolderVisualizerViewPreset selected = clone.Presets.First(p =>
+                EmoteVisualizerViewPreset selected = clone.Presets.First(p =>
                     string.Equals(p.Id, clone.SelectedPresetId, StringComparison.OrdinalIgnoreCase));
                 clone.SelectedPresetName = selected.Name;
             }
@@ -451,9 +446,9 @@ namespace OceanyaClient
         }
     }
 
-    public sealed class ColumnEditorItem
+    public sealed class EmoteColumnEditorItem
     {
-        public FolderVisualizerTableColumnKey Key { get; set; }
+        public EmoteVisualizerTableColumnKey Key { get; set; }
         public string DisplayName { get; set; } = string.Empty;
         public bool IsVisible { get; set; }
     }

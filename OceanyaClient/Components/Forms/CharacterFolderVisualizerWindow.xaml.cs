@@ -41,6 +41,7 @@ namespace OceanyaClient
         private readonly List<FolderVisualizerItem> allItems = new List<FolderVisualizerItem>();
 
         private bool hasLoaded;
+        private bool applyingSavedWindowState;
         private bool suppressViewSelectionChanged;
         private FolderVisualizerConfig visualizerConfig = new FolderVisualizerConfig();
         private ICollectionView? itemsView;
@@ -71,14 +72,14 @@ namespace OceanyaClient
         public static readonly DependencyProperty TileHeightProperty = DependencyProperty.Register(
             nameof(TileHeight), typeof(double), typeof(CharacterFolderVisualizerWindow), new PropertyMetadata(182d));
 
-        public static readonly DependencyProperty PreviewSizeProperty = DependencyProperty.Register(
-            nameof(PreviewSize), typeof(double), typeof(CharacterFolderVisualizerWindow), new PropertyMetadata(104d));
-
         public static readonly DependencyProperty IconSizeProperty = DependencyProperty.Register(
             nameof(IconSize), typeof(double), typeof(CharacterFolderVisualizerWindow), new PropertyMetadata(18d));
 
         public static readonly DependencyProperty TileNameFontSizeProperty = DependencyProperty.Register(
             nameof(TileNameFontSize), typeof(double), typeof(CharacterFolderVisualizerWindow), new PropertyMetadata(12d));
+
+        public static readonly DependencyProperty InternalTileRowPaddingProperty = DependencyProperty.Register(
+            nameof(InternalTileRowPadding), typeof(Thickness), typeof(CharacterFolderVisualizerWindow), new PropertyMetadata(new Thickness(0, 2, 0, 2)));
 
         public static readonly DependencyProperty TilePaddingProperty = DependencyProperty.Register(
             nameof(TilePadding), typeof(Thickness), typeof(CharacterFolderVisualizerWindow), new PropertyMetadata(new Thickness(8)));
@@ -98,12 +99,6 @@ namespace OceanyaClient
             set => SetValue(TileHeightProperty, value);
         }
 
-        public double PreviewSize
-        {
-            get => (double)GetValue(PreviewSizeProperty);
-            set => SetValue(PreviewSizeProperty, value);
-        }
-
         public double IconSize
         {
             get => (double)GetValue(IconSizeProperty);
@@ -120,6 +115,12 @@ namespace OceanyaClient
         {
             get => (Thickness)GetValue(TilePaddingProperty);
             set => SetValue(TilePaddingProperty, value);
+        }
+
+        public Thickness InternalTileRowPadding
+        {
+            get => (Thickness)GetValue(InternalTileRowPaddingProperty);
+            set => SetValue(InternalTileRowPaddingProperty, value);
         }
 
         public Thickness TileMargin
@@ -147,6 +148,7 @@ namespace OceanyaClient
             searchDebounceTimer.Tick += SearchDebounceTimer_Tick;
 
             visualizerConfig = CloneConfig(SaveFile.Data.FolderVisualizer);
+            ApplySavedWindowState();
             BindViewPresets();
         }
 
@@ -175,6 +177,40 @@ namespace OceanyaClient
         private void Window_StateChanged(object? sender, EventArgs e)
         {
             ApplyWorkAreaMaxBounds();
+        }
+
+        private void ApplySavedWindowState()
+        {
+            VisualizerWindowState state = SaveFile.Data.FolderVisualizerWindowState ?? new VisualizerWindowState();
+            applyingSavedWindowState = true;
+            try
+            {
+                Width = Math.Max(MinWidth, state.Width);
+                Height = Math.Max(MinHeight, state.Height);
+
+                if (state.IsMaximized)
+                {
+                    WindowState = WindowState.Maximized;
+                }
+            }
+            finally
+            {
+                applyingSavedWindowState = false;
+            }
+        }
+
+        private VisualizerWindowState CaptureWindowState()
+        {
+            Rect bounds = WindowState == WindowState.Normal ? new Rect(Left, Top, Width, Height) : RestoreBounds;
+            double capturedWidth = bounds.Width > 0 ? bounds.Width : Width;
+            double capturedHeight = bounds.Height > 0 ? bounds.Height : Height;
+
+            return new VisualizerWindowState
+            {
+                Width = Math.Max(MinWidth, capturedWidth),
+                Height = Math.Max(MinHeight, capturedHeight),
+                IsMaximized = WindowState == WindowState.Maximized
+            };
         }
 
         private void ApplyWorkAreaMaxBounds()
@@ -363,7 +399,7 @@ namespace OceanyaClient
                 items.Add(new FolderVisualizerItem
                 {
                     Name = characterFolder.Name,
-                    DirectoryPath = characterFolder.DirectoryPath,
+                    DirectoryPath = characterFolder.DirectoryPath ?? string.Empty,
                     IconPath = iconPath,
                     PreviewPath = previewPath,
                     CharIniPath = charIniPath,
@@ -464,9 +500,9 @@ namespace OceanyaClient
             UntrackTableColumnWidth();
             TileWidth = normal.TileWidth;
             TileHeight = normal.TileHeight;
-            PreviewSize = normal.PreviewSize;
             IconSize = normal.IconSize;
             TileNameFontSize = normal.NameFontSize;
+            InternalTileRowPadding = new Thickness(0, normal.InternalTilePadding, 0, normal.InternalTilePadding);
             TilePadding = new Thickness(normal.TilePadding);
             TileMargin = new Thickness(normal.TileMargin);
 
@@ -952,6 +988,66 @@ namespace OceanyaClient
             FolderListView.ContextMenu = BuildContextMenuForItem(target);
         }
 
+        private void FolderListView_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            if (IsWithinControl<Button>(e.OriginalSource as DependencyObject))
+            {
+                return;
+            }
+
+            FolderVisualizerItem? item = ResolveItemFromOriginalSource(e.OriginalSource as DependencyObject);
+            if (item == null)
+            {
+                return;
+            }
+
+            CharacterFolder? character = ResolveCharacterFolderForItem(item);
+            if (character == null)
+            {
+                return;
+            }
+
+            CharacterEmoteVisualizerWindow emoteVisualizerWindow = new CharacterEmoteVisualizerWindow(character)
+            {
+                Owner = this
+            };
+            emoteVisualizerWindow.ShowDialog();
+        }
+
+        private static bool IsWithinControl<TControl>(DependencyObject? source) where TControl : DependencyObject
+        {
+            DependencyObject? current = source;
+            while (current != null)
+            {
+                if (current is TControl)
+                {
+                    return true;
+                }
+
+                current = VisualTreeHelper.GetParent(current);
+            }
+
+            return false;
+        }
+
+        private static CharacterFolder? ResolveCharacterFolderForItem(FolderVisualizerItem item)
+        {
+            string directoryPath = item.DirectoryPath?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(directoryPath))
+            {
+                CharacterFolder? byDirectory = CharacterFolder.FullList.FirstOrDefault(character =>
+                    string.Equals(character.DirectoryPath, directoryPath, StringComparison.OrdinalIgnoreCase));
+                if (byDirectory != null)
+                {
+                    return byDirectory;
+                }
+            }
+
+            string characterName = item.Name?.Trim() ?? string.Empty;
+            return CharacterFolder.FullList.FirstOrDefault(character =>
+                string.Equals(character.Name, characterName, StringComparison.OrdinalIgnoreCase));
+        }
+
         private FolderVisualizerItem? ResolveItemFromOriginalSource(DependencyObject? source)
         {
             DependencyObject? current = source;
@@ -1056,6 +1152,11 @@ namespace OceanyaClient
         {
             UntrackTableColumnWidth();
             PersistVisualizerConfig();
+            if (!applyingSavedWindowState)
+            {
+                SaveFile.Data.FolderVisualizerWindowState = CaptureWindowState();
+                SaveFile.Save();
+            }
             base.OnClosed(e);
         }
 
@@ -1195,99 +1296,7 @@ namespace OceanyaClient
 
         internal static string ResolveFirstCharacterIdleSpritePath(CharacterFolder folder)
         {
-            if (folder?.configINI == null)
-            {
-                return string.Empty;
-            }
-
-            CharacterConfigINI config = folder.configINI;
-            string characterDirectory = folder.DirectoryPath ?? string.Empty;
-
-            for (int emotionId = 1; emotionId <= config.EmotionsCount; emotionId++)
-            {
-                if (!config.Emotions.TryGetValue(emotionId, out Emote? emote) || emote == null)
-                {
-                    continue;
-                }
-
-                string resolved = ResolveIdleSpritePath(characterDirectory, emote.Animation);
-                if (!string.IsNullOrWhiteSpace(resolved))
-                {
-                    return resolved;
-                }
-            }
-
-            foreach (KeyValuePair<int, Emote> emotion in config.Emotions.OrderBy(pair => pair.Key))
-            {
-                string resolved = ResolveIdleSpritePath(characterDirectory, emotion.Value.Animation);
-                if (!string.IsNullOrWhiteSpace(resolved))
-                {
-                    return resolved;
-                }
-            }
-
-            return folder.CharIconPath ?? string.Empty;
-        }
-
-        private static string ResolveIdleSpritePath(string characterDirectory, string animationName)
-        {
-            string normalizedAnimationName = animationName?.Trim() ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(normalizedAnimationName) || normalizedAnimationName == "-")
-            {
-                return string.Empty;
-            }
-
-            string[] orderedIdleCandidates =
-            {
-                "(a)" + normalizedAnimationName,
-                "(a)/" + normalizedAnimationName,
-                normalizedAnimationName,
-                "placeholder"
-            };
-
-            foreach (string candidate in orderedIdleCandidates)
-            {
-                string resolvedCandidate = ResolveCharacterImagePath(characterDirectory, candidate);
-                if (!string.IsNullOrWhiteSpace(resolvedCandidate))
-                {
-                    return resolvedCandidate;
-                }
-            }
-
-            return string.Empty;
-        }
-
-        private static string ResolveCharacterImagePath(string characterDirectory, string candidate)
-        {
-            string normalizedCandidate = (candidate ?? string.Empty).Trim();
-            if (string.IsNullOrWhiteSpace(normalizedCandidate))
-            {
-                return string.Empty;
-            }
-
-            if (Path.IsPathRooted(normalizedCandidate) && File.Exists(normalizedCandidate))
-            {
-                return normalizedCandidate;
-            }
-
-            string normalizedDirectoryCandidate = normalizedCandidate.Replace('/', Path.DirectorySeparatorChar);
-            string candidateFromDirectory = Path.Combine(characterDirectory, normalizedDirectoryCandidate);
-
-            if (Path.HasExtension(normalizedCandidate))
-            {
-                return File.Exists(candidateFromDirectory) ? candidateFromDirectory : string.Empty;
-            }
-
-            foreach (string extension in Globals.AllowedImageExtensions)
-            {
-                string pathWithExtension = candidateFromDirectory + "." + extension;
-                if (File.Exists(pathWithExtension))
-                {
-                    return pathWithExtension;
-                }
-            }
-
-            return string.Empty;
+            return CharacterAssetPathResolver.ResolveFirstCharacterIdleSpritePath(folder);
         }
 
         private static long GetDirectorySizeSafe(string directoryPath)
@@ -1519,9 +1528,9 @@ namespace OceanyaClient
                 {
                     TileWidth = preset?.Normal?.TileWidth ?? 170,
                     TileHeight = preset?.Normal?.TileHeight ?? 182,
-                    PreviewSize = preset?.Normal?.PreviewSize ?? 104,
                     IconSize = preset?.Normal?.IconSize ?? 18,
                     NameFontSize = preset?.Normal?.NameFontSize ?? 12,
+                    InternalTilePadding = preset?.Normal?.InternalTilePadding ?? 2,
                     TilePadding = preset?.Normal?.TilePadding ?? 8,
                     TileMargin = preset?.Normal?.TileMargin ?? 4
                 },

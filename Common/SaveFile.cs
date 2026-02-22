@@ -85,13 +85,24 @@ namespace OceanyaClient
         Readme
     }
 
+    public enum EmoteVisualizerTableColumnKey
+    {
+        Icon,
+        Id,
+        Name,
+        PreAnimationPreview,
+        AnimationPreview,
+        PreAnimationPath,
+        AnimationPath
+    }
+
     public class FolderVisualizerNormalViewConfig
     {
         public double TileWidth { get; set; } = 170;
         public double TileHeight { get; set; } = 182;
-        public double PreviewSize { get; set; } = 104;
         public double IconSize { get; set; } = 18;
         public double NameFontSize { get; set; } = 12;
+        public double InternalTilePadding { get; set; } = 2;
         public double TilePadding { get; set; } = 8;
         public double TileMargin { get; set; } = 4;
     }
@@ -127,6 +138,44 @@ namespace OceanyaClient
         public List<FolderVisualizerViewPreset> Presets { get; set; } = new List<FolderVisualizerViewPreset>();
     }
 
+    public class EmoteVisualizerTableColumnConfig
+    {
+        public EmoteVisualizerTableColumnKey Key { get; set; } = EmoteVisualizerTableColumnKey.Name;
+        public bool IsVisible { get; set; } = true;
+        public int Order { get; set; }
+        public double Width { get; set; } = 200;
+    }
+
+    public class EmoteVisualizerTableViewConfig
+    {
+        public double RowHeight { get; set; } = 58;
+        public double FontSize { get; set; } = 13;
+        public List<EmoteVisualizerTableColumnConfig> Columns { get; set; } = new List<EmoteVisualizerTableColumnConfig>();
+    }
+
+    public class EmoteVisualizerViewPreset
+    {
+        public string Id { get; set; } = Guid.NewGuid().ToString("N");
+        public string Name { get; set; } = "New View";
+        public FolderVisualizerLayoutMode Mode { get; set; } = FolderVisualizerLayoutMode.Normal;
+        public FolderVisualizerNormalViewConfig Normal { get; set; } = new FolderVisualizerNormalViewConfig();
+        public EmoteVisualizerTableViewConfig Table { get; set; } = new EmoteVisualizerTableViewConfig();
+    }
+
+    public class EmoteVisualizerConfig
+    {
+        public string SelectedPresetId { get; set; } = string.Empty;
+        public string SelectedPresetName { get; set; } = string.Empty;
+        public List<EmoteVisualizerViewPreset> Presets { get; set; } = new List<EmoteVisualizerViewPreset>();
+    }
+
+    public class VisualizerWindowState
+    {
+        public double Width { get; set; } = 980;
+        public double Height { get; set; } = 690;
+        public bool IsMaximized { get; set; }
+    }
+
     public class SaveData
     {
         //Initial Configuration
@@ -149,6 +198,10 @@ namespace OceanyaClient
         public bool InvertICLog { get; set; } = false;
         public int LogMaxMessages { get; set; } = 0;
         public FolderVisualizerConfig FolderVisualizer { get; set; } = new FolderVisualizerConfig();
+        public EmoteVisualizerConfig EmoteVisualizer { get; set; } = new EmoteVisualizerConfig();
+        public VisualizerWindowState FolderVisualizerWindowState { get; set; } = new VisualizerWindowState();
+        public VisualizerWindowState EmoteVisualizerWindowState { get; set; } = new VisualizerWindowState();
+        public bool LoopEmoteVisualizerAnimations { get; set; } = true;
     }
 
     public static class SaveFile
@@ -254,6 +307,11 @@ namespace OceanyaClient
                 })
                 .ToList();
 
+            data.FolderVisualizerWindowState ??= new VisualizerWindowState();
+            data.EmoteVisualizerWindowState ??= new VisualizerWindowState();
+            ClampWindowState(data.FolderVisualizerWindowState);
+            ClampWindowState(data.EmoteVisualizerWindowState);
+
             data.FolderVisualizer ??= new FolderVisualizerConfig();
             data.FolderVisualizer.Presets ??= new List<FolderVisualizerViewPreset>();
 
@@ -299,15 +357,61 @@ namespace OceanyaClient
                     string.Equals(p.Id, data.FolderVisualizer.SelectedPresetId, StringComparison.OrdinalIgnoreCase));
                 data.FolderVisualizer.SelectedPresetName = selected.Name;
             }
+
+            data.EmoteVisualizer ??= new EmoteVisualizerConfig();
+            data.EmoteVisualizer.Presets ??= new List<EmoteVisualizerViewPreset>();
+
+            if (data.EmoteVisualizer.Presets.Count == 0)
+            {
+                data.EmoteVisualizer.Presets = CreateDefaultEmoteVisualizerPresets();
+            }
+
+            for (int i = 0; i < data.EmoteVisualizer.Presets.Count; i++)
+            {
+                EmoteVisualizerViewPreset preset = data.EmoteVisualizer.Presets[i] ?? new EmoteVisualizerViewPreset();
+                preset.Id = string.IsNullOrWhiteSpace(preset.Id) ? Guid.NewGuid().ToString("N") : preset.Id.Trim();
+                preset.Name = string.IsNullOrWhiteSpace(preset.Name) ? $"View {i + 1}" : preset.Name.Trim();
+                preset.Normal ??= new FolderVisualizerNormalViewConfig();
+                preset.Table ??= new EmoteVisualizerTableViewConfig();
+                preset.Table.Columns ??= new List<EmoteVisualizerTableColumnConfig>();
+                EnsureDefaultEmoteTableColumns(preset.Table.Columns);
+                ClampEmotePresetValues(preset);
+                data.EmoteVisualizer.Presets[i] = preset;
+            }
+
+            bool selectedEmoteIdValid = !string.IsNullOrWhiteSpace(data.EmoteVisualizer.SelectedPresetId)
+                && data.EmoteVisualizer.Presets.Any(p =>
+                    string.Equals(p.Id, data.EmoteVisualizer.SelectedPresetId, StringComparison.OrdinalIgnoreCase));
+            if (!selectedEmoteIdValid)
+            {
+                EmoteVisualizerViewPreset? preferredByName = data.EmoteVisualizer.Presets.FirstOrDefault(p =>
+                    !string.IsNullOrWhiteSpace(data.EmoteVisualizer.SelectedPresetName)
+                    && string.Equals(p.Name, data.EmoteVisualizer.SelectedPresetName, StringComparison.OrdinalIgnoreCase));
+
+                EmoteVisualizerViewPreset preferred =
+                    preferredByName
+                    ??
+                    data.EmoteVisualizer.Presets.FirstOrDefault(p =>
+                        string.Equals(p.Name, "Detailed", StringComparison.OrdinalIgnoreCase))
+                    ?? data.EmoteVisualizer.Presets[0];
+                data.EmoteVisualizer.SelectedPresetId = preferred.Id;
+                data.EmoteVisualizer.SelectedPresetName = preferred.Name;
+            }
+            else
+            {
+                EmoteVisualizerViewPreset selected = data.EmoteVisualizer.Presets.First(p =>
+                    string.Equals(p.Id, data.EmoteVisualizer.SelectedPresetId, StringComparison.OrdinalIgnoreCase));
+                data.EmoteVisualizer.SelectedPresetName = selected.Name;
+            }
         }
 
         private static void ClampPresetValues(FolderVisualizerViewPreset preset)
         {
             preset.Normal.TileWidth = Math.Clamp(preset.Normal.TileWidth, 100, 420);
             preset.Normal.TileHeight = Math.Clamp(preset.Normal.TileHeight, 120, 480);
-            preset.Normal.PreviewSize = Math.Clamp(preset.Normal.PreviewSize, 32, 340);
             preset.Normal.IconSize = Math.Clamp(preset.Normal.IconSize, 12, 48);
             preset.Normal.NameFontSize = Math.Clamp(preset.Normal.NameFontSize, 9, 30);
+            preset.Normal.InternalTilePadding = Math.Clamp(preset.Normal.InternalTilePadding, 0, 24);
             preset.Normal.TilePadding = Math.Clamp(preset.Normal.TilePadding, 2, 28);
             preset.Normal.TileMargin = Math.Clamp(preset.Normal.TileMargin, 0, 20);
 
@@ -510,9 +614,9 @@ namespace OceanyaClient
                     {
                         TileWidth = 138,
                         TileHeight = 140,
-                        PreviewSize = 72,
                         IconSize = 16,
                         NameFontSize = 11,
+                        InternalTilePadding = 2,
                         TilePadding = 8,
                         TileMargin = 4
                     }
@@ -526,9 +630,9 @@ namespace OceanyaClient
                     {
                         TileWidth = 170,
                         TileHeight = 182,
-                        PreviewSize = 104,
                         IconSize = 18,
                         NameFontSize = 12,
+                        InternalTilePadding = 2,
                         TilePadding = 8,
                         TileMargin = 4
                     }
@@ -542,14 +646,127 @@ namespace OceanyaClient
                     {
                         TileWidth = 222,
                         TileHeight = 246,
-                        PreviewSize = 152,
                         IconSize = 20,
                         NameFontSize = 13,
+                        InternalTilePadding = 3,
                         TilePadding = 10,
                         TileMargin = 4
                     }
                 }
             };
+        }
+
+        private static void ClampEmotePresetValues(EmoteVisualizerViewPreset preset)
+        {
+            preset.Normal.TileWidth = Math.Clamp(preset.Normal.TileWidth, 160, 480);
+            preset.Normal.TileHeight = Math.Clamp(preset.Normal.TileHeight, 150, 420);
+            preset.Normal.IconSize = Math.Clamp(preset.Normal.IconSize, 12, 48);
+            preset.Normal.NameFontSize = Math.Clamp(preset.Normal.NameFontSize, 9, 30);
+            preset.Normal.InternalTilePadding = Math.Clamp(preset.Normal.InternalTilePadding, 0, 24);
+            preset.Normal.TilePadding = Math.Clamp(preset.Normal.TilePadding, 2, 28);
+            preset.Normal.TileMargin = Math.Clamp(preset.Normal.TileMargin, 0, 20);
+
+            preset.Table.RowHeight = Math.Clamp(preset.Table.RowHeight, 30, 140);
+            preset.Table.FontSize = Math.Clamp(preset.Table.FontSize, 9, 30);
+
+            foreach (EmoteVisualizerTableColumnConfig column in preset.Table.Columns)
+            {
+                column.Width = Math.Clamp(column.Width, 40, 900);
+            }
+        }
+
+        private static void EnsureDefaultEmoteTableColumns(List<EmoteVisualizerTableColumnConfig> existingColumns)
+        {
+            existingColumns.RemoveAll(column => column == null);
+
+            var defaults = new List<EmoteVisualizerTableColumnConfig>
+            {
+                new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.Icon, IsVisible = true, Order = 0, Width = 34 },
+                new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.Id, IsVisible = true, Order = 1, Width = 54 },
+                new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.Name, IsVisible = true, Order = 2, Width = 230 },
+                new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.PreAnimationPreview, IsVisible = true, Order = 3, Width = 110 },
+                new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.AnimationPreview, IsVisible = true, Order = 4, Width = 110 },
+                new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.PreAnimationPath, IsVisible = false, Order = 5, Width = 320 },
+                new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.AnimationPath, IsVisible = false, Order = 6, Width = 320 }
+            };
+
+            foreach (EmoteVisualizerTableColumnConfig defaultColumn in defaults)
+            {
+                EmoteVisualizerTableColumnConfig? existing = existingColumns.FirstOrDefault(column => column.Key == defaultColumn.Key);
+                if (existing == null)
+                {
+                    existingColumns.Add(defaultColumn);
+                    continue;
+                }
+
+                if (existing.Width <= 0)
+                {
+                    existing.Width = defaultColumn.Width;
+                }
+            }
+
+            List<EmoteVisualizerTableColumnConfig> ordered = existingColumns
+                .OrderBy(column => column.Order)
+                .ThenBy(column => column.Key)
+                .ToList();
+
+            for (int i = 0; i < ordered.Count; i++)
+            {
+                ordered[i].Order = i;
+            }
+
+            existingColumns.Clear();
+            existingColumns.AddRange(ordered);
+        }
+
+        private static List<EmoteVisualizerViewPreset> CreateDefaultEmoteVisualizerPresets()
+        {
+            return new List<EmoteVisualizerViewPreset>
+            {
+                new EmoteVisualizerViewPreset
+                {
+                    Id = "detailed",
+                    Name = "Detailed",
+                    Mode = FolderVisualizerLayoutMode.Table,
+                    Table = new EmoteVisualizerTableViewConfig
+                    {
+                        RowHeight = 58,
+                        FontSize = 13,
+                        Columns = new List<EmoteVisualizerTableColumnConfig>
+                        {
+                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.Icon, IsVisible = true, Order = 0, Width = 34 },
+                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.Id, IsVisible = true, Order = 1, Width = 54 },
+                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.Name, IsVisible = true, Order = 2, Width = 230 },
+                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.PreAnimationPreview, IsVisible = true, Order = 3, Width = 110 },
+                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.AnimationPreview, IsVisible = true, Order = 4, Width = 110 },
+                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.PreAnimationPath, IsVisible = false, Order = 5, Width = 320 },
+                            new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.AnimationPath, IsVisible = false, Order = 6, Width = 320 }
+                        }
+                    }
+                },
+                new EmoteVisualizerViewPreset
+                {
+                    Id = "normal",
+                    Name = "Normal",
+                    Mode = FolderVisualizerLayoutMode.Normal,
+                    Normal = new FolderVisualizerNormalViewConfig
+                    {
+                        TileWidth = 235,
+                        TileHeight = 210,
+                        IconSize = 18,
+                        NameFontSize = 12,
+                        InternalTilePadding = 2,
+                        TilePadding = 8,
+                        TileMargin = 4
+                    }
+                }
+            };
+        }
+
+        private static void ClampWindowState(VisualizerWindowState state)
+        {
+            state.Width = Math.Clamp(state.Width, 760, 6000);
+            state.Height = Math.Clamp(state.Height, 520, 4000);
         }
     }
 
