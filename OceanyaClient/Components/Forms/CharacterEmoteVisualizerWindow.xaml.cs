@@ -369,8 +369,13 @@ namespace OceanyaClient
                     NameWithId = $"{id}: {displayName}",
                     HasPreAnimation = hasPreAnimation,
                     IconPath = iconPath,
+                    IconDimensions = GetImageDimensionsText(iconPath),
                     PreAnimationPath = preAnimationPath,
+                    PreAnimationDimensions = hasPreAnimation
+                        ? GetImageDimensionsText(preAnimationPath)
+                        : "No preanim",
                     AnimationPath = animationPath,
+                    AnimationDimensions = GetImageDimensionsText(animationPath),
                     IconImage = iconImage,
                     PreAnimationImage = preImage,
                     AnimationImage = animationImage,
@@ -564,8 +569,11 @@ namespace OceanyaClient
                 EmoteVisualizerTableColumnKey.Icon => string.Empty,
                 EmoteVisualizerTableColumnKey.Id => "ID",
                 EmoteVisualizerTableColumnKey.Name => "Name",
+                EmoteVisualizerTableColumnKey.IconDimensions => "Icon Dimensions",
                 EmoteVisualizerTableColumnKey.PreAnimationPreview => "Pre",
+                EmoteVisualizerTableColumnKey.PreAnimationDimensions => "Pre Dims",
                 EmoteVisualizerTableColumnKey.AnimationPreview => "Final",
+                EmoteVisualizerTableColumnKey.AnimationDimensions => "Final Dims",
                 EmoteVisualizerTableColumnKey.PreAnimationPath => "Pre Path",
                 EmoteVisualizerTableColumnKey.AnimationPath => "Animation Path",
                 _ => "Column"
@@ -585,6 +593,9 @@ namespace OceanyaClient
             {
                 EmoteVisualizerTableColumnKey.Id => nameof(EmoteVisualizerItem.IdText),
                 EmoteVisualizerTableColumnKey.Name => nameof(EmoteVisualizerItem.NameWithId),
+                EmoteVisualizerTableColumnKey.IconDimensions => nameof(EmoteVisualizerItem.IconDimensions),
+                EmoteVisualizerTableColumnKey.PreAnimationDimensions => nameof(EmoteVisualizerItem.PreAnimationDimensions),
+                EmoteVisualizerTableColumnKey.AnimationDimensions => nameof(EmoteVisualizerItem.AnimationDimensions),
                 EmoteVisualizerTableColumnKey.PreAnimationPath => nameof(EmoteVisualizerItem.PreAnimationPath),
                 EmoteVisualizerTableColumnKey.AnimationPath => nameof(EmoteVisualizerItem.AnimationPath),
                 _ => nameof(EmoteVisualizerItem.NameWithId)
@@ -667,6 +678,9 @@ namespace OceanyaClient
                     {
                         EmoteVisualizerTableColumnKey.Id => item.IdText,
                         EmoteVisualizerTableColumnKey.Name => item.NameWithId,
+                        EmoteVisualizerTableColumnKey.IconDimensions => item.IconDimensions,
+                        EmoteVisualizerTableColumnKey.PreAnimationDimensions => item.PreAnimationDimensions,
+                        EmoteVisualizerTableColumnKey.AnimationDimensions => item.AnimationDimensions,
                         EmoteVisualizerTableColumnKey.PreAnimationPath => item.PreAnimationPath,
                         EmoteVisualizerTableColumnKey.AnimationPath => item.AnimationPath,
                         _ => item.NameWithId
@@ -735,6 +749,9 @@ namespace OceanyaClient
             {
                 EmoteVisualizerTableColumnKey.Id => nameof(EmoteVisualizerItem.Id),
                 EmoteVisualizerTableColumnKey.Name => nameof(EmoteVisualizerItem.NameWithId),
+                EmoteVisualizerTableColumnKey.IconDimensions => nameof(EmoteVisualizerItem.IconDimensions),
+                EmoteVisualizerTableColumnKey.PreAnimationDimensions => nameof(EmoteVisualizerItem.PreAnimationDimensions),
+                EmoteVisualizerTableColumnKey.AnimationDimensions => nameof(EmoteVisualizerItem.AnimationDimensions),
                 EmoteVisualizerTableColumnKey.PreAnimationPath => nameof(EmoteVisualizerItem.PreAnimationPath),
                 EmoteVisualizerTableColumnKey.AnimationPath => nameof(EmoteVisualizerItem.AnimationPath),
                 _ => string.Empty
@@ -1134,6 +1151,14 @@ namespace OceanyaClient
             openReadmeItem.Click += (_, _) => OpenReadmeButton_Click(OpenReadmeButton, new RoutedEventArgs(Button.ClickEvent));
             menu.Items.Add(openReadmeItem);
 
+            MenuItem openInExplorerItem = new MenuItem
+            {
+                Header = "Open in explorer",
+                IsEnabled = Directory.Exists(character.DirectoryPath ?? string.Empty)
+            };
+            openInExplorerItem.Click += (_, _) => ShowInExplorer(character.DirectoryPath ?? string.Empty);
+            menu.Items.Add(openInExplorerItem);
+
             AddContextCategoryHeader(menu, "Emote", addLeadingSeparator: true);
 
             MenuItem setAsFolderDisplayItem = new MenuItem
@@ -1261,6 +1286,59 @@ namespace OceanyaClient
                 CustomConsole.Error($"Failed to open path '{safePath}'.", ex);
                 return false;
             }
+        }
+
+        private void ShowInExplorer(string directoryPath)
+        {
+            string safePath = directoryPath?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(safePath) || !Directory.Exists(safePath))
+            {
+                return;
+            }
+
+            try
+            {
+                ProcessStartInfo processStartInfo = new ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = $"\"{safePath}\"",
+                    UseShellExecute = true
+                };
+                Process.Start(processStartInfo);
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Error($"Failed to open explorer at '{safePath}'.", ex);
+            }
+        }
+
+        private static string GetImageDimensionsText(string path)
+        {
+            string normalizedPath = path?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(normalizedPath) || !File.Exists(normalizedPath))
+            {
+                return "-";
+            }
+
+            try
+            {
+                BitmapDecoder decoder = BitmapDecoder.Create(
+                    new Uri(normalizedPath, UriKind.Absolute),
+                    BitmapCreateOptions.PreservePixelFormat,
+                    BitmapCacheOption.None);
+
+                BitmapFrame? firstFrame = decoder.Frames.FirstOrDefault();
+                if (firstFrame != null && firstFrame.PixelWidth > 0 && firstFrame.PixelHeight > 0)
+                {
+                    return firstFrame.PixelWidth + "x" + firstFrame.PixelHeight;
+                }
+            }
+            catch
+            {
+                // ignored
+            }
+
+            return "-";
         }
 
         private static string ResolveCharacterReadmePath(string directoryPath)
@@ -1483,8 +1561,11 @@ namespace OceanyaClient
         public string NameWithId { get; set; } = string.Empty;
         public bool HasPreAnimation { get; set; }
         public string IconPath { get; set; } = string.Empty;
+        public string IconDimensions { get; set; } = "-";
         public string PreAnimationPath { get; set; } = string.Empty;
+        public string PreAnimationDimensions { get; set; } = "-";
         public string AnimationPath { get; set; } = string.Empty;
+        public string AnimationDimensions { get; set; } = "-";
         public ImageSource IconImage { get; set; } = CharacterFolderVisualizerWindow.LoadEmbeddedImage(
             "pack://application:,,,/OceanyaClient;component/Resources/Buttons/smallFolder.png");
         public ImageSource PreAnimationImage

@@ -116,8 +116,11 @@ namespace OceanyaClient
                 EmoteVisualizerTableColumnKey.Icon => "Emote Icon",
                 EmoteVisualizerTableColumnKey.Id => "ID",
                 EmoteVisualizerTableColumnKey.Name => "Emote Name",
+                EmoteVisualizerTableColumnKey.IconDimensions => "Icon Dimensions",
                 EmoteVisualizerTableColumnKey.PreAnimationPreview => "Pre Animation Preview",
+                EmoteVisualizerTableColumnKey.PreAnimationDimensions => "Pre Animation Dimensions",
                 EmoteVisualizerTableColumnKey.AnimationPreview => "Final Animation Preview",
+                EmoteVisualizerTableColumnKey.AnimationDimensions => "Final Animation Dimensions",
                 EmoteVisualizerTableColumnKey.PreAnimationPath => "Pre Animation Path",
                 EmoteVisualizerTableColumnKey.AnimationPath => "Final Animation Path",
                 _ => key.ToString()
@@ -157,10 +160,13 @@ namespace OceanyaClient
                         new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.Icon, IsVisible = true, Order = 0, Width = 34 },
                         new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.Id, IsVisible = true, Order = 1, Width = 54 },
                         new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.Name, IsVisible = true, Order = 2, Width = 230 },
-                        new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.PreAnimationPreview, IsVisible = true, Order = 3, Width = 110 },
-                        new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.AnimationPreview, IsVisible = true, Order = 4, Width = 110 },
-                        new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.PreAnimationPath, IsVisible = false, Order = 5, Width = 320 },
-                        new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.AnimationPath, IsVisible = false, Order = 6, Width = 320 }
+                        new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.IconDimensions, IsVisible = true, Order = 3, Width = 96 },
+                        new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.PreAnimationPreview, IsVisible = true, Order = 4, Width = 110 },
+                        new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.PreAnimationDimensions, IsVisible = true, Order = 5, Width = 110 },
+                        new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.AnimationPreview, IsVisible = true, Order = 6, Width = 110 },
+                        new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.AnimationDimensions, IsVisible = true, Order = 7, Width = 110 },
+                        new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.PreAnimationPath, IsVisible = false, Order = 8, Width = 320 },
+                        new EmoteVisualizerTableColumnConfig { Key = EmoteVisualizerTableColumnKey.AnimationPath, IsVisible = false, Order = 9, Width = 320 }
                     }
                 }
             };
