@@ -64,6 +64,18 @@ namespace OceanyaClient
         {
             WriteIndented = true
         };
+        private static readonly HashSet<string> AllowedCharacterImageExtensions = new HashSet<string>(
+            new[] { ".webp", ".apng", ".gif", ".png" },
+            StringComparer.OrdinalIgnoreCase);
+        private static readonly HashSet<string> AllowedCharacterSoundExtensions = new HashSet<string>(
+            new[] { ".opus", ".ogg", ".mp3", ".wav" },
+            StringComparer.OrdinalIgnoreCase);
+        private static readonly HashSet<string> AllowedCharacterTopLevelFiles = new HashSet<string>(
+            new[] { "char.ini", "soundlist.ini", "sounds.ini", "iniswaps.ini", "char.txt", "design.txt", "soundlist.txt" },
+            StringComparer.OrdinalIgnoreCase);
+        private static readonly HashSet<string> IgnoredMetadataFiles = new HashSet<string>(
+            new[] { "desktop.ini", "thumbs.db", ".ds_store" },
+            StringComparer.OrdinalIgnoreCase);
 
         public static string GetReportFilePath(string directoryPath)
         {
@@ -302,6 +314,7 @@ namespace OceanyaClient
             }
 
             RunAssetPresenceTests(report, parsedCharacter);
+            RunNoExtraFilesTest(report, parsedCharacter.DirectoryPath ?? string.Empty, selectedCharIniPath);
         }
 
         private static List<string> EnumerateCharIniFiles(string directoryPath)
@@ -558,6 +571,58 @@ namespace OceanyaClient
             }
         }
 
+        private static void RunNoExtraFilesTest(CharacterIntegrityReport report, string characterDirectory, string charIniPath)
+        {
+            try
+            {
+                string resolvedReadmePath = ResolveCharacterReadmePath(characterDirectory);
+                List<string> unexpectedFiles = new List<string>();
+
+                IEnumerable<string> allFiles = Directory.EnumerateFiles(characterDirectory, "*", SearchOption.AllDirectories);
+                foreach (string filePath in allFiles)
+                {
+                    if (IsAllowedCharacterFile(filePath, characterDirectory, charIniPath, resolvedReadmePath))
+                    {
+                        continue;
+                    }
+
+                    unexpectedFiles.Add(filePath);
+                }
+
+                if (unexpectedFiles.Count == 0)
+                {
+                    report.Results.Add(CreatePass(
+                        "Has no extra files",
+                        "Verify the folder does not contain files outside AO2 character-supported assets/config files.",
+                        "No extra files were found."));
+                    return;
+                }
+
+                List<string> preview = unexpectedFiles
+                    .Take(8)
+                    .Select(path => Path.GetRelativePath(characterDirectory, path))
+                    .ToList();
+                string suffix = unexpectedFiles.Count > preview.Count
+                    ? $" ... and {unexpectedFiles.Count - preview.Count} more."
+                    : string.Empty;
+
+                CharacterIntegrityIssue issue = CreateFailure(
+                    "Has no extra files",
+                    "Verify the folder does not contain files outside AO2 character-supported assets/config files.",
+                    "Unexpected files found: " + string.Join(", ", preview) + suffix);
+                issue.ViewActionType = CharacterIntegrityViewActionType.OpenInExplorerSelect;
+                issue.ViewPath = unexpectedFiles[0];
+                report.Results.Add(issue);
+            }
+            catch (Exception ex)
+            {
+                report.Results.Add(CreateFailure(
+                    "Has no extra files",
+                    "Verify the folder does not contain files outside AO2 character-supported assets/config files.",
+                    "Unable to validate extra files: " + ex.Message));
+            }
+        }
+
         private static CharacterIntegrityIssue CreatePass(string testName, string description, string message)
         {
             return new CharacterIntegrityIssue
@@ -600,6 +665,60 @@ namespace OceanyaClient
             key = rawLine.Substring(0, equalsIndex).Trim();
             value = rawLine.Substring(equalsIndex + 1).Trim();
             return !string.IsNullOrWhiteSpace(key);
+        }
+
+        private static bool IsAllowedCharacterFile(string filePath, string characterDirectory, string charIniPath, string resolvedReadmePath)
+        {
+            string normalizedPath = filePath?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(normalizedPath))
+            {
+                return true;
+            }
+
+            string fileName = Path.GetFileName(normalizedPath);
+            if (IgnoredMetadataFiles.Contains(fileName))
+            {
+                return true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(charIniPath)
+                && string.Equals(normalizedPath, charIniPath, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(resolvedReadmePath)
+                && string.Equals(normalizedPath, resolvedReadmePath, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            string extension = Path.GetExtension(normalizedPath);
+            if (AllowedCharacterImageExtensions.Contains(extension)
+                || AllowedCharacterSoundExtensions.Contains(extension))
+            {
+                return true;
+            }
+
+            string? relative = null;
+            try
+            {
+                relative = Path.GetRelativePath(characterDirectory, normalizedPath);
+            }
+            catch
+            {
+                // ignored
+            }
+
+            string relativeNormalized = (relative ?? Path.GetFileName(normalizedPath))
+                .Replace('\\', '/')
+                .Trim();
+            if (!relativeNormalized.Contains('/'))
+            {
+                return AllowedCharacterTopLevelFiles.Contains(relativeNormalized);
+            }
+
+            return false;
         }
 
         private static bool IsBlankValue(string value)
@@ -730,6 +849,35 @@ namespace OceanyaClient
             }
 
             return null;
+        }
+
+        private static string ResolveCharacterReadmePath(string directoryPath)
+        {
+            if (string.IsNullOrWhiteSpace(directoryPath) || !Directory.Exists(directoryPath))
+            {
+                return string.Empty;
+            }
+
+            try
+            {
+                IEnumerable<string> textFiles = Directory.EnumerateFiles(directoryPath, "*.txt", SearchOption.TopDirectoryOnly);
+                foreach (string textFile in textFiles.OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+                {
+                    string fileName = Path.GetFileName(textFile).ToLowerInvariant();
+                    if (fileName == "char.txt" || fileName == "design.txt" || fileName == "soundlist.txt")
+                    {
+                        continue;
+                    }
+
+                    return textFile;
+                }
+            }
+            catch
+            {
+                // ignored
+            }
+
+            return string.Empty;
         }
 
         private static bool ApplyBlankEmotesFix(string charIniPath, int? count, out string resultMessage)

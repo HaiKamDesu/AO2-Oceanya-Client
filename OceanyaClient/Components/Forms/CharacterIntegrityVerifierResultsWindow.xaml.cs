@@ -333,9 +333,36 @@ namespace OceanyaClient
 
         private void DragWindow(object sender, MouseButtonEventArgs e)
         {
-            if (e.ChangedButton == MouseButton.Left)
+            if (e.ChangedButton != MouseButton.Left)
             {
-                DragMove();
+                return;
+            }
+
+            if (e.ClickCount == 2)
+            {
+                WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+                return;
+            }
+
+            if (WindowState == WindowState.Maximized)
+            {
+                Point mousePoint = e.GetPosition(this);
+                Point screenPoint = PointToScreen(mousePoint);
+                double horizontalPercent = ActualWidth > 0 ? mousePoint.X / ActualWidth : 0.5d;
+                WindowState = WindowState.Normal;
+                Left = screenPoint.X - (Width * horizontalPercent);
+                Top = Math.Max(0, screenPoint.Y - 12);
+            }
+
+            DragMove();
+        }
+
+        private void Window_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Escape)
+            {
+                e.Handled = true;
+                Close();
             }
         }
 
