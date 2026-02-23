@@ -15,7 +15,9 @@ using DrawingImageLockMode = System.Drawing.Imaging.ImageLockMode;
 using DrawingFrameDimension = System.Drawing.Imaging.FrameDimension;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Data;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -61,6 +63,12 @@ namespace OceanyaClient
         private EmoteVisualizerItem? contextMenuTargetItem;
         private double normalScrollWheelStep = 90;
         private CharacterIntegrityReport? integrityReport;
+        private Thumb? activeRowResizeThumb;
+        private double rowResizeStartHeight;
+        private double rowResizePreviewHeight;
+        private double rowResizeGuideStartY;
+        private AdornerLayer? rowResizeAdornerLayer;
+        private RowResizeGuideAdorner? rowResizeGuideAdorner;
 
         internal IReadOnlyList<EmoteVisualizerItem> EmoteItems => allItems;
 
@@ -84,6 +92,8 @@ namespace OceanyaClient
 
         public static readonly DependencyProperty TileMarginProperty = DependencyProperty.Register(
             nameof(TileMargin), typeof(Thickness), typeof(CharacterEmoteVisualizerWindow), new PropertyMetadata(new Thickness(4)));
+        public static readonly DependencyProperty DetailsRowHeightProperty = DependencyProperty.Register(
+            nameof(DetailsRowHeight), typeof(double), typeof(CharacterEmoteVisualizerWindow), new PropertyMetadata(58d));
 
         public double TileWidth
         {
@@ -125,6 +135,12 @@ namespace OceanyaClient
         {
             get => (Thickness)GetValue(TileMarginProperty);
             set => SetValue(TileMarginProperty, value);
+        }
+
+        public double DetailsRowHeight
+        {
+            get => (double)GetValue(DetailsRowHeightProperty);
+            set => SetValue(DetailsRowHeightProperty, value);
         }
 
         public CharacterEmoteVisualizerWindow(CharacterFolder sourceCharacter)
@@ -366,6 +382,9 @@ namespace OceanyaClient
 
                 EmoteVisualizerItem item = new EmoteVisualizerItem
                 {
+                    Index = items.Count + 1,
+                    IndexText = (items.Count + 1).ToString(),
+                    RowPositionText = (items.Count + 1).ToString(),
                     Id = id,
                     IdText = id.ToString(),
                     Name = displayName,
@@ -470,6 +489,7 @@ namespace OceanyaClient
         private void ApplyTablePreset(EmoteVisualizerViewPreset preset)
         {
             EmoteVisualizerTableViewConfig table = preset.Table;
+            DetailsRowHeight = table.RowHeight;
             EmoteListView.ItemTemplate = null;
             EmoteListView.ItemsPanel = (ItemsPanelTemplate)FindResource("DetailsItemsPanelTemplate");
             EmoteListView.ItemContainerStyle = BuildDetailsContainerStyle(table);
@@ -485,8 +505,115 @@ namespace OceanyaClient
             Style baseStyle = (Style)FindResource("VisualizerDetailsItemStyle");
             Style style = new Style(typeof(ListViewItem), baseStyle);
             style.Setters.Add(new Setter(FontSizeProperty, table.FontSize));
-            style.Setters.Add(new Setter(HeightProperty, table.RowHeight));
+            Binding rowHeightBinding = new Binding(nameof(DetailsRowHeight))
+            {
+                RelativeSource = new RelativeSource(RelativeSourceMode.FindAncestor, typeof(CharacterEmoteVisualizerWindow), 1)
+            };
+            style.Setters.Add(new Setter(HeightProperty, rowHeightBinding));
             return style;
+        }
+
+        private void DetailsRowResizeThumb_DragDelta(object sender, DragDeltaEventArgs e)
+        {
+            if (EmoteListView.View == null || sender is not Thumb thumb || !ReferenceEquals(thumb, activeRowResizeThumb))
+            {
+                return;
+            }
+
+            EmoteVisualizerViewPreset? selectedPreset = ViewModeCombo.SelectedItem as EmoteVisualizerViewPreset;
+            if (selectedPreset == null || selectedPreset.Mode != FolderVisualizerLayoutMode.Table)
+            {
+                return;
+            }
+
+            double mouseY = Mouse.GetPosition(EmoteListView).Y;
+            double minGuideY = rowResizeGuideStartY + (30 - rowResizeStartHeight);
+            double maxGuideY = rowResizeGuideStartY + (180 - rowResizeStartHeight);
+            double clampedGuideY = Math.Clamp(mouseY, Math.Min(minGuideY, maxGuideY), Math.Max(minGuideY, maxGuideY));
+
+            rowResizePreviewHeight = Math.Clamp(rowResizeStartHeight + (clampedGuideY - rowResizeGuideStartY), 30, 180);
+            UpdateRowResizeGuide(clampedGuideY);
+            e.Handled = true;
+        }
+
+        private void DetailsRowResizeThumb_DragStarted(object sender, DragStartedEventArgs e)
+        {
+            if (EmoteListView.View == null || sender is not Thumb thumb)
+            {
+                return;
+            }
+
+            EmoteVisualizerViewPreset? selectedPreset = ViewModeCombo.SelectedItem as EmoteVisualizerViewPreset;
+            if (selectedPreset == null || selectedPreset.Mode != FolderVisualizerLayoutMode.Table)
+            {
+                return;
+            }
+
+            activeRowResizeThumb = thumb;
+            rowResizeStartHeight = selectedPreset.Table.RowHeight;
+            rowResizePreviewHeight = rowResizeStartHeight;
+            rowResizeGuideStartY = Math.Clamp(Mouse.GetPosition(EmoteListView).Y, 0, Math.Max(0, EmoteListView.ActualHeight - 1));
+            ShowRowResizeGuide(rowResizeGuideStartY);
+            e.Handled = true;
+        }
+
+        private void DetailsRowResizeThumb_DragCompleted(object sender, DragCompletedEventArgs e)
+        {
+            if (sender is not Thumb thumb || !ReferenceEquals(thumb, activeRowResizeThumb))
+            {
+                return;
+            }
+
+            EmoteVisualizerViewPreset? selectedPreset = ViewModeCombo.SelectedItem as EmoteVisualizerViewPreset;
+            if (selectedPreset != null && selectedPreset.Mode == FolderVisualizerLayoutMode.Table)
+            {
+                if (Math.Abs(selectedPreset.Table.RowHeight - rowResizePreviewHeight) > 0.01)
+                {
+                    selectedPreset.Table.RowHeight = rowResizePreviewHeight;
+                    DetailsRowHeight = rowResizePreviewHeight;
+                }
+            }
+
+            activeRowResizeThumb = null;
+            HideRowResizeGuide();
+            PersistVisualizerConfig();
+            e.Handled = true;
+        }
+
+        private void ShowRowResizeGuide(double verticalOffset)
+        {
+            HideRowResizeGuide();
+            AdornerLayer? layer = AdornerLayer.GetAdornerLayer(EmoteListView);
+            if (layer == null)
+            {
+                return;
+            }
+
+            rowResizeAdornerLayer = layer;
+            rowResizeGuideAdorner = new RowResizeGuideAdorner(EmoteListView);
+            rowResizeGuideAdorner.SetGuideY(verticalOffset);
+            layer.Add(rowResizeGuideAdorner);
+        }
+
+        private void UpdateRowResizeGuide(double verticalOffset)
+        {
+            if (rowResizeGuideAdorner == null)
+            {
+                return;
+            }
+
+            rowResizeGuideAdorner.SetGuideY(verticalOffset);
+        }
+
+        private void HideRowResizeGuide()
+        {
+            if (rowResizeAdornerLayer != null && rowResizeGuideAdorner != null)
+            {
+                rowResizeAdornerLayer.Remove(rowResizeGuideAdorner);
+            }
+
+            rowResizeGuideAdorner = null;
+            rowResizeAdornerLayer = null;
         }
 
         private GridView BuildDetailsGridView(EmoteVisualizerViewPreset preset)
@@ -500,6 +627,14 @@ namespace OceanyaClient
                 AllowsColumnReorder = false,
                 ColumnHeaderContainerStyle = (Style)FindResource("VisualizerGridHeaderStyle")
             };
+
+            GridViewColumn rowNumberColumn = new GridViewColumn
+            {
+                Header = "#",
+                Width = 56,
+                CellTemplate = (DataTemplate)FindResource("DetailsRowNumberTemplate")
+            };
+            gridView.Columns.Add(rowNumberColumn);
 
             List<EmoteVisualizerTableColumnConfig> orderedColumns = table.Columns
                 .Where(column => column.IsVisible)
@@ -539,7 +674,9 @@ namespace OceanyaClient
                 }
                 else
                 {
-                    gridColumn.DisplayMemberBinding = new Binding(GetColumnBindingPath(column.Key));
+                    string bindingPath = GetColumnBindingPath(column.Key);
+                    bool centerHorizontally = column.Key == EmoteVisualizerTableColumnKey.Id;
+                    gridColumn.CellTemplate = CreateTextCellTemplate(bindingPath, centerHorizontally);
                 }
 
                 gridView.Columns.Add(gridColumn);
@@ -605,6 +742,23 @@ namespace OceanyaClient
             };
         }
 
+        private static DataTemplate CreateTextCellTemplate(string bindingPath, bool centerHorizontally)
+        {
+            FrameworkElementFactory textBlockFactory = new FrameworkElementFactory(typeof(TextBlock));
+            textBlockFactory.SetBinding(TextBlock.TextProperty, new Binding(bindingPath));
+            textBlockFactory.SetValue(TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center);
+            textBlockFactory.SetValue(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis);
+            textBlockFactory.SetValue(TextBlock.TextAlignmentProperty, centerHorizontally ? TextAlignment.Center : TextAlignment.Left);
+            textBlockFactory.SetValue(TextBlock.HorizontalAlignmentProperty, centerHorizontally ? HorizontalAlignment.Center : HorizontalAlignment.Left);
+            textBlockFactory.SetValue(TextBlock.ForegroundProperty, Brushes.White);
+
+            DataTemplate template = new DataTemplate
+            {
+                VisualTree = textBlockFactory
+            };
+            return template;
+        }
+
         private void GridHeader_Click(object sender, RoutedEventArgs e)
         {
             if (sender is not GridViewColumnHeader header || header.Column == null)
@@ -639,20 +793,141 @@ namespace OceanyaClient
                 return;
             }
 
-            if (header.Content is not EmoteVisualizerGridHeaderInfo info)
+            ContextMenu contextMenu = new ContextMenu();
+            AddContextCategoryHeader(contextMenu, "Table", addLeadingSeparator: false);
+
+            MenuItem bestFitColumnsItem = new MenuItem
+            {
+                Header = "Best Fit Columns"
+            };
+            bestFitColumnsItem.Click += (_, _) => BestFitAllColumns();
+            contextMenu.Items.Add(bestFitColumnsItem);
+
+            MenuItem filtersAndSortingItem = new MenuItem
+            {
+                Header = "Filters & Sorting",
+                IsEnabled = false
+            };
+            contextMenu.Items.Add(filtersAndSortingItem);
+
+            AddContextCategoryHeader(contextMenu, "Column", addLeadingSeparator: true);
+
+            if (header.Content is EmoteVisualizerGridHeaderInfo info)
+            {
+                MenuItem bestFitColumnItem = new MenuItem
+                {
+                    Header = "Best Fit Column"
+                };
+                bestFitColumnItem.Click += (_, _) => BestFitColumn(header.Column, info.Key, info.Text);
+                contextMenu.Items.Add(bestFitColumnItem);
+
+                MenuItem hideColumnItem = new MenuItem
+                {
+                    Header = "Hide Column",
+                    IsEnabled = CanHideColumn(header.Column)
+                };
+                hideColumnItem.Click += (_, _) => HideColumn(header.Column);
+                contextMenu.Items.Add(hideColumnItem);
+
+                MenuItem sortMenuItem = BuildSortSubmenu(info.Key);
+                contextMenu.Items.Add(sortMenuItem);
+            }
+
+            contextMenu.IsOpen = true;
+            e.Handled = true;
+        }
+
+        private MenuItem BuildSortSubmenu(EmoteVisualizerTableColumnKey key)
+        {
+            bool sortable = IsColumnSortable(key);
+            MenuItem sortMenu = new MenuItem
+            {
+                Header = "Sort",
+                IsEnabled = sortable
+            };
+
+            MenuItem sortAsc = new MenuItem
+            {
+                Header = "Sort Asc",
+                IsCheckable = true,
+                IsChecked = sortable
+                    && currentSortColumnKey == key
+                    && currentSortDirection == ListSortDirection.Ascending
+            };
+            sortAsc.Click += (_, _) =>
+            {
+                currentSortColumnKey = key;
+                currentSortDirection = ListSortDirection.Ascending;
+                ApplySortToCurrentView();
+            };
+            sortMenu.Items.Add(sortAsc);
+
+            MenuItem sortDesc = new MenuItem
+            {
+                Header = "Sort Desc",
+                IsCheckable = true,
+                IsChecked = sortable
+                    && currentSortColumnKey == key
+                    && currentSortDirection == ListSortDirection.Descending
+            };
+            sortDesc.Click += (_, _) =>
+            {
+                currentSortColumnKey = key;
+                currentSortDirection = ListSortDirection.Descending;
+                ApplySortToCurrentView();
+            };
+            sortMenu.Items.Add(sortDesc);
+
+            return sortMenu;
+        }
+
+        private void BestFitAllColumns()
+        {
+            if (EmoteListView.View is not GridView gridView)
             {
                 return;
             }
 
-            ContextMenu contextMenu = new ContextMenu();
-            MenuItem bestFitItem = new MenuItem
+            foreach (GridViewColumn column in gridView.Columns)
             {
-                Header = "Best Fit"
-            };
-            bestFitItem.Click += (_, _) => BestFitColumn(header.Column, info.Key, info.Text);
-            contextMenu.Items.Add(bestFitItem);
-            contextMenu.IsOpen = true;
-            e.Handled = true;
+                if (column.Header is EmoteVisualizerGridHeaderInfo info)
+                {
+                    BestFitColumn(column, info.Key, info.Text);
+                }
+                else if (column.Header is string)
+                {
+                    column.Width = 56;
+                }
+            }
+        }
+
+        private bool CanHideColumn(GridViewColumn column)
+        {
+            if (!tableColumnMap.TryGetValue(column, out EmoteVisualizerTableColumnConfig? config))
+            {
+                return false;
+            }
+
+            EmoteVisualizerViewPreset? selectedPreset = ViewModeCombo.SelectedItem as EmoteVisualizerViewPreset;
+            if (selectedPreset == null)
+            {
+                return false;
+            }
+
+            int currentlyVisible = selectedPreset.Table.Columns.Count(entry => entry.IsVisible);
+            return currentlyVisible > 1 && config.IsVisible;
+        }
+
+        private void HideColumn(GridViewColumn column)
+        {
+            if (!tableColumnMap.TryGetValue(column, out EmoteVisualizerTableColumnConfig? config))
+            {
+                return;
+            }
+
+            config.IsVisible = false;
+            PersistVisualizerConfig();
+            ApplySelectedViewPreset();
         }
 
         private void BestFitColumn(GridViewColumn column, EmoteVisualizerTableColumnKey key, string headerText)
@@ -706,7 +981,7 @@ namespace OceanyaClient
         {
             UpdateSortHeaderGlyphs();
 
-            if (EmoteListView.View == null || currentSortColumnKey == null)
+            if (currentSortColumnKey == null)
             {
                 return;
             }
@@ -726,6 +1001,23 @@ namespace OceanyaClient
             view.SortDescriptions.Clear();
             view.SortDescriptions.Add(new SortDescription(sortProperty, currentSortDirection));
             view.Refresh();
+            UpdateVisibleRowPositions();
+        }
+
+        private void UpdateVisibleRowPositions()
+        {
+            if (EmoteListView.Items == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < EmoteListView.Items.Count; i++)
+            {
+                if (EmoteListView.Items[i] is EmoteVisualizerItem item)
+                {
+                    item.RowPositionText = (i + 1).ToString();
+                }
+            }
         }
 
         private void UpdateSortHeaderGlyphs()
@@ -796,6 +1088,7 @@ namespace OceanyaClient
             searchText = SearchTextBox.Text ?? string.Empty;
             ICollectionView view = GetOrCreateItemsView();
             view.Refresh();
+            UpdateVisibleRowPositions();
         }
 
         private void TrackColumnWidth(GridViewColumn column, EmoteVisualizerTableColumnConfig config)
@@ -1142,6 +1435,39 @@ namespace OceanyaClient
             }
 
             return null;
+        }
+
+        private sealed class RowResizeGuideAdorner : Adorner
+        {
+            private static readonly Pen GuidePen = CreatePen();
+            private double guideY;
+
+            public RowResizeGuideAdorner(UIElement adornedElement) : base(adornedElement)
+            {
+                IsHitTestVisible = false;
+            }
+
+            public void SetGuideY(double y)
+            {
+                guideY = Math.Clamp(y, 0, Math.Max(0, AdornedElement.RenderSize.Height - 1));
+                InvalidateVisual();
+            }
+
+            protected override void OnRender(DrawingContext drawingContext)
+            {
+                base.OnRender(drawingContext);
+                double width = Math.Max(0, AdornedElement.RenderSize.Width);
+                drawingContext.DrawLine(GuidePen, new Point(0, guideY), new Point(width, guideY));
+            }
+
+            private static Pen CreatePen()
+            {
+                SolidColorBrush brush = new SolidColorBrush(Color.FromArgb(220, 151, 201, 255));
+                brush.Freeze();
+                Pen pen = new Pen(brush, 2);
+                pen.Freeze();
+                return pen;
+            }
         }
 
         private ContextMenu BuildContextMenuForItem(EmoteVisualizerItem item)
@@ -1659,7 +1985,40 @@ namespace OceanyaClient
         private ImageSource animationImage = CharacterFolderVisualizerWindow.LoadEmbeddedImage(
             "pack://application:,,,/OceanyaClient;component/Resources/Buttons/smallFolder.png");
         private bool integrityHasFailures;
+        private string indexText = string.Empty;
+        private string rowPositionText = string.Empty;
 
+        public int Index { get; set; }
+        public string IndexText
+        {
+            get => indexText;
+            set
+            {
+                string safeValue = value ?? string.Empty;
+                if (string.Equals(indexText, safeValue, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                indexText = safeValue;
+                OnPropertyChanged();
+            }
+        }
+        public string RowPositionText
+        {
+            get => rowPositionText;
+            set
+            {
+                string safeValue = value ?? string.Empty;
+                if (string.Equals(rowPositionText, safeValue, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                rowPositionText = safeValue;
+                OnPropertyChanged();
+            }
+        }
         public int Id { get; set; }
         public string IdText { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;

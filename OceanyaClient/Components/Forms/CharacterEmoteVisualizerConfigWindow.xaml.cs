@@ -79,7 +79,6 @@ namespace OceanyaClient
             TilePaddingSlider.Value = selected.Normal.TilePadding;
             ScrollSpeedSlider.Value = selected.Normal.ScrollWheelStep;
 
-            TableRowHeightSlider.Value = selected.Table.RowHeight;
             TableFontSizeSlider.Value = selected.Table.FontSize;
 
             RefreshNormalValueText();
@@ -299,7 +298,6 @@ namespace OceanyaClient
                 return;
             }
 
-            selected.Table.RowHeight = TableRowHeightSlider.Value;
             selected.Table.FontSize = TableFontSizeSlider.Value;
 
             RefreshTableValueText();
@@ -307,7 +305,6 @@ namespace OceanyaClient
 
         private void RefreshTableValueText()
         {
-            TableRowHeightValueText.Text = ((int)Math.Round(TableRowHeightSlider.Value)).ToString(CultureInfo.InvariantCulture);
             TableFontSizeValueText.Text = ((int)Math.Round(TableFontSizeSlider.Value)).ToString(CultureInfo.InvariantCulture);
         }
 

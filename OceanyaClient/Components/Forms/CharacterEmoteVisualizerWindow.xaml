@@ -217,17 +217,37 @@
         <Style x:Key="VisualizerDetailsItemStyle" TargetType="ListViewItem">
             <Setter Property="Foreground" Value="White"/>
             <Setter Property="Background" Value="#00000000"/>
-            <Setter Property="Padding" Value="3"/>
+            <Setter Property="Padding" Value="0"/>
             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="VerticalContentAlignment" Value="Stretch"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ListViewItem">
                         <Border x:Name="ItemBorder"
                                 Background="{TemplateBinding Background}"
                                 SnapsToDevicePixels="True">
-                            <GridViewRowPresenter Margin="2,0,2,0"
-                                                  VerticalAlignment="Center"
-                                                  Content="{TemplateBinding Content}"/>
+                            <Grid>
+                                <GridViewRowPresenter Margin="0"
+                                                      VerticalAlignment="Center"
+                                                      Content="{TemplateBinding Content}"/>
+                                <Thumb Height="6"
+                                       VerticalAlignment="Bottom"
+                                       HorizontalAlignment="Stretch"
+                                       Cursor="SizeNS"
+                                       DragStarted="DetailsRowResizeThumb_DragStarted"
+                                       DragDelta="DetailsRowResizeThumb_DragDelta"
+                                       DragCompleted="DetailsRowResizeThumb_DragCompleted">
+                                    <Thumb.Template>
+                                        <ControlTemplate TargetType="Thumb">
+                                            <Grid Background="Transparent">
+                                                <Border VerticalAlignment="Bottom"
+                                                        Height="1"
+                                                        Background="#554C86AE"/>
+                                            </Grid>
+                                        </ControlTemplate>
+                                    </Thumb.Template>
+                                </Thumb>
+                            </Grid>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
@@ -306,7 +326,9 @@
                             </Border>
                             <Thumb x:Name="PART_HeaderGripper"
                                    HorizontalAlignment="Right"
-                                   Width="7"
+                                   Width="9"
+                                   Margin="0"
+                                   Panel.ZIndex="3"
                                    Background="Transparent"
                                    Cursor="SizeWE">
                                 <Thumb.Template>
@@ -346,6 +368,23 @@
                 <Viewbox Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center">
                     <Image Source="{Binding IconImage}" Stretch="Uniform"/>
                 </Viewbox>
+            </Border>
+        </DataTemplate>
+
+        <DataTemplate x:Key="DetailsRowNumberTemplate">
+            <Border Background="#FF2F2F2F"
+                    BorderBrush="#444444"
+                    BorderThickness="0,0,1,1"
+                    Height="{Binding RelativeSource={RelativeSource AncestorType=ListViewItem}, Path=ActualHeight}"
+                    HorizontalAlignment="Stretch"
+                    VerticalAlignment="Stretch"
+                    Margin="-6,0,-6,0"
+                    SnapsToDevicePixels="True">
+                <TextBlock Text="{Binding RowPositionText}"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           Foreground="#FFD8D8D8"
+                           FontWeight="SemiBold"/>
             </Border>
         </DataTemplate>
 

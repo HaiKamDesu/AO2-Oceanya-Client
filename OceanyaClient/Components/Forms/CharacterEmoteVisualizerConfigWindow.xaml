@@ -373,7 +373,6 @@
                             <Grid x:Name="TablePanel" Visibility="Collapsed">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="*"/>
                                 </Grid.RowDefinitions>
                                 <Grid.ColumnDefinitions>
@@ -384,11 +383,7 @@
 
                                 <TextBlock Grid.Row="0" Grid.ColumnSpan="3" Text="Table View Settings" Foreground="#FFE6E6E6" FontWeight="Bold" FontSize="14" Margin="0,0,0,8"/>
 
-                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Row Height" Style="{StaticResource LabelText}"/>
-                                <Slider Grid.Row="1" Grid.Column="1" x:Name="TableRowHeightSlider" Minimum="22" Maximum="96" ValueChanged="TableSlider_ValueChanged"/>
-                                <TextBlock Grid.Row="1" Grid.Column="2" x:Name="TableRowHeightValueText" Foreground="#FFD8D8D8" VerticalAlignment="Center" HorizontalAlignment="Right"/>
-
-                                <Grid Grid.Row="2" Grid.ColumnSpan="3" Margin="0,12,0,0">
+                                <Grid Grid.Row="1" Grid.ColumnSpan="3" Margin="0,12,0,0">
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto"/>
                                         <RowDefinition Height="*"/>

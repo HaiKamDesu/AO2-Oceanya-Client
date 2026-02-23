@@ -262,17 +262,37 @@
         <Style x:Key="VisualizerDetailsItemStyle" TargetType="ListViewItem">
             <Setter Property="Foreground" Value="White"/>
             <Setter Property="Background" Value="#00000000"/>
-            <Setter Property="Padding" Value="3"/>
+            <Setter Property="Padding" Value="0"/>
             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="VerticalContentAlignment" Value="Stretch"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ListViewItem">
                         <Border x:Name="ItemBorder"
                                 Background="{TemplateBinding Background}"
                                 SnapsToDevicePixels="True">
-                            <GridViewRowPresenter Margin="2,0,2,0"
-                                                  VerticalAlignment="Center"
-                                                  Content="{TemplateBinding Content}"/>
+                            <Grid>
+                                <GridViewRowPresenter Margin="0"
+                                                      VerticalAlignment="Center"
+                                                      Content="{TemplateBinding Content}"/>
+                                <Thumb Height="6"
+                                       VerticalAlignment="Bottom"
+                                       HorizontalAlignment="Stretch"
+                                       Cursor="SizeNS"
+                                       DragStarted="DetailsRowResizeThumb_DragStarted"
+                                       DragDelta="DetailsRowResizeThumb_DragDelta"
+                                       DragCompleted="DetailsRowResizeThumb_DragCompleted">
+                                    <Thumb.Template>
+                                        <ControlTemplate TargetType="Thumb">
+                                            <Grid Background="Transparent">
+                                                <Border VerticalAlignment="Bottom"
+                                                        Height="1"
+                                                        Background="#554C86AE"/>
+                                            </Grid>
+                                        </ControlTemplate>
+                                    </Thumb.Template>
+                                </Thumb>
+                            </Grid>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
@@ -359,7 +379,9 @@
                             </Border>
                             <Thumb x:Name="PART_HeaderGripper"
                                    HorizontalAlignment="Right"
-                                   Width="7"
+                                   Width="9"
+                                   Margin="0"
+                                   Panel.ZIndex="3"
                                    Background="Transparent"
                                    Cursor="SizeWE">
                                 <Thumb.Template>
@@ -402,12 +424,68 @@
             </Border>
         </DataTemplate>
 
+        <DataTemplate x:Key="DetailsRowNumberTemplate">
+            <TextBlock Text="{Binding IndexText}"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       Foreground="#FFD8D8D8"/>
+        </DataTemplate>
+        <DataTemplate x:Key="DetailsRowHeaderTemplate">
+            <Border Background="#FF2F2F2F"
+                    BorderBrush="#444444"
+                    BorderThickness="0,0,1,1"
+                    Padding="0"
+                    Height="{Binding RelativeSource={RelativeSource AncestorType=ListViewItem}, Path=ActualHeight}"
+                    HorizontalAlignment="Stretch"
+                    VerticalAlignment="Stretch"
+                    Margin="-6,0,-6,0"
+                    SnapsToDevicePixels="True">
+                <TextBlock Text="{Binding RowPositionText}"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           Foreground="#FFD8D8D8"
+                           FontWeight="SemiBold"/>
+            </Border>
+        </DataTemplate>
+
+        <DataTemplate x:Key="DetailsTagsTemplate">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock FontFamily="Segoe MDL2 Assets"
+                           Text="&#xE8EC;"
+                           Margin="0,0,6,0"
+                           Foreground="#FF9FD0F5"
+                           VerticalAlignment="Center"/>
+                <TextBlock Text="{Binding TagsText}"
+                           Foreground="#FFEFEFEF"
+                           TextTrimming="CharacterEllipsis"
+                           VerticalAlignment="Center"/>
+            </StackPanel>
+        </DataTemplate>
+
+        <DataTemplate x:Key="DetailsEmoteCountCenteredTemplate">
+            <TextBlock Text="{Binding EmoteCountText}"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       TextAlignment="Center"
+                       Foreground="#FFEFEFEF"/>
+        </DataTemplate>
+
+        <DataTemplate x:Key="DetailsSizeCenteredTemplate">
+            <TextBlock Text="{Binding SizeText}"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       TextAlignment="Center"
+                       Foreground="#FFEFEFEF"/>
+        </DataTemplate>
+
         <DataTemplate x:Key="OpenCharIniTemplate">
             <Button Content="Open"
                     Style="{StaticResource ModernButton}"
                     Padding="8,2"
                     Height="24"
                     Width="70"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
                     Click="OpenCharIniButton_Click"/>
         </DataTemplate>
 
@@ -417,6 +495,8 @@
                     Padding="8,2"
                     Height="24"
                     Width="70"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
                     IsEnabled="{Binding HasReadme}"
                     Click="OpenReadmeButton_Click"/>
         </DataTemplate>
@@ -572,8 +652,8 @@
 
                     <Button Grid.Column="5"
                             x:Name="SelectTagsButton"
-                            Content="Select Tags"
-                            Width="110"
+                            Content="Filters &amp; Sorting"
+                            Width="140"
                             Margin="10,0,0,0"
                             Style="{StaticResource ModernButton}"
                             Click="SelectTagsButton_Click"/>
@@ -645,17 +725,40 @@
                                        Text="No folder selected"
                                        TextTrimming="CharacterEllipsis"/>
 
-                            <ComboBox Grid.Row="2"
-                                      x:Name="TagInputComboBox"
-                                      Style="{StaticResource DarkComboBoxStyle}"
-                                      IsEditable="True"
-                                      IsTextSearchEnabled="False"
-                                      StaysOpenOnEdit="True"
-                                      Height="30"
-                                      Margin="0,0,0,8"
-                                      PreviewKeyDown="TagInputComboBox_PreviewKeyDown"
-                                      TextBoxBase.TextChanged="TagInputComboBox_TextChanged"
-                                      ToolTip="Type tag name and press Enter"/>
+                            <Grid Grid.Row="2" Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           FontFamily="Segoe MDL2 Assets"
+                                           Text="&#xE8EC;"
+                                           Margin="0,0,6,0"
+                                           Foreground="#FF9FD0F5"
+                                           VerticalAlignment="Center"/>
+                                <ComboBox Grid.Column="1"
+                                          x:Name="TagInputComboBox"
+                                          Style="{StaticResource DarkComboBoxStyle}"
+                                          IsEditable="True"
+                                          IsTextSearchEnabled="False"
+                                          StaysOpenOnEdit="True"
+                                          Height="30"
+                                          PreviewKeyDown="TagInputComboBox_PreviewKeyDown"
+                                          TextBoxBase.TextChanged="TagInputComboBox_TextChanged"
+                                          ToolTip="Type tag name and press Enter">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock FontFamily="Segoe MDL2 Assets"
+                                                           Text="&#xE8EC;"
+                                                           Margin="0,0,6,0"
+                                                           Foreground="#FF9FD0F5"/>
+                                                <TextBlock Text="{Binding}" Foreground="#FFF2F2F2"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
+                            </Grid>
 
                             <ListBox Grid.Row="3"
                                      x:Name="SelectedFolderTagsListBox"
@@ -750,6 +853,7 @@
                                   VirtualizingPanel.IsVirtualizing="True"
                                   VirtualizingPanel.VirtualizationMode="Recycling"
                                   PreviewMouseWheel="FolderListView_PreviewMouseWheel"
+                                  PreviewMouseLeftButtonDown="FolderListView_PreviewMouseLeftButtonDown"
                                   MouseDoubleClick="FolderListView_MouseDoubleClick"
                                   PreviewMouseRightButtonDown="FolderListView_PreviewMouseRightButtonDown"
                                   ContextMenuOpening="FolderListView_ContextMenuOpening"

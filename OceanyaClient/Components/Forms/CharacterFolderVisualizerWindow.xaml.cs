@@ -14,7 +14,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Data;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -85,12 +87,20 @@ namespace OceanyaClient
         private double savedTagPanelWidth = 260;
         private bool tagPanelCollapsed;
         private double normalScrollWheelStep = 90;
-        private FolderVisualizerTableColumnKey? currentSortColumnKey;
+        private FolderVisualizerTableColumnKey? currentSortColumnKey = FolderVisualizerTableColumnKey.RowNumber;
         private ListSortDirection currentSortDirection = ListSortDirection.Ascending;
+        private FolderFilterRule activeFilterRoot = FolderFilterRule.CreateGroup(FolderFilterConnector.And);
         private readonly Dictionary<GridViewColumn, FolderVisualizerTableColumnConfig> tableColumnMap =
             new Dictionary<GridViewColumn, FolderVisualizerTableColumnConfig>();
         private readonly Dictionary<GridViewColumn, EventHandler> columnWidthHandlers =
             new Dictionary<GridViewColumn, EventHandler>();
+        private Thumb? activeRowResizeThumb;
+        private double rowResizeStartHeight;
+        private double rowResizePreviewHeight;
+        private double rowResizeGuideStartY;
+        private AdornerLayer? rowResizeAdornerLayer;
+        private RowResizeGuideAdorner? rowResizeGuideAdorner;
+        private bool preserveTagInputFocusOnSelection;
 
         /// <summary>
         /// Gets the currently projected folder items.
@@ -124,6 +134,8 @@ namespace OceanyaClient
             nameof(TileMargin), typeof(Thickness), typeof(CharacterFolderVisualizerWindow), new PropertyMetadata(new Thickness(4)));
         public static readonly DependencyProperty ShowIntegrityVerifierResultsProperty = DependencyProperty.Register(
             nameof(ShowIntegrityVerifierResults), typeof(bool), typeof(CharacterFolderVisualizerWindow), new PropertyMetadata(false));
+        public static readonly DependencyProperty DetailsRowHeightProperty = DependencyProperty.Register(
+            nameof(DetailsRowHeight), typeof(double), typeof(CharacterFolderVisualizerWindow), new PropertyMetadata(34d));
 
         public double TileWidth
         {
@@ -171,6 +183,12 @@ namespace OceanyaClient
         {
             get => (bool)GetValue(ShowIntegrityVerifierResultsProperty);
             set => SetValue(ShowIntegrityVerifierResultsProperty, value);
+        }
+
+        public double DetailsRowHeight
+        {
+            get => (double)GetValue(DetailsRowHeightProperty);
+            set => SetValue(DetailsRowHeightProperty, value);
         }
 
         /// <summary>
@@ -683,6 +701,7 @@ namespace OceanyaClient
                     WaitForm.SetSubtitle("Using cached character index...");
                 allItems.Clear();
                 allItems.AddRange(cachedItems);
+                RecomputeDerivedItemFields();
                 itemsView = null;
                 UpdateSummaryText();
                 PruneTagAssignmentsToExistingItems();
@@ -712,6 +731,7 @@ namespace OceanyaClient
                     cachedItems = diskCachedItems;
                     allItems.Clear();
                     allItems.AddRange(diskCachedItems);
+                    RecomputeDerivedItemFields();
                     itemsView = null;
                     UpdateSummaryText();
                     PruneTagAssignmentsToExistingItems();
@@ -742,6 +762,7 @@ namespace OceanyaClient
 
                 allItems.Clear();
                 allItems.AddRange(projected);
+                RecomputeDerivedItemFields();
                 itemsView = null;
                 UpdateSummaryText();
                 PruneTagAssignmentsToExistingItems();
@@ -812,11 +833,15 @@ namespace OceanyaClient
 
                 items.Add(new FolderVisualizerItem
                 {
+                    Index = i + 1,
+                    IndexText = (i + 1).ToString(),
+                    RowPositionText = (i + 1).ToString(),
                     Name = characterFolder.Name,
                     DirectoryPath = characterFolder.DirectoryPath ?? string.Empty,
                     IconPath = iconPath,
                     PreviewPath = previewPath,
                     CharIniPath = charIniPath,
+                    HasCharIni = !string.IsNullOrWhiteSpace(charIniPath) && File.Exists(charIniPath),
                     LastModified = lastModified,
                     LastModifiedText = lastModified.ToString("yyyy-MM-dd HH:mm"),
                     EmoteCount = emoteCount,
@@ -825,6 +850,8 @@ namespace OceanyaClient
                     SizeText = FormatBytes(sizeBytes),
                     ReadmePath = readmePath,
                     HasReadme = !string.IsNullOrWhiteSpace(readmePath),
+                    IconTypeText = ResolveIconType(iconPath),
+                    TagsText = string.Empty,
                     IntegrityHasFailures = integrityReport?.HasFailures == true,
                     IntegrityFailureCount = integrityReport?.FailureCount ?? 0,
                     IntegrityFailureMessages = integrityFailureMessages,
@@ -938,6 +965,7 @@ namespace OceanyaClient
         private void ApplyTablePreset(FolderVisualizerViewPreset preset)
         {
             FolderVisualizerTableViewConfig table = preset.Table;
+            DetailsRowHeight = table.RowHeight;
             FolderListView.ItemTemplate = null;
             FolderListView.ItemsPanel = (ItemsPanelTemplate)FindResource("DetailsItemsPanelTemplate");
             FolderListView.ItemContainerStyle = BuildDetailsContainerStyle(table);
@@ -996,6 +1024,11 @@ namespace OceanyaClient
                 }
             }
 
+            if (!MatchesAdvancedFilters(item))
+            {
+                return false;
+            }
+
             string query = searchText.Trim();
             if (string.IsNullOrWhiteSpace(query))
             {
@@ -1013,6 +1046,220 @@ namespace OceanyaClient
             }
 
             return false;
+        }
+
+        private bool MatchesAdvancedFilters(FolderVisualizerItem item)
+        {
+            if (activeFilterRoot == null || !activeFilterRoot.IsGroup || activeFilterRoot.Children.Count == 0)
+            {
+                return true;
+            }
+
+            return EvaluateGroupRule(activeFilterRoot, item);
+        }
+
+        private static bool EvaluateGroupRule(FolderFilterRule groupRule, FolderVisualizerItem item)
+        {
+            if (!groupRule.IsActive)
+            {
+                return true;
+            }
+
+            List<FolderFilterRule> activeChildren = groupRule.Children
+                .Where(child => child != null && child.IsActive)
+                .ToList();
+            if (activeChildren.Count == 0)
+            {
+                return true;
+            }
+
+            bool result = EvaluateRuleNode(activeChildren[0], item);
+            for (int i = 1; i < activeChildren.Count; i++)
+            {
+                bool current = EvaluateRuleNode(activeChildren[i], item);
+                result = groupRule.Connector == FolderFilterConnector.Or
+                    ? (result || current)
+                    : (result && current);
+            }
+
+            return result;
+        }
+
+        private static bool EvaluateRuleNode(FolderFilterRule rule, FolderVisualizerItem item)
+        {
+            if (rule.IsGroup)
+            {
+                return EvaluateGroupRule(rule, item);
+            }
+
+            object? value = GetFilterValue(item, rule.ColumnKey);
+            if (rule.UsesEnumSelection)
+            {
+                List<string> selectedValues = rule.EnumOptions
+                    .Where(option => option.IsSelected)
+                    .Select(option => option.Value)
+                    .ToList();
+                if (selectedValues.Count == 0)
+                {
+                    return true;
+                }
+
+                string actual = value switch
+                {
+                    bool boolEnumValue => boolEnumValue ? "True" : "False",
+                    _ => value?.ToString() ?? string.Empty
+                };
+
+                bool contains = selectedValues.Any(selected =>
+                    string.Equals(selected, actual, StringComparison.OrdinalIgnoreCase));
+
+                return rule.Operator == FolderFilterOperator.NotEquals ? !contains : contains;
+            }
+
+            if (value is DateTime dateValue)
+            {
+                return EvaluateDateRule(rule, dateValue);
+            }
+
+            if (value is long longValue)
+            {
+                return EvaluateLongRule(rule, longValue);
+            }
+
+            if (value is int intValue)
+            {
+                return EvaluateLongRule(rule, intValue);
+            }
+
+            if (value is bool boolValue)
+            {
+                return EvaluateBoolRule(rule, boolValue);
+            }
+
+            string textValue = value?.ToString() ?? string.Empty;
+            return EvaluateTextRule(rule, textValue);
+        }
+
+        private static object? GetFilterValue(FolderVisualizerItem item, FolderVisualizerTableColumnKey key)
+        {
+            return key switch
+            {
+                FolderVisualizerTableColumnKey.RowNumber => item.Index,
+                FolderVisualizerTableColumnKey.IconType => item.IconTypeText,
+                FolderVisualizerTableColumnKey.Name => item.Name,
+                FolderVisualizerTableColumnKey.Tags => item.TagsText,
+                FolderVisualizerTableColumnKey.DirectoryPath => item.DirectoryPath,
+                FolderVisualizerTableColumnKey.PreviewPath => item.PreviewPath,
+                FolderVisualizerTableColumnKey.LastModified => item.LastModified,
+                FolderVisualizerTableColumnKey.EmoteCount => item.EmoteCount,
+                FolderVisualizerTableColumnKey.Size => item.SizeBytes,
+                FolderVisualizerTableColumnKey.IntegrityFailures => item.IntegrityFailureMessages,
+                FolderVisualizerTableColumnKey.OpenCharIni => item.HasCharIni,
+                FolderVisualizerTableColumnKey.Readme => item.HasReadme,
+                _ => string.Empty
+            };
+        }
+
+        private static bool EvaluateTextRule(FolderFilterRule rule, string value)
+        {
+            string left = value ?? string.Empty;
+            string right = rule.Value ?? string.Empty;
+            string rightSecond = rule.SecondValue ?? string.Empty;
+
+            return rule.Operator switch
+            {
+                FolderFilterOperator.Contains => left.Contains(right, StringComparison.OrdinalIgnoreCase),
+                FolderFilterOperator.DoesNotContain => !left.Contains(right, StringComparison.OrdinalIgnoreCase),
+                FolderFilterOperator.Equals => string.Equals(left, right, StringComparison.OrdinalIgnoreCase),
+                FolderFilterOperator.NotEquals => !string.Equals(left, right, StringComparison.OrdinalIgnoreCase),
+                FolderFilterOperator.StartsWith => left.StartsWith(right, StringComparison.OrdinalIgnoreCase),
+                FolderFilterOperator.EndsWith => left.EndsWith(right, StringComparison.OrdinalIgnoreCase),
+                FolderFilterOperator.InList => SplitFilterList(right).Any(entry => string.Equals(entry, left, StringComparison.OrdinalIgnoreCase)),
+                FolderFilterOperator.NotInList => SplitFilterList(right).All(entry => !string.Equals(entry, left, StringComparison.OrdinalIgnoreCase)),
+                FolderFilterOperator.Between => string.Compare(left, right, StringComparison.OrdinalIgnoreCase) >= 0
+                    && string.Compare(left, rightSecond, StringComparison.OrdinalIgnoreCase) <= 0,
+                _ => true
+            };
+        }
+
+        private static bool EvaluateLongRule(FolderFilterRule rule, long value)
+        {
+            if (!long.TryParse(rule.Value, out long first))
+            {
+                first = 0;
+            }
+
+            if (!long.TryParse(rule.SecondValue, out long second))
+            {
+                second = first;
+            }
+
+            return rule.Operator switch
+            {
+                FolderFilterOperator.Equals => value == first,
+                FolderFilterOperator.NotEquals => value != first,
+                FolderFilterOperator.GreaterThan => value > first,
+                FolderFilterOperator.GreaterThanOrEqual => value >= first,
+                FolderFilterOperator.LessThan => value < first,
+                FolderFilterOperator.LessThanOrEqual => value <= first,
+                FolderFilterOperator.Between => value >= Math.Min(first, second) && value <= Math.Max(first, second),
+                _ => true
+            };
+        }
+
+        private static bool EvaluateDateRule(FolderFilterRule rule, DateTime value)
+        {
+            if (!DateTime.TryParse(rule.Value, out DateTime first))
+            {
+                first = DateTime.MinValue;
+            }
+
+            if (!DateTime.TryParse(rule.SecondValue, out DateTime second))
+            {
+                second = first;
+            }
+
+            DateTime safeValue = value.Date;
+            DateTime safeFirst = first.Date;
+            DateTime safeSecond = second.Date;
+
+            return rule.Operator switch
+            {
+                FolderFilterOperator.Equals => safeValue == safeFirst,
+                FolderFilterOperator.NotEquals => safeValue != safeFirst,
+                FolderFilterOperator.GreaterThan => safeValue > safeFirst,
+                FolderFilterOperator.GreaterThanOrEqual => safeValue >= safeFirst,
+                FolderFilterOperator.LessThan => safeValue < safeFirst,
+                FolderFilterOperator.LessThanOrEqual => safeValue <= safeFirst,
+                FolderFilterOperator.Between => safeValue >= (safeFirst <= safeSecond ? safeFirst : safeSecond)
+                    && safeValue <= (safeFirst <= safeSecond ? safeSecond : safeFirst),
+                _ => true
+            };
+        }
+
+        private static bool EvaluateBoolRule(FolderFilterRule rule, bool value)
+        {
+            bool expected = true;
+            if (!bool.TryParse(rule.Value, out expected))
+            {
+                expected = string.Equals(rule.Value, "yes", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(rule.Value, "1", StringComparison.OrdinalIgnoreCase);
+            }
+
+            return rule.Operator switch
+            {
+                FolderFilterOperator.Equals => value == expected,
+                FolderFilterOperator.NotEquals => value != expected,
+                _ => true
+            };
+        }
+
+        private static IEnumerable<string> SplitFilterList(string input)
+        {
+            return (input ?? string.Empty)
+                .Split(new[] { ',', ';', '|' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(value => value.Trim())
+                .Where(value => !string.IsNullOrWhiteSpace(value));
         }
 
         private IEnumerable<string> GetSearchableValues(FolderVisualizerItem item)
@@ -1034,7 +1281,10 @@ namespace OceanyaClient
             {
                 string value = key switch
                 {
+                    FolderVisualizerTableColumnKey.RowNumber => item.IndexText,
+                    FolderVisualizerTableColumnKey.IconType => item.IconTypeText,
                     FolderVisualizerTableColumnKey.Name => item.Name,
+                    FolderVisualizerTableColumnKey.Tags => item.TagsText,
                     FolderVisualizerTableColumnKey.DirectoryPath => item.DirectoryPath,
                     FolderVisualizerTableColumnKey.PreviewPath => item.PreviewPath,
                     FolderVisualizerTableColumnKey.LastModified => item.LastModifiedText,
@@ -1104,6 +1354,60 @@ namespace OceanyaClient
             return resolvedTags;
         }
 
+        private void RecomputeDerivedItemFields()
+        {
+            for (int i = 0; i < allItems.Count; i++)
+            {
+                FolderVisualizerItem item = allItems[i];
+                item.Index = i + 1;
+                item.IndexText = (i + 1).ToString();
+                item.RowPositionText = (i + 1).ToString();
+                item.IconTypeText = ResolveIconType(item.IconPath);
+                item.TagsText = string.Join(", ", GetTagsForItem(item).OrderBy(tag => tag, StringComparer.OrdinalIgnoreCase));
+            }
+        }
+
+        private void UpdateVisibleRowPositions()
+        {
+            if (FolderListView.Items == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < FolderListView.Items.Count; i++)
+            {
+                if (FolderListView.Items[i] is FolderVisualizerItem item)
+                {
+                    item.RowPositionText = (i + 1).ToString();
+                }
+            }
+        }
+
+        private void RefreshItemTagTexts()
+        {
+            foreach (FolderVisualizerItem item in allItems)
+            {
+                item.TagsText = string.Join(", ", GetTagsForItem(item).OrderBy(tag => tag, StringComparer.OrdinalIgnoreCase));
+            }
+        }
+
+        private static string ResolveIconType(string iconPath)
+        {
+            if (string.IsNullOrWhiteSpace(iconPath) || !File.Exists(iconPath))
+            {
+                return "Placeholder";
+            }
+
+            string fileName = Path.GetFileNameWithoutExtension(iconPath) ?? string.Empty;
+            if (fileName.Contains("char", StringComparison.OrdinalIgnoreCase)
+                && fileName.Contains("icon", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Character Icon";
+            }
+
+            return "Button Fallback";
+        }
+
         private static IEnumerable<string> GetTagLookupKeysForItem(FolderVisualizerItem item)
         {
             string directoryKey = NormalizeTagAssignmentKey(item.DirectoryPath);
@@ -1134,8 +1438,115 @@ namespace OceanyaClient
             Style baseStyle = (Style)FindResource("VisualizerDetailsItemStyle");
             Style style = new Style(typeof(ListViewItem), baseStyle);
             style.Setters.Add(new Setter(FontSizeProperty, table.FontSize));
-            style.Setters.Add(new Setter(HeightProperty, table.RowHeight));
+            Binding rowHeightBinding = new Binding(nameof(DetailsRowHeight))
+            {
+                RelativeSource = new RelativeSource(RelativeSourceMode.FindAncestor, typeof(CharacterFolderVisualizerWindow), 1)
+            };
+            style.Setters.Add(new Setter(HeightProperty, rowHeightBinding));
             return style;
+        }
+
+        private void DetailsRowResizeThumb_DragDelta(object sender, DragDeltaEventArgs e)
+        {
+            if (FolderListView.View == null || sender is not Thumb thumb || !ReferenceEquals(thumb, activeRowResizeThumb))
+            {
+                return;
+            }
+
+            FolderVisualizerViewPreset? selectedPreset = ViewModeCombo.SelectedItem as FolderVisualizerViewPreset;
+            if (selectedPreset == null || selectedPreset.Mode != FolderVisualizerLayoutMode.Table)
+            {
+                return;
+            }
+
+            double mouseY = Mouse.GetPosition(FolderListView).Y;
+            double minGuideY = rowResizeGuideStartY + (22 - rowResizeStartHeight);
+            double maxGuideY = rowResizeGuideStartY + (140 - rowResizeStartHeight);
+            double clampedGuideY = Math.Clamp(mouseY, Math.Min(minGuideY, maxGuideY), Math.Max(minGuideY, maxGuideY));
+
+            rowResizePreviewHeight = Math.Clamp(rowResizeStartHeight + (clampedGuideY - rowResizeGuideStartY), 22, 140);
+            UpdateRowResizeGuide(clampedGuideY);
+            e.Handled = true;
+        }
+
+        private void DetailsRowResizeThumb_DragStarted(object sender, DragStartedEventArgs e)
+        {
+            if (FolderListView.View == null || sender is not Thumb thumb)
+            {
+                return;
+            }
+
+            FolderVisualizerViewPreset? selectedPreset = ViewModeCombo.SelectedItem as FolderVisualizerViewPreset;
+            if (selectedPreset == null || selectedPreset.Mode != FolderVisualizerLayoutMode.Table)
+            {
+                return;
+            }
+
+            activeRowResizeThumb = thumb;
+            rowResizeStartHeight = selectedPreset.Table.RowHeight;
+            rowResizePreviewHeight = rowResizeStartHeight;
+            rowResizeGuideStartY = Math.Clamp(Mouse.GetPosition(FolderListView).Y, 0, Math.Max(0, FolderListView.ActualHeight - 1));
+            ShowRowResizeGuide(rowResizeGuideStartY);
+            e.Handled = true;
+        }
+
+        private void DetailsRowResizeThumb_DragCompleted(object sender, DragCompletedEventArgs e)
+        {
+            if (sender is not Thumb thumb || !ReferenceEquals(thumb, activeRowResizeThumb))
+            {
+                return;
+            }
+
+            FolderVisualizerViewPreset? selectedPreset = ViewModeCombo.SelectedItem as FolderVisualizerViewPreset;
+            if (selectedPreset != null && selectedPreset.Mode == FolderVisualizerLayoutMode.Table)
+            {
+                if (Math.Abs(selectedPreset.Table.RowHeight - rowResizePreviewHeight) > 0.01)
+                {
+                    selectedPreset.Table.RowHeight = rowResizePreviewHeight;
+                    DetailsRowHeight = rowResizePreviewHeight;
+                }
+            }
+
+            activeRowResizeThumb = null;
+            HideRowResizeGuide();
+            PersistVisualizerConfig();
+            e.Handled = true;
+        }
+
+        private void ShowRowResizeGuide(double verticalOffset)
+        {
+            HideRowResizeGuide();
+            AdornerLayer? layer = AdornerLayer.GetAdornerLayer(FolderListView);
+            if (layer == null)
+            {
+                return;
+            }
+
+            rowResizeAdornerLayer = layer;
+            rowResizeGuideAdorner = new RowResizeGuideAdorner(FolderListView);
+            rowResizeGuideAdorner.SetGuideY(verticalOffset);
+            layer.Add(rowResizeGuideAdorner);
+        }
+
+        private void UpdateRowResizeGuide(double verticalOffset)
+        {
+            if (rowResizeGuideAdorner == null)
+            {
+                return;
+            }
+
+            rowResizeGuideAdorner.SetGuideY(verticalOffset);
+        }
+
+        private void HideRowResizeGuide()
+        {
+            if (rowResizeAdornerLayer != null && rowResizeGuideAdorner != null)
+            {
+                rowResizeAdornerLayer.Remove(rowResizeGuideAdorner);
+            }
+
+            rowResizeGuideAdorner = null;
+            rowResizeAdornerLayer = null;
         }
 
         private GridView BuildDetailsGridView(FolderVisualizerViewPreset preset)
@@ -1149,6 +1560,14 @@ namespace OceanyaClient
                 AllowsColumnReorder = false,
                 ColumnHeaderContainerStyle = (Style)FindResource("VisualizerGridHeaderStyle")
             };
+
+            GridViewColumn rowHeaderColumn = new GridViewColumn
+            {
+                Header = "#",
+                Width = 56,
+                CellTemplate = (DataTemplate)FindResource("DetailsRowHeaderTemplate")
+            };
+            gridView.Columns.Add(rowHeaderColumn);
 
             List<FolderVisualizerTableColumnConfig> orderedColumns = table.Columns
                 .Where(column => column.IsVisible)
@@ -1200,6 +1619,22 @@ namespace OceanyaClient
                 {
                     gridColumn.CellTemplate = (DataTemplate)FindResource("DetailsIconTemplate");
                 }
+                else if (column.Key == FolderVisualizerTableColumnKey.RowNumber)
+                {
+                    gridColumn.CellTemplate = (DataTemplate)FindResource("DetailsRowNumberTemplate");
+                }
+                else if (column.Key == FolderVisualizerTableColumnKey.Tags)
+                {
+                    gridColumn.CellTemplate = (DataTemplate)FindResource("DetailsTagsTemplate");
+                }
+                else if (column.Key == FolderVisualizerTableColumnKey.EmoteCount)
+                {
+                    gridColumn.CellTemplate = (DataTemplate)FindResource("DetailsEmoteCountCenteredTemplate");
+                }
+                else if (column.Key == FolderVisualizerTableColumnKey.Size)
+                {
+                    gridColumn.CellTemplate = (DataTemplate)FindResource("DetailsSizeCenteredTemplate");
+                }
                 else if (column.Key == FolderVisualizerTableColumnKey.OpenCharIni)
                 {
                     gridColumn.CellTemplate = (DataTemplate)FindResource("OpenCharIniTemplate");
@@ -1210,7 +1645,12 @@ namespace OceanyaClient
                 }
                 else
                 {
-                    gridColumn.DisplayMemberBinding = new Binding(GetColumnBindingPath(column.Key));
+                    string bindingPath = GetColumnBindingPath(column.Key);
+                    gridColumn.CellTemplate = CreateTextCellTemplate(
+                        bindingPath,
+                        column.Key == FolderVisualizerTableColumnKey.EmoteCount
+                            || column.Key == FolderVisualizerTableColumnKey.Size
+                            || column.Key == FolderVisualizerTableColumnKey.RowNumber);
                 }
 
                 gridView.Columns.Add(gridColumn);
@@ -1241,8 +1681,11 @@ namespace OceanyaClient
         {
             return key switch
             {
+                FolderVisualizerTableColumnKey.RowNumber => "ID",
                 FolderVisualizerTableColumnKey.Icon => string.Empty,
+                FolderVisualizerTableColumnKey.IconType => "Icon Type",
                 FolderVisualizerTableColumnKey.Name => "Name",
+                FolderVisualizerTableColumnKey.Tags => "Tags",
                 FolderVisualizerTableColumnKey.DirectoryPath => "Folder Path",
                 FolderVisualizerTableColumnKey.PreviewPath => "Idle Sprite",
                 FolderVisualizerTableColumnKey.LastModified => "Last Modified",
@@ -1257,16 +1700,17 @@ namespace OceanyaClient
 
         private static bool IsColumnSortable(FolderVisualizerTableColumnKey key)
         {
-            return key != FolderVisualizerTableColumnKey.Icon
-                && key != FolderVisualizerTableColumnKey.OpenCharIni
-                && key != FolderVisualizerTableColumnKey.Readme;
+            return key != FolderVisualizerTableColumnKey.Icon;
         }
 
         private static string GetColumnBindingPath(FolderVisualizerTableColumnKey key)
         {
             return key switch
             {
+                FolderVisualizerTableColumnKey.RowNumber => nameof(FolderVisualizerItem.IndexText),
                 FolderVisualizerTableColumnKey.Name => nameof(FolderVisualizerItem.Name),
+                FolderVisualizerTableColumnKey.Tags => nameof(FolderVisualizerItem.TagsText),
+                FolderVisualizerTableColumnKey.IconType => nameof(FolderVisualizerItem.IconTypeText),
                 FolderVisualizerTableColumnKey.DirectoryPath => nameof(FolderVisualizerItem.DirectoryPath),
                 FolderVisualizerTableColumnKey.PreviewPath => nameof(FolderVisualizerItem.PreviewPath),
                 FolderVisualizerTableColumnKey.LastModified => nameof(FolderVisualizerItem.LastModifiedText),
@@ -1275,6 +1719,23 @@ namespace OceanyaClient
                 FolderVisualizerTableColumnKey.IntegrityFailures => nameof(FolderVisualizerItem.IntegrityFailureMessages),
                 _ => nameof(FolderVisualizerItem.Name)
             };
+        }
+
+        private static DataTemplate CreateTextCellTemplate(string bindingPath, bool centerHorizontally)
+        {
+            FrameworkElementFactory textBlockFactory = new FrameworkElementFactory(typeof(TextBlock));
+            textBlockFactory.SetBinding(TextBlock.TextProperty, new Binding(bindingPath));
+            textBlockFactory.SetValue(TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center);
+            textBlockFactory.SetValue(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis);
+            textBlockFactory.SetValue(TextBlock.TextAlignmentProperty, centerHorizontally ? TextAlignment.Center : TextAlignment.Left);
+            textBlockFactory.SetValue(TextBlock.HorizontalAlignmentProperty, centerHorizontally ? HorizontalAlignment.Center : HorizontalAlignment.Left);
+            textBlockFactory.SetValue(TextBlock.ForegroundProperty, Brushes.White);
+
+            DataTemplate template = new DataTemplate
+            {
+                VisualTree = textBlockFactory
+            };
+            return template;
         }
 
         private void GridHeader_Click(object sender, RoutedEventArgs e)
@@ -1311,20 +1772,141 @@ namespace OceanyaClient
                 return;
             }
 
-            if (header.Content is not FolderVisualizerGridHeaderInfo info)
+            ContextMenu contextMenu = new ContextMenu();
+            AddContextCategoryHeader(contextMenu, "Table", addLeadingSeparator: false);
+
+            MenuItem bestFitColumnsItem = new MenuItem
+            {
+                Header = "Best Fit Columns"
+            };
+            bestFitColumnsItem.Click += (_, _) => BestFitAllColumns();
+            contextMenu.Items.Add(bestFitColumnsItem);
+
+            MenuItem filtersAndSortingItem = new MenuItem
+            {
+                Header = "Filters & Sorting"
+            };
+            filtersAndSortingItem.Click += (_, _) => SelectTagsButton_Click(this, new RoutedEventArgs());
+            contextMenu.Items.Add(filtersAndSortingItem);
+
+            AddContextCategoryHeader(contextMenu, "Column", addLeadingSeparator: true);
+
+            if (header.Content is FolderVisualizerGridHeaderInfo info)
+            {
+                MenuItem bestFitColumnItem = new MenuItem
+                {
+                    Header = "Best Fit Column"
+                };
+                bestFitColumnItem.Click += (_, _) => BestFitColumn(header.Column, info.Key, info.Text);
+                contextMenu.Items.Add(bestFitColumnItem);
+
+                MenuItem hideColumnItem = new MenuItem
+                {
+                    Header = "Hide Column",
+                    IsEnabled = CanHideColumn(header.Column)
+                };
+                hideColumnItem.Click += (_, _) => HideColumn(header.Column);
+                contextMenu.Items.Add(hideColumnItem);
+
+                MenuItem sortMenuItem = BuildSortSubmenu(info.Key);
+                contextMenu.Items.Add(sortMenuItem);
+            }
+
+            contextMenu.IsOpen = true;
+            e.Handled = true;
+        }
+
+        private MenuItem BuildSortSubmenu(FolderVisualizerTableColumnKey key)
+        {
+            bool sortable = IsColumnSortable(key);
+            MenuItem sortMenu = new MenuItem
+            {
+                Header = "Sort",
+                IsEnabled = sortable
+            };
+
+            MenuItem sortAsc = new MenuItem
+            {
+                Header = "Sort Asc",
+                IsCheckable = true,
+                IsChecked = sortable
+                    && currentSortColumnKey == key
+                    && currentSortDirection == ListSortDirection.Ascending
+            };
+            sortAsc.Click += (_, _) =>
+            {
+                currentSortColumnKey = key;
+                currentSortDirection = ListSortDirection.Ascending;
+                ApplySortToCurrentView();
+            };
+            sortMenu.Items.Add(sortAsc);
+
+            MenuItem sortDesc = new MenuItem
+            {
+                Header = "Sort Desc",
+                IsCheckable = true,
+                IsChecked = sortable
+                    && currentSortColumnKey == key
+                    && currentSortDirection == ListSortDirection.Descending
+            };
+            sortDesc.Click += (_, _) =>
+            {
+                currentSortColumnKey = key;
+                currentSortDirection = ListSortDirection.Descending;
+                ApplySortToCurrentView();
+            };
+            sortMenu.Items.Add(sortDesc);
+
+            return sortMenu;
+        }
+
+        private void BestFitAllColumns()
+        {
+            if (FolderListView.View is not GridView gridView)
             {
                 return;
             }
 
-            ContextMenu contextMenu = new ContextMenu();
-            MenuItem bestFitItem = new MenuItem
+            foreach (GridViewColumn column in gridView.Columns)
             {
-                Header = "Best Fit"
-            };
-            bestFitItem.Click += (_, _) => BestFitColumn(header.Column, info.Key, info.Text);
-            contextMenu.Items.Add(bestFitItem);
-            contextMenu.IsOpen = true;
-            e.Handled = true;
+                if (column.Header is FolderVisualizerGridHeaderInfo info)
+                {
+                    BestFitColumn(column, info.Key, info.Text);
+                }
+                else if (column.Header is string)
+                {
+                    column.Width = 56;
+                }
+            }
+        }
+
+        private bool CanHideColumn(GridViewColumn column)
+        {
+            if (!tableColumnMap.TryGetValue(column, out FolderVisualizerTableColumnConfig? config))
+            {
+                return false;
+            }
+
+            FolderVisualizerViewPreset? selectedPreset = ViewModeCombo.SelectedItem as FolderVisualizerViewPreset;
+            if (selectedPreset == null)
+            {
+                return false;
+            }
+
+            int currentlyVisible = selectedPreset.Table.Columns.Count(entry => entry.IsVisible);
+            return currentlyVisible > 1 && config.IsVisible;
+        }
+
+        private void HideColumn(GridViewColumn column)
+        {
+            if (!tableColumnMap.TryGetValue(column, out FolderVisualizerTableColumnConfig? config))
+            {
+                return;
+            }
+
+            config.IsVisible = false;
+            PersistVisualizerConfig();
+            ApplySelectedViewPreset();
         }
 
         private void BestFitColumn(GridViewColumn column, FolderVisualizerTableColumnKey key, string headerText)
@@ -1339,6 +1921,10 @@ namespace OceanyaClient
             if (key == FolderVisualizerTableColumnKey.Icon)
             {
                 width = 30;
+            }
+            else if (key == FolderVisualizerTableColumnKey.RowNumber)
+            {
+                width = 56;
             }
             else if (key == FolderVisualizerTableColumnKey.OpenCharIni)
             {
@@ -1363,6 +1949,9 @@ namespace OceanyaClient
                     string text = key switch
                     {
                         FolderVisualizerTableColumnKey.Name => item.Name,
+                        FolderVisualizerTableColumnKey.Tags => item.TagsText,
+                        FolderVisualizerTableColumnKey.IconType => item.IconTypeText,
+                        FolderVisualizerTableColumnKey.RowNumber => item.IndexText,
                         FolderVisualizerTableColumnKey.DirectoryPath => item.DirectoryPath,
                         FolderVisualizerTableColumnKey.PreviewPath => item.PreviewPath,
                         FolderVisualizerTableColumnKey.LastModified => item.LastModifiedText,
@@ -1389,7 +1978,7 @@ namespace OceanyaClient
         {
             UpdateSortHeaderGlyphs();
 
-            if (FolderListView.View == null || currentSortColumnKey == null)
+            if (currentSortColumnKey == null)
             {
                 return;
             }
@@ -1409,6 +1998,7 @@ namespace OceanyaClient
             view.SortDescriptions.Clear();
             view.SortDescriptions.Add(new SortDescription(sortProperty, currentSortDirection));
             view.Refresh();
+            UpdateVisibleRowPositions();
         }
 
         private void UpdateSortHeaderGlyphs()
@@ -1433,13 +2023,18 @@ namespace OceanyaClient
         {
             return key switch
             {
+                FolderVisualizerTableColumnKey.RowNumber => nameof(FolderVisualizerItem.Index),
                 FolderVisualizerTableColumnKey.Name => nameof(FolderVisualizerItem.Name),
+                FolderVisualizerTableColumnKey.Tags => nameof(FolderVisualizerItem.TagsText),
+                FolderVisualizerTableColumnKey.IconType => nameof(FolderVisualizerItem.IconTypeText),
                 FolderVisualizerTableColumnKey.DirectoryPath => nameof(FolderVisualizerItem.DirectoryPath),
                 FolderVisualizerTableColumnKey.PreviewPath => nameof(FolderVisualizerItem.PreviewPath),
                 FolderVisualizerTableColumnKey.LastModified => nameof(FolderVisualizerItem.LastModified),
                 FolderVisualizerTableColumnKey.EmoteCount => nameof(FolderVisualizerItem.EmoteCount),
                 FolderVisualizerTableColumnKey.Size => nameof(FolderVisualizerItem.SizeBytes),
                 FolderVisualizerTableColumnKey.IntegrityFailures => nameof(FolderVisualizerItem.IntegrityFailureMessages),
+                FolderVisualizerTableColumnKey.OpenCharIni => nameof(FolderVisualizerItem.HasCharIni),
+                FolderVisualizerTableColumnKey.Readme => nameof(FolderVisualizerItem.HasReadme),
                 _ => string.Empty
             };
         }
@@ -1576,6 +2171,55 @@ namespace OceanyaClient
         {
             selectedItemForTagging = FolderListView.SelectedItem as FolderVisualizerItem;
             RefreshSelectedFolderTagPanel();
+
+            if (!preserveTagInputFocusOnSelection)
+            {
+                return;
+            }
+
+            preserveTagInputFocusOnSelection = false;
+            if (tagPanelCollapsed)
+            {
+                return;
+            }
+
+            Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
+            {
+                TextBox? editable = FindEditableTagInputTextBox();
+                if (editable == null)
+                {
+                    TagInputComboBox.Focus();
+                    return;
+                }
+
+                editable.Focus();
+                editable.SelectionStart = editable.Text?.Length ?? 0;
+                editable.SelectionLength = 0;
+            }));
+        }
+
+        private void FolderListView_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            preserveTagInputFocusOnSelection = false;
+
+            if (tagPanelCollapsed || TagPanelColumn.ActualWidth <= 0)
+            {
+                return;
+            }
+
+            if ((Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
+            {
+                return;
+            }
+
+            TextBox? editable = FindEditableTagInputTextBox();
+            bool tagFieldHasFocus = TagInputComboBox.IsKeyboardFocusWithin || (editable?.IsKeyboardFocusWithin == true);
+            if (!tagFieldHasFocus)
+            {
+                return;
+            }
+
+            preserveTagInputFocusOnSelection = true;
         }
 
         private void ToggleTagPanelButton_Click(object sender, RoutedEventArgs e)
@@ -1653,11 +2297,16 @@ namespace OceanyaClient
         {
             List<string> selectableFilters = new List<string> { UntaggedFilterToken };
             selectableFilters.AddRange(allKnownTags);
+            Dictionary<string, int> tagUsageCounts = BuildTagUsageCounts();
 
             TagFilterSelectionWindow selectionWindow = new TagFilterSelectionWindow(
                 selectableFilters,
                 activeIncludeTagFilters,
                 activeExcludeTagFilters,
+                activeFilterRoot,
+                currentSortColumnKey,
+                currentSortDirection,
+                tagUsageCounts,
                 tagFilterWindowState)
             {
                 Owner = this
@@ -1684,8 +2333,36 @@ namespace OceanyaClient
             {
                 activeExcludeTagFilters.Add(tag);
             }
+            activeFilterRoot = selectionWindow.FilterRoot.Clone();
+            currentSortColumnKey = selectionWindow.SortColumn;
+            currentSortDirection = selectionWindow.SortDirection;
+            ApplySortToCurrentView();
 
             await RefreshItemsAfterTagFilterChangeAsync();
+        }
+
+        private Dictionary<string, int> BuildTagUsageCounts()
+        {
+            Dictionary<string, int> counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (FolderVisualizerItem item in allItems)
+            {
+                List<string> tags = GetTagsForItem(item).ToList();
+                if (tags.Count == 0)
+                {
+                    counts[UntaggedFilterToken] = counts.TryGetValue(UntaggedFilterToken, out int existingUntagged)
+                        ? existingUntagged + 1
+                        : 1;
+                    continue;
+                }
+
+                foreach (string tag in tags.Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    counts[tag] = counts.TryGetValue(tag, out int existing) ? existing + 1 : 1;
+                }
+            }
+
+            return counts;
         }
 
         private async void SelectedFolderTagsListBox_MouseDoubleClick(object sender, MouseButtonEventArgs e)
@@ -1895,6 +2572,7 @@ namespace OceanyaClient
             }
 
             RefreshSelectedFolderTagPanel();
+            RefreshItemTagTexts();
             QueueTagStateSave();
 
             bool shouldRefreshView = activeIncludeTagFilters.Count > 0
@@ -1915,10 +2593,10 @@ namespace OceanyaClient
         {
             UpdateActiveTagFiltersText();
             QueueTagStateSave();
-            await WaitForm.ShowFormAsync("Applying tag filters...", this);
+            await WaitForm.ShowFormAsync("Applying filters & sorting...", this);
             try
             {
-                WaitForm.SetSubtitle("Refreshing visible folders...");
+                WaitForm.SetSubtitle("Rebuilding filter and sort results...");
                 await Dispatcher.Yield(DispatcherPriority.Background);
                 ICollectionView view = GetOrCreateItemsView();
                 view.Refresh();
@@ -2010,13 +2688,15 @@ namespace OceanyaClient
             string excludeText = activeExcludeTagFilters.Count == 0
                 ? "none"
                 : string.Join(", ", activeExcludeTagFilters.OrderBy(tag => tag, StringComparer.OrdinalIgnoreCase));
-            ActiveTagFiltersText.Text = $"Include: {includeText} | Exclude: {excludeText}";
+            int advancedCount = activeFilterRoot.CountActiveConditions();
+            ActiveTagFiltersText.Text = $"Include: {includeText} | Exclude: {excludeText} | Rules: {advancedCount}";
         }
 
         private void UpdateSummaryText()
         {
             int total = allItems.Count;
             int visible = FolderListView.Items.Count;
+            UpdateVisibleRowPositions();
             SummaryText.Text = $"Characters indexed: {total} | Showing: {visible}";
         }
 
@@ -2175,6 +2855,39 @@ namespace OceanyaClient
             }
 
             return null;
+        }
+
+        private sealed class RowResizeGuideAdorner : Adorner
+        {
+            private static readonly Pen GuidePen = CreatePen();
+            private double guideY;
+
+            public RowResizeGuideAdorner(UIElement adornedElement) : base(adornedElement)
+            {
+                IsHitTestVisible = false;
+            }
+
+            public void SetGuideY(double y)
+            {
+                guideY = Math.Clamp(y, 0, Math.Max(0, AdornedElement.RenderSize.Height - 1));
+                InvalidateVisual();
+            }
+
+            protected override void OnRender(DrawingContext drawingContext)
+            {
+                base.OnRender(drawingContext);
+                double width = Math.Max(0, AdornedElement.RenderSize.Width);
+                drawingContext.DrawLine(GuidePen, new Point(0, guideY), new Point(width, guideY));
+            }
+
+            private static Pen CreatePen()
+            {
+                SolidColorBrush brush = new SolidColorBrush(Color.FromArgb(220, 151, 201, 255));
+                brush.Freeze();
+                Pen pen = new Pen(brush, 2);
+                pen.Freeze();
+                return pen;
+            }
         }
 
         private static CharacterFolder? ResolveCharacterFolderForItem(FolderVisualizerItem item)
@@ -2735,6 +3448,7 @@ namespace OceanyaClient
                     IconPath = item.IconPath ?? string.Empty,
                     PreviewPath = item.PreviewPath ?? string.Empty,
                     CharIniPath = item.CharIniPath ?? string.Empty,
+                    HasCharIni = item.HasCharIni,
                     LastModified = item.LastModifiedUtc == default ? DateTime.MinValue : item.LastModifiedUtc.ToLocalTime(),
                     LastModifiedText = item.LastModifiedText ?? string.Empty,
                     EmoteCount = item.EmoteCount,
@@ -2774,6 +3488,7 @@ namespace OceanyaClient
                         IconPath = item.IconPath,
                         PreviewPath = item.PreviewPath,
                         CharIniPath = item.CharIniPath,
+                        HasCharIni = item.HasCharIni,
                         LastModifiedUtc = item.LastModified == DateTime.MinValue
                             ? DateTime.MinValue
                             : item.LastModified.ToUniversalTime(),
@@ -3031,6 +3746,7 @@ namespace OceanyaClient
             List<FolderVisualizerItem> projectedItems = BuildCharacterItems(CharacterFolder.FullList);
             allItems.Clear();
             allItems.AddRange(projectedItems);
+            RecomputeDerivedItemFields();
             UpdateSummaryText();
             PruneTagAssignmentsToExistingItems();
             RefreshSelectedFolderTagPanel();
@@ -3109,7 +3825,11 @@ namespace OceanyaClient
     /// </summary>
     public sealed class FolderVisualizerItem : INotifyPropertyChanged
     {
+        private string indexText = string.Empty;
+        private string rowPositionText = string.Empty;
         private string previewPath = string.Empty;
+        private string tagsText = string.Empty;
+        private string iconTypeText = string.Empty;
         private bool integrityHasFailures;
         private int integrityFailureCount;
         private string integrityFailureMessages = string.Empty;
@@ -3118,6 +3838,37 @@ namespace OceanyaClient
         private ImageSource previewImage = CharacterFolderVisualizerWindow.LoadEmbeddedImage(
             "pack://application:,,,/OceanyaClient;component/Resources/Buttons/smallFolder.png");
 
+        public int Index { get; set; }
+        public string IndexText
+        {
+            get => indexText;
+            set
+            {
+                string safeValue = value ?? string.Empty;
+                if (string.Equals(indexText, safeValue, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                indexText = safeValue;
+                OnPropertyChanged();
+            }
+        }
+        public string RowPositionText
+        {
+            get => rowPositionText;
+            set
+            {
+                string safeValue = value ?? string.Empty;
+                if (string.Equals(rowPositionText, safeValue, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                rowPositionText = safeValue;
+                OnPropertyChanged();
+            }
+        }
         public string Name { get; set; } = string.Empty;
         public string DirectoryPath { get; set; } = string.Empty;
         public string IconPath { get; set; } = string.Empty;
@@ -3136,12 +3887,43 @@ namespace OceanyaClient
             }
         }
         public string CharIniPath { get; set; } = string.Empty;
+        public bool HasCharIni { get; set; }
         public DateTime LastModified { get; set; }
         public string LastModifiedText { get; set; } = string.Empty;
         public int EmoteCount { get; set; }
         public string EmoteCountText { get; set; } = string.Empty;
         public long SizeBytes { get; set; }
         public string SizeText { get; set; } = string.Empty;
+        public string TagsText
+        {
+            get => tagsText;
+            set
+            {
+                string safeValue = value ?? string.Empty;
+                if (string.Equals(tagsText, safeValue, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                tagsText = safeValue;
+                OnPropertyChanged();
+            }
+        }
+        public string IconTypeText
+        {
+            get => iconTypeText;
+            set
+            {
+                string safeValue = value ?? string.Empty;
+                if (string.Equals(iconTypeText, safeValue, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                iconTypeText = safeValue;
+                OnPropertyChanged();
+            }
+        }
         public string ReadmePath { get; set; } = string.Empty;
         public bool HasReadme { get; set; }
         public bool IntegrityHasFailures
@@ -3247,6 +4029,660 @@ namespace OceanyaClient
         }
     }
 
+    public enum FolderFilterConnector
+    {
+        And,
+        Or
+    }
+
+    public enum FolderFilterOperator
+    {
+        Contains,
+        DoesNotContain,
+        Equals,
+        NotEquals,
+        StartsWith,
+        EndsWith,
+        InList,
+        NotInList,
+        GreaterThan,
+        GreaterThanOrEqual,
+        LessThan,
+        LessThanOrEqual,
+        Between
+    }
+
+    public sealed class FolderFilterListValue : INotifyPropertyChanged
+    {
+        private string text = string.Empty;
+        private FolderFilterRule? owner;
+
+        public FolderFilterRule? Owner
+        {
+            get => owner;
+            set
+            {
+                if (ReferenceEquals(owner, value))
+                {
+                    return;
+                }
+
+                owner = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public string Text
+        {
+            get => text;
+            set
+            {
+                string safe = value ?? string.Empty;
+                if (string.Equals(text, safe, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                text = safe;
+                OnPropertyChanged();
+            }
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
+    }
+
+    public sealed class FolderFilterEnumOption : INotifyPropertyChanged
+    {
+        private string value = string.Empty;
+        private bool isSelected;
+        private FolderFilterRule? owner;
+
+        public FolderFilterRule? Owner
+        {
+            get => owner;
+            set
+            {
+                if (ReferenceEquals(owner, value))
+                {
+                    return;
+                }
+
+                owner = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public string Value
+        {
+            get => value;
+            set
+            {
+                string safe = value ?? string.Empty;
+                if (string.Equals(this.value, safe, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                this.value = safe;
+                OnPropertyChanged();
+            }
+        }
+
+        public bool IsSelected
+        {
+            get => isSelected;
+            set
+            {
+                if (isSelected == value)
+                {
+                    return;
+                }
+
+                isSelected = value;
+                Owner?.OnEnumSelectionChanged();
+                OnPropertyChanged();
+            }
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
+    }
+
+    public sealed class FolderFilterRule : INotifyPropertyChanged
+    {
+        private bool isGroup;
+        private FolderVisualizerTableColumnKey columnKey = FolderVisualizerTableColumnKey.Name;
+        private FolderFilterOperator filterOperator = FolderFilterOperator.Contains;
+        private string value = string.Empty;
+        private string secondValue = string.Empty;
+        private FolderFilterConnector connector = FolderFilterConnector.And;
+        private bool isActive = true;
+        private FolderFilterRule? parent;
+        private readonly ObservableCollection<FolderFilterRule> children = new ObservableCollection<FolderFilterRule>();
+        private readonly ObservableCollection<FolderFilterListValue> listValues = new ObservableCollection<FolderFilterListValue>();
+        private readonly ObservableCollection<FolderFilterEnumOption> enumOptions = new ObservableCollection<FolderFilterEnumOption>();
+        private bool suppressListSync;
+
+        public static FolderFilterRule CreateGroup(FolderFilterConnector connector = FolderFilterConnector.And)
+        {
+            return new FolderFilterRule
+            {
+                IsGroup = true,
+                Connector = connector,
+                IsActive = true
+            };
+        }
+
+        public static FolderFilterRule CreateCondition()
+        {
+            FolderFilterRule rule = new FolderFilterRule
+            {
+                IsGroup = false,
+                ColumnKey = FolderVisualizerTableColumnKey.Name,
+                Operator = FolderFilterOperator.Contains,
+                IsActive = true
+            };
+            rule.EnsureListTail();
+            return rule;
+        }
+
+        public bool IsGroup
+        {
+            get => isGroup;
+            set
+            {
+                if (isGroup == value)
+                {
+                    return;
+                }
+
+                isGroup = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public FolderFilterRule? Parent
+        {
+            get => parent;
+            set
+            {
+                if (ReferenceEquals(parent, value))
+                {
+                    return;
+                }
+
+                parent = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(CanRemove));
+            }
+        }
+
+        public bool CanRemove => Parent != null;
+
+        public ObservableCollection<FolderFilterRule> Children => children;
+        public ObservableCollection<FolderFilterListValue> ListValues => listValues;
+        public ObservableCollection<FolderFilterEnumOption> EnumOptions => enumOptions;
+        public bool UsesListValues => Operator == FolderFilterOperator.InList || Operator == FolderFilterOperator.NotInList;
+        public bool UsesEnumSelection => IsEnumColumn(ColumnKey) && (Operator == FolderFilterOperator.Equals || Operator == FolderFilterOperator.NotEquals);
+        public bool UsesDateInput => IsDateColumn(ColumnKey);
+        public bool UsesSecondValue => Operator == FolderFilterOperator.Between;
+        public DateTime? ValueDate
+        {
+            get => ParseDateValue(Value);
+            set => Value = value?.ToString("yyyy-MM-dd") ?? string.Empty;
+        }
+        public DateTime? SecondValueDate
+        {
+            get => ParseDateValue(SecondValue);
+            set => SecondValue = value?.ToString("yyyy-MM-dd") ?? string.Empty;
+        }
+        public string SelectedEnumSummary => BuildEnumSelectionSummary();
+        public IReadOnlyList<FolderFilterOperator> AvailableOperators => GetAllowedOperators(ColumnKey);
+
+        public FolderVisualizerTableColumnKey ColumnKey
+        {
+            get => columnKey;
+            set
+            {
+                if (columnKey == value)
+                {
+                    return;
+                }
+
+                columnKey = value;
+                EnsureOperatorStillValid();
+                EnsureEnumOptions();
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(AvailableOperators));
+                OnPropertyChanged(nameof(UsesEnumSelection));
+                OnPropertyChanged(nameof(UsesDateInput));
+                OnPropertyChanged(nameof(SelectedEnumSummary));
+                OnPropertyChanged(nameof(ValueDate));
+                OnPropertyChanged(nameof(SecondValueDate));
+            }
+        }
+
+        public FolderFilterOperator Operator
+        {
+            get => filterOperator;
+            set
+            {
+                if (filterOperator == value)
+                {
+                    return;
+                }
+
+                filterOperator = value;
+                if (!UsesSecondValue)
+                {
+                    SecondValue = string.Empty;
+                }
+                EnsureListTail();
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(UsesListValues));
+                OnPropertyChanged(nameof(UsesSecondValue));
+                OnPropertyChanged(nameof(UsesEnumSelection));
+                OnPropertyChanged(nameof(UsesDateInput));
+                OnPropertyChanged(nameof(SelectedEnumSummary));
+            }
+        }
+
+        public string Value
+        {
+            get => value;
+            set
+            {
+                string safe = value ?? string.Empty;
+                if (string.Equals(this.value, safe, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                this.value = safe;
+                if (!suppressListSync)
+                {
+                    SyncListValuesFromValue();
+                }
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(ValueDate));
+            }
+        }
+
+        public string SecondValue
+        {
+            get => secondValue;
+            set
+            {
+                string safe = value ?? string.Empty;
+                if (string.Equals(secondValue, safe, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                secondValue = safe;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(SecondValueDate));
+            }
+        }
+
+        public FolderFilterConnector Connector
+        {
+            get => connector;
+            set
+            {
+                if (connector == value)
+                {
+                    return;
+                }
+
+                connector = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public bool IsActive
+        {
+            get => isActive;
+            set
+            {
+                if (isActive == value)
+                {
+                    return;
+                }
+
+                isActive = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public FolderFilterRule Clone()
+        {
+            FolderFilterRule clone = new FolderFilterRule
+            {
+                IsGroup = IsGroup,
+                ColumnKey = ColumnKey,
+                Operator = Operator,
+                Value = Value,
+                SecondValue = SecondValue,
+                Connector = Connector,
+                IsActive = IsActive
+            };
+
+            foreach (FolderFilterRule child in Children)
+            {
+                FolderFilterRule clonedChild = child.Clone();
+                clonedChild.Parent = clone;
+                clone.Children.Add(clonedChild);
+            }
+
+            clone.suppressListSync = true;
+            clone.ListValues.Clear();
+            foreach (FolderFilterListValue listValue in ListValues)
+            {
+                clone.ListValues.Add(new FolderFilterListValue
+                {
+                    Owner = clone,
+                    Text = listValue.Text
+                });
+            }
+            clone.suppressListSync = false;
+            clone.SyncValueFromListValues();
+            clone.EnsureListTail();
+            clone.EnsureEnumOptions();
+            foreach (FolderFilterEnumOption option in clone.EnumOptions)
+            {
+                option.IsSelected = EnumOptions.Any(original =>
+                    string.Equals(original.Value, option.Value, StringComparison.OrdinalIgnoreCase)
+                    && original.IsSelected);
+            }
+            clone.OnEnumSelectionChanged();
+
+            return clone;
+        }
+
+        public int CountActiveConditions()
+        {
+            if (!IsActive)
+            {
+                return 0;
+            }
+
+            if (!IsGroup)
+            {
+                return 1;
+            }
+
+            int count = 0;
+            foreach (FolderFilterRule child in Children)
+            {
+                count += child.CountActiveConditions();
+            }
+
+            return count;
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        public void OnListValueChanged()
+        {
+            SyncValueFromListValues();
+            EnsureListTail();
+        }
+
+        public void OnEnumSelectionChanged()
+        {
+            OnPropertyChanged(nameof(SelectedEnumSummary));
+            if (!UsesEnumSelection)
+            {
+                return;
+            }
+
+            string joined = string.Join(", ", EnumOptions
+                .Where(option => option.IsSelected)
+                .Select(option => option.Value));
+            Value = joined;
+        }
+
+        private void EnsureOperatorStillValid()
+        {
+            IReadOnlyList<FolderFilterOperator> allowed = AvailableOperators;
+            if (allowed.Count == 0)
+            {
+                return;
+            }
+
+            if (!allowed.Contains(Operator))
+            {
+                Operator = allowed[0];
+            }
+        }
+
+        private static IReadOnlyList<FolderFilterOperator> GetAllowedOperators(FolderVisualizerTableColumnKey key)
+        {
+            if (IsEnumColumn(key))
+            {
+                return new[]
+                {
+                    FolderFilterOperator.Equals,
+                    FolderFilterOperator.NotEquals
+                };
+            }
+
+            if (key == FolderVisualizerTableColumnKey.LastModified)
+            {
+                return new[]
+                {
+                    FolderFilterOperator.Equals,
+                    FolderFilterOperator.NotEquals,
+                    FolderFilterOperator.GreaterThan,
+                    FolderFilterOperator.GreaterThanOrEqual,
+                    FolderFilterOperator.LessThan,
+                    FolderFilterOperator.LessThanOrEqual,
+                    FolderFilterOperator.Between
+                };
+            }
+
+            if (key == FolderVisualizerTableColumnKey.RowNumber
+                || key == FolderVisualizerTableColumnKey.EmoteCount
+                || key == FolderVisualizerTableColumnKey.Size)
+            {
+                return new[]
+                {
+                    FolderFilterOperator.Equals,
+                    FolderFilterOperator.NotEquals,
+                    FolderFilterOperator.GreaterThan,
+                    FolderFilterOperator.GreaterThanOrEqual,
+                    FolderFilterOperator.LessThan,
+                    FolderFilterOperator.LessThanOrEqual,
+                    FolderFilterOperator.Between
+                };
+            }
+
+            return new[]
+            {
+                FolderFilterOperator.Contains,
+                FolderFilterOperator.DoesNotContain,
+                FolderFilterOperator.Equals,
+                FolderFilterOperator.NotEquals,
+                FolderFilterOperator.StartsWith,
+                FolderFilterOperator.EndsWith,
+                FolderFilterOperator.InList,
+                FolderFilterOperator.NotInList
+            };
+        }
+
+        private static bool IsEnumColumn(FolderVisualizerTableColumnKey key)
+        {
+            return key == FolderVisualizerTableColumnKey.OpenCharIni
+                || key == FolderVisualizerTableColumnKey.Readme
+                || key == FolderVisualizerTableColumnKey.IconType;
+        }
+
+        private static bool IsDateColumn(FolderVisualizerTableColumnKey key)
+        {
+            return key == FolderVisualizerTableColumnKey.LastModified;
+        }
+
+        private static DateTime? ParseDateValue(string raw)
+        {
+            if (DateTime.TryParse(raw, out DateTime parsed))
+            {
+                return parsed.Date;
+            }
+
+            return null;
+        }
+
+        private static IReadOnlyList<string> GetEnumValues(FolderVisualizerTableColumnKey key)
+        {
+            if (key == FolderVisualizerTableColumnKey.OpenCharIni || key == FolderVisualizerTableColumnKey.Readme)
+            {
+                return new[] { "True", "False" };
+            }
+
+            if (key == FolderVisualizerTableColumnKey.IconType)
+            {
+                return new[] { "Character Icon", "Placeholder", "Button Fallback" };
+            }
+
+            return Array.Empty<string>();
+        }
+
+        private void EnsureEnumOptions()
+        {
+            List<string> currentSelections = EnumOptions
+                .Where(option => option.IsSelected)
+                .Select(option => option.Value)
+                .ToList();
+
+            EnumOptions.Clear();
+            foreach (string enumValue in GetEnumValues(ColumnKey))
+            {
+                EnumOptions.Add(new FolderFilterEnumOption
+                {
+                    Owner = this,
+                    Value = enumValue,
+                    IsSelected = currentSelections.Any(selected => string.Equals(selected, enumValue, StringComparison.OrdinalIgnoreCase))
+                });
+            }
+
+            OnPropertyChanged(nameof(SelectedEnumSummary));
+        }
+
+        private string BuildEnumSelectionSummary()
+        {
+            if (EnumOptions.Count == 0)
+            {
+                return "Select values";
+            }
+
+            List<string> selected = EnumOptions
+                .Where(option => option.IsSelected)
+                .Select(option => option.Value)
+                .ToList();
+            if (selected.Count == 0)
+            {
+                return "Select values";
+            }
+
+            return string.Join(", ", selected);
+        }
+
+        private void SyncListValuesFromValue()
+        {
+            if (!UsesListValues)
+            {
+                return;
+            }
+
+            suppressListSync = true;
+            List<string> values = (value ?? string.Empty)
+                .Split(new[] { ',', ';', '|' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(part => part.Trim())
+                .Where(part => !string.IsNullOrWhiteSpace(part))
+                .ToList();
+
+            ListValues.Clear();
+            foreach (string entry in values)
+            {
+                ListValues.Add(new FolderFilterListValue
+                {
+                    Owner = this,
+                    Text = entry
+                });
+            }
+
+            suppressListSync = false;
+            EnsureListTail();
+        }
+
+        private void SyncValueFromListValues()
+        {
+            if (suppressListSync || !UsesListValues)
+            {
+                return;
+            }
+
+            string joined = string.Join(", ", ListValues
+                .Select(entry => entry.Text?.Trim() ?? string.Empty)
+                .Where(entry => !string.IsNullOrWhiteSpace(entry)));
+
+            suppressListSync = true;
+            Value = joined;
+            suppressListSync = false;
+        }
+
+        private void EnsureListTail()
+        {
+            if (!UsesListValues)
+            {
+                return;
+            }
+
+            for (int i = ListValues.Count - 2; i >= 0; i--)
+            {
+                if (string.IsNullOrWhiteSpace(ListValues[i].Text) && string.IsNullOrWhiteSpace(ListValues[i + 1].Text))
+                {
+                    ListValues.RemoveAt(i + 1);
+                }
+            }
+
+            if (ListValues.Count == 0)
+            {
+                ListValues.Add(new FolderFilterListValue
+                {
+                    Owner = this,
+                    Text = string.Empty
+                });
+                return;
+            }
+
+            FolderFilterListValue last = ListValues[ListValues.Count - 1];
+            if (!string.IsNullOrWhiteSpace(last.Text))
+            {
+                ListValues.Add(new FolderFilterListValue
+                {
+                    Owner = this,
+                    Text = string.Empty
+                });
+            }
+        }
+
+        private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
+    }
+
     internal sealed class FolderVisualizerDiskCacheContainer
     {
         public int Version { get; set; }
@@ -3261,6 +4697,7 @@ namespace OceanyaClient
         public string IconPath { get; set; } = string.Empty;
         public string PreviewPath { get; set; } = string.Empty;
         public string CharIniPath { get; set; } = string.Empty;
+        public bool HasCharIni { get; set; }
         public DateTime LastModifiedUtc { get; set; }
         public string LastModifiedText { get; set; } = string.Empty;
         public int EmoteCount { get; set; }
