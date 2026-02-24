@@ -188,6 +188,7 @@ namespace OceanyaClient
     {
         //Initial Configuration
         public string ConfigIniPath { get; set; } = "";
+        public string StartupFunctionalityId { get; set; } = "gm_multi_client";
         public bool UseSingleInternalClient { get; set; } = true;
         public string SelectedServerEndpoint { get; set; } = "";
         public string SelectedServerName { get; set; } = "";
@@ -286,6 +287,13 @@ namespace OceanyaClient
 
         private static void NormalizeLoadedData(SaveData data)
         {
+            data.StartupFunctionalityId = data.StartupFunctionalityId?.Trim() ?? string.Empty;
+            if (!string.Equals(data.StartupFunctionalityId, "gm_multi_client", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(data.StartupFunctionalityId, "character_database_viewer", StringComparison.OrdinalIgnoreCase))
+            {
+                data.StartupFunctionalityId = "gm_multi_client";
+            }
+
             data.CustomServerEndpoints ??= new List<string>();
             data.CustomServerEntries ??= new List<CustomServerEntry>();
             data.AdvancedFeatures ??= new AdvancedFeatureFlagStore();

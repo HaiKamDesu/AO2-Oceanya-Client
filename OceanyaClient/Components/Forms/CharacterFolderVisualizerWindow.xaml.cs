@@ -25,14 +25,16 @@ using System.Windows.Shell;
 using System.Windows.Threading;
 using AOBot_Testing.Structures;
 using Common;
+using OceanyaClient.Features.Startup;
 
 namespace OceanyaClient
 {
     /// <summary>
     /// Displays a configurable Windows-like visualizer for local AO character folders.
     /// </summary>
-    public partial class CharacterFolderVisualizerWindow : Window
+    public partial class CharacterFolderVisualizerWindow : Window, IStartupFunctionalityWindow
     {
+        public event Action? FinishedLoading;
         private const string FallbackFolderPackUri =
             "pack://application:,,,/OceanyaClient;component/Resources/Buttons/smallFolder.png";
 
@@ -60,6 +62,7 @@ namespace OceanyaClient
         private CancellationTokenSource? progressiveImageLoadCancellation;
 
         private bool hasLoaded;
+        private bool hasRaisedFinishedLoading;
         private bool applyingSavedWindowState;
         private bool suppressViewSelectionChanged;
         private FolderVisualizerConfig visualizerConfig = new FolderVisualizerConfig();
@@ -247,6 +250,12 @@ namespace OceanyaClient
 
             hasLoaded = true;
             await LoadCharacterItemsAsync();
+
+            if (!hasRaisedFinishedLoading)
+            {
+                hasRaisedFinishedLoading = true;
+                FinishedLoading?.Invoke();
+            }
         }
 
         private void Window_StateChanged(object? sender, EventArgs e)

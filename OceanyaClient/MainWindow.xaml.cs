@@ -16,13 +16,16 @@ using Common;
 using NAudio.Wave;
 using OceanyaClient.AdvancedFeatures;
 using OceanyaClient.Components;
+using OceanyaClient.Features.Startup;
 using OceanyaClient.Utilities;
 using ToggleButton = System.Windows.Controls.Primitives.ToggleButton;
 
 namespace OceanyaClient
 {
-    public partial class MainWindow : Window
+    public partial class MainWindow : Window, IStartupFunctionalityWindow
     {
+        public event Action? FinishedLoading;
+
         private readonly Dictionary<ToggleButton, AOClient> clients = new Dictionary<ToggleButton, AOClient>();
         private AOClient? currentClient;
         private AOClient? singleInternalClient;
@@ -56,6 +59,7 @@ namespace OceanyaClient
         private int konamiProgress;
         private string lastDreddOverlayContextKey = string.Empty;
         private string lastUnknownOverlayPromptKey = string.Empty;
+        private bool hasRaisedFinishedLoading;
 
         private sealed class DreddOverlaySelectionItem
         {
@@ -69,10 +73,9 @@ namespace OceanyaClient
         List<ToggleButton> objectionModifiers;
         public MainWindow()
         {
-            AudioPlayer.PlayEmbeddedSound("Resources/ApertureScienceJingleHD.mp3", 0.5f);
-
             InitializeComponent();
             WindowHelper.AddWindow(this);
+            Loaded += MainWindow_Loaded;
 
             objectionModifiers = new List<ToggleButton> { HoldIt, Objection, TakeThat, Custom };
             // Set grid mode and size
@@ -228,6 +231,17 @@ namespace OceanyaClient
 
             btnDebug.Visibility = debug ? Visibility.Visible : Visibility.Collapsed;
             RefreshAreaNavigatorForCurrentClient();
+        }
+
+        private void MainWindow_Loaded(object sender, RoutedEventArgs e)
+        {
+            if (hasRaisedFinishedLoading)
+            {
+                return;
+            }
+
+            hasRaisedFinishedLoading = true;
+            FinishedLoading?.Invoke();
         }
         private void RenameClient(AOClient bot)
         {
@@ -1872,11 +1886,6 @@ namespace OceanyaClient
                     await item.Disconnect();
                 }
             }
-
-            var config = new InitialConfigurationWindow();
-            config.Activate();
-            config.Show();
-
             this.Close();
         }
 
