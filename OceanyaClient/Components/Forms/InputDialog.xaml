@@ -167,7 +167,13 @@
                 <TextBlock x:Name="PromptTextBlock" 
                          Text="Enter Client Name:"
                          Style="{StaticResource LabelText}"
-                         TextWrapping="Wrap"/>
+                         TextWrapping="Wrap">
+                    <TextBlock.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="Copy message" Click="CopyPromptMenuItem_Click"/>
+                        </ContextMenu>
+                    </TextBlock.ContextMenu>
+                </TextBlock>
 
                 <!-- Input TextBox -->
                 <TextBox x:Name="InputTextBox"

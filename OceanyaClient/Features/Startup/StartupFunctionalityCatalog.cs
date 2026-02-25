@@ -7,6 +7,7 @@ namespace OceanyaClient.Features.Startup
     {
         public const string GmMultiClient = "gm_multi_client";
         public const string CharacterDatabaseViewer = "character_database_viewer";
+        public const string CharacterFileCreator = "character_file_creator";
     }
 
     public sealed class StartupFunctionalityOption
@@ -35,6 +36,12 @@ namespace OceanyaClient.Features.Startup
             {
                 Id = StartupFunctionalityIds.CharacterDatabaseViewer,
                 DisplayName = "AO Character Database Viewer",
+                RequiresServerEndpoint = false
+            },
+            new StartupFunctionalityOption
+            {
+                Id = StartupFunctionalityIds.CharacterFileCreator,
+                DisplayName = "AO Character File Creator",
                 RequiresServerEndpoint = false
             }
         };

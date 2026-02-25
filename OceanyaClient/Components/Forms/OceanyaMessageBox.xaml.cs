@@ -133,6 +133,20 @@ namespace OceanyaClient
             CloseWithAnimation();
         }
 
+        private void CopyMessageMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            string message = MessageTextBlock.Text ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(message) && !ClipboardUtilities.TrySetText(message))
+            {
+                _ = MessageBox.Show(
+                    this,
+                    "Could not access clipboard right now. Try again in a moment.",
+                    "Clipboard Busy",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
+        }
+
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
             // The FadeIn animation is triggered automatically by the EventTrigger in XAML

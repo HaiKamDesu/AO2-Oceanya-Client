@@ -181,6 +181,8 @@ namespace OceanyaClient
     {
         public double Width { get; set; } = 980;
         public double Height { get; set; } = 690;
+        public double? Left { get; set; }
+        public double? Top { get; set; }
         public bool IsMaximized { get; set; }
     }
 
@@ -210,6 +212,13 @@ namespace OceanyaClient
         public EmoteVisualizerConfig EmoteVisualizer { get; set; } = new EmoteVisualizerConfig();
         public VisualizerWindowState FolderVisualizerWindowState { get; set; } = new VisualizerWindowState();
         public VisualizerWindowState EmoteVisualizerWindowState { get; set; } = new VisualizerWindowState();
+        public VisualizerWindowState CharacterCreatorWindowState { get; set; } = new VisualizerWindowState
+        {
+            Width = 1220,
+            Height = 760,
+            IsMaximized = false
+        };
+        public double CharacterCreatorPreviewVolume { get; set; } = 1.0;
         public bool LoopEmoteVisualizerAnimations { get; set; } = true;
         public bool ViewFolderIntegrityVerifierResults { get; set; }
         public Dictionary<string, int> CharacterFolderPreviewEmoteOverrides { get; set; } =
@@ -289,7 +298,8 @@ namespace OceanyaClient
         {
             data.StartupFunctionalityId = data.StartupFunctionalityId?.Trim() ?? string.Empty;
             if (!string.Equals(data.StartupFunctionalityId, "gm_multi_client", StringComparison.OrdinalIgnoreCase)
-                && !string.Equals(data.StartupFunctionalityId, "character_database_viewer", StringComparison.OrdinalIgnoreCase))
+                && !string.Equals(data.StartupFunctionalityId, "character_database_viewer", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(data.StartupFunctionalityId, "character_file_creator", StringComparison.OrdinalIgnoreCase))
             {
                 data.StartupFunctionalityId = "gm_multi_client";
             }
@@ -333,8 +343,15 @@ namespace OceanyaClient
 
             data.FolderVisualizerWindowState ??= new VisualizerWindowState();
             data.EmoteVisualizerWindowState ??= new VisualizerWindowState();
+            data.CharacterCreatorWindowState ??= new VisualizerWindowState
+            {
+                Width = 1220,
+                Height = 760,
+                IsMaximized = false
+            };
             ClampWindowState(data.FolderVisualizerWindowState);
             ClampWindowState(data.EmoteVisualizerWindowState);
+            ClampWindowState(data.CharacterCreatorWindowState);
             data.CharacterFolderPreviewEmoteOverrides ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             data.CharacterFolderPreviewEmoteOverrides = data.CharacterFolderPreviewEmoteOverrides
                 .Where(pair => !string.IsNullOrWhiteSpace(pair.Key) && pair.Value > 0)
@@ -357,6 +374,7 @@ namespace OceanyaClient
                     StringComparer.OrdinalIgnoreCase);
             data.CharacterFolderActiveTagFilters = NormalizeTagList(data.CharacterFolderActiveTagFilters);
             data.CharacterFolderTagPanelWidth = Math.Clamp(data.CharacterFolderTagPanelWidth, 180, 520);
+            data.CharacterCreatorPreviewVolume = Math.Clamp(data.CharacterCreatorPreviewVolume, 0.0, 1.0);
 
             data.FolderVisualizer ??= new FolderVisualizerConfig();
             data.FolderVisualizer.Presets ??= new List<FolderVisualizerViewPreset>();
@@ -908,6 +926,15 @@ namespace OceanyaClient
         {
             state.Width = Math.Clamp(state.Width, 760, 6000);
             state.Height = Math.Clamp(state.Height, 520, 4000);
+            if (state.Left.HasValue && double.IsInfinity(state.Left.Value))
+            {
+                state.Left = null;
+            }
+
+            if (state.Top.HasValue && double.IsInfinity(state.Top.Value))
+            {
+                state.Top = null;
+            }
         }
 
         private static List<string> NormalizeTagList(IEnumerable<string>? values)

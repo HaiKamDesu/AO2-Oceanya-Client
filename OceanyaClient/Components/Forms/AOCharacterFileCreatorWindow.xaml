@@ -1,0 +1,862 @@
+<Window x:Class="OceanyaClient.AOCharacterFileCreatorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:OceanyaClient"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        Title="AO Character File Creator"
+        Height="760"
+        Width="1220"
+        MinHeight="640"
+        MinWidth="980"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Loaded="Window_Loaded"
+        KeyDown="Window_KeyDown"
+        StateChanged="Window_StateChanged"
+        Closing="Window_Closing">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="30"
+                            ResizeBorderThickness="6"
+                            CornerRadius="0"
+                            GlassFrameThickness="0"
+                            UseAeroCaptionButtons="False"/>
+    </shell:WindowChrome.WindowChrome>
+
+    <Window.Resources>
+        <Style x:Key="ModernButton" TargetType="Button">
+            <Setter Property="Background" Value="#FF262626"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#444444"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="12,5"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="3">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#FF3D3D3D" TargetName="ButtonBorder"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter Property="Background" Value="#FF171717" TargetName="ButtonBorder"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Background" Value="#FF1A1A1A" TargetName="ButtonBorder"/>
+                                <Setter Property="BorderBrush" Value="#FF333333" TargetName="ButtonBorder"/>
+                                <Setter Property="Foreground" Value="#FF7A7A7A"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="NavButtonStyle" TargetType="Button" BasedOn="{StaticResource ModernButton}">
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Padding" Value="12,5"/>
+            <Setter Property="Margin" Value="0,0,0,8"/>
+            <Setter Property="Background" Value="#FF1F1F1F"/>
+            <Setter Property="BorderBrush" Value="#FF3E3E3E"/>
+            <Setter Property="Height" Value="36"/>
+        </Style>
+
+        <Style x:Key="ModernTextBox" TargetType="TextBox">
+            <Setter Property="Background" Value="#FF262626"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#444444"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+
+        <Style x:Key="DarkComboBoxItemStyle" TargetType="ComboBoxItem">
+            <Setter Property="Foreground" Value="#FFECECEC"/>
+            <Setter Property="Background" Value="#FF1F1F1F"/>
+            <Setter Property="Padding" Value="10,4"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="ItemBorder" Background="{TemplateBinding Background}">
+                            <ContentPresenter VerticalAlignment="Center"
+                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#FF36506A"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#FF3D5E7F"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="DarkComboBoxStyle" TargetType="ComboBox">
+            <Setter Property="Foreground" Value="#FFF0F0F0"/>
+            <Setter Property="Background" Value="#FF262626"/>
+            <Setter Property="BorderBrush" Value="#FF444444"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="10,0,28,0"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="ItemContainerStyle" Value="{StaticResource DarkComboBoxItemStyle}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid SnapsToDevicePixels="True">
+                            <Border x:Name="MainBorder"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="3"/>
+
+                            <ToggleButton x:Name="DropdownToggle"
+                                          Focusable="False"
+                                          ClickMode="Press"
+                                          HorizontalAlignment="Stretch"
+                                          VerticalAlignment="Stretch"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                          Background="Transparent"
+                                          BorderThickness="0">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border Background="Transparent"/>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+
+                            <ContentPresenter x:Name="SelectionBoxPresenter"
+                                              Margin="{TemplateBinding Padding}"
+                                              VerticalAlignment="Center"
+                                              HorizontalAlignment="Stretch"
+                                              IsHitTestVisible="False"
+                                              Content="{TemplateBinding SelectionBoxItem}"
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                              TextElement.Foreground="{TemplateBinding Foreground}"/>
+
+                            <TextBox x:Name="PART_EditableTextBox"
+                                     Margin="{TemplateBinding Padding}"
+                                     VerticalContentAlignment="Center"
+                                     HorizontalContentAlignment="Left"
+                                     Foreground="{TemplateBinding Foreground}"
+                                     Background="Transparent"
+                                     BorderThickness="0"
+                                     Visibility="Hidden"
+                                     Focusable="True"/>
+
+                            <Path HorizontalAlignment="Right"
+                                  VerticalAlignment="Center"
+                                  Margin="0,0,10,0"
+                                  IsHitTestVisible="False"
+                                  Fill="#FFDCDCDC"
+                                  Data="M 0 0 L 8 0 L 4 5 Z"/>
+
+                            <Popup x:Name="PART_Popup"
+                                   Placement="Bottom"
+                                   IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   AllowsTransparency="True"
+                                   Focusable="False"
+                                   PopupAnimation="Fade">
+                                <Border Margin="0,2,0,0"
+                                        MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
+                                        Background="#FF1F1F1F"
+                                        BorderBrush="#FF4A4A4A"
+                                        BorderThickness="1"
+                                        CornerRadius="3">
+                                    <ScrollViewer CanContentScroll="True" MaxHeight="320">
+                                        <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsEditable" Value="True">
+                                <Setter TargetName="PART_EditableTextBox" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="SelectionBoxPresenter" Property="Visibility" Value="Hidden"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="MainBorder" Property="Background" Value="#FF2A2A2A"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                <Setter TargetName="MainBorder" Property="BorderBrush" Value="#FF6E93BB"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="MainBorder" Property="Background" Value="#FF1A1A1A"/>
+                                <Setter Property="Foreground" Value="#FF7A7A7A"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="LabelStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#FFD2D2D2"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Margin" Value="0,8,0,4"/>
+        </Style>
+
+        <Style x:Key="FieldTitleStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#FFE3E3E3"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+
+        <Style x:Key="HelpBadgeStyle" TargetType="Button">
+            <Setter Property="Height" Value="18"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#FFBDBDBD"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="FontWeight" Value="Normal"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="BlipPreviewGlyphButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Foreground" Value="#FFB8B8B8"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Foreground" Value="#FFE0E0E0"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="TagSuggestionListBoxStyle" TargetType="ListBox">
+            <Setter Property="Background" Value="#FF1F1F1F"/>
+            <Setter Property="Foreground" Value="#FFF0F0F0"/>
+            <Setter Property="BorderBrush" Value="#FF4A4A4A"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="0"/>
+        </Style>
+
+        <Style x:Key="TagSuggestionListBoxItemStyle" TargetType="ListBoxItem">
+            <Setter Property="Foreground" Value="#FFECECEC"/>
+            <Setter Property="Background" Value="#00000000"/>
+            <Setter Property="Padding" Value="8,5"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="ItemBorder" Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#FF36506A"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#FF3D5E7F"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="CloseButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#FFE81123" TargetName="ButtonBorder"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter Property="Background" Value="#FFC41E3A" TargetName="ButtonBorder"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Border x:Name="WindowFrameBorder" BorderBrush="#222222" BorderThickness="1" CornerRadius="5">
+        <Grid Margin="0,0,-1,-1">
+            <Rectangle HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                <Rectangle.Fill>
+                    <ImageBrush ImageSource="pack://application:,,,/OceanyaClient;component/Resources/scoienceblur.jpg"
+                                Opacity="0.5"
+                                Stretch="UniformToFill"/>
+                </Rectangle.Fill>
+            </Rectangle>
+
+            <Rectangle HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Fill="#7F000000"/>
+
+            <Rectangle HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Margin="0,30,0,44">
+                <Rectangle.Fill>
+                    <ImageBrush ImageSource="pack://application:,,,/OceanyaClient;component/Resources/Logo_O.png" Stretch="Uniform" Opacity="0.08"/>
+                </Rectangle.Fill>
+            </Rectangle>
+
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="30"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="44"/>
+                </Grid.RowDefinitions>
+
+                <Border Grid.Row="0" Background="#CC000000" MouseLeftButtonDown="DragWindow">
+                    <Grid>
+                        <Rectangle HorizontalAlignment="Left" Width="129" Height="30" VerticalAlignment="Center">
+                            <Rectangle.Fill>
+                                <ImageBrush ImageSource="pack://application:,,,/OceanyaClient;component/Resources/Logo_Oceanya.png"/>
+                            </Rectangle.Fill>
+                        </Rectangle>
+                        <Button Width="30"
+                                HorizontalAlignment="Right"
+                                Content="✕"
+                                shell:WindowChrome.IsHitTestVisibleInChrome="True"
+                                Style="{StaticResource CloseButtonStyle}"
+                                Click="CloseButton_Click"/>
+                        <Rectangle HorizontalAlignment="Left" Width="157" Height="23" VerticalAlignment="Top" Margin="129,6,0,0">
+                            <Rectangle.Fill>
+                                <ImageBrush ImageSource="pack://application:,,,/OceanyaClient;component/Resources/Logo_Laboratories.png" Stretch="Uniform"/>
+                            </Rectangle.Fill>
+                        </Rectangle>
+                        <TextBlock Text="AO Character File Creator"
+                                   Foreground="#FFDADADA"
+                                   FontSize="12"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"/>
+                    </Grid>
+                </Border>
+
+                <Grid Grid.Row="1" Margin="10,10,10,6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="220"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0" Background="#A0101010" BorderBrush="#2F4A5E" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,10,0">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <StackPanel Grid.Row="0">
+                                <TextBlock Text="Workflow" Foreground="White" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,10"/>
+                                <Button x:Name="SectionSetupButton" Tag="setup" Content="1. Initial Character Setup" Style="{StaticResource NavButtonStyle}" Click="SectionButton_Click"/>
+                                <Button x:Name="SectionEffectsButton" Tag="effects" Content="2. Effects" Style="{StaticResource NavButtonStyle}" Click="SectionButton_Click"/>
+                                <Button x:Name="SectionEmotesButton" Tag="emotes" Content="3. Emotes" Style="{StaticResource NavButtonStyle}" Click="SectionButton_Click"/>
+                            </StackPanel>
+                            <StackPanel Grid.Row="1" Margin="0,8,0,0">
+                                <Button Content="Default Tab" Style="{StaticResource ModernButton}" Margin="0,0,0,8" Click="DefaultTabButton_Click"/>
+                                <Button Content="Default all" Style="{StaticResource ModernButton}" Click="DefaultAllButton_Click"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <Grid Grid.Column="1">
+                        <Border x:Name="SetupSectionPanel" Background="#A0101010" BorderBrush="#2F4A5E" BorderThickness="1" CornerRadius="4" Padding="10">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel>
+                                    <TextBlock Text="Initial Character Setup" Foreground="White" FontSize="14" FontWeight="SemiBold"/>
+
+                                    <StackPanel x:Name="MountPathAutoPanel" Margin="0,12,0,4">
+                                        <TextBlock x:Name="MountPathResolvedTextBlock" Foreground="#FFD3E8FA" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <StackPanel x:Name="MountPathSelectPanel" Visibility="Collapsed" Margin="0,12,0,4">
+                                        <DockPanel Margin="0,0,0,4" LastChildFill="False">
+                                            <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                                                    ToolTip="This chooses which AO base mount receives the new character folder in its characters directory."/>
+                                            <TextBlock Text="Character base mount path" Style="{StaticResource FieldTitleStyle}"/>
+                                        </DockPanel>
+                                        <ComboBox x:Name="MountPathComboBox" Style="{StaticResource DarkComboBoxStyle}" SelectionChanged="MountPathComboBox_SelectionChanged"/>
+                                    </StackPanel>
+
+                                    <Border BorderBrush="#2F4A5E" BorderThickness="1" CornerRadius="4" Padding="10" Background="#400F0F0F" Margin="0,8,0,0">
+                                        <Grid>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+
+                                            <StackPanel Grid.Row="0" Margin="0,0,0,10">
+                                                <DockPanel Margin="0,0,0,4" LastChildFill="False">
+                                                    <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                                                            ToolTip="This is the actual folder name in AO. It is what appears in the file system inside characters/."/>
+                                                    <TextBlock Text="1) Character Folder Name" Style="{StaticResource FieldTitleStyle}"/>
+                                                </DockPanel>
+                                                <TextBox x:Name="CharacterFolderNameTextBox" Style="{StaticResource ModernTextBox}" TextChanged="CharacterField_TextChanged"/>
+                                            </StackPanel>
+
+                                            <StackPanel Grid.Row="1" Margin="0,0,0,10">
+                                                <DockPanel Margin="0,0,0,4" LastChildFill="False">
+                                                    <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                                                            ToolTip="This is the display name shown in chat/court when using this character."/>
+                                                    <TextBlock Text="2) Showname" Style="{StaticResource FieldTitleStyle}"/>
+                                                </DockPanel>
+                                                <TextBox x:Name="ShowNameTextBox" Style="{StaticResource ModernTextBox}" TextChanged="CharacterField_TextChanged"/>
+                                            </StackPanel>
+
+                                            <StackPanel Grid.Row="2" Margin="0,0,0,10">
+                                                <DockPanel Margin="0,0,0,4" LastChildFill="False">
+                                                    <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                                                            ToolTip="This sets where the character appears by default (for example defense, prosecution, witness, judge)."/>
+                                                    <TextBlock Text="3) Side" Style="{StaticResource FieldTitleStyle}"/>
+                                                </DockPanel>
+                                                <ComboBox x:Name="SideComboBox"
+                                                          Style="{StaticResource DarkComboBoxStyle}"
+                                                          IsEditable="True"
+                                                          IsTextSearchEnabled="True"
+                                                          StaysOpenOnEdit="True"
+                                                          SelectionChanged="CharacterSelectionField_Changed"/>
+                                            </StackPanel>
+
+                                            <StackPanel Grid.Row="3">
+                                                <DockPanel Margin="0,0,0,4" LastChildFill="False">
+                                                    <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                                                            ToolTip="This controls the voice blip style used while text appears. You can pick defaults or import a custom blip file."/>
+                                                    <TextBlock Text="4) Gender / Blips" Style="{StaticResource FieldTitleStyle}"/>
+                                                </DockPanel>
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <local:AutoCompleteDropdownField x:Name="GenderBlipsDropdown"
+                                                                                     Grid.Column="0"
+                                                                                     ShowItemSymbol="False"
+                                                                                     TextValueChanged="CharacterAutoCompleteField_TextValueChanged"/>
+                                                    <local:PlayStopProgressButton x:Name="BlipPreviewPlayButton"
+                                                                                  Grid.Column="1"
+                                                                                  Margin="8,0,0,0"
+                                                                                  VerticalAlignment="Center"
+                                                                                  Width="36"
+                                                                                  Height="36"
+                                                                                  ProgressEnabled="True"
+                                                                                  AutoProgress="True"
+                                                                                  ToolTipText="Preview how this blip sounds in AO2 message playback."
+                                                                                  PlayRequested="BlipPreviewPlayButton_PlayRequested"
+                                                                                  StopRequested="BlipPreviewPlayButton_StopRequested"/>
+                                                    <Button Grid.Column="2" Margin="8,0,0,0" Width="100" Content="From file..." Style="{StaticResource ModernButton}" Click="BlipFromFileButton_Click"/>
+                                                </Grid>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Border>
+
+                        <Border x:Name="EffectsSectionPanel" Background="#A0101010" BorderBrush="#2F4A5E" BorderThickness="1" CornerRadius="4" Padding="10" Visibility="Collapsed">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel>
+                                    <TextBlock Text="Effects" Foreground="White" FontSize="14" FontWeight="SemiBold"/>
+                                    <Border Margin="0,8,0,8" Padding="8" BorderBrush="#725E3B" BorderThickness="1" CornerRadius="4" Background="#33221800">
+                                        <DockPanel LastChildFill="False">
+                                            <TextBlock Text="This tab is fully optional and mostly unnecessary unless you feel like configuring extra things."
+                                                       Foreground="#FFE3CAA7"
+                                                       TextWrapping="Wrap"
+                                                       VerticalAlignment="Center"
+                                                       Width="700"/>
+                                        </DockPanel>
+                                    </Border>
+
+                                    <Border Margin="0,0,0,8" BorderBrush="#2F4A5E" BorderThickness="1" CornerRadius="4" Padding="8" Background="#33000000">
+                                        <StackPanel>
+                                            <DockPanel Margin="0,0,0,4" LastChildFill="False">
+                                                <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                                                        ToolTip="Configure per-shout visuals and sounds. AO2 uses fixed names: holdit_bubble/holdit, objection_bubble/objection, takethat_bubble/takethat, custom/custom. Imported files are copied into this character folder."/>
+                                                <TextBlock Text="Shouts (Visual + SFX)" Style="{StaticResource FieldTitleStyle}"/>
+                                            </DockPanel>
+                                            <UniformGrid Columns="4" Margin="0,4,0,0">
+                                                <Border Margin="0,0,8,0" Background="#1E262D38" BorderBrush="#503B4659" BorderThickness="1" CornerRadius="4" Padding="8">
+                                                    <StackPanel>
+                                                        <TextBlock Text="Hold it" Foreground="#FFF0F0F0" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,6"/>
+                                                        <Border Height="120" Background="#1A000000" BorderBrush="#334A5E72" BorderThickness="1" CornerRadius="4">
+                                                            <Grid>
+                                                                <Image x:Name="HoldItPreviewImage" Stretch="Uniform"/>
+                                                                <TextBlock x:Name="HoldItNoImageText" Text="No image" Foreground="#FFC6C6C6" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
+                                                            </Grid>
+                                                        </Border>
+                                                        <local:PlayStopProgressButton x:Name="HoldItPlayButton" Tag="holdit" Width="36" Height="36" Margin="0,8,0,6" HorizontalAlignment="Center" ProgressEnabled="True" AutoProgress="True" PlayRequested="ShoutPlayButton_PlayRequested" StopRequested="ShoutPlayButton_StopRequested" PlaybackCompleted="ShoutPlayButton_PlaybackCompleted"/>
+                                                        <TextBlock x:Name="HoldItVisualFileTextBlock" Foreground="#FFC9C9C9" FontSize="10" Text="Default visual" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock x:Name="HoldItSfxFileTextBlock" Foreground="#FFC9C9C9" FontSize="10" Text="Default sfx" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
+                                                        <UniformGrid Columns="3" Margin="0,6,0,0">
+                                                            <Button Margin="0,0,4,0" Content="Visual..." Style="{StaticResource ModernButton}" Click="ShoutVisualFromFileButton_Click" Tag="holdit"/>
+                                                            <Button Margin="4,0,4,0" Content="SFX..." Style="{StaticResource ModernButton}" Click="ShoutSfxFromFileButton_Click" Tag="holdit"/>
+                                                            <Button Margin="4,0,0,0" Content="Default" Style="{StaticResource ModernButton}" Click="ShoutDefaultButton_Click" Tag="holdit"/>
+                                                        </UniformGrid>
+                                                    </StackPanel>
+                                                </Border>
+
+                                                <Border Margin="8,0,8,0" Background="#1E262D38" BorderBrush="#503B4659" BorderThickness="1" CornerRadius="4" Padding="8">
+                                                    <StackPanel>
+                                                        <TextBlock Text="Objection" Foreground="#FFF0F0F0" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,6"/>
+                                                        <Border Height="120" Background="#1A000000" BorderBrush="#334A5E72" BorderThickness="1" CornerRadius="4">
+                                                            <Grid>
+                                                                <Image x:Name="ObjectionPreviewImage" Stretch="Uniform"/>
+                                                                <TextBlock x:Name="ObjectionNoImageText" Text="No image" Foreground="#FFC6C6C6" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
+                                                            </Grid>
+                                                        </Border>
+                                                        <local:PlayStopProgressButton x:Name="ObjectionPlayButton" Tag="objection" Width="36" Height="36" Margin="0,8,0,6" HorizontalAlignment="Center" ProgressEnabled="True" AutoProgress="True" PlayRequested="ShoutPlayButton_PlayRequested" StopRequested="ShoutPlayButton_StopRequested" PlaybackCompleted="ShoutPlayButton_PlaybackCompleted"/>
+                                                        <TextBlock x:Name="ObjectionVisualFileTextBlock" Foreground="#FFC9C9C9" FontSize="10" Text="Default visual" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock x:Name="ObjectionSfxFileTextBlock" Foreground="#FFC9C9C9" FontSize="10" Text="Default sfx" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
+                                                        <UniformGrid Columns="3" Margin="0,6,0,0">
+                                                            <Button Margin="0,0,4,0" Content="Visual..." Style="{StaticResource ModernButton}" Click="ShoutVisualFromFileButton_Click" Tag="objection"/>
+                                                            <Button Margin="4,0,4,0" Content="SFX..." Style="{StaticResource ModernButton}" Click="ShoutSfxFromFileButton_Click" Tag="objection"/>
+                                                            <Button Margin="4,0,0,0" Content="Default" Style="{StaticResource ModernButton}" Click="ShoutDefaultButton_Click" Tag="objection"/>
+                                                        </UniformGrid>
+                                                    </StackPanel>
+                                                </Border>
+
+                                                <Border Margin="8,0,8,0" Background="#1E262D38" BorderBrush="#503B4659" BorderThickness="1" CornerRadius="4" Padding="8">
+                                                    <StackPanel>
+                                                        <TextBlock Text="Take That" Foreground="#FFF0F0F0" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,6"/>
+                                                        <Border Height="120" Background="#1A000000" BorderBrush="#334A5E72" BorderThickness="1" CornerRadius="4">
+                                                            <Grid>
+                                                                <Image x:Name="TakeThatPreviewImage" Stretch="Uniform"/>
+                                                                <TextBlock x:Name="TakeThatNoImageText" Text="No image" Foreground="#FFC6C6C6" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
+                                                            </Grid>
+                                                        </Border>
+                                                        <local:PlayStopProgressButton x:Name="TakeThatPlayButton" Tag="takethat" Width="36" Height="36" Margin="0,8,0,6" HorizontalAlignment="Center" ProgressEnabled="True" AutoProgress="True" PlayRequested="ShoutPlayButton_PlayRequested" StopRequested="ShoutPlayButton_StopRequested" PlaybackCompleted="ShoutPlayButton_PlaybackCompleted"/>
+                                                        <TextBlock x:Name="TakeThatVisualFileTextBlock" Foreground="#FFC9C9C9" FontSize="10" Text="Default visual" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock x:Name="TakeThatSfxFileTextBlock" Foreground="#FFC9C9C9" FontSize="10" Text="Default sfx" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
+                                                        <UniformGrid Columns="3" Margin="0,6,0,0">
+                                                            <Button Margin="0,0,4,0" Content="Visual..." Style="{StaticResource ModernButton}" Click="ShoutVisualFromFileButton_Click" Tag="takethat"/>
+                                                            <Button Margin="4,0,4,0" Content="SFX..." Style="{StaticResource ModernButton}" Click="ShoutSfxFromFileButton_Click" Tag="takethat"/>
+                                                            <Button Margin="4,0,0,0" Content="Default" Style="{StaticResource ModernButton}" Click="ShoutDefaultButton_Click" Tag="takethat"/>
+                                                        </UniformGrid>
+                                                    </StackPanel>
+                                                </Border>
+
+                                                <Border Margin="8,0,0,0" Background="#1E262D38" BorderBrush="#503B4659" BorderThickness="1" CornerRadius="4" Padding="8">
+                                                    <StackPanel>
+                                                        <TextBlock Text="Custom" Foreground="#FFF0F0F0" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,6"/>
+                                                        <Border Height="120" Background="#1A000000" BorderBrush="#334A5E72" BorderThickness="1" CornerRadius="4">
+                                                            <Grid>
+                                                                <Image x:Name="CustomPreviewImage" Stretch="Uniform"/>
+                                                                <TextBlock x:Name="CustomNoImageText" Text="No image" Foreground="#FFC6C6C6" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                            </Grid>
+                                                        </Border>
+                                                        <local:PlayStopProgressButton x:Name="CustomPlayButton" Tag="custom" Width="36" Height="36" Margin="0,8,0,6" HorizontalAlignment="Center" ProgressEnabled="True" AutoProgress="True" PlayRequested="ShoutPlayButton_PlayRequested" StopRequested="ShoutPlayButton_StopRequested" PlaybackCompleted="ShoutPlayButton_PlaybackCompleted"/>
+                                                        <TextBlock x:Name="CustomVisualFileTextBlock" Foreground="#FFC9C9C9" FontSize="10" Text="No image" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock x:Name="CustomSfxFileTextBlock" Foreground="#FFC9C9C9" FontSize="10" Text="Default sfx" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
+                                                        <UniformGrid Columns="3" Margin="0,6,0,0">
+                                                            <Button Margin="0,0,4,0" Content="Visual..." Style="{StaticResource ModernButton}" Click="ShoutVisualFromFileButton_Click" Tag="custom"/>
+                                                            <Button Margin="4,0,4,0" Content="SFX..." Style="{StaticResource ModernButton}" Click="ShoutSfxFromFileButton_Click" Tag="custom"/>
+                                                            <Button Margin="4,0,0,0" Content="Default" Style="{StaticResource ModernButton}" Click="ShoutDefaultButton_Click" Tag="custom"/>
+                                                        </UniformGrid>
+                                                        <DockPanel Margin="0,6,0,4" LastChildFill="False">
+                                                            <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}" ToolTip="Custom shout label shown in AO2 custom shout menu."/>
+                                                            <TextBlock Text="Custom Label" Style="{StaticResource FieldTitleStyle}"/>
+                                                        </DockPanel>
+                                                        <TextBox x:Name="CustomShoutNameTextBox" Style="{StaticResource ModernTextBox}" TextChanged="CharacterField_TextChanged"/>
+                                                    </StackPanel>
+                                                </Border>
+                                            </UniformGrid>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <StackPanel Margin="0,0,0,8">
+                                        <DockPanel Margin="0,0,0,4" LastChildFill="False">
+                                            <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                                                    ToolTip="Realization in AO2 is a custom sound token from char.ini [Options]/realization. Importing a file copies it into this character folder and writes a compatible relative path token."/>
+                                            <TextBlock Text="Realization (SFX)" Style="{StaticResource FieldTitleStyle}"/>
+                                        </DockPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox x:Name="RealizationTextBox" Grid.Column="0" Style="{StaticResource ModernTextBox}" TextChanged="CharacterField_TextChanged"/>
+                                            <local:PlayStopProgressButton x:Name="RealizationPlayButton"
+                                                                          Grid.Column="1"
+                                                                          Margin="8,0,0,0"
+                                                                          Width="36"
+                                                                          Height="36"
+                                                                          ProgressEnabled="True"
+                                                                          AutoProgress="True"
+                                                                          PlayRequested="RealizationPlayButton_PlayRequested"
+                                                                          StopRequested="RealizationPlayButton_StopRequested"
+                                                                          PlaybackCompleted="RealizationPlayButton_PlaybackCompleted"/>
+                                            <Button Grid.Column="2" Margin="8,0,0,0" Width="110" Content="From file..." Style="{StaticResource ModernButton}" Click="RealizationFromFileButton_Click"/>
+                                        </Grid>
+                                    </StackPanel>
+
+                                    <StackPanel Margin="0,0,0,8">
+                                        <DockPanel Margin="0,0,0,4" LastChildFill="False">
+                                            <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                                                    ToolTip="Chooses a misc chat profile for chatbox/fonts/colors. Example values: default, hd, custom_theme_name."/>
+                                            <TextBlock Text="Chat" Style="{StaticResource FieldTitleStyle}"/>
+                                        </DockPanel>
+                                        <local:AutoCompleteDropdownField x:Name="ChatDropdown"
+                                                                         ShowItemSymbol="False"
+                                                                         TextValueChanged="ChatDropdown_TextValueChanged"/>
+                                        <local:AO2ChatPreviewControl x:Name="ChatPreviewControl"
+                                                                     Margin="0,10,0,0"
+                                                                     HorizontalAlignment="Center"
+                                                                     ShowMessage="False"
+                                                                     ShowShowname="False"/>
+                                    </StackPanel>
+
+                                    <Expander Header="Advanced/Extra options"
+                                              Foreground="#FFE5E5E5"
+                                              FontSize="12"
+                                              Margin="0,2,0,0"
+                                              IsExpanded="False">
+                                        <Border BorderBrush="#2F4A5E" BorderThickness="1" CornerRadius="4" Padding="10" Background="#400F0F0F" Margin="0,8,0,0">
+                                            <StackPanel>
+                                                <StackPanel Margin="0,0,0,8">
+                                                    <DockPanel Margin="0,0,0,4" LastChildFill="False">
+                                                        <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                                                                ToolTip="Uses a misc effect pack folder for extra effects. Example values: default, rta_effects, custom_fx_folder."/>
+                                                        <TextBlock Text="Effects" Style="{StaticResource FieldTitleStyle}"/>
+                                                    </DockPanel>
+                                                    <local:AutoCompleteDropdownField x:Name="EffectsDropdown"
+                                                                                     ShowItemSymbol="False"
+                                                                                     TextValueChanged="CharacterAutoCompleteField_TextValueChanged"/>
+                                                </StackPanel>
+
+                                                <UniformGrid Columns="3">
+                                                    <StackPanel Margin="0,0,6,0">
+                                                        <DockPanel Margin="0,0,0,4" LastChildFill="False">
+                                                            <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                                                                    ToolTip="Image scaling mode for this character. AO2 uses: smooth, pixel, or fast."/>
+                                                            <TextBlock Text="Scaling" Style="{StaticResource FieldTitleStyle}"/>
+                                                        </DockPanel>
+                                                        <local:AutoCompleteDropdownField x:Name="ScalingDropdown"
+                                                                                         TextValueChanged="CharacterAutoCompleteField_TextValueChanged"/>
+                                                    </StackPanel>
+                                                    <StackPanel Margin="6,0,6,0">
+                                                        <DockPanel Margin="0,0,0,4" LastChildFill="False">
+                                                            <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                                                                    ToolTip="Whether animations stretch to fit. AO2 expects true/false."/>
+                                                            <TextBlock Text="Stretch" Style="{StaticResource FieldTitleStyle}"/>
+                                                        </DockPanel>
+                                                        <local:AutoCompleteDropdownField x:Name="StretchDropdown"
+                                                                                         TextValueChanged="CharacterAutoCompleteField_TextValueChanged"/>
+                                                    </StackPanel>
+                                                    <StackPanel Margin="6,0,0,0">
+                                                        <DockPanel Margin="0,0,0,4" LastChildFill="False">
+                                                            <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                                                                    ToolTip="Whether AO should display this character showname. AO2 behavior checks for false to hide it."/>
+                                                            <TextBlock Text="Needs showname" Style="{StaticResource FieldTitleStyle}"/>
+                                                        </DockPanel>
+                                                        <local:AutoCompleteDropdownField x:Name="NeedsShownameDropdown"
+                                                                                         TextValueChanged="CharacterAutoCompleteField_TextValueChanged"/>
+                                                    </StackPanel>
+                                                </UniformGrid>
+                                            </StackPanel>
+                                        </Border>
+                                    </Expander>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Border>
+
+                        <Border x:Name="EmotesSectionPanel" Background="#A0101010" BorderBrush="#2F4A5E" BorderThickness="1" CornerRadius="4" Padding="10" Visibility="Collapsed">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="300"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+
+                                <Border Grid.Column="0" Background="#40101010" BorderBrush="#2F4A5E" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,10,0">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="*"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        <TextBlock Text="Emotes" Foreground="White" FontSize="14" FontWeight="SemiBold"/>
+                                        <ListBox x:Name="EmoteListBox"
+                                                 Grid.Row="1"
+                                                 Margin="0,8,0,8"
+                                                 Background="#FF1E1E1E"
+                                                 Foreground="White"
+                                                 DisplayMemberPath="DisplayName"
+                                                 SelectionChanged="EmoteListBox_SelectionChanged"/>
+                                        <UniformGrid Grid.Row="2" Columns="2" Rows="2">
+                                            <Button Margin="0,0,6,6" Content="Add" Style="{StaticResource ModernButton}" Click="AddEmoteButton_Click"/>
+                                            <Button Margin="6,0,0,6" Content="Remove" Style="{StaticResource ModernButton}" Click="RemoveEmoteButton_Click"/>
+                                            <Button Margin="0,0,6,0" Content="Move Up" Style="{StaticResource ModernButton}" Click="MoveEmoteUpButton_Click"/>
+                                            <Button Margin="6,0,0,0" Content="Move Down" Style="{StaticResource ModernButton}" Click="MoveEmoteDownButton_Click"/>
+                                        </UniformGrid>
+                                    </Grid>
+                                </Border>
+
+                                <Border Grid.Column="1" Background="#40101010" BorderBrush="#2F4A5E" BorderThickness="1" CornerRadius="4" Padding="10">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                        <StackPanel>
+                                            <TextBlock Text="Selected Emote Editor" Foreground="White" FontSize="14" FontWeight="SemiBold"/>
+                                            <TextBlock Text="Name / preanim / final anim (?)" Style="{StaticResource LabelStyle}" ToolTip="Name is the emote label; preanim plays before speaking; final anim is the main pose/talk animation."/>
+                                            <UniformGrid Columns="3">
+                                                <TextBox x:Name="EmoteNameTextBox" Style="{StaticResource ModernTextBox}" Margin="0,0,6,0" TextChanged="EmoteEditor_TextChanged"/>
+                                                <TextBox x:Name="PreAnimationTextBox" Style="{StaticResource ModernTextBox}" Margin="6,0,6,0" TextChanged="EmoteEditor_TextChanged"/>
+                                                <TextBox x:Name="AnimationTextBox" Style="{StaticResource ModernTextBox}" Margin="6,0,0,0" TextChanged="EmoteEditor_TextChanged"/>
+                                            </UniformGrid>
+
+                                            <TextBlock Text="Emote mod / desk mod (?)" Style="{StaticResource LabelStyle}" ToolTip="These control how preanimation/zoom behaves and how desk visibility behaves during that emote."/>
+                                            <UniformGrid Columns="2">
+                                                <TextBox x:Name="EmoteModifierTextBox" Style="{StaticResource ModernTextBox}" Margin="0,0,6,0" TextChanged="EmoteEditor_TextChanged"/>
+                                                <TextBox x:Name="DeskModifierTextBox" Style="{StaticResource ModernTextBox}" Margin="6,0,0,0" TextChanged="EmoteEditor_TextChanged"/>
+                                            </UniformGrid>
+
+                                            <TextBlock Text="SFX name / delay(ms) / loop (?)" Style="{StaticResource LabelStyle}" ToolTip="Choose the emote sound, when it plays in milliseconds, and whether it loops."/>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="130"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBox x:Name="SfxNameTextBox" Grid.Column="0" Style="{StaticResource ModernTextBox}" Margin="0,0,6,0" TextChanged="EmoteEditor_TextChanged"/>
+                                                <TextBox x:Name="SfxDelayTextBox" Grid.Column="1" Style="{StaticResource ModernTextBox}" Margin="6,0,6,0" TextChanged="EmoteEditor_TextChanged"/>
+                                                <CheckBox x:Name="SfxLoopingCheckBox" Grid.Column="2" Content="Loop" Foreground="White" VerticalAlignment="Center" Checked="SfxLoopingCheckBox_Changed" Unchecked="SfxLoopingCheckBox_Changed"/>
+                                            </Grid>
+
+                                            <TextBlock Text="Preanim duration(ms) / stay_time(ms) / per-emote blips override (?)" Style="{StaticResource LabelStyle}" ToolTip="Preanim duration controls how long preanimation lasts; stay_time controls on-screen hold timing; blips override changes voice blips for this emote only."/>
+                                            <UniformGrid Columns="3">
+                                                <TextBox x:Name="PreAnimationDurationTextBox" Style="{StaticResource ModernTextBox}" Margin="0,0,6,0" TextChanged="EmoteEditor_TextChanged"/>
+                                                <TextBox x:Name="StayTimeTextBox" Style="{StaticResource ModernTextBox}" Margin="6,0,6,0" TextChanged="EmoteEditor_TextChanged"/>
+                                                <TextBox x:Name="BlipsOverrideTextBox" Style="{StaticResource ModernTextBox}" Margin="6,0,0,0" TextChanged="EmoteEditor_TextChanged"/>
+                                            </UniformGrid>
+                                        </StackPanel>
+                                    </ScrollViewer>
+                                </Border>
+                            </Grid>
+                        </Border>
+
+                        <Border x:Name="AdvancedSectionPanel" Background="#A0101010" BorderBrush="#2F4A5E" BorderThickness="1" CornerRadius="4" Padding="10" Visibility="Collapsed">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel>
+                                    <TextBlock Text="Frame Timing &amp; Advanced INI Sections" Foreground="White" FontSize="14" FontWeight="SemiBold"/>
+
+                                    <TextBlock Text="Frame timing helper (?)" Style="{StaticResource LabelStyle}" ToolTip="Converts animation frame number to milliseconds so sound timing matches the exact frame you want."/>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="160"/>
+                                            <ColumnDefinition Width="160"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox x:Name="FrameNumberForDelayTextBox" Grid.Column="0" Style="{StaticResource ModernTextBox}" Margin="0,0,6,0"/>
+                                        <TextBox x:Name="FramesPerSecondTextBox" Grid.Column="1" Style="{StaticResource ModernTextBox}" Margin="6,0,6,0"/>
+                                        <Button Grid.Column="2" Margin="6,0,6,0" Content="Frame -&gt; ms" Style="{StaticResource ModernButton}" Click="FrameToDelayButton_Click"/>
+                                        <TextBlock x:Name="FrameToDelayResultTextBlock" Grid.Column="3" Foreground="#FFD0D0D0" VerticalAlignment="Center"/>
+                                    </Grid>
+
+                                    <TextBlock Text="Frame events (SFX/screenshake/realization) (?)" Style="{StaticResource LabelStyle}" ToolTip="Attach sound, screenshake, or realization triggers to exact animation frames."/>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="170"/>
+                                            <ColumnDefinition Width="130"/>
+                                            <ColumnDefinition Width="90"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <ComboBox x:Name="FrameTargetComboBox" Grid.Column="0" Style="{StaticResource DarkComboBoxStyle}" Margin="0,0,6,0"/>
+                                        <ComboBox x:Name="FrameTypeComboBox" Grid.Column="1" Style="{StaticResource DarkComboBoxStyle}" Margin="6,0,6,0"/>
+                                        <TextBox x:Name="FrameNumberTextBox" Grid.Column="2" Style="{StaticResource ModernTextBox}" Margin="6,0,6,0"/>
+                                        <TextBox x:Name="FrameValueTextBox" Grid.Column="3" Style="{StaticResource ModernTextBox}" Margin="6,0,6,0"/>
+                                        <Button Grid.Column="4" Content="Add" Width="62" Style="{StaticResource ModernButton}" Click="AddFrameEventButton_Click"/>
+                                    </Grid>
+                                    <TextBox x:Name="CustomFrameTargetTextBox" Style="{StaticResource ModernTextBox}" Margin="0,6,0,0"/>
+                                    <ListBox x:Name="FrameEventListBox" Height="180" Margin="0,6,0,0" Background="#FF1E1E1E" Foreground="White" DisplayMemberPath="DisplayText"/>
+                                    <Button Margin="0,6,0,0" Content="Remove selected frame event" Style="{StaticResource ModernButton}" Click="RemoveFrameEventButton_Click"/>
+
+                                    <TextBlock Text="Advanced INI entries (for full char.ini compatibility) (?)" Style="{StaticResource LabelStyle}" ToolTip="Add any extra section/key/value entries directly into char.ini for advanced AO2 behavior."/>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="170"/>
+                                            <ColumnDefinition Width="170"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox x:Name="AdvancedSectionTextBox" Grid.Column="0" Style="{StaticResource ModernTextBox}" Margin="0,0,6,0"/>
+                                        <TextBox x:Name="AdvancedKeyTextBox" Grid.Column="1" Style="{StaticResource ModernTextBox}" Margin="6,0,6,0"/>
+                                        <TextBox x:Name="AdvancedValueTextBox" Grid.Column="2" Style="{StaticResource ModernTextBox}" Margin="6,0,6,0"/>
+                                        <Button Grid.Column="3" Width="62" Content="Add" Style="{StaticResource ModernButton}" Click="AddAdvancedEntryButton_Click"/>
+                                    </Grid>
+                                    <ListBox x:Name="AdvancedEntriesListBox" Height="180" Margin="0,6,0,0" Background="#FF1E1E1E" Foreground="White" DisplayMemberPath="DisplayText"/>
+                                    <Button Margin="0,6,0,0" Content="Remove selected advanced entry" Style="{StaticResource ModernButton}" Click="RemoveAdvancedEntryButton_Click"/>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Border>
+                    </Grid>
+                </Grid>
+
+                <Border Grid.Row="2" Background="#CC111111" Padding="10,6">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <DockPanel Grid.Column="0" LastChildFill="True">
+                            <StackPanel Orientation="Horizontal" Margin="0,0,18,0" VerticalAlignment="Center">
+                                <TextBlock Text="Preview Volume" Foreground="#FFD0D0D0" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <Slider x:Name="PreviewVolumeSlider"
+                                        Width="150"
+                                        Minimum="0"
+                                        Maximum="100"
+                                        ValueChanged="PreviewVolumeSlider_ValueChanged"
+                                        TickFrequency="5"
+                                        IsSnapToTickEnabled="False"
+                                        VerticalAlignment="Center"/>
+                                <TextBlock x:Name="PreviewVolumePercentTextBlock"
+                                           Foreground="#FFD0D0D0"
+                                           VerticalAlignment="Center"
+                                           Margin="8,0,0,0"
+                                           Text="100%"/>
+                            </StackPanel>
+                            <TextBlock x:Name="StatusTextBlock" Foreground="#FFB8B8B8" VerticalAlignment="Center" Text="Configure the character and generate a new AO folder."/>
+                        </DockPanel>
+                        <Button Grid.Column="1" Width="280" Content="Generate Character Folder" Style="{StaticResource ModernButton}" Click="GenerateButton_Click"/>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

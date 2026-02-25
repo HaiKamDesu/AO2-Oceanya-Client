@@ -16,6 +16,10 @@ namespace OceanyaClient.Features.Startup
             {
                 startupWindow = new CharacterFolderVisualizerWindow(onAssetsRefreshed: null);
             }
+            else if (selected.Id == StartupFunctionalityIds.CharacterFileCreator)
+            {
+                startupWindow = new AOCharacterFileCreatorWindow();
+            }
             else
             {
                 startupWindow = new MainWindow();

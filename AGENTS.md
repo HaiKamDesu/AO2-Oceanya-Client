@@ -36,3 +36,15 @@ Any time code is changed, run build and test to verify the work using these exac
 - **Comments**: Use XML documentation comments for public methods and classes.
 - **Dependencies**: Use dependency injection where possible.
 - **Organization**: Keep code organized in the existing namespace structure (AOBot_Testing.Agents, AOBot_Testing.Structures).
+
+## UI Consistency Guidelines
+- **Dark ComboBoxes Standard**: For dark-themed popups/windows, always use the same fully themed ComboBox pattern as `InitialConfigurationWindow.xaml` / `CharacterFolderVisualizerWindow.xaml`, including:
+  - `DarkComboBoxItemStyle`
+  - `DarkComboBoxStyle` with custom `ControlTemplate`
+  - Dark popup/dropdown background and highlighted/selected item states
+- Do not ship new popups with default/light-themed ComboBox dropdown menus.
+- **Auto-complete dropdown standard**: Use `AutoCompleteComboBoxBehavior` for editable searchable dropdowns. This is the default reusable asset for:
+  - Open dropdown while typing
+  - Filter list as user types
+  - Arrow-key navigation through suggestions
+  - `Enter` to commit current suggestion/text

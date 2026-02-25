@@ -171,7 +171,13 @@
                 <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto" Margin="0,16,0,0">
                     <TextBlock x:Name="MessageTextBlock" 
                              Text="Message text goes here"
-                             Style="{StaticResource MessageText}" TextAlignment="Center"/>
+                             Style="{StaticResource MessageText}" TextAlignment="Center">
+                        <TextBlock.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="Copy message" Click="CopyMessageMenuItem_Click"/>
+                            </ContextMenu>
+                        </TextBlock.ContextMenu>
+                    </TextBlock>
                 </ScrollViewer>
 
                 <!-- Action Buttons -->

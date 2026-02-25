@@ -51,6 +51,13 @@ namespace OceanyaClient
                         WaitForm.SetSubtitle("Indexed background mount path: " + path);
                     });
 
+                WaitForm.SetSubtitle("Indexing blip files...");
+                _ = BlipCatalog.Refresh();
+                WaitForm.SetSubtitle("Indexing chat profiles...");
+                _ = ChatCatalog.Refresh();
+                WaitForm.SetSubtitle("Indexing effects folders...");
+                _ = EffectsFolderCatalog.Refresh();
+
                 PersistRefreshMarker();
             }
             finally

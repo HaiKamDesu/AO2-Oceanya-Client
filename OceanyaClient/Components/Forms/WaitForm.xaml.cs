@@ -239,6 +239,34 @@ namespace OceanyaClient
             });
         }
 
+        private void CopyMainMessageMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            string message = lblMessage.Text ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(message) && !ClipboardUtilities.TrySetText(message))
+            {
+                _ = MessageBox.Show(
+                    _instance ?? Application.Current?.MainWindow,
+                    "Could not access clipboard right now. Try again in a moment.",
+                    "Clipboard Busy",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
+        }
+
+        private void CopySubtitleMessageMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            string message = lblSubtitle.Text ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(message) && !ClipboardUtilities.TrySetText(message))
+            {
+                _ = MessageBox.Show(
+                    _instance ?? Application.Current?.MainWindow,
+                    "Could not access clipboard right now. Try again in a moment.",
+                    "Clipboard Busy",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
+        }
+
         public static void SetSubtitle(string subtitle)
         {
             // For backward compatibility

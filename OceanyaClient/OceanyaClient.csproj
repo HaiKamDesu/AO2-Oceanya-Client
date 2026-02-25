@@ -3,6 +3,8 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
@@ -25,8 +27,11 @@
 
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+    <PackageReference Include="libbass" Version="2.4.17" />
+    <PackageReference Include="libbassopus" Version="2.4.3" />
     <PackageReference Include="MaterialDesignColors" Version="5.2.1" />
     <PackageReference Include="MaterialDesignThemes" Version="5.2.1" />
+    <PackageReference Include="ManagedBass" Version="3.0.0" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3065.39" />
     <PackageReference Include="NAudio" Version="2.2.1" />
   </ItemGroup>
@@ -50,6 +55,28 @@
     <None Update="server.json">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Update="Resources\ShoutDefaults\holdit_bubble.gif">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Resources\ShoutDefaults\objection_bubble.gif">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Resources\ShoutDefaults\takethat_bubble.gif">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
+
+  <Target Name="EnsureX64BassInRootOutput" AfterTargets="Build">
+    <Copy SourceFiles="$(OutputPath)win-x64\bass.dll"
+          DestinationFiles="$(OutputPath)bass.dll"
+          OverwriteReadOnlyFiles="true"
+          SkipUnchangedFiles="false"
+          Condition="Exists('$(OutputPath)win-x64\bass.dll')" />
+    <Copy SourceFiles="$(OutputPath)win-x64\bassopus.dll"
+          DestinationFiles="$(OutputPath)bassopus.dll"
+          OverwriteReadOnlyFiles="true"
+          SkipUnchangedFiles="false"
+          Condition="Exists('$(OutputPath)win-x64\bassopus.dll')" />
+  </Target>
 
 </Project>
