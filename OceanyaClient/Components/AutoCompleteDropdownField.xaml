@@ -96,12 +96,21 @@
                          BorderThickness="0"
                          Margin="8,0,0,0"
                          Background="Transparent"
+                         IsReadOnly="{Binding IsTextReadOnly, RelativeSource={RelativeSource AncestorType=UserControl}}"
                          Foreground="#FFF0F0F0"
                          VerticalContentAlignment="Center"
                          GotKeyboardFocus="InputTextBox_GotKeyboardFocus"
                          LostKeyboardFocus="InputTextBox_LostKeyboardFocus"
                          TextChanged="InputTextBox_TextChanged"
                          PreviewKeyDown="InputTextBox_PreviewKeyDown"/>
+                <Button x:Name="ReadOnlyTextAreaToggleButton"
+                        Grid.Column="1"
+                        Style="{StaticResource InlineArrowButtonStyle}"
+                        HorizontalAlignment="Stretch"
+                        VerticalAlignment="Stretch"
+                        Visibility="Collapsed"
+                        Click="ReadOnlyTextAreaToggleButton_Click"
+                        ToolTip="Show all options"/>
 
                 <Button x:Name="ToggleButton"
                         Grid.Column="2"

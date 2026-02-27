@@ -156,12 +156,9 @@ namespace OceanyaClient.Features.CharacterCreator
                     AddEntry("Time", preAnimation, Math.Max(0, emote.PreAnimationDurationMs.Value).ToString());
                 }
 
-                if (emote.StayTimeMs.HasValue)
+                if (!string.Equals(preAnimation, "-", StringComparison.Ordinal) && emote.StayTimeMs.HasValue)
                 {
-                    string stayTimeKey = !string.Equals(preAnimation, "-", StringComparison.Ordinal)
-                        ? preAnimation
-                        : animation;
-                    AddEntry("stay_time", stayTimeKey, Math.Max(0, emote.StayTimeMs.Value).ToString());
+                    AddEntry("stay_time", preAnimation, Math.Max(0, emote.StayTimeMs.Value).ToString());
                 }
 
                 foreach (CharacterCreationFrameEvent frameEvent in emote.FrameEvents ?? new List<CharacterCreationFrameEvent>())
@@ -305,7 +302,9 @@ namespace OceanyaClient.Features.CharacterCreator
             }
 
             Directory.CreateDirectory(characterDirectory);
-            Directory.CreateDirectory(Path.Combine(characterDirectory, "Emotions"));
+            Directory.CreateDirectory(Path.Combine(characterDirectory, "Images"));
+            Directory.CreateDirectory(Path.Combine(characterDirectory, "Sounds"));
+            Directory.CreateDirectory(Path.Combine(characterDirectory, "emotions"));
 
             foreach (string requested in project.AssetFolders ?? new List<string>())
             {

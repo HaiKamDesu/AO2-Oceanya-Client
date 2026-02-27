@@ -219,6 +219,8 @@ namespace OceanyaClient
             IsMaximized = false
         };
         public double CharacterCreatorPreviewVolume { get; set; } = 1.0;
+        public double CharacterCreatorEmoteTileWidth { get; set; } = 420;
+        public double CharacterCreatorEmoteTileHeight { get; set; } = 430;
         public bool LoopEmoteVisualizerAnimations { get; set; } = true;
         public bool ViewFolderIntegrityVerifierResults { get; set; }
         public Dictionary<string, int> CharacterFolderPreviewEmoteOverrides { get; set; } =
@@ -375,6 +377,8 @@ namespace OceanyaClient
             data.CharacterFolderActiveTagFilters = NormalizeTagList(data.CharacterFolderActiveTagFilters);
             data.CharacterFolderTagPanelWidth = Math.Clamp(data.CharacterFolderTagPanelWidth, 180, 520);
             data.CharacterCreatorPreviewVolume = Math.Clamp(data.CharacterCreatorPreviewVolume, 0.0, 1.0);
+            data.CharacterCreatorEmoteTileWidth = Math.Clamp(data.CharacterCreatorEmoteTileWidth, 320, 760);
+            data.CharacterCreatorEmoteTileHeight = Math.Clamp(data.CharacterCreatorEmoteTileHeight, 330, 820);
 
             data.FolderVisualizer ??= new FolderVisualizerConfig();
             data.FolderVisualizer.Presets ??= new List<FolderVisualizerViewPreset>();

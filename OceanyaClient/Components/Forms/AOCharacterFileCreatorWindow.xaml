@@ -291,6 +291,677 @@
             </Setter>
         </Style>
 
+        <Style x:Key="EmoteTileListBoxStyle" TargetType="ListBox">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+            <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="Padding" Value="4"/>
+        </Style>
+
+        <Style x:Key="EmoteTileListBoxItemStyle" TargetType="ListBoxItem">
+            <Setter Property="Margin" Value="4"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="VerticalContentAlignment" Value="Stretch"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <ContentPresenter/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="RenderTransform">
+                <Setter.Value>
+                    <TranslateTransform Y="8"/>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Opacity" Value="0"/>
+            <Style.Triggers>
+                <EventTrigger RoutedEvent="FrameworkElement.Loaded">
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.18"/>
+                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.(TranslateTransform.Y)" To="0" Duration="0:0:0.18"/>
+                        </Storyboard>
+                    </BeginStoryboard>
+                </EventTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="EmoteToolbarButtonStyle" TargetType="Button">
+            <Setter Property="Foreground" Value="#FFD7E6F6"/>
+            <Setter Property="Background" Value="#2B22303E"/>
+            <Setter Property="BorderBrush" Value="#5C617589"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ToolbarButtonBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ToolbarButtonBorder" Property="Background" Value="#3331465A"/>
+                                <Setter TargetName="ToolbarButtonBorder" Property="BorderBrush" Value="#6F8299B4"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ToolbarButtonBorder" Property="Background" Value="#2A2A3A4A"/>
+                                <Setter TargetName="ToolbarButtonBorder" Property="BorderBrush" Value="#778AA4C1"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="ToolbarButtonBorder" Property="Background" Value="#22161C24"/>
+                                <Setter TargetName="ToolbarButtonBorder" Property="BorderBrush" Value="#3F4B5868"/>
+                                <Setter Property="Foreground" Value="#8FA4B8CC"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="InvisibleResizeThumbStyle" TargetType="Thumb">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Thumb">
+                        <Border Background="Transparent"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="EmoteClickableZoneBorderStyle" TargetType="Border">
+            <Setter Property="Background" Value="#26000000"/>
+            <Setter Property="BorderBrush" Value="#55404B58"/>
+            <Setter Property="Cursor" Value="Arrow"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#2E385369"/>
+                    <Setter Property="BorderBrush" Value="#88A8C5DE"/>
+                    <Setter Property="Cursor" Value="Hand"/>
+                </Trigger>
+                <Trigger Property="IsMouseCaptured" Value="True">
+                    <Setter Property="Background" Value="#355A7A96"/>
+                    <Setter Property="BorderBrush" Value="#A8D4F0FF"/>
+                    <Setter Property="Cursor" Value="Pen"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="DialogTabControlStyle" TargetType="TabControl">
+            <Setter Property="Background" Value="#22131B24"/>
+            <Setter Property="BorderBrush" Value="#4B5E748A"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Foreground" Value="#E7EDF5"/>
+            <Setter Property="Padding" Value="0"/>
+        </Style>
+
+        <Style x:Key="DialogTabItemStyle" TargetType="TabItem">
+            <Setter Property="Foreground" Value="#C9D5E3"/>
+            <Setter Property="Background" Value="#2B1E2833"/>
+            <Setter Property="Padding" Value="12,6"/>
+            <Setter Property="Margin" Value="0,0,2,0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="TabBorder"
+                                BorderBrush="#4B5E748A"
+                                BorderThickness="1,1,1,0"
+                                Background="{TemplateBinding Background}"
+                                Padding="{TemplateBinding Padding}"
+                                CornerRadius="4,4,0,0">
+                            <ContentPresenter ContentSource="Header" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="TabBorder" Property="Background" Value="#36425563"/>
+                                <Setter TargetName="TabBorder" Property="BorderBrush" Value="#627D9FC4"/>
+                                <Setter Property="Foreground" Value="#F2F7FC"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="TabBorder" Property="Background" Value="#313B4A5B"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <DataTemplate x:Key="AddEmoteTileContentTemplate">
+            <Border Width="{Binding EmoteTileWidth, RelativeSource={RelativeSource AncestorType=Window}}"
+                    Height="{Binding EmoteTileHeight, RelativeSource={RelativeSource AncestorType=Window}}"
+                    Background="#2A1F2A3A"
+                    BorderBrush="#664A5E72"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    MouseLeftButtonUp="AddEmoteTileBorder_MouseLeftButtonUp">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Style.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#2F253240"/>
+                                <Setter Property="BorderBrush" Value="#7E6C89A8"/>
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <Grid>
+                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                        <TextBlock Text="+"
+                                   FontSize="56"
+                                   FontWeight="Thin"
+                                   Foreground="#D4E2F3"
+                                   HorizontalAlignment="Center"/>
+                        <TextBlock Text="add emote"
+                                   Margin="0,2,0,0"
+                                   FontSize="10"
+                                   Foreground="#BFD3E5"
+                                   HorizontalAlignment="Center"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </DataTemplate>
+
+        <DataTemplate x:Key="EmoteTileContentTemplate">
+            <Border Width="{Binding EmoteTileWidth, RelativeSource={RelativeSource AncestorType=Window}}"
+                    Height="{Binding EmoteTileHeight, RelativeSource={RelativeSource AncestorType=Window}}"
+                    CornerRadius="8"
+                    BorderThickness="1"
+                    MouseRightButtonUp="EmoteTile_MouseRightButtonUp"
+                    MouseLeftButtonDown="EmoteTile_MouseLeftButtonDown"
+                    ContextMenuOpening="EmoteTile_ContextMenuOpening">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Background" Value="#2A171B22"/>
+                        <Setter Property="BorderBrush" Value="#664A5E72"/>
+                        <Style.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#2F2A3340"/>
+                                <Setter Property="BorderBrush" Value="#758AA2BA"/>
+                            </Trigger>
+                            <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=ListBoxItem}, Path=IsSelected}" Value="True">
+                                <Setter Property="Background" Value="#3330434F"/>
+                                <Setter Property="BorderBrush" Value="#7780A4C6"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Emote.IsSelected}" Value="True">
+                                <Setter Property="Background" Value="#3330434F"/>
+                                <Setter Property="BorderBrush" Value="#7780A4C6"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Emote.IsDragTarget}" Value="True">
+                                <Setter Property="Background" Value="#335B7A96"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <Grid>
+                    <Grid Margin="8">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0"
+                                   Text="{Binding Emote.EmoteHeader}"
+                                   Foreground="#FFE2E2E2"
+                                   FontSize="10"
+                                   FontWeight="SemiBold"
+                                   HorizontalAlignment="Center"
+                                   Margin="0,0,0,6"/>
+
+                        <Grid Grid.Row="1">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="24"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <Border Grid.Column="0"
+                                    CornerRadius="4"
+                                    Margin="0,0,4,0"
+                                    BorderThickness="1"
+                                    AllowDrop="True"
+                                    Tag="preanim"
+                                    MouseLeftButtonDown="EmoteDropZone_MouseLeftButtonDown"
+                                    MouseLeftButtonUp="EmoteDropZone_MouseLeftButtonUp"
+                                    PreviewMouseRightButtonDown="EmoteDropZone_PreviewMouseRightButtonDown"
+                                    DragEnter="EmoteDropZone_DragEnter"
+                                    DragOver="EmoteDropZone_DragOver"
+                                    DragLeave="EmoteDropZone_DragLeave"
+                                    Drop="EmoteDropZone_Drop">
+                                <Border.Style>
+                                    <Style TargetType="Border" BasedOn="{StaticResource EmoteClickableZoneBorderStyle}">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Emote.IsPreDropActive}" Value="True">
+                                                <Setter Property="Background" Value="#2A6A8EAE"/>
+                                                <Setter Property="BorderBrush" Value="#7CA4D0F3"/>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding Emote.ShowPreAnimationField}" Value="False">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <Grid Margin="4">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="*"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    <Viewbox Grid.Row="0" Stretch="Uniform" StretchDirection="DownOnly">
+                                        <Grid Width="256" Height="192">
+                                            <Image Source="{Binding Emote.PreAnimationPreview}" Stretch="Uniform"/>
+                                            <TextBlock Text="+"
+                                                       FontSize="36"
+                                                       Foreground="#BFD5E8FB"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Emote.HasPreAnimationValue}" Value="False">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=Border}, Path=IsMouseOver}" Value="True">
+                                                        <Setter Property="Text" Value="⤓"/>
+                                                        <Setter Property="Foreground" Value="#DDF3FFFF"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=Border}, Path=IsMouseCaptured}" Value="True">
+                                                        <Setter Property="Text" Value="●"/>
+                                                        <Setter Property="Foreground" Value="#FFF4FCFF"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                        </Grid>
+                                    </Viewbox>
+                                    <TextBlock Grid.Row="1"
+                                               Text="{Binding Emote.PreAnimationDisplayText}"
+                                               Foreground="#CFE2F5"
+                                               FontSize="11"
+                                               HorizontalAlignment="Center"
+                                               Margin="0,6,0,0"
+                                               TextTrimming="CharacterEllipsis"/>
+                                </Grid>
+                            </Border>
+
+                            <TextBlock Grid.Column="1"
+                                       Text="➜"
+                                       Foreground="#99D8E2ED"
+                                       FontSize="15"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Emote.ShowPreAnimationField}" Value="False">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+
+                            <Border Grid.Column="2"
+                                    CornerRadius="4"
+                                    Margin="4,0,0,0"
+                                    BorderThickness="1"
+                                    AllowDrop="True"
+                                    Tag="anim"
+                                    MouseLeftButtonDown="EmoteDropZone_MouseLeftButtonDown"
+                                    MouseLeftButtonUp="EmoteDropZone_MouseLeftButtonUp"
+                                    PreviewMouseRightButtonDown="EmoteDropZone_PreviewMouseRightButtonDown"
+                                    DragEnter="EmoteDropZone_DragEnter"
+                                    DragOver="EmoteDropZone_DragOver"
+                                    DragLeave="EmoteDropZone_DragLeave"
+                                    Drop="EmoteDropZone_Drop">
+                                <Border.Style>
+                                    <Style TargetType="Border" BasedOn="{StaticResource EmoteClickableZoneBorderStyle}">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Emote.IsAnimationDropActive}" Value="True">
+                                                <Setter Property="Background" Value="#2A6A8EAE"/>
+                                                <Setter Property="BorderBrush" Value="#7CA4D0F3"/>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding Emote.ShowPreAnimationField}" Value="False">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <Grid Margin="4">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="*"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    <Viewbox Grid.Row="0" Stretch="Uniform" StretchDirection="DownOnly">
+                                        <Grid Width="256" Height="192">
+                                            <Image Source="{Binding Emote.AnimationPreview}" Stretch="Uniform"/>
+                                            <TextBlock Text="+"
+                                                       FontSize="36"
+                                                       Foreground="#BFD5E8FB"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Emote.HasAnimationValue}" Value="False">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=Border}, Path=IsMouseOver}" Value="True">
+                                                        <Setter Property="Text" Value="⤓"/>
+                                                        <Setter Property="Foreground" Value="#DDF3FFFF"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=Border}, Path=IsMouseCaptured}" Value="True">
+                                                        <Setter Property="Text" Value="●"/>
+                                                        <Setter Property="Foreground" Value="#FFF4FCFF"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                        </Grid>
+                                    </Viewbox>
+                                    <TextBlock Grid.Row="1"
+                                               Text="{Binding Emote.AnimationDisplayText}"
+                                               Foreground="#CFE2F5"
+                                               FontSize="11"
+                                               HorizontalAlignment="Center"
+                                               Margin="0,6,0,0"
+                                               TextTrimming="CharacterEllipsis"/>
+                                </Grid>
+                            </Border>
+
+                            <Border Grid.Column="0"
+                                    Grid.ColumnSpan="3"
+                                    CornerRadius="4"
+                                    BorderThickness="1"
+                                    AllowDrop="True"
+                                    Tag="anim"
+                                    MouseLeftButtonDown="EmoteDropZone_MouseLeftButtonDown"
+                                    MouseLeftButtonUp="EmoteDropZone_MouseLeftButtonUp"
+                                    PreviewMouseRightButtonDown="EmoteDropZone_PreviewMouseRightButtonDown"
+                                    DragEnter="EmoteDropZone_DragEnter"
+                                    DragOver="EmoteDropZone_DragOver"
+                                    DragLeave="EmoteDropZone_DragLeave"
+                                    Drop="EmoteDropZone_Drop">
+                                <Border.Style>
+                                    <Style TargetType="Border" BasedOn="{StaticResource EmoteClickableZoneBorderStyle}">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Emote.ShowPreAnimationField}" Value="False">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding Emote.IsAnimationDropActive}" Value="True">
+                                                <Setter Property="Background" Value="#2A6A8EAE"/>
+                                                <Setter Property="BorderBrush" Value="#7CA4D0F3"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <Grid Margin="4">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="*"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    <Viewbox Grid.Row="0" Stretch="Uniform" StretchDirection="DownOnly">
+                                        <Grid Width="256" Height="192">
+                                            <Image Source="{Binding Emote.AnimationPreview}" Stretch="Uniform"/>
+                                            <TextBlock Text="+"
+                                                       FontSize="36"
+                                                       Foreground="#BFD5E8FB"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Emote.HasAnimationValue}" Value="False">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=Border}, Path=IsMouseOver}" Value="True">
+                                                        <Setter Property="Text" Value="⤓"/>
+                                                        <Setter Property="Foreground" Value="#DDF3FFFF"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=Border}, Path=IsMouseCaptured}" Value="True">
+                                                        <Setter Property="Text" Value="●"/>
+                                                        <Setter Property="Foreground" Value="#FFF4FCFF"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                        </Grid>
+                                    </Viewbox>
+                                    <TextBlock Grid.Row="1"
+                                               Text="{Binding Emote.AnimationDisplayText}"
+                                               Foreground="#CFE2F5"
+                                               FontSize="11"
+                                               HorizontalAlignment="Center"
+                                               Margin="0,6,0,0"
+                                               TextTrimming="CharacterEllipsis"/>
+                                </Grid>
+                            </Border>
+                        </Grid>
+
+                        <Grid Grid.Row="2" Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="62"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <Border Grid.Column="0"
+                                    Height="62"
+                                    Width="62"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    AllowDrop="True"
+                                    Tag="button"
+                                    MouseLeftButtonDown="EmoteDropZone_MouseLeftButtonDown"
+                                    MouseLeftButtonUp="EmoteDropZone_MouseLeftButtonUp"
+                                    PreviewMouseRightButtonDown="EmoteDropZone_PreviewMouseRightButtonDown"
+                                    DragEnter="EmoteDropZone_DragEnter"
+                                    DragOver="EmoteDropZone_DragOver"
+                                    DragLeave="EmoteDropZone_DragLeave"
+                                    Drop="EmoteDropZone_Drop">
+                                <Border.Style>
+                                    <Style TargetType="Border" BasedOn="{StaticResource EmoteClickableZoneBorderStyle}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Emote.IsButtonDropActive}" Value="True">
+                                                <Setter Property="Background" Value="#2A6A8EAE"/>
+                                                <Setter Property="BorderBrush" Value="#7CA4D0F3"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <Grid>
+                                    <Image Source="{Binding Emote.ButtonIconPreview}" Stretch="Uniform"/>
+                                    <TextBlock Text="+"
+                                               FontSize="24"
+                                               Foreground="#BFD5E8FB"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Emote.HasButtonIconValue}" Value="False">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=Border}, Path=IsMouseOver}" Value="True">
+                                                        <Setter Property="Text" Value="⚙"/>
+                                                        <Setter Property="Foreground" Value="#DDF3FFFF"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=Border}, Path=IsMouseCaptured}" Value="True">
+                                                        <Setter Property="Text" Value="●"/>
+                                                        <Setter Property="Foreground" Value="#FFF4FCFF"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </Grid>
+                            </Border>
+
+                            <Grid Grid.Column="1" Margin="8,0,0,0">
+                                <TextBlock Text="{Binding Emote.Name}"
+                                           Foreground="#FFF2F2F2"
+                                           FontWeight="SemiBold"
+                                           FontSize="12"
+                                           VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis"
+                                           MouseLeftButtonDown="EmoteNameTextBlock_MouseLeftButtonDown">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Emote.IsRenaming}" Value="True">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBox x:Name="EmoteNameEditTextBox"
+                                         Text="{Binding Emote.RenameDraft, UpdateSourceTrigger=PropertyChanged}"
+                                         Height="26"
+                                         Focusable="True"
+                                         KeyDown="EmoteNameEditTextBox_KeyDown"
+                                         LostFocus="EmoteNameEditTextBox_LostFocus">
+                                    <TextBox.Style>
+                                        <Style TargetType="TextBox" BasedOn="{StaticResource ModernTextBox}">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Emote.IsRenaming}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBox.Style>
+                                </TextBox>
+                                <Button Content="✔"
+                                        Width="22"
+                                        Height="22"
+                                        HorizontalAlignment="Right"
+                                        VerticalAlignment="Center"
+                                        Margin="0,0,2,0"
+                                        FontSize="12"
+                                        Background="#283746"
+                                        Foreground="#DDEAF7"
+                                        BorderBrush="#5B7795"
+                                        BorderThickness="1"
+                                        Click="CommitRenameButton_Click">
+                                    <Button.Style>
+                                        <Style TargetType="Button">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Setter Property="Template">
+                                                <Setter.Value>
+                                                    <ControlTemplate TargetType="Button">
+                                                        <Border x:Name="ButtonBorder"
+                                                                Background="{TemplateBinding Background}"
+                                                                BorderBrush="{TemplateBinding BorderBrush}"
+                                                                BorderThickness="{TemplateBinding BorderThickness}"
+                                                                CornerRadius="3">
+                                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                        </Border>
+                                                        <ControlTemplate.Triggers>
+                                                            <Trigger Property="IsMouseOver" Value="True">
+                                                                <Setter TargetName="ButtonBorder" Property="Background" Value="#32485E"/>
+                                                            </Trigger>
+                                                            <Trigger Property="IsPressed" Value="True">
+                                                                <Setter TargetName="ButtonBorder" Property="Background" Value="#223647"/>
+                                                            </Trigger>
+                                                        </ControlTemplate.Triggers>
+                                                    </ControlTemplate>
+                                                </Setter.Value>
+                                            </Setter>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Emote.IsRenaming}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                            </Grid>
+                        </Grid>
+
+                        <TextBlock Grid.Row="3"
+                                   Margin="0,6,0,0"
+                                   FontSize="10"
+                                   Foreground="#FFC4CED8"
+                                   Text="{Binding Emote.SfxSummaryText}"
+                                   TextTrimming="CharacterEllipsis"
+                                   Cursor="Hand"
+                                   Tag="sfx"
+                                   PreviewMouseRightButtonDown="EmoteDropZone_PreviewMouseRightButtonDown"
+                                   MouseLeftButtonUp="SfxSummaryTextBlock_MouseLeftButtonUp">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="#FFC4CED8"/>
+                                    <Style.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter Property="Foreground" Value="#FFE3F4FF"/>
+                                            <Setter Property="TextDecorations" Value="Underline"/>
+                                        </Trigger>
+                                        <Trigger Property="IsMouseCaptured" Value="True">
+                                            <Setter Property="Foreground" Value="#FFFFFFFF"/>
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
+
+                    <Thumb Width="8"
+                           Margin="0,-2,-2,-2"
+                           HorizontalAlignment="Right"
+                           VerticalAlignment="Stretch"
+                           Cursor="SizeWE"
+                           Style="{StaticResource InvisibleResizeThumbStyle}"
+                           DragStarted="EmoteResizeThumb_DragStarted"
+                           DragDelta="EmoteResizeThumb_DragDelta"
+                           DragCompleted="EmoteResizeThumb_DragCompleted"
+                           Tag="right"/>
+                    <Thumb Height="8"
+                           Margin="-2,0,-2,-2"
+                           HorizontalAlignment="Stretch"
+                           VerticalAlignment="Bottom"
+                           Cursor="SizeNS"
+                           Style="{StaticResource InvisibleResizeThumbStyle}"
+                           DragStarted="EmoteResizeThumb_DragStarted"
+                           DragDelta="EmoteResizeThumb_DragDelta"
+                           DragCompleted="EmoteResizeThumb_DragCompleted"
+                           Tag="bottom"/>
+                    <Thumb Width="14"
+                           Height="14"
+                           Margin="0,0,-2,-2"
+                           HorizontalAlignment="Right"
+                           VerticalAlignment="Bottom"
+                           Cursor="SizeNWSE"
+                           Style="{StaticResource InvisibleResizeThumbStyle}"
+                           DragStarted="EmoteResizeThumb_DragStarted"
+                           DragDelta="EmoteResizeThumb_DragDelta"
+                           DragCompleted="EmoteResizeThumb_DragCompleted"
+                           Tag="corner"/>
+                </Grid>
+            </Border>
+        </DataTemplate>
+
         <Style x:Key="CloseButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
@@ -386,6 +1057,12 @@
                                 <Button x:Name="SectionSetupButton" Tag="setup" Content="1. Initial Character Setup" Style="{StaticResource NavButtonStyle}" Click="SectionButton_Click"/>
                                 <Button x:Name="SectionEffectsButton" Tag="effects" Content="2. Effects" Style="{StaticResource NavButtonStyle}" Click="SectionButton_Click"/>
                                 <Button x:Name="SectionEmotesButton" Tag="emotes" Content="3. Emotes" Style="{StaticResource NavButtonStyle}" Click="SectionButton_Click"/>
+                                <Button x:Name="SectionButtonIconsButton"
+                                        Tag="buttonicons"
+                                        Content="4. Button Icons"
+                                        Style="{StaticResource NavButtonStyle}"
+                                        Click="SectionButton_Click"
+                                        Visibility="Collapsed"/>
                             </StackPanel>
                             <StackPanel Grid.Row="1" Margin="0,8,0,0">
                                 <Button Content="Default Tab" Style="{StaticResource ModernButton}" Margin="0,0,0,8" Click="DefaultTabButton_Click"/>
@@ -409,12 +1086,14 @@
                                                     ToolTip="This chooses which AO base mount receives the new character folder in its characters directory."/>
                                             <TextBlock Text="Character base mount path" Style="{StaticResource FieldTitleStyle}"/>
                                         </DockPanel>
-                                        <ComboBox x:Name="MountPathComboBox" Style="{StaticResource DarkComboBoxStyle}" SelectionChanged="MountPathComboBox_SelectionChanged"/>
+                                        <local:AutoCompleteDropdownField x:Name="MountPathComboBox"
+                                                                         TextValueChanged="MountPathComboBox_TextValueChanged"/>
                                     </StackPanel>
 
                                     <Border BorderBrush="#2F4A5E" BorderThickness="1" CornerRadius="4" Padding="10" Background="#400F0F0F" Margin="0,8,0,0">
                                         <Grid>
                                             <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
                                                 <RowDefinition Height="Auto"/>
                                                 <RowDefinition Height="Auto"/>
                                                 <RowDefinition Height="Auto"/>
@@ -445,19 +1124,53 @@
                                                             ToolTip="This sets where the character appears by default (for example defense, prosecution, witness, judge)."/>
                                                     <TextBlock Text="3) Side" Style="{StaticResource FieldTitleStyle}"/>
                                                 </DockPanel>
-                                                <ComboBox x:Name="SideComboBox"
-                                                          Style="{StaticResource DarkComboBoxStyle}"
-                                                          IsEditable="True"
-                                                          IsTextSearchEnabled="True"
-                                                          StaysOpenOnEdit="True"
-                                                          SelectionChanged="CharacterSelectionField_Changed"/>
+                                                <local:AutoCompleteDropdownField x:Name="SideComboBox"
+                                                                                 TextValueChanged="CharacterAutoCompleteField_TextValueChanged"/>
                                             </StackPanel>
 
-                                            <StackPanel Grid.Row="3">
+                                            <StackPanel Grid.Row="3" Margin="0,0,0,10">
+                                                <DockPanel Margin="0,0,0,4" LastChildFill="False">
+                                                    <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                                                            ToolTip="Optional character button icon used by AO2 character select. Saved as char_icon in the character root."/>
+                                                    <TextBlock Text="4) Character Icon" Style="{StaticResource FieldTitleStyle}"/>
+                                                </DockPanel>
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="66"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <Border Grid.Column="0"
+                                                            Width="62"
+                                                            Height="62"
+                                                            Background="#26000000"
+                                                            BorderBrush="#55404B58"
+                                                            BorderThickness="1"
+                                                            CornerRadius="4">
+                                                        <Grid>
+                                                            <Image x:Name="CharacterIconPreviewImage" Stretch="Uniform"/>
+                                                            <TextBlock x:Name="CharacterIconEmptyText"
+                                                                       Text="+"
+                                                                       FontSize="24"
+                                                                       Foreground="#BFD5E8FB"
+                                                                       HorizontalAlignment="Center"
+                                                                       VerticalAlignment="Center"/>
+                                                        </Grid>
+                                                    </Border>
+                                                    <Button Grid.Column="1"
+                                                            Margin="10,16,0,16"
+                                                            Width="110"
+                                                            HorizontalAlignment="Left"
+                                                            Content="From file..."
+                                                            Style="{StaticResource ModernButton}"
+                                                            Click="CharacterIconFromFileButton_Click"/>
+                                                </Grid>
+                                            </StackPanel>
+
+                                            <StackPanel Grid.Row="4">
                                                 <DockPanel Margin="0,0,0,4" LastChildFill="False">
                                                     <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
                                                             ToolTip="This controls the voice blip style used while text appears. You can pick defaults or import a custom blip file."/>
-                                                    <TextBlock Text="4) Gender / Blips" Style="{StaticResource FieldTitleStyle}"/>
+                                                    <TextBlock Text="5) Gender / Blips" Style="{StaticResource FieldTitleStyle}"/>
                                                 </DockPanel>
                                                 <Grid>
                                                     <Grid.ColumnDefinitions>
@@ -699,73 +1412,127 @@
 
                         <Border x:Name="EmotesSectionPanel" Background="#A0101010" BorderBrush="#2F4A5E" BorderThickness="1" CornerRadius="4" Padding="10" Visibility="Collapsed">
                             <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="300"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                </Grid.RowDefinitions>
 
-                                <Border Grid.Column="0" Background="#40101010" BorderBrush="#2F4A5E" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,10,0">
-                                    <Grid>
-                                        <Grid.RowDefinitions>
-                                            <RowDefinition Height="Auto"/>
-                                            <RowDefinition Height="*"/>
-                                            <RowDefinition Height="Auto"/>
-                                        </Grid.RowDefinitions>
-                                        <TextBlock Text="Emotes" Foreground="White" FontSize="14" FontWeight="SemiBold"/>
-                                        <ListBox x:Name="EmoteListBox"
-                                                 Grid.Row="1"
-                                                 Margin="0,8,0,8"
-                                                 Background="#FF1E1E1E"
-                                                 Foreground="White"
-                                                 DisplayMemberPath="DisplayName"
-                                                 SelectionChanged="EmoteListBox_SelectionChanged"/>
-                                        <UniformGrid Grid.Row="2" Columns="2" Rows="2">
-                                            <Button Margin="0,0,6,6" Content="Add" Style="{StaticResource ModernButton}" Click="AddEmoteButton_Click"/>
-                                            <Button Margin="6,0,0,6" Content="Remove" Style="{StaticResource ModernButton}" Click="RemoveEmoteButton_Click"/>
-                                            <Button Margin="0,0,6,0" Content="Move Up" Style="{StaticResource ModernButton}" Click="MoveEmoteUpButton_Click"/>
-                                            <Button Margin="6,0,0,0" Content="Move Down" Style="{StaticResource ModernButton}" Click="MoveEmoteDownButton_Click"/>
-                                        </UniformGrid>
-                                    </Grid>
-                                </Border>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0"
+                                               Text="Emote Editor"
+                                               Foreground="White"
+                                               FontSize="14"
+                                               FontWeight="SemiBold"
+                                               Margin="0,0,14,0"
+                                               VerticalAlignment="Center"/>
+                                    <Button Grid.Column="1" Width="30" Height="28" Margin="0,0,6,0"
+                                            Content="+"
+                                            Foreground="#7CE39B"
+                                            Style="{StaticResource EmoteToolbarButtonStyle}"
+                                            ToolTip="Add emote"
+                                            Click="AddEmoteToolbarButton_Click"/>
+                                    <Button Grid.Column="2" Width="30" Height="28" Margin="0,0,6,0"
+                                            Content="-"
+                                            Foreground="#F07F7F"
+                                            Style="{StaticResource EmoteToolbarButtonStyle}"
+                                            ToolTip="Delete selected emote"
+                                            Click="DeleteEmoteToolbarButton_Click"/>
+                                    <Button Grid.Column="3" Width="30" Height="28" Margin="0,0,6,0"
+                                            Content="↑"
+                                            Style="{StaticResource EmoteToolbarButtonStyle}"
+                                            ToolTip="Move selected emote up"
+                                            Click="MoveUpEmoteToolbarButton_Click"/>
+                                    <Button Grid.Column="4" Width="30" Height="28" Margin="0,0,10,0"
+                                            Content="↓"
+                                            Style="{StaticResource EmoteToolbarButtonStyle}"
+                                            ToolTip="Move selected emote down"
+                                            Click="MoveDownEmoteToolbarButton_Click"/>
+                                    <TextBlock x:Name="SelectedEmoteHeaderTextBlock"
+                                               Grid.Column="5"
+                                               Foreground="#FFD0D0D0"
+                                               VerticalAlignment="Center"
+                                               Text="No emote selected"/>
+                                    <CheckBox x:Name="LoopAnimationPreviewsCheckBox"
+                                              Grid.Column="6"
+                                              Margin="12,0,0,0"
+                                              VerticalAlignment="Center"
+                                              IsChecked="True"
+                                              Foreground="#FFD0D0D0"
+                                              Content="Loop animation previews"
+                                              Checked="LoopAnimationPreviewsCheckBox_Changed"
+                                              Unchecked="LoopAnimationPreviewsCheckBox_Changed"/>
+                                </Grid>
 
-                                <Border Grid.Column="1" Background="#40101010" BorderBrush="#2F4A5E" BorderThickness="1" CornerRadius="4" Padding="10">
-                                    <ScrollViewer VerticalScrollBarVisibility="Auto">
-                                        <StackPanel>
-                                            <TextBlock Text="Selected Emote Editor" Foreground="White" FontSize="14" FontWeight="SemiBold"/>
-                                            <TextBlock Text="Name / preanim / final anim (?)" Style="{StaticResource LabelStyle}" ToolTip="Name is the emote label; preanim plays before speaking; final anim is the main pose/talk animation."/>
-                                            <UniformGrid Columns="3">
-                                                <TextBox x:Name="EmoteNameTextBox" Style="{StaticResource ModernTextBox}" Margin="0,0,6,0" TextChanged="EmoteEditor_TextChanged"/>
-                                                <TextBox x:Name="PreAnimationTextBox" Style="{StaticResource ModernTextBox}" Margin="6,0,6,0" TextChanged="EmoteEditor_TextChanged"/>
-                                                <TextBox x:Name="AnimationTextBox" Style="{StaticResource ModernTextBox}" Margin="6,0,0,0" TextChanged="EmoteEditor_TextChanged"/>
-                                            </UniformGrid>
-
-                                            <TextBlock Text="Emote mod / desk mod (?)" Style="{StaticResource LabelStyle}" ToolTip="These control how preanimation/zoom behaves and how desk visibility behaves during that emote."/>
-                                            <UniformGrid Columns="2">
-                                                <TextBox x:Name="EmoteModifierTextBox" Style="{StaticResource ModernTextBox}" Margin="0,0,6,0" TextChanged="EmoteEditor_TextChanged"/>
-                                                <TextBox x:Name="DeskModifierTextBox" Style="{StaticResource ModernTextBox}" Margin="6,0,0,0" TextChanged="EmoteEditor_TextChanged"/>
-                                            </UniformGrid>
-
-                                            <TextBlock Text="SFX name / delay(ms) / loop (?)" Style="{StaticResource LabelStyle}" ToolTip="Choose the emote sound, when it plays in milliseconds, and whether it loops."/>
-                                            <Grid>
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="130"/>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                </Grid.ColumnDefinitions>
-                                                <TextBox x:Name="SfxNameTextBox" Grid.Column="0" Style="{StaticResource ModernTextBox}" Margin="0,0,6,0" TextChanged="EmoteEditor_TextChanged"/>
-                                                <TextBox x:Name="SfxDelayTextBox" Grid.Column="1" Style="{StaticResource ModernTextBox}" Margin="6,0,6,0" TextChanged="EmoteEditor_TextChanged"/>
-                                                <CheckBox x:Name="SfxLoopingCheckBox" Grid.Column="2" Content="Loop" Foreground="White" VerticalAlignment="Center" Checked="SfxLoopingCheckBox_Changed" Unchecked="SfxLoopingCheckBox_Changed"/>
-                                            </Grid>
-
-                                            <TextBlock Text="Preanim duration(ms) / stay_time(ms) / per-emote blips override (?)" Style="{StaticResource LabelStyle}" ToolTip="Preanim duration controls how long preanimation lasts; stay_time controls on-screen hold timing; blips override changes voice blips for this emote only."/>
-                                            <UniformGrid Columns="3">
-                                                <TextBox x:Name="PreAnimationDurationTextBox" Style="{StaticResource ModernTextBox}" Margin="0,0,6,0" TextChanged="EmoteEditor_TextChanged"/>
-                                                <TextBox x:Name="StayTimeTextBox" Style="{StaticResource ModernTextBox}" Margin="6,0,6,0" TextChanged="EmoteEditor_TextChanged"/>
-                                                <TextBox x:Name="BlipsOverrideTextBox" Style="{StaticResource ModernTextBox}" Margin="6,0,0,0" TextChanged="EmoteEditor_TextChanged"/>
-                                            </UniformGrid>
-                                        </StackPanel>
-                                    </ScrollViewer>
-                                </Border>
+                                <Grid x:Name="EmoteTilesOverlayRoot" Grid.Row="1" Margin="0,10,0,0">
+                                    <ListBox x:Name="EmoteTilesListBox"
+                                             Style="{StaticResource EmoteTileListBoxStyle}"
+                                             ItemContainerStyle="{StaticResource EmoteTileListBoxItemStyle}"
+                                             SelectionChanged="EmoteTilesListBox_SelectionChanged"
+                                             PreviewMouseLeftButtonDown="EmoteTilesListBox_PreviewMouseLeftButtonDown"
+                                             PreviewMouseMove="EmoteTilesListBox_PreviewMouseMove"
+                                             DragOver="EmoteTilesListBox_DragOver"
+                                             Drop="EmoteTilesListBox_Drop"
+                                             AllowDrop="True">
+                                        <ListBox.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel/>
+                                            </ItemsPanelTemplate>
+                                        </ListBox.ItemsPanel>
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <ContentControl Content="{Binding}" ContentTemplate="{StaticResource EmoteTileContentTemplate}"/>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                    <TextBlock Text="Add emotes through the + button to begin."
+                                               Foreground="#BFC6CFD8"
+                                               FontSize="13"
+                                               FontStyle="Italic"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center"
+                                               IsHitTestVisible="False">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding HasAnyEmotes, RelativeSource={RelativeSource AncestorType=Window}}" Value="False">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <Canvas IsHitTestVisible="False">
+                                        <Border Width="{Binding ResizePreviewWidth, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                Height="{Binding ResizePreviewHeight, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                BorderBrush="#88A3C7E8"
+                                                BorderThickness="1"
+                                                CornerRadius="8"
+                                                Background="#11000000"
+                                                Canvas.Left="{Binding ResizeGuideLeft, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                Canvas.Top="{Binding ResizeGuideTop, RelativeSource={RelativeSource AncestorType=Window}}">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsGlobalResizeGuideVisible, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                        </Border>
+                                    </Canvas>
+                                </Grid>
                             </Grid>
                         </Border>
 
@@ -797,8 +1564,8 @@
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
-                                        <ComboBox x:Name="FrameTargetComboBox" Grid.Column="0" Style="{StaticResource DarkComboBoxStyle}" Margin="0,0,6,0"/>
-                                        <ComboBox x:Name="FrameTypeComboBox" Grid.Column="1" Style="{StaticResource DarkComboBoxStyle}" Margin="6,0,6,0"/>
+                                        <local:AutoCompleteDropdownField x:Name="FrameTargetComboBox" Grid.Column="0" Margin="0,0,6,0"/>
+                                        <local:AutoCompleteDropdownField x:Name="FrameTypeComboBox" Grid.Column="1" Margin="6,0,6,0"/>
                                         <TextBox x:Name="FrameNumberTextBox" Grid.Column="2" Style="{StaticResource ModernTextBox}" Margin="6,0,6,0"/>
                                         <TextBox x:Name="FrameValueTextBox" Grid.Column="3" Style="{StaticResource ModernTextBox}" Margin="6,0,6,0"/>
                                         <Button Grid.Column="4" Content="Add" Width="62" Style="{StaticResource ModernButton}" Click="AddFrameEventButton_Click"/>
@@ -822,6 +1589,158 @@
                                     </Grid>
                                     <ListBox x:Name="AdvancedEntriesListBox" Height="180" Margin="0,6,0,0" Background="#FF1E1E1E" Foreground="White" DisplayMemberPath="DisplayText"/>
                                     <Button Margin="0,6,0,0" Content="Remove selected advanced entry" Style="{StaticResource ModernButton}" Click="RemoveAdvancedEntryButton_Click"/>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Border>
+
+                        <Border x:Name="ButtonIconsSectionPanel" Background="#A0101010" BorderBrush="#2F4A5E" BorderThickness="1" CornerRadius="4" Padding="10" Visibility="Collapsed">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel>
+                                    <TextBlock Text="Button Icons" Foreground="White" FontSize="14" FontWeight="SemiBold"/>
+                                    <Border Margin="0,8,0,8" Padding="8" BorderBrush="#725E3B" BorderThickness="1" CornerRadius="4" Background="#33221800">
+                                        <TextBlock Text="The button icons tab is a conditional tab that only exists because you were lazy and did not fully make your buttons in the emotes tab. And due to that, this is a tab to help you do all of them automatically at once."
+                                                   Foreground="#FFE3CAA7"
+                                                   TextWrapping="Wrap"/>
+                                    </Border>
+
+                                    <StackPanel Margin="0,0,0,8">
+                                        <DockPanel Margin="0,0,0,4" LastChildFill="False">
+                                            <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                                                    ToolTip="Choose which emotes receive the bulk button config."/>
+                                            <TextBlock Text="Apply To" Style="{StaticResource FieldTitleStyle}"/>
+                                        </DockPanel>
+                                        <local:AutoCompleteDropdownField x:Name="ButtonIconsApplyScopeDropdown"/>
+                                    </StackPanel>
+
+                                    <StackPanel Margin="0,0,0,8">
+                                        <DockPanel Margin="0,0,0,4" LastChildFill="False">
+                                            <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                                                    ToolTip="Automatic generation background source for the selected emote list."/>
+                                            <TextBlock Text="Background Config" Style="{StaticResource FieldTitleStyle}"/>
+                                        </DockPanel>
+                                        <local:AutoCompleteDropdownField x:Name="ButtonIconsBackgroundDropdown"/>
+                                    </StackPanel>
+
+                                    <Border x:Name="ButtonIconsPresetPreviewCard"
+                                            Visibility="Collapsed"
+                                            Margin="0,0,0,8"
+                                            BorderBrush="#445A7088"
+                                            BorderThickness="1"
+                                            CornerRadius="4"
+                                            Background="#2A101820"
+                                            Padding="8">
+                                        <StackPanel>
+                                            <TextBlock Text="Preset preview" Foreground="#FFD3E5F7" Margin="0,0,0,6"/>
+                                            <Border Height="130" BorderBrush="#39536A84" BorderThickness="1" CornerRadius="4" Background="#1A000000">
+                                                <Image x:Name="ButtonIconsPresetPreviewImage" Stretch="Uniform"/>
+                                            </Border>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <StackPanel x:Name="ButtonIconsSolidColorPanel" Visibility="Collapsed" Margin="0,0,0,8">
+                                        <DockPanel Margin="0,0,0,4" LastChildFill="False">
+                                            <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                                                    ToolTip="Pick solid background color for automatic button generation."/>
+                                            <TextBlock Text="Solid Color" Style="{StaticResource FieldTitleStyle}"/>
+                                        </DockPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Button x:Name="ButtonIconsPickColorButton"
+                                                    Width="130"
+                                                    Content="Pick color..."
+                                                    Style="{StaticResource ModernButton}"
+                                                    Click="ButtonIconsPickColorButton_Click"/>
+                                            <Border x:Name="ButtonIconsSolidColorPreview"
+                                                    Grid.Column="1"
+                                                    Width="48"
+                                                    Height="30"
+                                                    Margin="8,0,8,0"
+                                                    BorderBrush="#556F899F"
+                                                    BorderThickness="1"/>
+                                            <TextBlock x:Name="ButtonIconsSolidColorHexTextBlock"
+                                                       Grid.Column="2"
+                                                       VerticalAlignment="Center"
+                                                       Foreground="#FFD3E5F7"/>
+                                        </Grid>
+                                    </StackPanel>
+
+                                    <StackPanel x:Name="ButtonIconsUploadPanel" Visibility="Collapsed" Margin="0,0,0,8">
+                                        <DockPanel Margin="0,0,0,4" LastChildFill="False">
+                                            <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                                                    ToolTip="Upload a shared background image for automatic button generation."/>
+                                            <TextBlock Text="Background Upload" Style="{StaticResource FieldTitleStyle}"/>
+                                        </DockPanel>
+                                        <Button x:Name="ButtonIconsBackgroundUploadButton"
+                                                Width="150"
+                                                Content="Select image..."
+                                                Style="{StaticResource ModernButton}"
+                                                Click="ButtonIconsBackgroundUploadButton_Click"/>
+                                        <TextBlock x:Name="ButtonIconsBackgroundUploadTextBlock"
+                                                   Foreground="#FFC5D6E8"
+                                                   Margin="0,6,0,0"
+                                                   Text="No file selected"/>
+                                    </StackPanel>
+
+                                    <StackPanel Margin="0,0,0,8">
+                                        <DockPanel Margin="0,0,0,4" LastChildFill="False">
+                                            <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                                                    ToolTip="Open multi-emote cutting and configure each cutout in sequence."/>
+                                            <TextBlock Text="Emote Cutting" Style="{StaticResource FieldTitleStyle}"/>
+                                        </DockPanel>
+                                        <Button x:Name="ButtonIconsBulkCuttingButton"
+                                                Width="200"
+                                                Content="Configure cutouts..."
+                                                Style="{StaticResource ModernButton}"
+                                                Click="ButtonIconsBulkCuttingButton_Click"/>
+                                        <WrapPanel x:Name="ButtonIconsCutoutPreviewWrapPanel" Margin="0,8,0,0"/>
+                                    </StackPanel>
+
+                                    <StackPanel Margin="0,0,0,10">
+                                        <DockPanel Margin="0,0,0,4" LastChildFill="False">
+                                            <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                                                    ToolTip="How button_off is generated from button_on."/>
+                                            <TextBlock Text="Effects Generation" Style="{StaticResource FieldTitleStyle}"/>
+                                        </DockPanel>
+                                        <local:AutoCompleteDropdownField x:Name="ButtonIconsEffectsDropdown"/>
+                                        <StackPanel x:Name="ButtonIconsDarkenPanel" Visibility="Collapsed" Margin="0,6,0,0">
+                                            <TextBlock x:Name="ButtonIconsDarkenValueText" Foreground="#FFD3E5F7" Margin="0,0,0,4" Text="Darkness: 50%"/>
+                                            <Slider x:Name="ButtonIconsDarkenSlider"
+                                                    Minimum="0"
+                                                    Maximum="100"
+                                                    Value="50"
+                                                    TickFrequency="5"
+                                                    IsSnapToTickEnabled="True"
+                                                    ValueChanged="ButtonIconsDarkenSlider_ValueChanged"/>
+                                        </StackPanel>
+                                        <StackPanel x:Name="ButtonIconsOpacityPanel" Visibility="Collapsed" Margin="0,6,0,0">
+                                            <TextBlock x:Name="ButtonIconsOpacityValueText" Foreground="#FFD3E5F7" Margin="0,0,0,4" Text="Opacity: 75%"/>
+                                            <Slider x:Name="ButtonIconsOpacitySlider"
+                                                    Minimum="0"
+                                                    Maximum="100"
+                                                    Value="75"
+                                                    TickFrequency="5"
+                                                    IsSnapToTickEnabled="True"
+                                                    ValueChanged="ButtonIconsOpacitySlider_ValueChanged"/>
+                                        </StackPanel>
+                                        <StackPanel x:Name="ButtonIconsOverlayPanel" Visibility="Collapsed" Margin="0,6,0,0">
+                                            <Button x:Name="ButtonIconsOverlayUploadButton"
+                                                    Width="170"
+                                                    Content="Select overlay..."
+                                                    Style="{StaticResource ModernButton}"
+                                                    Click="ButtonIconsOverlayUploadButton_Click"/>
+                                            <TextBlock x:Name="ButtonIconsOverlayPathTextBlock" Foreground="#FFC5D6E8" Margin="0,6,0,0" Text="No overlay selected"/>
+                                        </StackPanel>
+                                    </StackPanel>
+
+                                    <Button x:Name="ButtonIconsApplyButton"
+                                            Width="260"
+                                            Content="Apply Automatic Config To List"
+                                            Style="{StaticResource ModernButton}"
+                                            Click="ButtonIconsApplyButton_Click"/>
                                 </StackPanel>
                             </ScrollViewer>
                         </Border>

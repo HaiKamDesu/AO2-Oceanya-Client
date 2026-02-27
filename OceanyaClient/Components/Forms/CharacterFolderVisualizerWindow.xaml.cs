@@ -3646,29 +3646,10 @@ namespace OceanyaClient
                 }
             }
 
-            ImageSource loadedImage = FallbackFolderImage;
-            try
-            {
-                if (!string.IsNullOrWhiteSpace(normalizedPath) && File.Exists(normalizedPath))
-                {
-                    BitmapImage bitmapImage = new BitmapImage();
-                    bitmapImage.BeginInit();
-                    bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
-                    bitmapImage.UriSource = new Uri(normalizedPath, UriKind.Absolute);
-                    if (decodePixelWidth > 0)
-                    {
-                        bitmapImage.DecodePixelWidth = decodePixelWidth;
-                    }
-
-                    bitmapImage.EndInit();
-                    bitmapImage.Freeze();
-                    loadedImage = bitmapImage;
-                }
-            }
-            catch (Exception ex)
-            {
-                CustomConsole.Warning($"Unable to load character visualizer image '{normalizedPath}'.", ex);
-            }
+            ImageSource loadedImage = Ao2AnimationPreview.LoadStaticPreviewImage(
+                normalizedPath,
+                decodePixelWidth,
+                FallbackFolderImage);
 
             lock (imageCacheLock)
             {

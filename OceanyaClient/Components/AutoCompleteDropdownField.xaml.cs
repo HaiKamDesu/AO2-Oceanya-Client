@@ -20,6 +20,7 @@ namespace OceanyaClient
         private bool forceOpenAll;
         private bool isHovering;
         private bool isFocused;
+        private DateTime lastClosedAtUtc = DateTime.MinValue;
 
         public event EventHandler? TextValueChanged;
 
@@ -54,11 +55,17 @@ namespace OceanyaClient
             typeof(string),
             typeof(AutoCompleteDropdownField),
             new PropertyMetadata("\uE8EC"));
+        public static readonly DependencyProperty IsTextReadOnlyProperty = DependencyProperty.Register(
+            nameof(IsTextReadOnly),
+            typeof(bool),
+            typeof(AutoCompleteDropdownField),
+            new PropertyMetadata(false, OnIsTextReadOnlyPropertyChanged));
 
         public AutoCompleteDropdownField()
         {
             InitializeComponent();
             Loaded += AutoCompleteDropdownField_Loaded;
+            SuggestionsPopup.Closed += SuggestionsPopup_Closed;
         }
 
         public string Text
@@ -91,6 +98,12 @@ namespace OceanyaClient
             set => SetValue(ItemSymbolGlyphProperty, value);
         }
 
+        public bool IsTextReadOnly
+        {
+            get => (bool)GetValue(IsTextReadOnlyProperty);
+            set => SetValue(IsTextReadOnlyProperty, value);
+        }
+
         private void AutoCompleteDropdownField_Loaded(object sender, RoutedEventArgs e)
         {
             ApplySymbolVisibility();
@@ -98,6 +111,7 @@ namespace OceanyaClient
             InputTextBox.Text = Text ?? string.Empty;
             suppressTextHandlers = false;
             UpdateVisualState();
+            ApplyReadOnlyTextAreaState();
         }
 
         private static void OnTextPropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
@@ -136,10 +150,25 @@ namespace OceanyaClient
             }
         }
 
+        private static void OnIsTextReadOnlyPropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            if (d is AutoCompleteDropdownField field)
+            {
+                field.ApplyReadOnlyTextAreaState();
+            }
+        }
+
         private void ApplySymbolVisibility()
         {
             bool hasSymbol = !string.IsNullOrWhiteSpace(SymbolGlyph);
             SymbolTextBlock.Visibility = hasSymbol ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void ApplyReadOnlyTextAreaState()
+        {
+            bool isReadOnly = IsTextReadOnly;
+            ReadOnlyTextAreaToggleButton.Visibility = isReadOnly ? Visibility.Visible : Visibility.Collapsed;
+            InputTextBox.Cursor = isReadOnly ? Cursors.Arrow : Cursors.IBeam;
         }
 
         private void RootGrid_MouseEnter(object sender, MouseEventArgs e)
@@ -231,10 +260,40 @@ namespace OceanyaClient
 
         private void ToggleButton_Click(object sender, RoutedEventArgs e)
         {
+            ToggleDropdownAndFocusInput();
+        }
+
+        private void ReadOnlyTextAreaToggleButton_Click(object sender, RoutedEventArgs e)
+        {
+            ToggleDropdownAndFocusInput();
+        }
+
+        private void ToggleDropdownAndFocusInput()
+        {
+            if (SuggestionsPopup.IsOpen)
+            {
+                SuggestionsPopup.IsOpen = false;
+                SuggestionsListBox.SelectedIndex = -1;
+                navigationSelectionActive = false;
+                lastClosedAtUtc = DateTime.UtcNow;
+                return;
+            }
+
+            if ((DateTime.UtcNow - lastClosedAtUtc).TotalMilliseconds < 120)
+            {
+                return;
+            }
+
             InputTextBox.Focus();
             forceOpenAll = true;
             RefreshSuggestions(string.Empty);
-            SuggestionsPopup.IsOpen = Suggestions.Count > 0;
+        }
+
+        private void SuggestionsPopup_Closed(object? sender, EventArgs e)
+        {
+            lastClosedAtUtc = DateTime.UtcNow;
+            SuggestionsListBox.SelectedIndex = -1;
+            navigationSelectionActive = false;
         }
 
         private void SuggestionItem_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
@@ -264,7 +323,8 @@ namespace OceanyaClient
                 Suggestions.Add(match);
             }
 
-            bool open = Suggestions.Count > 0 && (forceOpenAll || !string.IsNullOrWhiteSpace(query));
+            bool shouldAutoOpen = !IsTextReadOnly && isFocused && !string.IsNullOrWhiteSpace(query);
+            bool open = Suggestions.Count > 0 && (forceOpenAll || shouldAutoOpen);
             SuggestionsPopup.IsOpen = open;
             if (!open)
             {
