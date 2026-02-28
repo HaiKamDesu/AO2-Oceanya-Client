@@ -3,6 +3,8 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Shell;
 
 namespace OceanyaClient
@@ -19,7 +21,7 @@ namespace OceanyaClient
             nameof(HeaderText),
             typeof(string),
             typeof(GenericOceanyaWindow),
-            new PropertyMetadata("Oceanya"));
+            new PropertyMetadata("Oceanya", OnHeaderTextChanged));
 
         /// <summary>
         /// Content hosted in the main body area.
@@ -152,6 +154,7 @@ namespace OceanyaClient
         {
             ApplyInteractionSettings();
             ApplyWindowFrameForState();
+            UpdateHeaderCollisionOpacity();
         }
 
         private void ApplyInteractionSettings()
@@ -169,6 +172,7 @@ namespace OceanyaClient
             }
 
             ApplyWindowFrameForState();
+            UpdateHeaderCollisionOpacity();
         }
 
         private void DragWindow(object sender, MouseButtonEventArgs e)
@@ -223,6 +227,73 @@ namespace OceanyaClient
 
             WindowFrameBorder.BorderThickness = new Thickness(1);
             WindowFrameBorder.CornerRadius = new CornerRadius(5);
+        }
+
+        private static void OnHeaderTextChanged(DependencyObject dependencyObject, DependencyPropertyChangedEventArgs e)
+        {
+            if (dependencyObject is GenericOceanyaWindow window)
+            {
+                window.Dispatcher.BeginInvoke(new Action(window.UpdateHeaderCollisionOpacity));
+            }
+        }
+
+        private void Window_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            UpdateHeaderCollisionOpacity();
+        }
+
+        private void UpdateHeaderCollisionOpacity()
+        {
+            if (!IsLoaded)
+            {
+                return;
+            }
+
+            Rect oceanyaBounds = GetBoundsInHeader(OceanyaLogoRectangle);
+            Rect laboratoriesBounds = GetBoundsInHeader(LaboratoriesLogoRectangle);
+            Rect titleBounds = GetBoundsInHeader(HeaderTitleTextBlock);
+            Rect closeBounds = GetBoundsInHeader(CloseButton);
+
+            bool hideTitle = Intersects(titleBounds, oceanyaBounds) || Intersects(titleBounds, laboratoriesBounds);
+            bool hideLaboratoriesLogo = Intersects(laboratoriesBounds, closeBounds);
+            bool hideOceanyaLogo = Intersects(oceanyaBounds, closeBounds);
+
+            FadeElementTo(HeaderTitleTextBlock, hideTitle ? 0 : 1);
+            FadeElementTo(LaboratoriesLogoRectangle, hideLaboratoriesLogo ? 0 : 1);
+            FadeElementTo(OceanyaLogoRectangle, hideOceanyaLogo ? 0 : 1);
+        }
+
+        private Rect GetBoundsInHeader(FrameworkElement element)
+        {
+            if (element.ActualWidth <= 0 || element.ActualHeight <= 0 || !element.IsVisible)
+            {
+                return Rect.Empty;
+            }
+
+            GeneralTransform transform = element.TransformToAncestor(HeaderGrid);
+            return transform.TransformBounds(new Rect(0, 0, element.ActualWidth, element.ActualHeight));
+        }
+
+        private static bool Intersects(Rect left, Rect right)
+        {
+            return !left.IsEmpty && !right.IsEmpty && left.IntersectsWith(right);
+        }
+
+        private static void FadeElementTo(UIElement element, double targetOpacity)
+        {
+            if (Math.Abs(element.Opacity - targetOpacity) < 0.01)
+            {
+                return;
+            }
+
+            DoubleAnimation fadeAnimation = new DoubleAnimation
+            {
+                To = targetOpacity,
+                Duration = TimeSpan.FromMilliseconds(140),
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+            };
+
+            element.BeginAnimation(OpacityProperty, fadeAnimation);
         }
 
         private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)

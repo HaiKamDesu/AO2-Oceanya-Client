@@ -5,13 +5,12 @@
         Title="Generic Oceanya Window"
         Width="900"
         Height="600"
-        MinWidth="520"
-        MinHeight="320"
         WindowStartupLocation="CenterScreen"
         WindowStyle="None"
         AllowsTransparency="True"
         Background="Transparent"
-        StateChanged="Window_StateChanged">
+        StateChanged="Window_StateChanged"
+        SizeChanged="Window_SizeChanged">
     <shell:WindowChrome.WindowChrome>
         <shell:WindowChrome CaptionHeight="30"
                             ResizeBorderThickness="6"
@@ -77,8 +76,12 @@
                 </Grid.RowDefinitions>
 
                 <Border Grid.Row="0" Background="#CC000000" MouseLeftButtonDown="DragWindow">
-                    <Grid>
-                        <Rectangle HorizontalAlignment="Left" Width="129" Height="30" VerticalAlignment="Center">
+                    <Grid x:Name="HeaderGrid">
+                        <Rectangle x:Name="OceanyaLogoRectangle"
+                                   HorizontalAlignment="Left"
+                                   Width="129"
+                                   Height="30"
+                                   VerticalAlignment="Center">
                             <Rectangle.Fill>
                                 <ImageBrush ImageSource="pack://application:,,,/OceanyaClient;component/Resources/Logo_Oceanya.png"/>
                             </Rectangle.Fill>
@@ -90,13 +93,19 @@
                                 shell:WindowChrome.IsHitTestVisibleInChrome="True"
                                 Style="{StaticResource CloseButtonStyle}"
                                 Click="CloseButton_Click"/>
-                        <Rectangle HorizontalAlignment="Left" Width="157" Height="23" VerticalAlignment="Top" Margin="129,6,0,0">
+                        <Rectangle x:Name="LaboratoriesLogoRectangle"
+                                   HorizontalAlignment="Left"
+                                   Width="157"
+                                   Height="23"
+                                   VerticalAlignment="Top"
+                                   Margin="129,6,0,0">
                             <Rectangle.Fill>
                                 <ImageBrush ImageSource="pack://application:,,,/OceanyaClient;component/Resources/Logo_Laboratories.png"
                                             Stretch="Uniform"/>
                             </Rectangle.Fill>
                         </Rectangle>
-                        <TextBlock Text="{Binding HeaderText, RelativeSource={RelativeSource AncestorType=Window}}"
+                        <TextBlock x:Name="HeaderTitleTextBlock"
+                                   Text="{Binding HeaderText, RelativeSource={RelativeSource AncestorType=Window}}"
                                    Foreground="#FFDADADA"
                                    FontSize="12"
                                    HorizontalAlignment="Center"
