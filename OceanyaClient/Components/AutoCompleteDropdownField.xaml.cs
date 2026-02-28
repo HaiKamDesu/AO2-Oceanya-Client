@@ -21,6 +21,7 @@ namespace OceanyaClient
         private bool isHovering;
         private bool isFocused;
         private DateTime lastClosedAtUtc = DateTime.MinValue;
+        private bool suppressNextToggleClick;
 
         public event EventHandler? TextValueChanged;
 
@@ -268,8 +269,28 @@ namespace OceanyaClient
             ToggleDropdownAndFocusInput();
         }
 
+        private void ToggleSurface_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            suppressNextToggleClick = false;
+            if (SuggestionsPopup.IsOpen)
+            {
+                suppressNextToggleClick = true;
+                SuggestionsPopup.IsOpen = false;
+                SuggestionsListBox.SelectedIndex = -1;
+                navigationSelectionActive = false;
+                lastClosedAtUtc = DateTime.UtcNow;
+                e.Handled = true;
+            }
+        }
+
         private void ToggleDropdownAndFocusInput()
         {
+            if (suppressNextToggleClick)
+            {
+                suppressNextToggleClick = false;
+                return;
+            }
+
             if (SuggestionsPopup.IsOpen)
             {
                 SuggestionsPopup.IsOpen = false;
@@ -284,7 +305,10 @@ namespace OceanyaClient
                 return;
             }
 
-            InputTextBox.Focus();
+            if (!IsTextReadOnly)
+            {
+                InputTextBox.Focus();
+            }
             forceOpenAll = true;
             RefreshSuggestions(string.Empty);
         }

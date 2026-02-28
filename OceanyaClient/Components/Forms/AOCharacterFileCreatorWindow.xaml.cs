@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -90,6 +91,12 @@ namespace OceanyaClient
         private readonly ObservableCollection<string> assetFolders = new ObservableCollection<string>();
         private readonly ObservableCollection<AdvancedEntryViewModel> advancedEntries =
             new ObservableCollection<AdvancedEntryViewModel>();
+        private readonly ObservableCollection<FileOrganizationEntryViewModel> fileOrganizationEntries =
+            new ObservableCollection<FileOrganizationEntryViewModel>();
+        private readonly ObservableCollection<ExternalOrganizationEntry> externalOrganizationEntries =
+            new ObservableCollection<ExternalOrganizationEntry>();
+        private readonly Dictionary<string, string> generatedOrganizationOverrides = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private readonly List<FileOrganizationEntryViewModel> allFileOrganizationEntries = new List<FileOrganizationEntryViewModel>();
         private readonly ObservableCollection<string> mountPathOptions = new ObservableCollection<string>();
         private readonly ObservableCollection<string> sideOptions = new ObservableCollection<string>();
         private readonly ObservableCollection<string> blipOptions = new ObservableCollection<string>();
@@ -100,7 +107,8 @@ namespace OceanyaClient
         private readonly Dictionary<string, string> selectedShoutVisualSourcePaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> selectedShoutSfxSourcePaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private readonly AO2BlipPreviewPlayer blipPreviewPlayer = new AO2BlipPreviewPlayer();
-        private readonly AO2BlipPreviewPlayer shoutSfxPreviewPlayer = new AO2BlipPreviewPlayer();
+        private readonly Dictionary<string, AO2BlipPreviewPlayer> shoutSfxPreviewPlayers =
+            new Dictionary<string, AO2BlipPreviewPlayer>(StringComparer.OrdinalIgnoreCase);
         private readonly AO2BlipPreviewPlayer realizationSfxPreviewPlayer = new AO2BlipPreviewPlayer();
         private readonly Dictionary<string, IAnimationPlayer> shoutVisualPlayers = new Dictionary<string, IAnimationPlayer>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, DispatcherTimer> shoutVisualCutoffTimers = new Dictionary<string, DispatcherTimer>(StringComparer.OrdinalIgnoreCase);
@@ -169,7 +177,9 @@ namespace OceanyaClient
         private string selectedCustomBlipSourcePath = string.Empty;
         private string selectedRealizationSourcePath = string.Empty;
         private string selectedCharacterIconSourcePath = string.Empty;
+        private BitmapSource? generatedCharacterIconImage;
         private CancellationTokenSource? blipPreviewCancellation;
+        private Point fileOrganizationDragStartPoint;
         private Point emoteTileDragStartPoint;
         private EmoteTileEntryViewModel? pendingTileDragEntry;
         private EmoteTileEntryViewModel? currentDragTargetEntry;
@@ -193,6 +203,27 @@ namespace OceanyaClient
         };
         private string bulkButtonBackgroundUploadPath = string.Empty;
         private string bulkButtonOverlayUploadPath = string.Empty;
+        private string currentFileOrganizationPath = string.Empty;
+        private FileOrganizationEntryViewModel? fileOrganizationContextEntry;
+        private readonly Dictionary<string, IAnimationPlayer> fileOrganizationPreviewPlayers = new Dictionary<string, IAnimationPlayer>(StringComparer.OrdinalIgnoreCase);
+        private readonly AO2BlipPreviewPlayer fileOrganizationAudioPreviewPlayer = new AO2BlipPreviewPlayer();
+        private PlayStopProgressButton? activeFileOrganizationAudioButton;
+        private readonly List<FileOrganizationClipboardEntry> fileOrganizationClipboardEntries = new List<FileOrganizationClipboardEntry>();
+        private bool fileOrganizationClipboardIsCut;
+        private readonly Dictionary<string, CutSelectionState> savedCutSelectionByEmoteKey =
+            new Dictionary<string, CutSelectionState>(StringComparer.OrdinalIgnoreCase);
+        private Thumb? activeFileOrganizationRowResizeThumb;
+        private DataGridRow? activeFileOrganizationRowResizeRow;
+        private bool fileOrganizationRowResizeFromDivider;
+        private double fileOrganizationRowResizeStartHeight;
+        private double fileOrganizationRowResizePreviewHeight = 74;
+        private double fileOrganizationRowResizeGuideStartY;
+        private AdornerLayer? fileOrganizationRowResizeAdornerLayer;
+        private RowResizeGuideAdorner? fileOrganizationRowResizeGuideAdorner;
+        private DateTime suppressFolderOpenFromRenameUntilUtc = DateTime.MinValue;
+        private string suppressFolderOpenFromRenamePath = string.Empty;
+        private string lastCommittedStateFingerprint = string.Empty;
+        private bool skipCloseConfirmationOnce;
 
         private bool ShouldLoopEmotePreviews => LoopAnimationPreviewsCheckBox?.IsChecked != false;
 
@@ -251,6 +282,8 @@ namespace OceanyaClient
 
             EmoteTilesListBox.ItemsSource = emoteTiles;
             AdvancedEntriesListBox.ItemsSource = advancedEntries;
+            FileOrganizationListView.ItemsSource = fileOrganizationEntries;
+            FileOrganizationListView.RowHeight = fileOrganizationRowResizePreviewHeight;
             SideComboBox.ItemsSource = sideOptions;
             GenderBlipsDropdown.ItemsSource = blipOptions;
             ChatDropdown.ItemsSource = chatOptions;
@@ -258,12 +291,23 @@ namespace OceanyaClient
             ScalingDropdown.ItemsSource = scalingOptions;
             StretchDropdown.ItemsSource = booleanOptions;
             NeedsShownameDropdown.ItemsSource = booleanOptions;
+            SideComboBox.IsTextReadOnly = true;
+            ChatDropdown.IsTextReadOnly = true;
+            EffectsDropdown.IsTextReadOnly = true;
+            ScalingDropdown.IsTextReadOnly = true;
+            StretchDropdown.IsTextReadOnly = true;
+            NeedsShownameDropdown.IsTextReadOnly = true;
 
             FrameTargetComboBox.ItemsSource = FrameTargetOptionNames;
             FrameTypeComboBox.ItemsSource = FrameEventTypeOptionNames;
+            FrameTargetComboBox.IsTextReadOnly = true;
+            FrameTypeComboBox.IsTextReadOnly = true;
             ButtonIconsApplyScopeDropdown.ItemsSource = ButtonIconsApplyScopeOptionNames;
+            ButtonIconsApplyScopeDropdown.IsTextReadOnly = true;
             ButtonIconsBackgroundDropdown.ItemsSource = GetAutomaticBackgroundOptions();
             ButtonIconsEffectsDropdown.ItemsSource = ButtonEffectsGenerationOptionNames;
+            ButtonIconsBackgroundDropdown.IsTextReadOnly = true;
+            ButtonIconsEffectsDropdown.IsTextReadOnly = true;
             FrameTargetComboBox.Text = CharacterFrameTarget.PreAnimation.ToString();
             FrameTypeComboBox.Text = CharacterFrameEventType.Sfx.ToString();
             ButtonIconsApplyScopeDropdown.Text = ButtonIconsApplyScopeOptionNames[1];
@@ -291,7 +335,41 @@ namespace OceanyaClient
             ApplySavedPreviewVolume();
             RefreshChatPreview();
             ResetBulkButtonIconsConfigToDefaults();
+            LoadPersistedCutSelections();
+            InitializeEffectsFieldContextMenus();
             RefreshEmoteTiles();
+            UpdateFolderAvailabilityStatus();
+            lastCommittedStateFingerprint = ComputeCurrentStateFingerprint();
+        }
+
+        private void LoadPersistedCutSelections()
+        {
+            savedCutSelectionByEmoteKey.Clear();
+            Dictionary<string, CharacterCreatorCutSelectionState>? persisted = SaveFile.Data.CharacterCreatorCutSelections;
+            if (persisted == null)
+            {
+                return;
+            }
+
+            foreach (KeyValuePair<string, CharacterCreatorCutSelectionState> pair in persisted)
+            {
+                if (string.IsNullOrWhiteSpace(pair.Key) || pair.Value == null)
+                {
+                    continue;
+                }
+
+                Rect normalized = new Rect(pair.Value.X, pair.Value.Y, pair.Value.Width, pair.Value.Height);
+                if (normalized.Width <= 0 || normalized.Height <= 0)
+                {
+                    continue;
+                }
+
+                savedCutSelectionByEmoteKey[pair.Key.Trim()] = new CutSelectionState
+                {
+                    SourcePath = pair.Value.SourcePath?.Trim() ?? string.Empty,
+                    NormalizedSelection = normalized
+                };
+            }
         }
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
@@ -406,10 +484,13 @@ namespace OceanyaClient
             CharacterFolderNameTextBox.Text = "new_character";
             ShowNameTextBox.Text = "New Character";
             selectedCharacterIconSourcePath = string.Empty;
+            generatedCharacterIconImage = null;
             CharacterIconPreviewImage.Source = null;
             CharacterIconEmptyText.Visibility = Visibility.Visible;
             SideComboBox.Text = "wit";
-            GenderBlipsDropdown.Text = blipOptions.FirstOrDefault() ?? string.Empty;
+            string? femaleDefault = blipOptions.FirstOrDefault(option =>
+                string.Equals(option, "female", StringComparison.OrdinalIgnoreCase));
+            GenderBlipsDropdown.Text = femaleDefault ?? blipOptions.FirstOrDefault() ?? string.Empty;
             // Match AO2 defaults by leaving these unset in char.ini unless the user explicitly chooses values.
             ScalingDropdown.Text = string.Empty;
             StretchDropdown.Text = string.Empty;
@@ -422,6 +503,8 @@ namespace OceanyaClient
             FrameNumberTextBox.Text = "1";
             FrameValueTextBox.Text = "1";
             CustomFrameTargetTextBox.Text = "anim/custom";
+            UpdateCharacterIconFromEmoteButtonVisibility();
+            UpdateFolderAvailabilityStatus();
         }
 
         private void AddDefaultEmote()
@@ -445,6 +528,10 @@ namespace OceanyaClient
         private void CharacterField_TextChanged(object sender, TextChangedEventArgs e)
         {
             StatusTextBlock.Text = "Character metadata updated.";
+            if (ReferenceEquals(sender, CharacterFolderNameTextBox))
+            {
+                UpdateFolderAvailabilityStatus();
+            }
         }
 
         private void CharacterSelectionField_Changed(object sender, SelectionChangedEventArgs e)
@@ -470,6 +557,8 @@ namespace OceanyaClient
             {
                 MountPathResolvedTextBlock.Text = "The character folder will be created in: " + BuildCharactersDirectoryDisplayPath(mountPath);
             }
+
+            UpdateFolderAvailabilityStatus();
         }
 
         private static string BuildCharactersDirectoryDisplayPath(string mountPath)
@@ -477,6 +566,60 @@ namespace OceanyaClient
             string path = Path.Combine(mountPath ?? string.Empty, "characters");
             path = path.Replace('\\', '/').TrimEnd('/');
             return path + "/";
+        }
+
+        private string ResolveSelectedMountPathForCreation()
+        {
+            string selected = (MountPathComboBox.Text ?? string.Empty).Trim();
+            if (!string.IsNullOrWhiteSpace(selected))
+            {
+                return selected;
+            }
+
+            if (mountPathOptions.Count > 0)
+            {
+                return mountPathOptions[0];
+            }
+
+            return string.Empty;
+        }
+
+        private void UpdateFolderAvailabilityStatus()
+        {
+            if (CharacterFolderAvailabilityTextBlock == null)
+            {
+                return;
+            }
+
+            string folderName = (CharacterFolderNameTextBox.Text ?? string.Empty).Trim();
+            string mountPath = ResolveSelectedMountPathForCreation();
+            if (string.IsNullOrWhiteSpace(folderName) || string.IsNullOrWhiteSpace(mountPath))
+            {
+                CharacterFolderAvailabilityTextBlock.Foreground = new SolidColorBrush(Color.FromRgb(181, 208, 232));
+                CharacterFolderAvailabilityTextBlock.Text = "Enter a folder name to validate availability.";
+                return;
+            }
+
+            if (folderName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+            {
+                CharacterFolderAvailabilityTextBlock.Foreground = new SolidColorBrush(Color.FromRgb(244, 148, 148));
+                CharacterFolderAvailabilityTextBlock.Text =
+                    $"Folder \"{folderName}\" contains invalid characters and cannot be created.";
+                return;
+            }
+
+            string fullPath = Path.Combine(mountPath, "characters", folderName);
+            if (Directory.Exists(fullPath))
+            {
+                CharacterFolderAvailabilityTextBlock.Foreground = new SolidColorBrush(Color.FromRgb(244, 148, 148));
+                CharacterFolderAvailabilityTextBlock.Text =
+                    $"Folder \"{folderName}\" already exists, change the name or delete the original folder.";
+            }
+            else
+            {
+                CharacterFolderAvailabilityTextBlock.Foreground = new SolidColorBrush(Color.FromRgb(154, 224, 170));
+                CharacterFolderAvailabilityTextBlock.Text = $"Folder \"{folderName}\" is an available folder name.";
+            }
         }
 
         private void SectionButton_Click(object sender, RoutedEventArgs e)
@@ -492,6 +635,7 @@ namespace OceanyaClient
 
         private void SetActiveSection(string section)
         {
+            CommitAnyFileOrganizationRename();
             activeSection = section;
             SetupSectionPanel.Visibility = string.Equals(section, "setup", StringComparison.OrdinalIgnoreCase)
                 ? Visibility.Visible
@@ -504,6 +648,9 @@ namespace OceanyaClient
                 : Visibility.Collapsed;
             ButtonIconsSectionPanel.Visibility = string.Equals(section, "buttonicons", StringComparison.OrdinalIgnoreCase)
                 && IsButtonIconsSectionRequired()
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            FileOrganizationSectionPanel.Visibility = string.Equals(section, "fileorganization", StringComparison.OrdinalIgnoreCase)
                 ? Visibility.Visible
                 : Visibility.Collapsed;
             AdvancedSectionPanel.Visibility = Visibility.Collapsed;
@@ -525,6 +672,12 @@ namespace OceanyaClient
             {
                 StatusTextBlock.Text = "Step 4: Bulk-generate missing button icons.";
             }
+            else if (string.Equals(section, "fileorganization", StringComparison.OrdinalIgnoreCase))
+            {
+                currentFileOrganizationPath = string.Empty;
+                RefreshFileOrganizationEntries();
+                StatusTextBlock.Text = "Organize the final generated folder structure.";
+            }
             else
             {
                 StatusTextBlock.Text = "Configure the character and generate a new AO folder.";
@@ -545,6 +698,20 @@ namespace OceanyaClient
             ApplySectionButtonStyle(
                 SectionButtonIconsButton,
                 string.Equals(activeSection, "buttonicons", StringComparison.OrdinalIgnoreCase));
+            ApplySectionButtonStyle(
+                SectionFileOrganizationButton,
+                string.Equals(activeSection, "fileorganization", StringComparison.OrdinalIgnoreCase));
+            UpdateSectionButtonNumbers();
+        }
+
+        private void UpdateSectionButtonNumbers()
+        {
+            bool hasButtonIcons = SectionButtonIconsButton.Visibility == Visibility.Visible;
+            SectionSetupButton.Content = "1. Initial Character Setup";
+            SectionEffectsButton.Content = "2. Effects";
+            SectionEmotesButton.Content = "3. Emotes";
+            SectionButtonIconsButton.Content = "4. Button Icons";
+            SectionFileOrganizationButton.Content = hasButtonIcons ? "5. File Organization" : "4. File Organization";
         }
 
         private static void ApplySectionButtonStyle(Button button, bool isActive)
@@ -603,6 +770,25 @@ namespace OceanyaClient
                 || emote.ButtonAutomaticCutEmoteImage != null;
         }
 
+        private static bool HasAnyCuttableAsset(CharacterCreationEmoteViewModel emote)
+        {
+            return !string.IsNullOrWhiteSpace(emote.PreAnimationAssetSourcePath)
+                || !string.IsNullOrWhiteSpace(emote.FinalAnimationIdleAssetSourcePath)
+                || !string.IsNullOrWhiteSpace(emote.FinalAnimationTalkingAssetSourcePath)
+                || !string.IsNullOrWhiteSpace(emote.AnimationAssetSourcePath);
+        }
+
+        private void UpdateCharacterIconFromEmoteButtonVisibility()
+        {
+            if (CharacterIconFromEmoteButton == null)
+            {
+                return;
+            }
+
+            bool hasEligible = emotes.Any(static emote => HasAnyCuttableAsset(emote));
+            CharacterIconFromEmoteButton.Visibility = hasEligible ? Visibility.Visible : Visibility.Collapsed;
+        }
+
         private static bool HasUsableButtonPair(CharacterCreationEmoteViewModel emote)
         {
             ButtonIconGenerationConfig config = BuildButtonIconGenerationConfig(emote);
@@ -629,6 +815,8 @@ namespace OceanyaClient
                     ? Visibility.Visible
                     : Visibility.Collapsed;
             }
+
+            UpdateSectionButtonNumbers();
         }
 
         private void DefaultTabButton_Click(object sender, RoutedEventArgs e)
@@ -658,7 +846,16 @@ namespace OceanyaClient
             {
                 ResetBulkButtonIconsConfigToDefaults();
                 StatusTextBlock.Text = "Button Icons tab reset to defaults.";
+                return;
             }
+
+            if (string.Equals(activeSection, "fileorganization", StringComparison.OrdinalIgnoreCase))
+            {
+                ResetFileOrganizationToDefaults();
+                StatusTextBlock.Text = "File Organization tab reset to defaults.";
+                return;
+            }
+
         }
 
         private void DefaultAllButton_Click(object sender, RoutedEventArgs e)
@@ -667,6 +864,9 @@ namespace OceanyaClient
             ResetEffectsToDefaults();
             ResetEmotesToDefaults();
             ResetBulkButtonIconsConfigToDefaults();
+            externalOrganizationEntries.Clear();
+            generatedOrganizationOverrides.Clear();
+            currentFileOrganizationPath = string.Empty;
             ResetFrameAndAdvancedToDefaults();
             StatusTextBlock.Text = "All tabs reset to defaults.";
         }
@@ -676,10 +876,12 @@ namespace OceanyaClient
             CharacterFolderNameTextBox.Text = "new_character";
             ShowNameTextBox.Text = "New Character";
             selectedCharacterIconSourcePath = string.Empty;
+            generatedCharacterIconImage = null;
             CharacterIconPreviewImage.Source = null;
             CharacterIconEmptyText.Visibility = Visibility.Visible;
             SideComboBox.Text = "wit";
             SetBlipText(blipOptions.FirstOrDefault() ?? string.Empty);
+            UpdateCharacterIconFromEmoteButtonVisibility();
         }
 
         private void ResetEmotesToDefaults()
@@ -893,18 +1095,16 @@ namespace OceanyaClient
                 return;
             }
 
-            BitmapSource? lastCutout = null;
             foreach (CharacterCreationEmoteViewModel emote in targets)
             {
                 bulkButtonCutoutByEmoteId.TryGetValue(emote.Id, out BitmapSource? existingCutout);
-                BitmapSource? cutout = ShowEmoteCuttingDialog(emote, existingCutout ?? lastCutout);
+                BitmapSource? cutout = ShowEmoteCuttingDialog(emote, existingCutout);
                 if (cutout == null)
                 {
                     continue;
                 }
 
                 bulkButtonCutoutByEmoteId[emote.Id] = cutout;
-                lastCutout = cutout;
             }
 
             RenderBulkCutoutPreviewTiles(targets);
@@ -930,12 +1130,25 @@ namespace OceanyaClient
                     BorderThickness = new Thickness(1),
                     CornerRadius = new CornerRadius(3),
                     Background = new SolidColorBrush(Color.FromArgb(110, 20, 20, 20)),
-                    ToolTip = emote.EmoteHeader + " - " + emote.Name
+                    ToolTip = emote.EmoteHeader + " - " + emote.Name,
+                    Cursor = Cursors.Hand
                 };
                 tile.Child = new Image
                 {
                     Source = cutout,
                     Stretch = Stretch.Uniform
+                };
+                tile.MouseLeftButtonUp += (_, _) =>
+                {
+                    SelectEmoteTile(emote);
+                    BitmapSource? updated = ShowEmoteCuttingDialog(emote, cutout);
+                    if (updated == null)
+                    {
+                        return;
+                    }
+
+                    bulkButtonCutoutByEmoteId[emote.Id] = updated;
+                    RenderBulkCutoutPreviewTiles(targets);
                 };
                 ButtonIconsCutoutPreviewWrapPanel.Children.Add(tile);
             }
@@ -988,6 +1201,1911 @@ namespace OceanyaClient
             UpdateButtonIconsSectionVisibility();
             StatusTextBlock.Text = $"Applied automatic button config to {appliedCount} emotes.";
             RefreshEmoteTiles(GetSelectedEmote());
+        }
+
+        private void RefreshFileOrganizationEntries()
+        {
+            StopFileOrganizationAudioPreview();
+            ClearFileOrganizationPreviewPlayers();
+            allFileOrganizationEntries.Clear();
+            allFileOrganizationEntries.AddRange(BuildGeneratedFileOrganizationEntries());
+
+            foreach (ExternalOrganizationEntry external in externalOrganizationEntries)
+            {
+                FileOrganizationEntryViewModel externalEntry = new FileOrganizationEntryViewModel
+                {
+                    Name = Path.GetFileName(external.RelativePath.TrimEnd('/', '\\')),
+                    RelativePath = external.RelativePath,
+                    TypeText = external.IsFolder ? "Folder" : "File",
+                    StatusText = "UNUSED USER FILE",
+                    IsLocked = false,
+                    IsExternal = true,
+                    SourcePath = external.SourcePath,
+                    IsFolder = external.IsFolder,
+                    DefaultRelativePath = external.RelativePath
+                };
+                InitializeFileOrganizationEntryVisual(externalEntry);
+                allFileOrganizationEntries.Add(externalEntry);
+            }
+
+            EnsureParentFolderEntries(allFileOrganizationEntries);
+            UpdateUnusedFlags(allFileOrganizationEntries);
+            if (!string.IsNullOrWhiteSpace(currentFileOrganizationPath)
+                && !allFileOrganizationEntries.Any(entry => entry.IsFolder
+                    && string.Equals(entry.RelativePath, currentFileOrganizationPath, StringComparison.OrdinalIgnoreCase)))
+            {
+                currentFileOrganizationPath = string.Empty;
+            }
+
+            RefreshFileOrganizationCurrentFolderView();
+        }
+
+        private List<FileOrganizationEntryViewModel> BuildGeneratedFileOrganizationEntries()
+        {
+            List<FileOrganizationEntryViewModel> result = new List<FileOrganizationEntryViewModel>();
+            AddGeneratedOrganizationFile(result, "charini", "char.ini", sourcePath: null, locked: true);
+
+            if (generatedCharacterIconImage != null)
+            {
+                AddGeneratedOrganizationFile(result, "charicon", "char_icon.png", sourcePath: null, locked: true);
+            }
+            else if (!string.IsNullOrWhiteSpace(selectedCharacterIconSourcePath))
+            {
+                AddGeneratedOrganizationFile(
+                    result,
+                    "charicon",
+                    "char_icon" + Path.GetExtension(selectedCharacterIconSourcePath),
+                    selectedCharacterIconSourcePath,
+                    locked: true);
+            }
+
+            foreach (CharacterCreationEmoteViewModel emote in emotes)
+            {
+                if (!HasAnyRealAssetSet(emote))
+                {
+                    continue;
+                }
+
+                if (!string.IsNullOrWhiteSpace(emote.PreAnimationAssetSourcePath))
+                {
+                    AddGeneratedOrganizationFile(
+                        result,
+                        $"emote:{emote.Index}:preanim",
+                        "Images/" + Path.GetFileName(emote.PreAnimationAssetSourcePath),
+                        emote.PreAnimationAssetSourcePath,
+                        locked: false);
+                }
+
+                if (!string.IsNullOrWhiteSpace(emote.AnimationAssetSourcePath))
+                {
+                    AddGeneratedOrganizationFile(
+                        result,
+                        $"emote:{emote.Index}:anim",
+                        "Images/" + Path.GetFileName(emote.AnimationAssetSourcePath),
+                        emote.AnimationAssetSourcePath,
+                        locked: false);
+                }
+
+                if (!string.IsNullOrWhiteSpace(emote.FinalAnimationIdleAssetSourcePath))
+                {
+                    AddGeneratedOrganizationFile(
+                        result,
+                        $"emote:{emote.Index}:idle",
+                        "Images/(a)/" + Path.GetFileName(emote.FinalAnimationIdleAssetSourcePath),
+                        emote.FinalAnimationIdleAssetSourcePath,
+                        locked: false);
+                }
+
+                if (!string.IsNullOrWhiteSpace(emote.FinalAnimationTalkingAssetSourcePath))
+                {
+                    AddGeneratedOrganizationFile(
+                        result,
+                        $"emote:{emote.Index}:talking",
+                        "Images/(b)/" + Path.GetFileName(emote.FinalAnimationTalkingAssetSourcePath),
+                        emote.FinalAnimationTalkingAssetSourcePath,
+                        locked: false);
+                }
+
+                if (!string.IsNullOrWhiteSpace(emote.AnimationAssetSourcePath)
+                    && (!string.IsNullOrWhiteSpace(emote.FinalAnimationIdleAssetSourcePath)
+                        || !string.IsNullOrWhiteSpace(emote.FinalAnimationTalkingAssetSourcePath)))
+                {
+                    AddGeneratedOrganizationFile(
+                        result,
+                        $"emote:{emote.Index}:splitbase",
+                        "Images/" + Path.GetFileName(emote.AnimationAssetSourcePath),
+                        emote.AnimationAssetSourcePath,
+                        locked: false);
+                }
+
+                if (!string.IsNullOrWhiteSpace(emote.SfxAssetSourcePath))
+                {
+                    AddGeneratedOrganizationFile(
+                        result,
+                        $"emote:{emote.Index}:sfx",
+                        "Sounds/" + Path.GetFileName(emote.SfxAssetSourcePath),
+                        emote.SfxAssetSourcePath,
+                        locked: false);
+                }
+
+                int emoteId = Math.Max(1, emote.Index);
+                ButtonIconGenerationConfig buttonConfig = BuildButtonIconGenerationConfig(emote);
+                if (TryBuildButtonIconPair(buttonConfig, out _, out _, out _))
+                {
+                    AddGeneratedOrganizationFile(
+                        result,
+                        $"button:{emoteId}:on",
+                        $"emotions/button{emoteId}_on.png",
+                        sourcePath: null,
+                        locked: true);
+                    AddGeneratedOrganizationFile(
+                        result,
+                        $"button:{emoteId}:off",
+                        $"emotions/button{emoteId}_off.png",
+                        sourcePath: null,
+                        locked: true);
+                }
+            }
+
+            AddShoutOrganizationEntries(result);
+            AddOptionalGeneratedOrganizationEntries(result);
+
+            return result
+                .GroupBy(static entry => entry.RelativePath, StringComparer.OrdinalIgnoreCase)
+                .Select(static group => group.First())
+                .ToList();
+        }
+
+        private void AddGeneratedOrganizationFile(
+            List<FileOrganizationEntryViewModel> entries,
+            string assetKey,
+            string defaultRelativePath,
+            string? sourcePath,
+            bool locked)
+        {
+            string resolved = ResolveOutputPathForAsset(assetKey, defaultRelativePath, isFolder: false);
+            FileOrganizationEntryViewModel entry = new FileOrganizationEntryViewModel
+            {
+                Name = Path.GetFileName(resolved),
+                RelativePath = resolved,
+                DefaultRelativePath = NormalizeRelativePath(defaultRelativePath, isFolder: false),
+                TypeText = "File",
+                StatusText = locked ? "Generated (locked)" : "Generated",
+                IsLocked = locked,
+                IsExternal = false,
+                IsFolder = false,
+                SourcePath = sourcePath,
+                AssetKey = assetKey
+            };
+            InitializeFileOrganizationEntryVisual(entry);
+            entries.Add(entry);
+        }
+
+        private void AddGeneratedOrganizationFolder(List<FileOrganizationEntryViewModel> entries, string assetKey, string defaultRelativePath, bool locked)
+        {
+            string resolved = ResolveOutputPathForAsset(assetKey, defaultRelativePath, isFolder: true);
+            FileOrganizationEntryViewModel entry = new FileOrganizationEntryViewModel
+            {
+                Name = Path.GetFileName(resolved.TrimEnd('/')),
+                RelativePath = resolved,
+                DefaultRelativePath = NormalizeRelativePath(defaultRelativePath, isFolder: true),
+                TypeText = "Folder",
+                StatusText = locked ? "Generated (locked)" : "Generated",
+                IsLocked = locked,
+                IsExternal = false,
+                IsFolder = true,
+                AssetKey = assetKey
+            };
+            InitializeFileOrganizationEntryVisual(entry);
+            entries.Add(entry);
+        }
+
+        private void AddShoutOrganizationEntries(List<FileOrganizationEntryViewModel> entries)
+        {
+            AddShoutOrganizationEntry(entries, "holdit", "holdit_bubble", isVisual: true);
+            AddShoutOrganizationEntry(entries, "objection", "objection_bubble", isVisual: true);
+            AddShoutOrganizationEntry(entries, "takethat", "takethat_bubble", isVisual: true);
+            AddShoutOrganizationEntry(entries, "custom", "custom", isVisual: true);
+            AddShoutOrganizationEntry(entries, "holdit", "holdit", isVisual: false);
+            AddShoutOrganizationEntry(entries, "objection", "objection", isVisual: false);
+            AddShoutOrganizationEntry(entries, "takethat", "takethat", isVisual: false);
+            AddShoutOrganizationEntry(entries, "custom", "custom", isVisual: false);
+        }
+
+        private void AddShoutOrganizationEntry(List<FileOrganizationEntryViewModel> entries, string key, string targetBaseName, bool isVisual)
+        {
+            Dictionary<string, string> sourceMap = isVisual ? selectedShoutVisualSourcePaths : selectedShoutSfxSourcePaths;
+            if (!sourceMap.TryGetValue(key, out string? sourcePath)
+                || string.IsNullOrWhiteSpace(sourcePath))
+            {
+                return;
+            }
+
+            string extension = Path.GetExtension(sourcePath);
+            if (string.IsNullOrWhiteSpace(extension))
+            {
+                return;
+            }
+
+            string assetKey = isVisual ? $"shout:visual:{key}" : $"shout:sfx:{key}";
+            AddGeneratedOrganizationFile(entries, assetKey, targetBaseName + extension, sourcePath, locked: true);
+        }
+
+        private void AddOptionalGeneratedOrganizationEntries(List<FileOrganizationEntryViewModel> entries)
+        {
+            bool usingCustomBlipFile = !string.IsNullOrWhiteSpace(selectedCustomBlipSourcePath)
+                && !string.IsNullOrWhiteSpace(customBlipOptionText)
+                && string.Equals((GenderBlipsDropdown.Text ?? string.Empty).Trim(), customBlipOptionText, StringComparison.OrdinalIgnoreCase);
+            if (usingCustomBlipFile)
+            {
+                string extension = Path.GetExtension(selectedCustomBlipSourcePath);
+                string fileName = Path.GetFileNameWithoutExtension(selectedCustomBlipSourcePath);
+                AddGeneratedOrganizationFile(entries, "blip:custom", $"blips/{fileName}{extension}", selectedCustomBlipSourcePath, locked: false);
+            }
+
+            if (!string.IsNullOrWhiteSpace(selectedRealizationSourcePath)
+                && string.Equals((RealizationTextBox.Text ?? string.Empty).Trim(), Path.GetFileName(selectedRealizationSourcePath), StringComparison.OrdinalIgnoreCase))
+            {
+                string extension = Path.GetExtension(selectedRealizationSourcePath);
+                AddGeneratedOrganizationFile(entries, "realization:custom", $"realization{extension}", selectedRealizationSourcePath, locked: true);
+            }
+        }
+
+        private static string NormalizeRelativePath(string path, bool isFolder)
+        {
+            string normalized = (path ?? string.Empty).Trim().Replace('\\', '/').TrimStart('/');
+            if (isFolder)
+            {
+                normalized = normalized.Trim('/');
+                if (!string.IsNullOrWhiteSpace(normalized))
+                {
+                    normalized += "/";
+                }
+            }
+            else
+            {
+                normalized = normalized.TrimEnd('/');
+            }
+
+            return normalized;
+        }
+
+        private static string RemoveExtensionFromRelativePath(string path)
+        {
+            string normalized = NormalizeRelativePath(path, isFolder: false);
+            string extension = Path.GetExtension(normalized);
+            if (string.IsNullOrWhiteSpace(extension))
+            {
+                return normalized;
+            }
+
+            return normalized.Substring(0, normalized.Length - extension.Length);
+        }
+
+        private string ResolveOutputPathForAsset(string assetKey, string defaultRelativePath, bool isFolder)
+        {
+            if (generatedOrganizationOverrides.TryGetValue(assetKey, out string? overridePath)
+                && !string.IsNullOrWhiteSpace(overridePath))
+            {
+                return NormalizeRelativePath(overridePath, isFolder);
+            }
+
+            return NormalizeRelativePath(defaultRelativePath, isFolder);
+        }
+
+        private static string GetParentDirectoryPath(string relativePath, bool isFolder)
+        {
+            string normalized = NormalizeRelativePath(relativePath, isFolder);
+            if (isFolder)
+            {
+                normalized = normalized.TrimEnd('/');
+            }
+
+            string? parent = Path.GetDirectoryName(normalized.Replace('/', Path.DirectorySeparatorChar));
+            if (string.IsNullOrWhiteSpace(parent))
+            {
+                return string.Empty;
+            }
+
+            return parent.Replace(Path.DirectorySeparatorChar, '/').Trim('/') + "/";
+        }
+
+        private void EnsureParentFolderEntries(List<FileOrganizationEntryViewModel> entries)
+        {
+            HashSet<string> existingFolders = entries
+                .Where(static entry => entry.IsFolder)
+                .Select(static entry => NormalizeRelativePath(entry.RelativePath, isFolder: true))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            List<FileOrganizationEntryViewModel> generatedFolders = new List<FileOrganizationEntryViewModel>();
+
+            foreach (FileOrganizationEntryViewModel entry in entries.ToArray())
+            {
+                string parent = GetParentDirectoryPath(entry.RelativePath, entry.IsFolder);
+                while (!string.IsNullOrWhiteSpace(parent))
+                {
+                    if (existingFolders.Add(parent))
+                    {
+                        FileOrganizationEntryViewModel folderEntry = new FileOrganizationEntryViewModel
+                        {
+                            Name = Path.GetFileName(parent.TrimEnd('/')),
+                            RelativePath = parent,
+                            DefaultRelativePath = parent,
+                            TypeText = "Folder",
+                            StatusText = "Generated",
+                            IsLocked = string.Equals(parent, "emotions/", StringComparison.OrdinalIgnoreCase),
+                            IsExternal = false,
+                            IsFolder = true
+                        };
+                        InitializeFileOrganizationEntryVisual(folderEntry);
+                        generatedFolders.Add(folderEntry);
+                    }
+
+                    parent = GetParentDirectoryPath(parent, isFolder: true);
+                }
+            }
+
+            entries.AddRange(generatedFolders);
+        }
+
+        private void RefreshFileOrganizationCurrentFolderView()
+        {
+            string normalizedCurrent = NormalizeRelativePath(currentFileOrganizationPath, isFolder: true);
+            currentFileOrganizationPath = normalizedCurrent;
+            string mountPath = (MountPathComboBox.Text ?? string.Empty).Trim();
+            string folderName = (CharacterFolderNameTextBox.Text ?? "new_character").Trim();
+            string basePath;
+            if (!string.IsNullOrWhiteSpace(mountPath))
+            {
+                basePath = Path.Combine(mountPath, "characters", folderName).Replace('\\', '/');
+            }
+            else
+            {
+                basePath = $"characters/{folderName}";
+            }
+
+            FileOrganizationPathTextBlock.Text = string.IsNullOrWhiteSpace(normalizedCurrent)
+                ? basePath + "/"
+                : basePath + "/" + normalizedCurrent;
+            FileOrganizationGoUpButton.IsEnabled = !string.IsNullOrWhiteSpace(normalizedCurrent);
+
+            fileOrganizationEntries.Clear();
+            IEnumerable<FileOrganizationEntryViewModel> visibleEntries = allFileOrganizationEntries
+                .Where(entry => string.Equals(
+                    GetParentDirectoryPath(entry.RelativePath, entry.IsFolder),
+                    normalizedCurrent,
+                    StringComparison.OrdinalIgnoreCase))
+                .OrderBy(static entry => entry.IsFolder ? 0 : 1)
+                .ThenBy(static entry => entry.Name, StringComparer.OrdinalIgnoreCase);
+
+            foreach (FileOrganizationEntryViewModel entry in visibleEntries)
+            {
+                fileOrganizationEntries.Add(entry);
+            }
+        }
+
+        private void InitializeFileOrganizationEntryVisual(FileOrganizationEntryViewModel entry)
+        {
+            string displayPath = entry.SourcePath ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(displayPath) && !entry.IsFolder)
+            {
+                displayPath = entry.RelativePath;
+            }
+
+            if (entry.IsFolder)
+            {
+                entry.EntryKind = FileOrganizationEntryKind.Folder;
+                entry.IconGlyph = "\uE8B7";
+                entry.TypeDisplayName = "Folder";
+                return;
+            }
+
+            string extension = Path.GetExtension(displayPath ?? string.Empty).ToLowerInvariant();
+            if (IsImageExtension(extension))
+            {
+                entry.EntryKind = FileOrganizationEntryKind.Image;
+                entry.TypeDisplayName = "Image asset";
+                if (string.Equals(entry.AssetKey, "charicon", StringComparison.OrdinalIgnoreCase)
+                    && generatedCharacterIconImage != null)
+                {
+                    entry.PreviewImage = generatedCharacterIconImage;
+                    return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(entry.AssetKey)
+                    && entry.AssetKey.StartsWith("button:", StringComparison.OrdinalIgnoreCase))
+                {
+                    string[] parts = entry.AssetKey.Split(':');
+                    if (parts.Length == 3
+                        && int.TryParse(parts[1], out int emoteIndex)
+                        && (string.Equals(parts[2], "on", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(parts[2], "off", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        CharacterCreationEmoteViewModel? emote = emotes.FirstOrDefault(model => model.Index == emoteIndex);
+                        if (emote != null)
+                        {
+                            ButtonIconGenerationConfig config = BuildButtonIconGenerationConfig(emote);
+                            if (TryBuildButtonIconPair(config, out BitmapSource? onImage, out BitmapSource? offImage, out _))
+                            {
+                                entry.PreviewImage = string.Equals(parts[2], "off", StringComparison.OrdinalIgnoreCase)
+                                    ? offImage
+                                    : onImage;
+                                if (entry.PreviewImage != null)
+                                {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                string? resolvedPath = ResolveAo2PreviewImagePath(entry.SourcePath);
+                if (!string.IsNullOrWhiteSpace(resolvedPath))
+                {
+                    if (Ao2AnimationPreview.TryCreateAnimationPlayer(resolvedPath, loop: true, out IAnimationPlayer? player)
+                        && player != null)
+                    {
+                        entry.PreviewImage = player.CurrentFrame;
+                        string animationKey = entry.UniqueKey;
+                        fileOrganizationPreviewPlayers[animationKey] = player;
+                        player.FrameChanged += frame => Dispatcher.Invoke(() =>
+                        {
+                            entry.PreviewImage = frame;
+                        });
+                        return;
+                    }
+
+                    entry.PreviewImage = Ao2AnimationPreview.LoadStaticPreviewImage(resolvedPath, decodePixelWidth: 120);
+                }
+
+                return;
+            }
+
+            if (IsAudioExtension(extension))
+            {
+                entry.EntryKind = FileOrganizationEntryKind.Audio;
+                entry.IconGlyph = "\uE189";
+                entry.TypeDisplayName = "Sound asset";
+                return;
+            }
+
+            if (string.Equals(extension, ".txt", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(extension, ".ini", StringComparison.OrdinalIgnoreCase))
+            {
+                entry.EntryKind = FileOrganizationEntryKind.Text;
+                entry.IconGlyph = "\uE8A5";
+                entry.TypeDisplayName = "Text asset";
+                return;
+            }
+
+            entry.EntryKind = FileOrganizationEntryKind.Unknown;
+            entry.IconGlyph = "\uE11B";
+            entry.TypeDisplayName = "Unknown";
+        }
+
+        private static void UpdateUnusedFlags(IReadOnlyList<FileOrganizationEntryViewModel> entries)
+        {
+            foreach (FileOrganizationEntryViewModel entry in entries)
+            {
+                entry.IsUnused = entry.IsExternal;
+            }
+
+            List<FileOrganizationEntryViewModel> folders = entries
+                .Where(static entry => entry.IsFolder)
+                .OrderByDescending(static entry => entry.RelativePath.Length)
+                .ToList();
+            foreach (FileOrganizationEntryViewModel folder in folders)
+            {
+                string prefix = NormalizeRelativePath(folder.RelativePath, isFolder: true);
+                List<FileOrganizationEntryViewModel> descendants = entries
+                    .Where(entry => !ReferenceEquals(entry, folder)
+                        && NormalizeRelativePath(entry.RelativePath, entry.IsFolder).StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                if (descendants.Count == 0)
+                {
+                    folder.IsUnused = folder.IsExternal;
+                }
+                else
+                {
+                    folder.IsUnused = descendants.All(static descendant => descendant.IsUnused);
+                }
+            }
+        }
+
+        private static bool IsImageExtension(string extension)
+        {
+            return extension == ".png"
+                || extension == ".jpg"
+                || extension == ".jpeg"
+                || extension == ".bmp"
+                || extension == ".gif"
+                || extension == ".webp"
+                || extension == ".apng";
+        }
+
+        private static bool IsAudioExtension(string extension)
+        {
+            return extension == ".opus"
+                || extension == ".ogg"
+                || extension == ".mp3"
+                || extension == ".wav";
+        }
+
+        private void ClearFileOrganizationPreviewPlayers()
+        {
+            foreach (IAnimationPlayer player in fileOrganizationPreviewPlayers.Values.ToArray())
+            {
+                try
+                {
+                    player.Stop();
+                }
+                catch
+                {
+                    // ignored
+                }
+            }
+
+            fileOrganizationPreviewPlayers.Clear();
+        }
+
+        private void RefreshFileOrganizationButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (externalOrganizationEntries.Count > 0 || generatedOrganizationOverrides.Count > 0)
+            {
+                MessageBoxResult decision = OceanyaMessageBox.Show(
+                    this,
+                    "Refreshing the file organization list will clear your current unused file/folder organization config. Continue?",
+                    "Refresh File Organization",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+                if (decision != MessageBoxResult.Yes)
+                {
+                    return;
+                }
+
+                externalOrganizationEntries.Clear();
+                generatedOrganizationOverrides.Clear();
+                currentFileOrganizationPath = string.Empty;
+            }
+
+            RefreshFileOrganizationEntries();
+        }
+
+        private void ResetFileOrganizationButton_Click(object sender, RoutedEventArgs e)
+        {
+            ResetFileOrganizationToDefaults();
+        }
+
+        private void ResetFileOrganizationToDefaults()
+        {
+            if (externalOrganizationEntries.Count == 0 && generatedOrganizationOverrides.Count == 0)
+            {
+                currentFileOrganizationPath = string.Empty;
+                RefreshFileOrganizationEntries();
+                return;
+            }
+
+            MessageBoxResult decision = OceanyaMessageBox.Show(
+                this,
+                "Reset file organization to defaults? This clears your folder structure edits and unused entries.",
+                "Reset File Organization",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            if (decision != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            externalOrganizationEntries.Clear();
+            generatedOrganizationOverrides.Clear();
+            currentFileOrganizationPath = string.Empty;
+            fileOrganizationClipboardEntries.Clear();
+            fileOrganizationClipboardIsCut = false;
+            RefreshFileOrganizationEntries();
+        }
+
+        private void CreateOrganizationFolderButton_Click(object sender, RoutedEventArgs e)
+        {
+            string normalized = BuildUniqueExternalPath(currentFileOrganizationPath + "New Folder/", isFolder: true);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                return;
+            }
+
+            externalOrganizationEntries.Add(new ExternalOrganizationEntry
+            {
+                RelativePath = normalized,
+                IsFolder = true
+            });
+            RefreshFileOrganizationEntries();
+            FileOrganizationEntryViewModel? created = fileOrganizationEntries.FirstOrDefault(entry =>
+                entry.IsFolder
+                && entry.IsExternal
+                && string.Equals(
+                    NormalizeRelativePath(entry.RelativePath, isFolder: true),
+                    NormalizeRelativePath(normalized, isFolder: true),
+                    StringComparison.OrdinalIgnoreCase));
+            if (created != null)
+            {
+                BeginFileOrganizationRename(created);
+            }
+        }
+
+        private void AddOrganizationFileButton_Click(object sender, RoutedEventArgs e)
+        {
+            OpenFileDialog picker = new OpenFileDialog
+            {
+                Title = "Select unused file",
+                Filter = "All files (*.*)|*.*"
+            };
+            if (picker.ShowDialog() != true)
+            {
+                return;
+            }
+
+            string defaultName = Path.GetFileName(picker.FileName);
+            string? relativePath = InputDialog.Show("Add File", "File name:", defaultName);
+            if (string.IsNullOrWhiteSpace(relativePath))
+            {
+                return;
+            }
+
+            externalOrganizationEntries.Add(new ExternalOrganizationEntry
+            {
+                SourcePath = picker.FileName,
+                RelativePath = NormalizeRelativePath(currentFileOrganizationPath + relativePath, isFolder: false),
+                IsFolder = false
+            });
+            RefreshFileOrganizationEntries();
+        }
+
+        private void CreateReadmeFileButton_Click(object sender, RoutedEventArgs e)
+        {
+            string? content = ShowTextDocumentDialog(
+                "Create Readme",
+                "readme.txt",
+                "Create a readme file in the current folder. This file is user-added and marked as unused.",
+                string.Empty,
+                isReadOnly: false);
+            if (content == null)
+            {
+                return;
+            }
+
+            string fileName = BuildUniqueReadmeNameInCurrentFolder();
+            string tempPath = Path.Combine(Path.GetTempPath(), $"oceanya_readme_{Guid.NewGuid():N}.txt");
+            File.WriteAllText(tempPath, content);
+            externalOrganizationEntries.Add(new ExternalOrganizationEntry
+            {
+                SourcePath = tempPath,
+                RelativePath = NormalizeRelativePath(currentFileOrganizationPath + fileName, isFolder: false),
+                IsFolder = false
+            });
+            RefreshFileOrganizationEntries();
+        }
+
+        private string BuildUniqueReadmeNameInCurrentFolder()
+        {
+            HashSet<string> occupied = allFileOrganizationEntries
+                .Where(entry => string.Equals(
+                    GetParentDirectoryPath(entry.RelativePath, entry.IsFolder),
+                    NormalizeRelativePath(currentFileOrganizationPath, isFolder: true),
+                    StringComparison.OrdinalIgnoreCase))
+                .Select(entry => Path.GetFileName(entry.RelativePath.TrimEnd('/', '\\')))
+                .Where(static name => !string.IsNullOrWhiteSpace(name))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (!occupied.Contains("readme.txt"))
+            {
+                return "readme.txt";
+            }
+
+            int index = 1;
+            while (true)
+            {
+                string candidate = $"readme ({index}).txt";
+                if (!occupied.Contains(candidate))
+                {
+                    return candidate;
+                }
+
+                index++;
+            }
+        }
+
+        private void RenameOrganizationEntryButton_Click(object sender, RoutedEventArgs e)
+        {
+            FileOrganizationEntryViewModel? target = fileOrganizationContextEntry ?? GetSelectedFileOrganizationEntry();
+            if (target is not FileOrganizationEntryViewModel selectedEntry)
+            {
+                return;
+            }
+
+            if (selectedEntry.IsInteractionLocked)
+            {
+                StatusTextBlock.Text = "Selected entry is locked.";
+                return;
+            }
+
+            BeginFileOrganizationRename(selectedEntry);
+        }
+
+        private void BeginFileOrganizationRename(FileOrganizationEntryViewModel entry)
+        {
+            foreach (FileOrganizationEntryViewModel item in allFileOrganizationEntries)
+            {
+                if (!ReferenceEquals(item, entry))
+                {
+                    item.IsRenaming = false;
+                }
+            }
+
+            entry.RenameDraft = entry.Name;
+            entry.IsRenaming = true;
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                DataGridRow? row = FileOrganizationListView.ItemContainerGenerator.ContainerFromItem(entry) as DataGridRow;
+                TextBox? textBox = FindDescendantByName<TextBox>(row, "FileOrgInlineRenameTextBox");
+                if (textBox != null)
+                {
+                    textBox.Focus();
+                    textBox.SelectAll();
+                }
+            }), DispatcherPriority.Background);
+        }
+
+        private void CommitFileOrganizationRename(FileOrganizationEntryViewModel entry)
+        {
+            string newName = (entry.RenameDraft ?? string.Empty).Trim();
+            entry.IsRenaming = false;
+            if (string.IsNullOrWhiteSpace(newName))
+            {
+                return;
+            }
+
+            string parent = GetParentDirectoryPath(entry.RelativePath, entry.IsFolder);
+            string normalized = NormalizeRelativePath(parent + newName + (entry.IsFolder ? "/" : string.Empty), entry.IsFolder);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                return;
+            }
+
+            if (!UpdateOrganizationPathForEntry(entry, normalized))
+            {
+                return;
+            }
+
+            RefreshFileOrganizationEntries();
+        }
+
+        private void CommitAnyFileOrganizationRename()
+        {
+            FileOrganizationEntryViewModel? active = allFileOrganizationEntries.FirstOrDefault(static item => item.IsRenaming);
+            if (active != null)
+            {
+                CommitFileOrganizationRename(active);
+            }
+        }
+
+        private void FileOrgNameTextBlock_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.ClickCount < 2)
+            {
+                return;
+            }
+
+            if (sender is TextBlock textBlock && textBlock.DataContext is FileOrganizationEntryViewModel entry)
+            {
+                if (entry.IsFolder)
+                {
+                    // Name double-click should rename, while row double-click opens folder.
+                    e.Handled = true;
+                    suppressFolderOpenFromRenameUntilUtc = DateTime.UtcNow.AddMilliseconds(450);
+                    suppressFolderOpenFromRenamePath = entry.RelativePath;
+                }
+
+                if (!entry.IsInteractionLocked)
+                {
+                    BeginFileOrganizationRename(entry);
+                }
+            }
+        }
+
+        private void FileOrgRenameTextBox_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (sender is not TextBox textBox || textBox.DataContext is not FileOrganizationEntryViewModel entry)
+            {
+                return;
+            }
+
+            if (e.Key == Key.Enter)
+            {
+                CommitFileOrganizationRename(entry);
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Escape)
+            {
+                entry.IsRenaming = false;
+                e.Handled = true;
+            }
+        }
+
+        private void FileOrgRenameTextBox_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+        {
+            if (sender is TextBox textBox && textBox.DataContext is FileOrganizationEntryViewModel entry && entry.IsRenaming)
+            {
+                CommitFileOrganizationRename(entry);
+            }
+        }
+
+        private void MoveOrganizationEntryButton_Click(object sender, RoutedEventArgs e)
+        {
+            FileOrganizationEntryViewModel? target = fileOrganizationContextEntry ?? GetSelectedFileOrganizationEntry();
+            if (target is not FileOrganizationEntryViewModel selectedEntry)
+            {
+                return;
+            }
+
+            if (selectedEntry.IsInteractionLocked)
+            {
+                StatusTextBlock.Text = "Selected entry is locked.";
+                return;
+            }
+
+            string? targetFolder = InputDialog.Show("Move Entry", "Target folder path:", "extras/");
+            if (string.IsNullOrWhiteSpace(targetFolder))
+            {
+                return;
+            }
+
+            string normalizedFolder = targetFolder.Trim().Replace('\\', '/').Trim('/');
+            if (!string.IsNullOrWhiteSpace(normalizedFolder))
+            {
+                normalizedFolder += "/";
+            }
+
+            string fileName = Path.GetFileName(selectedEntry.RelativePath.TrimEnd('/', '\\'));
+            string destination = normalizedFolder + fileName + (selectedEntry.IsFolder ? "/" : string.Empty);
+            if (!UpdateOrganizationPathForEntry(selectedEntry, destination))
+            {
+                return;
+            }
+            RefreshFileOrganizationEntries();
+        }
+
+        private void RemoveOrganizationEntryButton_Click(object sender, RoutedEventArgs e)
+        {
+            FileOrganizationEntryViewModel[] selectedEntries = GetSelectedFileOrganizationEntries();
+            if (selectedEntries.Length == 0)
+            {
+                return;
+            }
+
+            FileOrganizationEntryViewModel[] removable = selectedEntries
+                .Where(static entry => entry.IsExternal && entry.IsUnused && !entry.IsLocked)
+                .ToArray();
+            if (removable.Length == 0)
+            {
+                StatusTextBlock.Text = "Only unused entries can be removed.";
+                return;
+            }
+
+            foreach (FileOrganizationEntryViewModel removableEntry in removable)
+            {
+                ExternalOrganizationEntry? external = externalOrganizationEntries.FirstOrDefault(entry =>
+                    string.Equals(entry.RelativePath, removableEntry.RelativePath, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(entry.SourcePath ?? string.Empty, removableEntry.SourcePath ?? string.Empty, StringComparison.OrdinalIgnoreCase));
+                if (external != null)
+                {
+                    externalOrganizationEntries.Remove(external);
+                }
+            }
+
+            RefreshFileOrganizationEntries();
+        }
+
+        private void RemoveAllExternalOrganizationEntriesButton_Click(object sender, RoutedEventArgs e)
+        {
+            List<ExternalOrganizationEntry> removable = new List<ExternalOrganizationEntry>();
+            foreach (ExternalOrganizationEntry external in externalOrganizationEntries)
+            {
+                FileOrganizationEntryViewModel? view = allFileOrganizationEntries.FirstOrDefault(entry =>
+                    string.Equals(entry.RelativePath, external.RelativePath, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(entry.SourcePath ?? string.Empty, external.SourcePath ?? string.Empty, StringComparison.OrdinalIgnoreCase));
+                if (view != null && view.IsUnused)
+                {
+                    removable.Add(external);
+                }
+            }
+
+            if (removable.Count == 0)
+            {
+                return;
+            }
+
+            MessageBoxResult decision = OceanyaMessageBox.Show(
+                this,
+                "Remove all unused assets from organization config?",
+                "Remove Unused Assets",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            if (decision != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            foreach (ExternalOrganizationEntry external in removable)
+            {
+                externalOrganizationEntries.Remove(external);
+            }
+            fileOrganizationClipboardEntries.Clear();
+            fileOrganizationClipboardIsCut = false;
+            RefreshFileOrganizationEntries();
+        }
+
+        private bool UpdateOrganizationPathForEntry(FileOrganizationEntryViewModel selectedEntry, string normalizedPath)
+        {
+            if (selectedEntry != null && !selectedEntry.IsExternal && !selectedEntry.IsFolder)
+            {
+                normalizedPath = EnsureGeneratedFileExtension(selectedEntry, normalizedPath);
+            }
+
+            string oldNormalized = NormalizeRelativePath(selectedEntry.RelativePath, selectedEntry.IsFolder);
+            if (selectedEntry.IsExternal)
+            {
+                ExternalOrganizationEntry? external = externalOrganizationEntries.FirstOrDefault(entry =>
+                    string.Equals(entry.RelativePath, selectedEntry.RelativePath, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(entry.SourcePath ?? string.Empty, selectedEntry.SourcePath ?? string.Empty, StringComparison.OrdinalIgnoreCase));
+                if (external == null)
+                {
+                    return false;
+                }
+
+                external.RelativePath = normalizedPath;
+                if (selectedEntry.IsFolder)
+                {
+                    UpdateFolderDescendants(oldNormalized, normalizedPath, forExternalEntries: true, forGeneratedOverrides: false);
+                }
+                return true;
+            }
+
+            if (string.IsNullOrWhiteSpace(selectedEntry.AssetKey))
+            {
+                if (!selectedEntry.IsFolder)
+                {
+                    return false;
+                }
+
+                UpdateFolderDescendants(oldNormalized, normalizedPath, forExternalEntries: true, forGeneratedOverrides: false);
+                ApplyGeneratedFolderRenameOverrides(oldNormalized, normalizedPath);
+                return true;
+            }
+
+            if (string.Equals(normalizedPath, selectedEntry.DefaultRelativePath, StringComparison.OrdinalIgnoreCase))
+            {
+                generatedOrganizationOverrides.Remove(selectedEntry.AssetKey);
+            }
+            else
+            {
+                generatedOrganizationOverrides[selectedEntry.AssetKey] = normalizedPath;
+            }
+
+            if (selectedEntry.IsFolder)
+            {
+                UpdateFolderDescendants(oldNormalized, normalizedPath, forExternalEntries: false, forGeneratedOverrides: false);
+                ApplyGeneratedFolderRenameOverrides(oldNormalized, normalizedPath);
+            }
+
+            return true;
+        }
+
+        private static string EnsureGeneratedFileExtension(FileOrganizationEntryViewModel entry, string proposedPath)
+        {
+            string normalized = NormalizeRelativePath(proposedPath, isFolder: false);
+            string expectedExtension = Path.GetExtension(entry.DefaultRelativePath ?? string.Empty);
+            if (string.IsNullOrWhiteSpace(expectedExtension))
+            {
+                return normalized;
+            }
+
+            string currentExtension = Path.GetExtension(normalized);
+            string withoutCurrent = string.IsNullOrWhiteSpace(currentExtension)
+                ? normalized
+                : normalized.Substring(0, normalized.Length - currentExtension.Length);
+            return NormalizeRelativePath(withoutCurrent + expectedExtension, isFolder: false);
+        }
+
+        private void ApplyGeneratedFolderRenameOverrides(string oldFolderPath, string newFolderPath)
+        {
+            string oldPrefix = NormalizeRelativePath(oldFolderPath, isFolder: true);
+            string newPrefix = NormalizeRelativePath(newFolderPath, isFolder: true);
+            if (string.IsNullOrWhiteSpace(oldPrefix) || string.IsNullOrWhiteSpace(newPrefix))
+            {
+                return;
+            }
+
+            foreach (FileOrganizationEntryViewModel entry in allFileOrganizationEntries)
+            {
+                if (entry.IsExternal || string.IsNullOrWhiteSpace(entry.AssetKey))
+                {
+                    continue;
+                }
+
+                string normalizedEntryPath = NormalizeRelativePath(entry.RelativePath, entry.IsFolder);
+                if (!normalizedEntryPath.StartsWith(oldPrefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                string suffix = normalizedEntryPath.Substring(oldPrefix.Length);
+                string replacementPath = NormalizeRelativePath(newPrefix + suffix, entry.IsFolder);
+                if (string.Equals(replacementPath, NormalizeRelativePath(entry.DefaultRelativePath, entry.IsFolder), StringComparison.OrdinalIgnoreCase))
+                {
+                    generatedOrganizationOverrides.Remove(entry.AssetKey);
+                }
+                else
+                {
+                    generatedOrganizationOverrides[entry.AssetKey] = replacementPath;
+                }
+            }
+        }
+
+        private void UpdateFolderDescendants(
+            string oldFolderPath,
+            string newFolderPath,
+            bool forExternalEntries,
+            bool forGeneratedOverrides)
+        {
+            string oldPrefix = NormalizeRelativePath(oldFolderPath, isFolder: true);
+            string newPrefix = NormalizeRelativePath(newFolderPath, isFolder: true);
+            if (string.IsNullOrWhiteSpace(oldPrefix) || string.IsNullOrWhiteSpace(newPrefix))
+            {
+                return;
+            }
+
+            if (forExternalEntries)
+            {
+                foreach (ExternalOrganizationEntry external in externalOrganizationEntries)
+                {
+                    string normalized = NormalizeRelativePath(external.RelativePath, external.IsFolder);
+                    if (!normalized.StartsWith(oldPrefix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    string suffix = normalized.Substring(oldPrefix.Length);
+                    external.RelativePath = NormalizeRelativePath(newPrefix + suffix, external.IsFolder);
+                }
+            }
+
+            if (forGeneratedOverrides)
+            {
+                List<string> keys = generatedOrganizationOverrides.Keys.ToList();
+                foreach (string key in keys)
+                {
+                    string normalized = NormalizeRelativePath(
+                        generatedOrganizationOverrides[key],
+                        isFolder: generatedOrganizationOverrides[key].EndsWith("/", StringComparison.Ordinal));
+                    if (!normalized.StartsWith(oldPrefix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    string suffix = normalized.Substring(oldPrefix.Length);
+                    generatedOrganizationOverrides[key] = NormalizeRelativePath(
+                        newPrefix + suffix,
+                        isFolder: generatedOrganizationOverrides[key].EndsWith("/", StringComparison.Ordinal));
+                }
+            }
+        }
+
+        private FileOrganizationEntryViewModel? GetSelectedFileOrganizationEntry()
+        {
+            return FileOrganizationListView.SelectedItem as FileOrganizationEntryViewModel;
+        }
+
+        private FileOrganizationEntryViewModel[] GetSelectedFileOrganizationEntries()
+        {
+            return FileOrganizationListView.SelectedItems
+                .OfType<FileOrganizationEntryViewModel>()
+                .ToArray();
+        }
+
+        private static FileOrganizationEntryViewModel? ResolveFileOrganizationEntryFromSource(object? source)
+        {
+            DependencyObject? current = source as DependencyObject;
+            while (current != null)
+            {
+                if (current is DataGridRow row && row.Item is FileOrganizationEntryViewModel entry)
+                {
+                    return entry;
+                }
+
+                if (current is FrameworkElement element)
+                {
+                    current = element.Parent ?? element.TemplatedParent as DependencyObject;
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            return null;
+        }
+
+        private void FileOrganizationContextMenu_Opening(object sender, ContextMenuEventArgs e)
+        {
+            OpenFileOrganizationContextMenu(sender, e.OriginalSource);
+        }
+
+        private void FileOrganizationContextMenu_Opened(object sender, RoutedEventArgs e)
+        {
+            OpenFileOrganizationContextMenu(sender, e.OriginalSource);
+        }
+
+        private void OpenFileOrganizationContextMenu(object sender, object? originalSource)
+        {
+            FileOrganizationEntryViewModel? entryFromSource = sender is DataGridRow row
+                ? row.Item as FileOrganizationEntryViewModel
+                : ResolveFileOrganizationEntryFromSource(originalSource);
+            if (entryFromSource != null)
+            {
+                fileOrganizationContextEntry = entryFromSource;
+                if (!FileOrganizationListView.SelectedItems.OfType<FileOrganizationEntryViewModel>().Contains(entryFromSource))
+                {
+                    FileOrganizationListView.SelectedItems.Clear();
+                    FileOrganizationListView.SelectedItem = entryFromSource;
+                }
+            }
+            else
+            {
+                fileOrganizationContextEntry = GetSelectedFileOrganizationEntry();
+            }
+
+            ContextMenu menu = (sender as FrameworkElement)?.ContextMenu ?? new ContextMenu();
+            menu.Items.Clear();
+            AddContextCategoryHeader(menu, "List", addLeadingSeparator: false);
+            menu.Items.Add(CreateContextMenuItem("Refresh List", () => RefreshFileOrganizationButton_Click(this, new RoutedEventArgs())));
+            menu.Items.Add(CreateContextMenuItem("Reset File Organization", () => ResetFileOrganizationButton_Click(this, new RoutedEventArgs())));
+
+            MenuItem newSubmenu = new MenuItem
+            {
+                Header = "New..."
+            };
+            newSubmenu.Items.Add(CreateContextMenuItem("File", () => AddOrganizationFileButton_Click(this, new RoutedEventArgs())));
+            newSubmenu.Items.Add(CreateContextMenuItem("Folder", () => CreateOrganizationFolderButton_Click(this, new RoutedEventArgs())));
+            newSubmenu.Items.Add(CreateContextMenuItem("Readme File", () => CreateReadmeFileButton_Click(this, new RoutedEventArgs())));
+            menu.Items.Add(newSubmenu);
+
+            AddContextCategoryHeader(menu, "Selection", addLeadingSeparator: true);
+            FileOrganizationEntryViewModel? selected = fileOrganizationContextEntry ?? GetSelectedFileOrganizationEntry();
+            MenuItem openItem = CreateContextMenuItem("Open", () =>
+            {
+                FileOrganizationEntryViewModel? target = fileOrganizationContextEntry;
+                if (target?.IsFolder == true)
+                {
+                    currentFileOrganizationPath = NormalizeRelativePath(target.RelativePath, isFolder: true);
+                    RefreshFileOrganizationCurrentFolderView();
+                }
+                else if (target != null && IsCharIniOrganizationEntry(target))
+                {
+                    OpenCharIniPreviewButton_Click(this, new RoutedEventArgs());
+                }
+            });
+            MenuItem renameItem = CreateContextMenuItem("Rename", () => RenameOrganizationEntryButton_Click(this, new RoutedEventArgs()));
+            MenuItem moveItem = CreateContextMenuItem("Move To...", () => MoveOrganizationEntryButton_Click(this, new RoutedEventArgs()));
+            MenuItem removeItem = CreateContextMenuItem("Remove (Only if unused)", () => RemoveOrganizationEntryButton_Click(this, new RoutedEventArgs()));
+            bool canEditSelected = selected != null
+                && !selected.IsInteractionLocked
+                && (selected.IsExternal || !string.IsNullOrWhiteSpace(selected.AssetKey) || selected.IsFolder);
+            openItem.IsEnabled = selected?.IsFolder == true || (selected != null && IsCharIniOrganizationEntry(selected));
+            menu.Items.Add(openItem);
+            renameItem.IsEnabled = canEditSelected;
+            moveItem.IsEnabled = canEditSelected;
+            removeItem.IsEnabled = selected != null && selected.IsUnused;
+            menu.Items.Add(renameItem);
+            menu.Items.Add(moveItem);
+            menu.Items.Add(removeItem);
+
+            AddContextCategoryHeader(menu, "Clipboard", addLeadingSeparator: true);
+            MenuItem copyItem = CreateContextMenuItem("Copy", () => CopySelectedFileOrganizationEntry());
+            MenuItem cutItem = CreateContextMenuItem("Cut", () => CutSelectedFileOrganizationEntry());
+            MenuItem pasteItem = CreateContextMenuItem("Paste", () => PasteIntoCurrentFileOrganizationPath());
+            copyItem.IsEnabled = selected != null;
+            cutItem.IsEnabled = selected != null && canEditSelected;
+            pasteItem.IsEnabled = fileOrganizationClipboardEntries.Count > 0;
+            menu.Items.Add(copyItem);
+            menu.Items.Add(cutItem);
+            menu.Items.Add(pasteItem);
+
+            AddContextCategoryHeader(menu, "Cleanup", addLeadingSeparator: true);
+            MenuItem removeAllItem = CreateContextMenuItem("Remove all unused assets", () => RemoveAllExternalOrganizationEntriesButton_Click(this, new RoutedEventArgs()));
+            removeAllItem.IsEnabled = allFileOrganizationEntries.Any(static entry => entry.IsUnused);
+            menu.Items.Add(removeAllItem);
+
+            if (sender is FrameworkElement host)
+            {
+                host.ContextMenu = menu;
+            }
+        }
+
+        private void FileOrganizationListView_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (allFileOrganizationEntries.Any(static entry => entry.IsRenaming))
+            {
+                TextBox? renameTextBox = FindAncestor<TextBox>(e.OriginalSource as DependencyObject);
+                if (renameTextBox == null || !string.Equals(renameTextBox.Name, "FileOrgInlineRenameTextBox", StringComparison.Ordinal))
+                {
+                    CommitAnyFileOrganizationRename();
+                }
+            }
+
+            fileOrganizationDragStartPoint = e.GetPosition(FileOrganizationListView);
+        }
+
+        private void FileOrganizationListView_PreviewMouseMove(object sender, MouseEventArgs e)
+        {
+            if (activeFileOrganizationRowResizeThumb != null)
+            {
+                return;
+            }
+
+            if (e.LeftButton != MouseButtonState.Pressed)
+            {
+                return;
+            }
+
+            Vector delta = e.GetPosition(FileOrganizationListView) - fileOrganizationDragStartPoint;
+            if (Math.Abs(delta.X) < SystemParameters.MinimumHorizontalDragDistance
+                && Math.Abs(delta.Y) < SystemParameters.MinimumVerticalDragDistance)
+            {
+                return;
+            }
+
+            FileOrganizationEntryViewModel[] selectedEntries = GetSelectedFileOrganizationEntries()
+                .Where(static entry => !entry.IsInteractionLocked
+                    && (entry.IsExternal || !string.IsNullOrWhiteSpace(entry.AssetKey) || entry.IsFolder))
+                .ToArray();
+            if (selectedEntries.Length == 0)
+            {
+                return;
+            }
+
+            DataObject dataObject = new DataObject();
+            dataObject.SetData(typeof(FileOrganizationEntryViewModel[]), selectedEntries);
+            dataObject.SetData(typeof(FileOrganizationEntryViewModel), selectedEntries[0]);
+            DragDrop.DoDragDrop(FileOrganizationListView, dataObject, DragDropEffects.Move);
+        }
+
+        private void FileOrganizationRow_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (sender is not DataGridRow row || e.ClickCount > 1)
+            {
+                return;
+            }
+
+            Point point = e.GetPosition(row);
+            if (point.Y < row.ActualHeight - 4)
+            {
+                return;
+            }
+
+            activeFileOrganizationRowResizeRow = row;
+            activeFileOrganizationRowResizeThumb = new Thumb();
+            fileOrganizationRowResizeFromDivider = true;
+            fileOrganizationRowResizeStartHeight = FileOrganizationListView.RowHeight > 0
+                ? FileOrganizationListView.RowHeight
+                : fileOrganizationRowResizePreviewHeight;
+            fileOrganizationRowResizePreviewHeight = fileOrganizationRowResizeStartHeight;
+            fileOrganizationRowResizeGuideStartY = Math.Clamp(
+                e.GetPosition(FileOrganizationListView).Y,
+                0,
+                Math.Max(0, FileOrganizationListView.ActualHeight - 1));
+            ShowFileOrganizationRowResizeGuide(fileOrganizationRowResizeGuideStartY);
+            row.CaptureMouse();
+            e.Handled = true;
+        }
+
+        private void FileOrganizationRow_PreviewMouseMove(object sender, MouseEventArgs e)
+        {
+            if (sender is DataGridRow row)
+            {
+                Point hoverPoint = e.GetPosition(row);
+                if (!fileOrganizationRowResizeFromDivider)
+                {
+                    row.Cursor = hoverPoint.Y >= row.ActualHeight - 4 ? Cursors.SizeNS : Cursors.Arrow;
+                }
+            }
+
+            if (!fileOrganizationRowResizeFromDivider || activeFileOrganizationRowResizeRow == null || e.LeftButton != MouseButtonState.Pressed)
+            {
+                return;
+            }
+
+            double mouseY = Mouse.GetPosition(FileOrganizationListView).Y;
+            double minGuideY = fileOrganizationRowResizeGuideStartY + (48 - fileOrganizationRowResizeStartHeight);
+            double maxGuideY = fileOrganizationRowResizeGuideStartY + (180 - fileOrganizationRowResizeStartHeight);
+            double clampedGuideY = Math.Clamp(mouseY, Math.Min(minGuideY, maxGuideY), Math.Max(minGuideY, maxGuideY));
+            fileOrganizationRowResizePreviewHeight = Math.Clamp(
+                fileOrganizationRowResizeStartHeight + (clampedGuideY - fileOrganizationRowResizeGuideStartY),
+                48,
+                180);
+            UpdateFileOrganizationRowResizeGuide(clampedGuideY);
+            e.Handled = true;
+        }
+
+        private void FileOrganizationRow_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (!fileOrganizationRowResizeFromDivider || activeFileOrganizationRowResizeRow == null)
+            {
+                return;
+            }
+
+            if (Math.Abs(FileOrganizationListView.RowHeight - fileOrganizationRowResizePreviewHeight) > 0.01)
+            {
+                FileOrganizationListView.RowHeight = fileOrganizationRowResizePreviewHeight;
+            }
+
+            activeFileOrganizationRowResizeRow.ReleaseMouseCapture();
+            activeFileOrganizationRowResizeRow = null;
+            activeFileOrganizationRowResizeThumb = null;
+            fileOrganizationRowResizeFromDivider = false;
+            HideFileOrganizationRowResizeGuide();
+            e.Handled = true;
+        }
+
+        private void FileOrganizationListView_DragOver(object sender, DragEventArgs e)
+        {
+            if (e.Data.GetDataPresent(DataFormats.FileDrop))
+            {
+                e.Effects = DragDropEffects.Copy;
+                e.Handled = true;
+                return;
+            }
+
+            bool hasInternalEntries = e.Data.GetDataPresent(typeof(FileOrganizationEntryViewModel))
+                || e.Data.GetDataPresent(typeof(FileOrganizationEntryViewModel[]));
+            if (!hasInternalEntries)
+            {
+                e.Effects = DragDropEffects.None;
+                e.Handled = true;
+                return;
+            }
+
+            FileOrganizationEntryViewModel? target = ResolveFileOrganizationEntryFromSource(e.OriginalSource);
+            bool validTarget = target != null && target.IsFolder && !target.IsInteractionLocked;
+            e.Effects = validTarget ? DragDropEffects.Move : DragDropEffects.None;
+            e.Handled = true;
+        }
+
+        private void FileOrganizationListView_Drop(object sender, DragEventArgs e)
+        {
+            if (e.Data.GetDataPresent(DataFormats.FileDrop)
+                && e.Data.GetData(DataFormats.FileDrop) is string[] droppedPaths
+                && droppedPaths.Length > 0)
+            {
+                foreach (string droppedPath in droppedPaths)
+                {
+                    AddDroppedPathToCurrentFileOrganization(droppedPath);
+                }
+
+                RefreshFileOrganizationEntries();
+                StatusTextBlock.Text = "Added dropped assets as unused files.";
+                return;
+            }
+
+            FileOrganizationEntryViewModel[] draggedEntries;
+            if (e.Data.GetDataPresent(typeof(FileOrganizationEntryViewModel[]))
+                && e.Data.GetData(typeof(FileOrganizationEntryViewModel[])) is FileOrganizationEntryViewModel[] manyEntries)
+            {
+                draggedEntries = manyEntries;
+            }
+            else if (e.Data.GetDataPresent(typeof(FileOrganizationEntryViewModel))
+                && e.Data.GetData(typeof(FileOrganizationEntryViewModel)) is FileOrganizationEntryViewModel singleEntry)
+            {
+                draggedEntries = new[] { singleEntry };
+            }
+            else
+            {
+                return;
+            }
+
+            FileOrganizationEntryViewModel? dropTarget = ResolveFileOrganizationEntryFromSource(e.OriginalSource);
+            if (dropTarget == null || !dropTarget.IsFolder || dropTarget.IsInteractionLocked)
+            {
+                return;
+            }
+
+            string baseFolder = dropTarget.RelativePath.Trim().Replace('\\', '/');
+            if (!string.IsNullOrWhiteSpace(baseFolder) && !baseFolder.EndsWith("/", StringComparison.Ordinal))
+            {
+                baseFolder += "/";
+            }
+
+            bool movedAny = false;
+            foreach (FileOrganizationEntryViewModel draggedEntry in draggedEntries)
+            {
+                if (draggedEntry == null
+                    || draggedEntry.IsInteractionLocked
+                    || (!draggedEntry.IsExternal && string.IsNullOrWhiteSpace(draggedEntry.AssetKey) && !draggedEntry.IsFolder))
+                {
+                    continue;
+                }
+
+                string fileName = Path.GetFileName(draggedEntry.RelativePath.TrimEnd('/', '\\'));
+                string destination = baseFolder + fileName + (draggedEntry.IsFolder ? "/" : string.Empty);
+                movedAny |= UpdateOrganizationPathForEntry(draggedEntry, destination);
+            }
+
+            if (!movedAny)
+            {
+                return;
+            }
+
+            RefreshFileOrganizationEntries();
+            StatusTextBlock.Text = draggedEntries.Length > 1 ? "Entries moved." : "Entry moved.";
+        }
+
+        private void AddDroppedPathToCurrentFileOrganization(string droppedPath)
+        {
+            if (string.IsNullOrWhiteSpace(droppedPath))
+            {
+                return;
+            }
+
+            if (File.Exists(droppedPath))
+            {
+                string relative = currentFileOrganizationPath + Path.GetFileName(droppedPath);
+                externalOrganizationEntries.Add(new ExternalOrganizationEntry
+                {
+                    SourcePath = droppedPath,
+                    RelativePath = NormalizeRelativePath(relative, isFolder: false),
+                    IsFolder = false
+                });
+                return;
+            }
+
+            if (Directory.Exists(droppedPath))
+            {
+                string relative = currentFileOrganizationPath + Path.GetFileName(droppedPath) + "/";
+                externalOrganizationEntries.Add(new ExternalOrganizationEntry
+                {
+                    SourcePath = droppedPath,
+                    RelativePath = NormalizeRelativePath(relative, isFolder: true),
+                    IsFolder = true
+                });
+            }
+        }
+
+        private void CopySelectedFileOrganizationEntry()
+        {
+            FileOrganizationEntryViewModel[] selectedEntries = GetSelectedFileOrganizationEntries();
+            if (selectedEntries.Length == 0)
+            {
+                return;
+            }
+
+            fileOrganizationClipboardEntries.Clear();
+            foreach (FileOrganizationEntryViewModel selected in selectedEntries)
+            {
+                fileOrganizationClipboardEntries.Add(new FileOrganizationClipboardEntry
+                {
+                    Entry = selected
+                });
+            }
+            fileOrganizationClipboardIsCut = false;
+            ClearPendingCutState();
+            StatusTextBlock.Text = "Copied entry.";
+        }
+
+        private void CutSelectedFileOrganizationEntry()
+        {
+            FileOrganizationEntryViewModel[] selectedEntries = GetSelectedFileOrganizationEntries()
+                .Where(static entry => !entry.IsInteractionLocked
+                    && (entry.IsExternal || !string.IsNullOrWhiteSpace(entry.AssetKey)))
+                .ToArray();
+            if (selectedEntries.Length == 0)
+            {
+                return;
+            }
+
+            fileOrganizationClipboardEntries.Clear();
+            foreach (FileOrganizationEntryViewModel selected in selectedEntries)
+            {
+                fileOrganizationClipboardEntries.Add(new FileOrganizationClipboardEntry
+                {
+                    Entry = selected
+                });
+            }
+            fileOrganizationClipboardIsCut = true;
+            ClearPendingCutState();
+            foreach (FileOrganizationEntryViewModel selected in selectedEntries)
+            {
+                selected.IsPendingCut = true;
+            }
+            StatusTextBlock.Text = "Cut entry.";
+        }
+
+        private void PasteIntoCurrentFileOrganizationPath()
+        {
+            if (fileOrganizationClipboardEntries.Count == 0)
+            {
+                return;
+            }
+
+            if (fileOrganizationClipboardIsCut)
+            {
+                foreach (FileOrganizationClipboardEntry clipboardEntry in fileOrganizationClipboardEntries)
+                {
+                    FileOrganizationEntryViewModel? entry = clipboardEntry.Entry;
+                    if (entry == null || entry.IsInteractionLocked)
+                    {
+                        continue;
+                    }
+
+                    string destination = NormalizeRelativePath(
+                        currentFileOrganizationPath + Path.GetFileName(entry.RelativePath.TrimEnd('/', '\\')) + (entry.IsFolder ? "/" : string.Empty),
+                        entry.IsFolder);
+                    _ = UpdateOrganizationPathForEntry(entry, destination);
+                }
+
+                fileOrganizationClipboardEntries.Clear();
+                fileOrganizationClipboardIsCut = false;
+                ClearPendingCutState();
+                RefreshFileOrganizationEntries();
+                StatusTextBlock.Text = "Moved entry.";
+                return;
+            }
+
+            foreach (FileOrganizationClipboardEntry clipboardEntry in fileOrganizationClipboardEntries)
+            {
+                FileOrganizationEntryViewModel? entry = clipboardEntry.Entry;
+                if (entry == null)
+                {
+                    continue;
+                }
+
+                if (entry.IsExternal)
+                {
+                    string destination = BuildUniqueExternalPath(
+                        currentFileOrganizationPath + Path.GetFileName(entry.RelativePath.TrimEnd('/', '\\')) + (entry.IsFolder ? "/" : string.Empty),
+                        entry.IsFolder);
+                    externalOrganizationEntries.Add(new ExternalOrganizationEntry
+                    {
+                        SourcePath = entry.SourcePath,
+                        RelativePath = NormalizeRelativePath(destination, entry.IsFolder),
+                        IsFolder = entry.IsFolder
+                    });
+                }
+                else if (!string.IsNullOrWhiteSpace(entry.SourcePath) && File.Exists(entry.SourcePath))
+                {
+                    string destination = BuildUniqueExternalPath(
+                        currentFileOrganizationPath + Path.GetFileName(entry.RelativePath.TrimEnd('/', '\\')),
+                        isFolder: false);
+                    externalOrganizationEntries.Add(new ExternalOrganizationEntry
+                    {
+                        SourcePath = entry.SourcePath,
+                        RelativePath = NormalizeRelativePath(destination, isFolder: false),
+                        IsFolder = false
+                    });
+                }
+            }
+
+            RefreshFileOrganizationEntries();
+            StatusTextBlock.Text = "Pasted entry.";
+        }
+
+        private string BuildUniqueExternalPath(string desiredPath, bool isFolder)
+        {
+            string normalized = NormalizeRelativePath(desiredPath, isFolder);
+            HashSet<string> occupiedPaths = allFileOrganizationEntries
+                .Select(entry => NormalizeRelativePath(entry.RelativePath, entry.IsFolder))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (!occupiedPaths.Contains(normalized))
+            {
+                return normalized;
+            }
+
+            string name = Path.GetFileNameWithoutExtension(normalized.TrimEnd('/'));
+            string extension = isFolder ? string.Empty : Path.GetExtension(normalized);
+            string parent = GetParentDirectoryPath(normalized, isFolder);
+            int index = 2;
+            while (true)
+            {
+                string candidateName = $"{name} - Copy {index}";
+                string candidate = NormalizeRelativePath(parent + candidateName + extension + (isFolder ? "/" : string.Empty), isFolder);
+                if (!occupiedPaths.Contains(candidate))
+                {
+                    return candidate;
+                }
+
+                index++;
+            }
+        }
+
+        private void ClearPendingCutState()
+        {
+            foreach (FileOrganizationEntryViewModel entry in allFileOrganizationEntries)
+            {
+                entry.IsPendingCut = false;
+            }
+        }
+
+        private void FileOrganizationListView_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            if (allFileOrganizationEntries.Any(static entry => entry.IsRenaming))
+            {
+                return;
+            }
+
+            FileOrganizationEntryViewModel? entry = ResolveFileOrganizationEntryFromSource(e.OriginalSource)
+                ?? GetSelectedFileOrganizationEntry();
+            if (entry == null)
+            {
+                return;
+            }
+
+            if (!entry.IsFolder)
+            {
+                if (IsCharIniOrganizationEntry(entry))
+                {
+                    OpenCharIniPreviewButton_Click(this, new RoutedEventArgs());
+                }
+                return;
+            }
+
+            if (DateTime.UtcNow <= suppressFolderOpenFromRenameUntilUtc
+                && string.Equals(entry.RelativePath, suppressFolderOpenFromRenamePath, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            currentFileOrganizationPath = NormalizeRelativePath(entry.RelativePath, isFolder: true);
+            RefreshFileOrganizationCurrentFolderView();
+        }
+
+        private static bool IsCharIniOrganizationEntry(FileOrganizationEntryViewModel entry)
+        {
+            if (entry == null || entry.IsFolder)
+            {
+                return false;
+            }
+
+            if (string.Equals(entry.AssetKey, "charini", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return string.Equals(
+                NormalizeRelativePath(entry.RelativePath, isFolder: false),
+                "char.ini",
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void FileOrgRowResizeThumb_DragStarted(object sender, DragStartedEventArgs e)
+        {
+            if (sender is not Thumb thumb)
+            {
+                return;
+            }
+
+            activeFileOrganizationRowResizeThumb = thumb;
+            fileOrganizationRowResizeStartHeight = FileOrganizationListView.RowHeight > 0
+                ? FileOrganizationListView.RowHeight
+                : fileOrganizationRowResizePreviewHeight;
+            fileOrganizationRowResizePreviewHeight = fileOrganizationRowResizeStartHeight;
+            fileOrganizationRowResizeGuideStartY = Math.Clamp(
+                Mouse.GetPosition(FileOrganizationListView).Y,
+                0,
+                Math.Max(0, FileOrganizationListView.ActualHeight - 1));
+            ShowFileOrganizationRowResizeGuide(fileOrganizationRowResizeGuideStartY);
+            e.Handled = true;
+        }
+
+        private void FileOrgRowResizeThumb_DragDelta(object sender, DragDeltaEventArgs e)
+        {
+            if (sender is not Thumb thumb || !ReferenceEquals(thumb, activeFileOrganizationRowResizeThumb))
+            {
+                return;
+            }
+
+            double mouseY = Mouse.GetPosition(FileOrganizationListView).Y;
+            double minGuideY = fileOrganizationRowResizeGuideStartY + (48 - fileOrganizationRowResizeStartHeight);
+            double maxGuideY = fileOrganizationRowResizeGuideStartY + (180 - fileOrganizationRowResizeStartHeight);
+            double clampedGuideY = Math.Clamp(mouseY, Math.Min(minGuideY, maxGuideY), Math.Max(minGuideY, maxGuideY));
+            fileOrganizationRowResizePreviewHeight = Math.Clamp(
+                fileOrganizationRowResizeStartHeight + (clampedGuideY - fileOrganizationRowResizeGuideStartY),
+                48,
+                180);
+            UpdateFileOrganizationRowResizeGuide(clampedGuideY);
+            e.Handled = true;
+        }
+
+        private void FileOrgRowResizeThumb_DragCompleted(object sender, DragCompletedEventArgs e)
+        {
+            if (sender is not Thumb thumb || !ReferenceEquals(thumb, activeFileOrganizationRowResizeThumb))
+            {
+                return;
+            }
+
+            if (Math.Abs(FileOrganizationListView.RowHeight - fileOrganizationRowResizePreviewHeight) > 0.01)
+            {
+                FileOrganizationListView.RowHeight = fileOrganizationRowResizePreviewHeight;
+            }
+
+            activeFileOrganizationRowResizeThumb = null;
+            HideFileOrganizationRowResizeGuide();
+            e.Handled = true;
+        }
+
+        private void ShowFileOrganizationRowResizeGuide(double verticalOffset)
+        {
+            HideFileOrganizationRowResizeGuide();
+            AdornerLayer? layer = AdornerLayer.GetAdornerLayer(FileOrganizationListView);
+            if (layer == null)
+            {
+                return;
+            }
+
+            fileOrganizationRowResizeAdornerLayer = layer;
+            fileOrganizationRowResizeGuideAdorner = new RowResizeGuideAdorner(FileOrganizationListView);
+            fileOrganizationRowResizeGuideAdorner.SetGuideY(verticalOffset);
+            layer.Add(fileOrganizationRowResizeGuideAdorner);
+        }
+
+        private void UpdateFileOrganizationRowResizeGuide(double verticalOffset)
+        {
+            if (fileOrganizationRowResizeGuideAdorner == null)
+            {
+                return;
+            }
+
+            fileOrganizationRowResizeGuideAdorner.SetGuideY(verticalOffset);
+        }
+
+        private void HideFileOrganizationRowResizeGuide()
+        {
+            if (fileOrganizationRowResizeAdornerLayer != null && fileOrganizationRowResizeGuideAdorner != null)
+            {
+                fileOrganizationRowResizeAdornerLayer.Remove(fileOrganizationRowResizeGuideAdorner);
+            }
+
+            fileOrganizationRowResizeGuideAdorner = null;
+            fileOrganizationRowResizeAdornerLayer = null;
+        }
+
+        private void FileOrganizationGoUpButton_Click(object sender, RoutedEventArgs e)
+        {
+            CommitAnyFileOrganizationRename();
+            if (string.IsNullOrWhiteSpace(currentFileOrganizationPath))
+            {
+                return;
+            }
+
+            currentFileOrganizationPath = GetParentDirectoryPath(currentFileOrganizationPath, isFolder: true);
+            RefreshFileOrganizationCurrentFolderView();
+        }
+
+        private void FileOrganizationAudioPlayButton_PlayRequested(object sender, EventArgs e)
+        {
+            if (sender is not PlayStopProgressButton button
+                || button.Tag is not FileOrganizationEntryViewModel entry
+                || string.IsNullOrWhiteSpace(entry.SourcePath)
+                || !File.Exists(entry.SourcePath))
+            {
+                return;
+            }
+
+            if (activeFileOrganizationAudioButton != null && !ReferenceEquals(activeFileOrganizationAudioButton, button))
+            {
+                activeFileOrganizationAudioButton.IsPlaying = false;
+            }
+
+            StopFileOrganizationAudioPreview();
+            if (!fileOrganizationAudioPreviewPlayer.TrySetBlip(entry.SourcePath))
+            {
+                return;
+            }
+
+            double durationMs = Math.Max(120, fileOrganizationAudioPreviewPlayer.GetLoadedDurationMs());
+            button.DurationMs = durationMs;
+            button.IsPlaying = true;
+            activeFileOrganizationAudioButton = button;
+            _ = fileOrganizationAudioPreviewPlayer.PlayBlip();
+        }
+
+        private void FileOrganizationAudioPlayButton_StopRequested(object sender, EventArgs e)
+        {
+            StopFileOrganizationAudioPreview();
+        }
+
+        private void StopFileOrganizationAudioPreview()
+        {
+            fileOrganizationAudioPreviewPlayer.Stop();
+            if (activeFileOrganizationAudioButton != null)
+            {
+                activeFileOrganizationAudioButton.IsPlaying = false;
+                activeFileOrganizationAudioButton = null;
+            }
+        }
+
+        private void OpenCharIniPreviewButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                CharacterCreationProject project = BuildProjectForPreview();
+                string charIni = AOCharacterFileCreatorBuilder.BuildCharIni(project);
+                _ = ShowTextDocumentDialog(
+                    "char.ini Preview",
+                    "char.ini",
+                    "Read-only output preview.",
+                    charIni,
+                    isReadOnly: true);
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Error("Failed to build char.ini preview.", ex);
+                StatusTextBlock.Text = "Could not generate char.ini preview.";
+            }
+        }
+
+        private string? ShowTextDocumentDialog(
+            string title,
+            string label,
+            string description,
+            string initialContent,
+            bool isReadOnly)
+        {
+            Window dialog = CreateEmoteDialog(title, 780, 640);
+            Grid grid = BuildDialogGrid(1);
+            TextBox box = CreateDialogTextBox(initialContent, description);
+            box.AcceptsReturn = true;
+            box.AcceptsTab = true;
+            box.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+            box.HorizontalScrollBarVisibility = ScrollBarVisibility.Auto;
+            box.IsReadOnly = isReadOnly;
+            box.Height = 520;
+            AddDialogFieldContainer(grid, 0, label, description, box);
+            DockPanel buttons = isReadOnly
+                ? BuildDialogButtonsCentered(dialog)
+                : BuildDialogButtons(dialog);
+            dialog.Content = BuildStyledDialogContent(dialog, dialog.Title, grid, buttons);
+            bool? result = dialog.ShowDialog();
+            if (result != true)
+            {
+                return null;
+            }
+
+            return box.Text ?? string.Empty;
+        }
+
+        private CharacterCreationProject BuildProjectForPreview()
+        {
+            string folderName = (CharacterFolderNameTextBox.Text ?? string.Empty).Trim();
+            List<CharacterCreationEmote> generatedEmotes = emotes.Select(static viewModel => viewModel.ToModel()).ToList();
+            return new CharacterCreationProject
+            {
+                MountPath = (MountPathComboBox.Text ?? string.Empty).Trim(),
+                CharacterFolderName = folderName,
+                Name = folderName,
+                ShowName = (ShowNameTextBox.Text ?? string.Empty).Trim(),
+                Side = (SideComboBox.Text ?? string.Empty).Trim(),
+                Gender = (GenderBlipsDropdown.Text ?? string.Empty).Trim(),
+                Blips = (GenderBlipsDropdown.Text ?? string.Empty).Trim(),
+                Chat = (ChatDropdown.Text ?? string.Empty).Trim(),
+                Realization = (RealizationTextBox.Text ?? string.Empty).Trim(),
+                Effects = (EffectsDropdown.Text ?? string.Empty).Trim(),
+                Scaling = (ScalingDropdown.Text ?? string.Empty).Trim(),
+                Stretch = (StretchDropdown.Text ?? string.Empty).Trim(),
+                NeedsShowName = (NeedsShownameDropdown.Text ?? string.Empty).Trim(),
+                AssetFolders = assetFolders.ToList(),
+                AdvancedEntries = advancedEntries.Select(static entry => new CharacterCreationAdvancedEntry
+                {
+                    Section = entry.Section,
+                    Key = entry.Key,
+                    Value = entry.Value
+                }).ToList(),
+                Emotes = generatedEmotes
+            };
         }
 
         private void EmoteTilesListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1273,6 +3391,7 @@ namespace OceanyaClient
 
                 HasAnyEmotes = emotes.Count > 0;
                 UpdateButtonIconsSectionVisibility();
+                UpdateCharacterIconFromEmoteButtonVisibility();
             }
             finally
             {
@@ -3410,6 +5529,7 @@ namespace OceanyaClient
             bool suppressTimelineSeek = false;
             bool sfxTriggeredInCycle = false;
             double previousPositionMs = 0;
+            bool suppressSfxTriggerUntilPlaybackAdvance = false;
             if (AnimationTimelinePreviewController.TryCreate(ResolveAo2PreviewImagePath(animationSourcePath), out AnimationTimelinePreviewController? createdController))
             {
                 animationPreviewController = createdController;
@@ -3481,13 +5601,25 @@ namespace OceanyaClient
                 animationPreviewController.PositionChanged += (frame, positionMs) => Dispatcher.Invoke(() =>
                 {
                     previewImage.Source = frame;
+                    bool isPlaying = animationPreviewController.IsPlaying;
+                    double delayMs = ReadDelayMs();
                     if (positionMs < previousPositionMs)
                     {
                         sfxTriggeredInCycle = false;
+                        suppressSfxTriggerUntilPlaybackAdvance = false;
                     }
 
+                    if (suppressSfxTriggerUntilPlaybackAdvance && isPlaying && positionMs > previousPositionMs)
+                    {
+                        suppressSfxTriggerUntilPlaybackAdvance = false;
+                    }
+
+                    bool crossedDelay = previousPositionMs < delayMs && positionMs >= delayMs;
                     previousPositionMs = positionMs;
-                    if (!sfxTriggeredInCycle && positionMs >= ReadDelayMs())
+                    if (isPlaying
+                        && !sfxTriggeredInCycle
+                        && !suppressSfxTriggerUntilPlaybackAdvance
+                        && crossedDelay)
                     {
                         if (TryPlayConfiguredSfx())
                         {
@@ -3534,11 +5666,6 @@ namespace OceanyaClient
                 }
                 else
                 {
-                    if (ReadDelayMs() == 0)
-                    {
-                        sfxTriggeredInCycle = TryPlayConfiguredSfx();
-                    }
-
                     animationPreviewController.Play();
                 }
             };
@@ -3551,6 +5678,7 @@ namespace OceanyaClient
                     animationPreviewController?.Seek(timelineSlider.Value);
                     sfxTriggeredInCycle = false;
                     previousPositionMs = animationPreviewController?.CurrentPositionMs ?? 0;
+                    suppressSfxTriggerUntilPlaybackAdvance = true;
                 }
             };
             previewLoopCheckBox.Checked += (_, _) => animationPreviewController?.SetLoop(true);
@@ -3698,6 +5826,7 @@ namespace OceanyaClient
                 FontSize = 11,
                 Margin = new Thickness(0, 8, 0, 0)
             };
+            int automaticSelectedTabIndex = 0;
 
             StackPanel previewRow = new StackPanel
             {
@@ -4008,7 +6137,7 @@ namespace OceanyaClient
                 {
                     TabControl automaticTabs = new TabControl
                     {
-                        Margin = new Thickness(0, 2, 0, 0)
+                        Margin = new Thickness(0, 4, 0, 0)
                     };
                     if (TryFindResource("DialogTabControlStyle") is Style dialogTabControlStyle)
                     {
@@ -4016,7 +6145,7 @@ namespace OceanyaClient
                     }
                     Style? dialogTabItemStyle = TryFindResource("DialogTabItemStyle") as Style;
 
-                    StackPanel backgroundTabContent = new StackPanel();
+                    StackPanel backgroundTabContent = new StackPanel { Margin = new Thickness(8, 6, 8, 6) };
                     AutoCompleteDropdownField backgroundDropdown = CreateDialogAutoCompleteField(
                         GetAutomaticBackgroundOptions(),
                         GetAutomaticBackgroundSelectionName(config),
@@ -4098,7 +6227,7 @@ namespace OceanyaClient
                         AddSimpleField(backgroundTabContent, "Background image", uploadCard);
                     }
 
-                    StackPanel emoteTabContent = new StackPanel();
+                    StackPanel emoteTabContent = new StackPanel { Margin = new Thickness(8, 6, 8, 6) };
                     Button cutButton = CreateDialogButton("Open Emote Cutting...", isPrimary: false);
                     cutButton.Width = 190;
                     cutButton.Click += (_, _) =>
@@ -4119,12 +6248,41 @@ namespace OceanyaClient
                             ? "No cut emote selected yet."
                             : $"Cut emote ready ({config.AutomaticCutEmoteImage.PixelWidth}x{config.AutomaticCutEmoteImage.PixelHeight})"
                     };
+                    Border cutPreviewBorder = new Border
+                    {
+                        Width = 120,
+                        Height = 120,
+                        Margin = new Thickness(0, 8, 0, 0),
+                        BorderBrush = new SolidColorBrush(Color.FromRgb(72, 92, 112)),
+                        BorderThickness = new Thickness(1),
+                        CornerRadius = new CornerRadius(4),
+                        Background = new SolidColorBrush(Color.FromArgb(110, 20, 20, 20)),
+                        Padding = new Thickness(4)
+                    };
+                    Grid cutPreviewGrid = new Grid();
+                    Image cutPreviewImage = new Image
+                    {
+                        Source = config.AutomaticCutEmoteImage,
+                        Stretch = Stretch.Uniform
+                    };
+                    TextBlock cutPreviewEmptyText = new TextBlock
+                    {
+                        Text = "No cutout",
+                        Foreground = new SolidColorBrush(Color.FromRgb(170, 188, 206)),
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Visibility = config.AutomaticCutEmoteImage == null ? Visibility.Visible : Visibility.Collapsed
+                    };
+                    cutPreviewGrid.Children.Add(cutPreviewImage);
+                    cutPreviewGrid.Children.Add(cutPreviewEmptyText);
+                    cutPreviewBorder.Child = cutPreviewGrid;
                     StackPanel cutPanel = new StackPanel();
                     cutPanel.Children.Add(cutButton);
                     cutPanel.Children.Add(cutStatus);
+                    cutPanel.Children.Add(cutPreviewBorder);
                     AddSimpleField(emoteTabContent, "Emote cutting", cutPanel);
 
-                    StackPanel effectTabContent = new StackPanel();
+                    StackPanel effectTabContent = new StackPanel { Margin = new Thickness(8, 6, 8, 6) };
                     effectTabContent.Children.Add(BuildEffectsSection());
 
                     automaticTabs.Items.Add(new TabItem
@@ -4145,6 +6303,11 @@ namespace OceanyaClient
                         Content = effectTabContent,
                         Style = dialogTabItemStyle
                     });
+                    automaticTabs.SelectionChanged += (_, _) =>
+                    {
+                        automaticSelectedTabIndex = automaticTabs.SelectedIndex;
+                    };
+                    automaticTabs.SelectedIndex = Math.Clamp(automaticSelectedTabIndex, 0, Math.Max(0, automaticTabs.Items.Count - 1));
                     host.Children.Add(automaticTabs);
                 }
 
@@ -4210,8 +6373,32 @@ namespace OceanyaClient
             StatusTextBlock.Text = "Button icon configuration saved.";
         }
 
+        private static string BuildCutSelectionStorageKey(CharacterCreationEmoteViewModel emote)
+        {
+            string emoteName = (emote.Name ?? string.Empty).Trim();
+            string preanimName = Path.GetFileName(emote.PreAnimationAssetSourcePath ?? string.Empty);
+            string animationName = Path.GetFileName(emote.AnimationAssetSourcePath ?? string.Empty);
+            string idleName = Path.GetFileName(emote.FinalAnimationIdleAssetSourcePath ?? string.Empty);
+            string talkingName = Path.GetFileName(emote.FinalAnimationTalkingAssetSourcePath ?? string.Empty);
+            return $"{emote.Index}|{emoteName}|{preanimName}|{animationName}|{idleName}|{talkingName}";
+        }
+
+        private void PersistCutSelectionState(string emoteKey, CutSelectionState state)
+        {
+            SaveFile.Data.CharacterCreatorCutSelections[emoteKey] = new CharacterCreatorCutSelectionState
+            {
+                SourcePath = state.SourcePath ?? string.Empty,
+                X = state.NormalizedSelection.X,
+                Y = state.NormalizedSelection.Y,
+                Width = state.NormalizedSelection.Width,
+                Height = state.NormalizedSelection.Height
+            };
+            SaveFile.Save();
+        }
+
         private BitmapSource? ShowEmoteCuttingDialog(CharacterCreationEmoteViewModel emote, BitmapSource? existingCutout)
         {
+            string emoteCutSelectionKey = BuildCutSelectionStorageKey(emote);
             List<CutSourceOption> sourceOptions = new List<CutSourceOption>();
             if (!string.IsNullOrWhiteSpace(emote.PreAnimationAssetSourcePath))
             {
@@ -4249,6 +6436,8 @@ namespace OceanyaClient
             }
 
             Window dialog = CreateEmoteDialog("Emote Cutting", 940, 700);
+            string emoteCuttingPopupKey = BuildPopupStateKey("EmoteCutting");
+            ApplyPopupState(dialog, emoteCuttingPopupKey);
             Grid grid = BuildDialogGrid(3);
 
             AutoCompleteDropdownField sourceDropdown = CreateDialogAutoCompleteField(
@@ -4260,16 +6449,27 @@ namespace OceanyaClient
 
             Border previewBorder = new Border
             {
-                Height = 390,
+                MinHeight = 120,
+                Height = Math.Clamp(SaveFile.Data.CharacterCreatorCuttingPreviewHeight, 120, 520),
                 CornerRadius = new CornerRadius(4),
                 BorderBrush = new SolidColorBrush(Color.FromRgb(64, 80, 98)),
                 BorderThickness = new Thickness(1),
                 Background = new SolidColorBrush(Color.FromArgb(145, 14, 14, 14)),
-                Padding = new Thickness(6)
+                Padding = new Thickness(6),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch
             };
             Grid previewGrid = new Grid();
             Image previewImage = new Image { Stretch = Stretch.Uniform };
             Canvas selectionCanvas = new Canvas { Background = Brushes.Transparent };
+            System.Windows.Shapes.Rectangle lastSelectionRect = new System.Windows.Shapes.Rectangle
+            {
+                Stroke = new SolidColorBrush(Color.FromRgb(226, 160, 96)),
+                StrokeThickness = 1.3,
+                StrokeDashArray = new DoubleCollection { 4, 2 },
+                Fill = Brushes.Transparent,
+                Visibility = Visibility.Collapsed
+            };
             System.Windows.Shapes.Rectangle selectionRect = new System.Windows.Shapes.Rectangle
             {
                 Stroke = new SolidColorBrush(Color.FromRgb(148, 220, 255)),
@@ -4277,6 +6477,7 @@ namespace OceanyaClient
                 StrokeThickness = 1.5,
                 Visibility = Visibility.Collapsed
             };
+            selectionCanvas.Children.Add(lastSelectionRect);
             selectionCanvas.Children.Add(selectionRect);
             previewGrid.Children.Add(previewImage);
             previewGrid.Children.Add(selectionCanvas);
@@ -4330,8 +6531,35 @@ namespace OceanyaClient
                 Margin = new Thickness(0, 8, 0, 0)
             };
 
+            Thumb previewResizeThumb = new Thumb
+            {
+                Height = 6,
+                Cursor = Cursors.SizeNS,
+                Margin = new Thickness(0, 6, 0, 2)
+            };
+            Grid previewResizeGrip = new Grid
+            {
+                Height = 6,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            previewResizeGrip.Children.Add(new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(80, 90, 115, 138)),
+                Height = 2,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            previewResizeGrip.Children.Add(previewResizeThumb);
+            previewResizeThumb.DragDelta += (_, dragEvent) =>
+            {
+                double next = Math.Clamp(previewBorder.Height + dragEvent.VerticalChange, 120, 520);
+                previewBorder.Height = next;
+                SaveFile.Data.CharacterCreatorCuttingPreviewHeight = next;
+                SaveFile.Save();
+            };
+
             StackPanel previewPanel = new StackPanel();
             previewPanel.Children.Add(previewBorder);
+            previewPanel.Children.Add(previewResizeGrip);
             previewPanel.Children.Add(timelineControls);
             previewPanel.Children.Add(tipText);
             AddDialogFieldContainer(grid, 1, "Frame + Crop", "Select a frame and draw the crop region.", previewPanel);
@@ -4350,7 +6578,7 @@ namespace OceanyaClient
             Image lastCutoutImage = new Image
             {
                 Stretch = Stretch.Uniform,
-                Source = existingCutout
+                Source = null
             };
             lastCutoutBorder.Child = lastCutoutImage;
 
@@ -4403,6 +6631,23 @@ namespace OceanyaClient
             bool dragging = false;
             Rect selectionBounds = Rect.Empty;
             BitmapSource? currentSelectionCutout = null;
+            string currentSourceName = sourceOptions[0].Name;
+            string currentSourcePath = sourceOptions[0].Path;
+
+            void UpdateLastCutoutPreviewForCurrentSource()
+            {
+                if (existingCutout == null)
+                {
+                    lastCutoutImage.Source = null;
+                    return;
+                }
+
+                bool hasMatchingSavedSelection = savedCutSelectionByEmoteKey.TryGetValue(emoteCutSelectionKey, out CutSelectionState? saved)
+                    && string.Equals(saved.SourcePath, currentSourcePath, StringComparison.OrdinalIgnoreCase)
+                    && saved.NormalizedSelection.Width > 0
+                    && saved.NormalizedSelection.Height > 0;
+                lastCutoutImage.Source = hasMatchingSavedSelection ? existingCutout : null;
+            }
 
             Rect ComputeImageViewport(BitmapSource frame)
             {
@@ -4416,6 +6661,73 @@ namespace OceanyaClient
                 double x = (hostWidth - drawWidth) * 0.5;
                 double y = (hostHeight - drawHeight) * 0.5;
                 return new Rect(x, y, drawWidth, drawHeight);
+            }
+
+            bool TryGetSavedSelectionForCurrentSource(out Rect normalizedSelection)
+            {
+                if (savedCutSelectionByEmoteKey.TryGetValue(emoteCutSelectionKey, out CutSelectionState? saved)
+                    && string.Equals(saved.SourcePath, currentSourcePath, StringComparison.OrdinalIgnoreCase)
+                    && saved.NormalizedSelection.Width > 0
+                    && saved.NormalizedSelection.Height > 0)
+                {
+                    normalizedSelection = saved.NormalizedSelection;
+                    return true;
+                }
+
+                normalizedSelection = Rect.Empty;
+                return false;
+            }
+
+            void UpdateLastSelectionVisual(Rect? normalizedSelection)
+            {
+                if (currentFrame == null || !normalizedSelection.HasValue)
+                {
+                    lastSelectionRect.Visibility = Visibility.Collapsed;
+                    return;
+                }
+
+                Rect viewport = ComputeImageViewport(currentFrame);
+                Rect normalized = normalizedSelection.Value;
+                Rect rect = new Rect(
+                    viewport.X + (normalized.X * viewport.Width),
+                    viewport.Y + (normalized.Y * viewport.Height),
+                    normalized.Width * viewport.Width,
+                    normalized.Height * viewport.Height);
+                if (rect.Width < 2 || rect.Height < 2)
+                {
+                    lastSelectionRect.Visibility = Visibility.Collapsed;
+                    return;
+                }
+
+                Canvas.SetLeft(lastSelectionRect, rect.X);
+                Canvas.SetTop(lastSelectionRect, rect.Y);
+                lastSelectionRect.Width = rect.Width;
+                lastSelectionRect.Height = rect.Height;
+                lastSelectionRect.Visibility = Visibility.Visible;
+            }
+
+            void ApplySavedSelectionAsCurrent()
+            {
+                if (currentFrame == null || !TryGetSavedSelectionForCurrentSource(out Rect normalized))
+                {
+                    selectionBounds = Rect.Empty;
+                    UpdateSelectionVisual();
+                    UpdateCurrentCutoutPreview();
+                    UpdateLastSelectionVisual(null);
+                    UpdateLastCutoutPreviewForCurrentSource();
+                    return;
+                }
+
+                Rect viewport = ComputeImageViewport(currentFrame);
+                selectionBounds = new Rect(
+                    viewport.X + (normalized.X * viewport.Width),
+                    viewport.Y + (normalized.Y * viewport.Height),
+                    normalized.Width * viewport.Width,
+                    normalized.Height * viewport.Height);
+                UpdateSelectionVisual();
+                UpdateCurrentCutoutPreview();
+                UpdateLastSelectionVisual(normalized);
+                UpdateLastCutoutPreviewForCurrentSource();
             }
 
             void UpdateSelectionVisual()
@@ -4471,6 +6783,7 @@ namespace OceanyaClient
 
             void LoadSource(string path)
             {
+                currentSourcePath = path ?? string.Empty;
                 previewController?.Dispose();
                 previewController = null;
                 currentFrame = null;
@@ -4492,6 +6805,14 @@ namespace OceanyaClient
                     {
                         previewImage.Source = frame;
                         currentFrame = frame as BitmapSource;
+                        if (TryGetSavedSelectionForCurrentSource(out Rect normalized))
+                        {
+                            UpdateLastSelectionVisual(normalized);
+                        }
+                        else
+                        {
+                            UpdateLastSelectionVisual(null);
+                        }
                         suppressTimelineSeek = true;
                         timelineSlider.Value = Math.Clamp(positionMs, timelineSlider.Minimum, timelineSlider.Maximum);
                         suppressTimelineSeek = false;
@@ -4504,6 +6825,8 @@ namespace OceanyaClient
                     timelineSlider.Value = 0;
                     timelineSlider.Maximum = 1;
                 }
+
+                ApplySavedSelectionAsCurrent();
 
                 bool interactive = previewController?.HasTimeline == true;
                 playPauseButton.IsEnabled = interactive;
@@ -4519,6 +6842,7 @@ namespace OceanyaClient
                     string.Equals(option.Name, sourceDropdown.Text, StringComparison.OrdinalIgnoreCase));
                 if (selected != null)
                 {
+                    currentSourceName = selected.Name;
                     LoadSource(selected.Path);
                 }
             };
@@ -4598,7 +6922,15 @@ namespace OceanyaClient
 
             DockPanel buttons = BuildDialogButtons(dialog);
             dialog.Content = BuildStyledDialogContent(dialog, dialog.Title, grid, buttons);
-            bool? result = dialog.ShowDialog();
+            bool? result;
+            try
+            {
+                result = dialog.ShowDialog();
+            }
+            finally
+            {
+                PersistPopupState(dialog, emoteCuttingPopupKey);
+            }
             previewController?.Dispose();
             if (result != true)
             {
@@ -4636,6 +6968,7 @@ namespace OceanyaClient
 
             if (currentSelectionCutout != null)
             {
+                SaveCutSelectionState(emoteCutSelectionKey, currentSourcePath, selection, viewport);
                 return currentSelectionCutout;
             }
 
@@ -4653,7 +6986,34 @@ namespace OceanyaClient
 
             CroppedBitmap cropped = new CroppedBitmap(currentFrame, new Int32Rect(cropX, cropY, cropSize, cropSize));
             cropped.Freeze();
+            SaveCutSelectionState(emoteCutSelectionKey, currentSourcePath, selection, viewport);
             return cropped;
+        }
+
+        private void SaveCutSelectionState(string emoteKey, string sourceName, Rect selection, Rect viewport)
+        {
+            if (viewport.Width <= 0 || viewport.Height <= 0)
+            {
+                return;
+            }
+
+            Rect normalized = new Rect(
+                Math.Clamp((selection.X - viewport.X) / viewport.Width, 0, 1),
+                Math.Clamp((selection.Y - viewport.Y) / viewport.Height, 0, 1),
+                Math.Clamp(selection.Width / viewport.Width, 0, 1),
+                Math.Clamp(selection.Height / viewport.Height, 0, 1));
+            if (normalized.Width <= 0 || normalized.Height <= 0)
+            {
+                return;
+            }
+
+            CutSelectionState state = new CutSelectionState
+            {
+                SourcePath = sourceName,
+                NormalizedSelection = normalized
+            };
+            savedCutSelectionByEmoteKey[emoteKey] = state;
+            PersistCutSelectionState(emoteKey, state);
         }
 
         private Color? ShowAdvancedColorPickerDialog(Color initialColor)
@@ -5087,6 +7447,7 @@ namespace OceanyaClient
                 Foreground = Brushes.White,
                 ShowInTaskbar = false
             };
+            AttachMaximizeBoundsHook(dialog);
             WindowChrome.SetWindowChrome(
                 dialog,
                 new WindowChrome
@@ -5098,6 +7459,77 @@ namespace OceanyaClient
                     UseAeroCaptionButtons = false
                 });
             return dialog;
+        }
+
+        private static void AttachMaximizeBoundsHook(Window dialog)
+        {
+            dialog.SourceInitialized += (_, _) =>
+            {
+                IntPtr handle = new WindowInteropHelper(dialog).Handle;
+                HwndSource? source = HwndSource.FromHwnd(handle);
+                source?.AddHook((IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled) =>
+                {
+                    const int WM_GETMINMAXINFO = 0x0024;
+                    if (msg == WM_GETMINMAXINFO)
+                    {
+                        WmGetMinMaxInfo(hwnd, lParam);
+                        handled = true;
+                    }
+
+                    return IntPtr.Zero;
+                });
+            };
+        }
+
+        private static string BuildPopupStateKey(string id)
+        {
+            string typeName = typeof(AOCharacterFileCreatorWindow).FullName ?? nameof(AOCharacterFileCreatorWindow);
+            return $"{typeName}|{id}";
+        }
+
+        private static VisualizerWindowState CapturePopupWindowState(Window window)
+        {
+            Rect bounds = window.WindowState == WindowState.Normal
+                ? new Rect(window.Left, window.Top, window.Width, window.Height)
+                : window.RestoreBounds;
+            double capturedWidth = bounds.Width > 0 ? bounds.Width : window.Width;
+            double capturedHeight = bounds.Height > 0 ? bounds.Height : window.Height;
+            return new VisualizerWindowState
+            {
+                Width = Math.Max(window.MinWidth, capturedWidth),
+                Height = Math.Max(window.MinHeight, capturedHeight),
+                Left = bounds.X,
+                Top = bounds.Y,
+                IsMaximized = window.WindowState == WindowState.Maximized
+            };
+        }
+
+        private void ApplyPopupState(Window window, string popupStateKey)
+        {
+            if (!SaveFile.Data.PopupWindowStates.TryGetValue(popupStateKey, out VisualizerWindowState? state) || state == null)
+            {
+                return;
+            }
+
+            window.Width = Math.Max(window.MinWidth, state.Width);
+            window.Height = Math.Max(window.MinHeight, state.Height);
+            if (state.Left.HasValue && state.Top.HasValue)
+            {
+                window.WindowStartupLocation = WindowStartupLocation.Manual;
+                window.Left = state.Left.Value;
+                window.Top = state.Top.Value;
+            }
+
+            if (state.IsMaximized)
+            {
+                window.WindowState = WindowState.Maximized;
+            }
+        }
+
+        private static void PersistPopupState(Window window, string popupStateKey)
+        {
+            SaveFile.Data.PopupWindowStates[popupStateKey] = CapturePopupWindowState(window);
+            SaveFile.Save();
         }
 
         private static Grid BuildDialogGrid(int rowCount)
@@ -5457,11 +7889,22 @@ namespace OceanyaClient
                 HorizontalAlignment = HorizontalAlignment.Right,
                 Content = "✕"
             };
+            WindowChrome.SetIsHitTestVisibleInChrome(closeButton, true);
             if (TryFindResource("CloseButtonStyle") is Style closeStyle)
             {
                 closeButton.Style = closeStyle;
             }
-            closeButton.Click += (_, _) => dialog.Close();
+            closeButton.Click += (_, _) =>
+            {
+                try
+                {
+                    dialog.DialogResult = false;
+                }
+                catch
+                {
+                    dialog.Close();
+                }
+            };
             topBarGrid.Children.Add(closeButton);
 
             Border panel = new Border
@@ -5668,25 +8111,20 @@ namespace OceanyaClient
 
         private static IReadOnlyList<string> GetAutomaticBackgroundOptions()
         {
-            List<string> options = new List<string>
+            return new List<string>
             {
                 "None",
-                "Solid Color",
+                "Solid color",
                 "Upload"
             };
-            options.AddRange(ButtonBackgroundPresetAssetMap.Keys);
-            return options;
         }
 
         private static string GetAutomaticBackgroundSelectionName(ButtonIconGenerationConfig config)
         {
             return config.AutomaticBackgroundMode switch
             {
-                ButtonAutomaticBackgroundMode.SolidColor => "Solid Color",
+                ButtonAutomaticBackgroundMode.SolidColor => "Solid color",
                 ButtonAutomaticBackgroundMode.Upload => "Upload",
-                ButtonAutomaticBackgroundMode.PresetList => string.IsNullOrWhiteSpace(config.AutomaticBackgroundPreset)
-                    ? ButtonBackgroundPresetAssetMap.Keys.First()
-                    : config.AutomaticBackgroundPreset,
                 _ => "None"
             };
         }
@@ -5694,7 +8132,7 @@ namespace OceanyaClient
         private static void ApplyAutomaticBackgroundSelection(string selectionText, ButtonIconGenerationConfig config)
         {
             string selected = (selectionText ?? string.Empty).Trim();
-            if (string.Equals(selected, "Solid Color", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(selected, "Solid color", StringComparison.OrdinalIgnoreCase))
             {
                 config.AutomaticBackgroundMode = ButtonAutomaticBackgroundMode.SolidColor;
                 return;
@@ -5709,13 +8147,6 @@ namespace OceanyaClient
             if (string.Equals(selected, "None", StringComparison.OrdinalIgnoreCase))
             {
                 config.AutomaticBackgroundMode = ButtonAutomaticBackgroundMode.None;
-                return;
-            }
-
-            if (ButtonBackgroundPresetAssetMap.ContainsKey(selected))
-            {
-                config.AutomaticBackgroundMode = ButtonAutomaticBackgroundMode.PresetList;
-                config.AutomaticBackgroundPreset = selected;
                 return;
             }
 
@@ -6352,11 +8783,330 @@ namespace OceanyaClient
             }
 
             selectedCharacterIconSourcePath = dialog.FileName;
+            generatedCharacterIconImage = null;
             CharacterIconPreviewImage.Source = TryLoadPreviewImage(dialog.FileName);
             CharacterIconEmptyText.Visibility = CharacterIconPreviewImage.Source == null
                 ? Visibility.Visible
                 : Visibility.Collapsed;
             StatusTextBlock.Text = "Character icon selected.";
+        }
+
+        private void CharacterIconPreviewBorder_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            CharacterIconFromFileButton_Click(sender, new RoutedEventArgs());
+            e.Handled = true;
+        }
+
+        private void CharacterIconPreviewBorder_MouseEnter(object sender, MouseEventArgs e)
+        {
+            CharacterIconPreviewBorder.Background = new SolidColorBrush(Color.FromArgb(62, 62, 72, 86));
+            CharacterIconPreviewBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(92, 118, 146));
+        }
+
+        private void CharacterIconPreviewBorder_MouseLeave(object sender, MouseEventArgs e)
+        {
+            CharacterIconPreviewBorder.Background = new SolidColorBrush(Color.FromArgb(38, 0, 0, 0));
+            CharacterIconPreviewBorder.BorderBrush = new SolidColorBrush(Color.FromArgb(85, 64, 75, 88));
+        }
+
+        private void CharacterIconPreviewBorder_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            CharacterIconPreviewBorder.Background = new SolidColorBrush(Color.FromArgb(82, 36, 44, 54));
+            CharacterIconPreviewBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(115, 141, 166));
+        }
+
+        private void CharacterIconFromEmoteButton_Click(object sender, RoutedEventArgs e)
+        {
+            List<CharacterCreationEmoteViewModel> eligibleEmotes = emotes
+                .Where(static emote => HasAnyCuttableAsset(emote))
+                .ToList();
+            if (eligibleEmotes.Count == 0)
+            {
+                OceanyaMessageBox.Show(
+                    this,
+                    "No emotes have source assets available yet. Add preanim/idle/talking assets first.",
+                    "Character Icon",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            CharacterCreationEmoteViewModel? selectedEmote = ShowEmoteSelectionDialogForCharacterIcon(eligibleEmotes);
+            if (selectedEmote == null)
+            {
+                return;
+            }
+
+            BitmapSource? generated = ShowCharacterIconGeneratorDialogFromEmote(selectedEmote);
+            if (generated == null)
+            {
+                return;
+            }
+
+            generatedCharacterIconImage = CloneBitmapSource(generated);
+            selectedCharacterIconSourcePath = string.Empty;
+            CharacterIconPreviewImage.Source = generatedCharacterIconImage;
+            CharacterIconEmptyText.Visibility = CharacterIconPreviewImage.Source == null
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            StatusTextBlock.Text = "Character icon generated from emote frame.";
+        }
+
+        private BitmapSource? ShowCharacterIconGeneratorDialogFromEmote(CharacterCreationEmoteViewModel emote)
+        {
+            Window dialog = CreateEmoteDialog("Character Icon From Emote", 860, 700);
+            Grid grid = BuildDialogGrid(3);
+
+            ButtonIconGenerationConfig config = new ButtonIconGenerationConfig
+            {
+                Mode = ButtonIconMode.Automatic,
+                EffectsMode = ButtonEffectsGenerationMode.Darken,
+                DarknessPercent = 50,
+                OpacityPercent = 75
+            };
+
+            AutoCompleteDropdownField modeDropdown = CreateDialogAutoCompleteField(
+                new[] { "Single image", "Automatic" },
+                "Automatic",
+                "Generate character icon from a single image or automatic emote extraction.",
+                isReadOnly: true);
+            AddDialogFieldContainer(grid, 0, "Mode", "Character icon generation mode.", modeDropdown);
+            Border fieldsHost = new Border
+            {
+                BorderBrush = new SolidColorBrush(Color.FromRgb(64, 80, 98)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                Background = new SolidColorBrush(Color.FromArgb(72, 12, 18, 24)),
+                Padding = new Thickness(10)
+            };
+            Grid.SetRow(fieldsHost, 1);
+            grid.Children.Add(fieldsHost);
+
+            Image previewImage = new Image { Stretch = Stretch.Uniform };
+            TextBlock previewEmpty = CreatePreviewEmptyText("char icon preview");
+            AddDialogFieldContainer(grid, 2, "Preview", "Live preview for generated character icon.", CreateButtonPreviewCard("char_icon", previewImage, previewEmpty));
+
+            void RefreshPreview()
+            {
+                if (TryBuildButtonIconPair(config, out BitmapSource? onImage, out _, out _)
+                    && onImage != null)
+                {
+                    previewImage.Source = onImage;
+                    previewEmpty.Visibility = Visibility.Collapsed;
+                }
+                else
+                {
+                    previewImage.Source = null;
+                    previewEmpty.Visibility = Visibility.Visible;
+                }
+            }
+
+            void RefreshFields()
+            {
+                StackPanel panel = new StackPanel { Margin = new Thickness(6) };
+                if (config.Mode == ButtonIconMode.SingleImage)
+                {
+                    Button upload = CreateDialogButton("Select image...", isPrimary: false);
+                    upload.Width = 150;
+                    upload.Click += (_, _) =>
+                    {
+                        OpenFileDialog picker = new OpenFileDialog
+                        {
+                            Title = "Select character icon source",
+                            Filter = "Image files (*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp;*.apng)|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp;*.apng|All files (*.*)|*.*"
+                        };
+                        if (picker.ShowDialog() == true)
+                        {
+                            config.SingleImagePath = picker.FileName;
+                            RefreshFields();
+                        }
+                    };
+                    TextBlock path = new TextBlock
+                    {
+                        Text = string.IsNullOrWhiteSpace(config.SingleImagePath) ? "No image selected" : Path.GetFileName(config.SingleImagePath),
+                        Foreground = new SolidColorBrush(Color.FromRgb(198, 212, 224)),
+                        Margin = new Thickness(0, 6, 0, 0)
+                    };
+                    panel.Children.Add(upload);
+                    panel.Children.Add(path);
+                }
+                else
+                {
+                    AutoCompleteDropdownField backgroundDropdown = CreateDialogAutoCompleteField(
+                        GetAutomaticBackgroundOptions(),
+                        GetAutomaticBackgroundSelectionName(config),
+                        "Background config",
+                        isReadOnly: true);
+                    backgroundDropdown.TextValueChanged += (_, _) =>
+                    {
+                        ApplyAutomaticBackgroundSelection(backgroundDropdown.Text, config);
+                        RefreshFields();
+                    };
+                    AddSimpleField(panel, "Background config", backgroundDropdown);
+
+                    if (config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.SolidColor)
+                    {
+                        Button color = CreateDialogButton("Pick color...", isPrimary: false);
+                        color.Width = 130;
+                        color.Click += (_, _) =>
+                        {
+                            Color? picked = ShowAdvancedColorPickerDialog(config.AutomaticSolidColor);
+                            if (picked.HasValue)
+                            {
+                                config.AutomaticSolidColor = picked.Value;
+                                RefreshFields();
+                            }
+                        };
+                        panel.Children.Add(color);
+                    }
+                    else if (config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.Upload)
+                    {
+                        Button uploadBackground = CreateDialogButton("Upload background...", isPrimary: false);
+                        uploadBackground.Width = 170;
+                        uploadBackground.Click += (_, _) =>
+                        {
+                            OpenFileDialog picker = new OpenFileDialog
+                            {
+                                Title = "Select background image",
+                                Filter = "Image files (*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp;*.apng)|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp;*.apng|All files (*.*)|*.*"
+                            };
+                            if (picker.ShowDialog() == true)
+                            {
+                                config.AutomaticBackgroundUploadPath = picker.FileName;
+                                RefreshFields();
+                            }
+                        };
+                        panel.Children.Add(uploadBackground);
+                    }
+
+                    Button cutButton = CreateDialogButton("Cut from emote...", isPrimary: false);
+                    cutButton.Width = 160;
+                    cutButton.Margin = new Thickness(0, 6, 0, 0);
+                    cutButton.Click += (_, _) =>
+                    {
+                        BitmapSource? cut = ShowEmoteCuttingDialog(emote, config.AutomaticCutEmoteImage);
+                        if (cut != null)
+                        {
+                            config.AutomaticCutEmoteImage = cut;
+                            RefreshPreview();
+                        }
+                    };
+                    panel.Children.Add(cutButton);
+                }
+
+                AutoCompleteDropdownField effectsDropdown = CreateDialogAutoCompleteField(
+                    ButtonEffectsGenerationOptionNames,
+                    GetButtonEffectsGenerationName(config.EffectsMode),
+                    "Effects generation",
+                    isReadOnly: true);
+                effectsDropdown.TextValueChanged += (_, _) =>
+                {
+                    config.EffectsMode = ParseButtonEffectsGenerationMode(effectsDropdown.Text);
+                    RefreshFields();
+                };
+                AddSimpleField(panel, "Effects generation", effectsDropdown);
+
+                fieldsHost.Child = panel;
+                RefreshPreview();
+            }
+
+            modeDropdown.TextValueChanged += (_, _) =>
+            {
+                config.Mode = string.Equals(modeDropdown.Text?.Trim(), "Single image", StringComparison.OrdinalIgnoreCase)
+                    ? ButtonIconMode.SingleImage
+                    : ButtonIconMode.Automatic;
+                RefreshFields();
+            };
+            RefreshFields();
+
+            DockPanel buttons = BuildDialogButtons(dialog);
+            dialog.Content = BuildStyledDialogContent(dialog, dialog.Title, grid, buttons);
+            if (dialog.ShowDialog() != true)
+            {
+                return null;
+            }
+
+            return TryBuildButtonIconPair(config, out BitmapSource? onImage, out _, out _)
+                ? onImage
+                : null;
+        }
+
+        private CharacterCreationEmoteViewModel? ShowEmoteSelectionDialogForCharacterIcon(IReadOnlyList<CharacterCreationEmoteViewModel> eligibleEmotes)
+        {
+            if (eligibleEmotes.Count == 1)
+            {
+                return eligibleEmotes[0];
+            }
+
+            Window dialog = CreateEmoteDialog("Select Emote", 880, 620);
+            Grid grid = new Grid();
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            TextBlock description = new TextBlock
+            {
+                Text = "Choose the emote source used for character icon extraction.",
+                Foreground = new SolidColorBrush(Color.FromRgb(210, 222, 236)),
+                Margin = new Thickness(0, 0, 0, 8),
+                TextWrapping = TextWrapping.Wrap
+            };
+            Grid.SetRow(description, 0);
+            grid.Children.Add(description);
+
+            ObservableCollection<EmoteTileEntryViewModel> entries = new ObservableCollection<EmoteTileEntryViewModel>(
+                eligibleEmotes.Select(static emote => new EmoteTileEntryViewModel
+                {
+                    IsAddTile = false,
+                    Emote = emote
+                }));
+
+            ListBox emoteList = new ListBox
+            {
+                Background = Brushes.Transparent,
+                BorderBrush = new SolidColorBrush(Color.FromArgb(90, 74, 94, 114)),
+                BorderThickness = new Thickness(1),
+                SelectionMode = SelectionMode.Single,
+                ItemsSource = entries
+            };
+            if (TryFindResource("EmoteTileListBoxStyle") is Style emoteListStyle)
+            {
+                emoteList.Style = emoteListStyle;
+            }
+
+            if (TryFindResource("EmoteTileListBoxItemStyle") is Style emoteItemStyle)
+            {
+                emoteList.ItemContainerStyle = emoteItemStyle;
+            }
+
+            FrameworkElementFactory wrapPanelFactory = new FrameworkElementFactory(typeof(WrapPanel));
+            emoteList.ItemsPanel = new ItemsPanelTemplate(wrapPanelFactory);
+            emoteList.ItemTemplate = new DataTemplate
+            {
+                VisualTree = new FrameworkElementFactory(typeof(ContentControl))
+            };
+            emoteList.ItemTemplate.VisualTree.SetBinding(
+                ContentControl.ContentProperty,
+                new System.Windows.Data.Binding());
+            emoteList.ItemTemplate.VisualTree.SetValue(
+                ContentControl.ContentTemplateProperty,
+                TryFindResource("EmoteTileContentTemplate"));
+
+            emoteList.SelectedItem = entries[0];
+            Grid.SetRow(emoteList, 1);
+            grid.Children.Add(emoteList);
+
+            DockPanel buttons = BuildDialogButtons(dialog);
+            dialog.Content = BuildStyledDialogContent(dialog, dialog.Title, grid, buttons);
+            if (dialog.ShowDialog() != true)
+            {
+                return null;
+            }
+
+            if (emoteList.SelectedItem is EmoteTileEntryViewModel selectedEntry && selectedEntry.Emote != null)
+            {
+                return selectedEntry.Emote;
+            }
+
+            return eligibleEmotes[0];
         }
 
         private void InitializeShoutPreviewDefaults()
@@ -7039,7 +9789,10 @@ namespace OceanyaClient
         private void ResetEffectsToDefaults()
         {
             StopBlipPreview();
-            shoutSfxPreviewPlayer.Stop();
+            foreach (AO2BlipPreviewPlayer player in shoutSfxPreviewPlayers.Values)
+            {
+                player.Stop();
+            }
             realizationSfxPreviewPlayer.Stop();
             RealizationPlayButton.IsPlaying = false;
 
@@ -7058,6 +9811,60 @@ namespace OceanyaClient
             ResetSingleShoutToDefault("objection");
             ResetSingleShoutToDefault("takethat");
             ResetSingleShoutToDefault("custom");
+        }
+
+        private void InitializeEffectsFieldContextMenus()
+        {
+            AttachSetDefaultContextMenu(ChatDropdown, () => ChatDropdown.Text = "default");
+            AttachSetDefaultContextMenu(EffectsDropdown, () => EffectsDropdown.Text = string.Empty);
+            AttachSetDefaultContextMenu(ScalingDropdown, () => ScalingDropdown.Text = string.Empty);
+            AttachSetDefaultContextMenu(StretchDropdown, () => StretchDropdown.Text = string.Empty);
+            AttachSetDefaultContextMenu(NeedsShownameDropdown, () => NeedsShownameDropdown.Text = string.Empty);
+            AttachSetDefaultContextMenu(CustomShoutNameTextBox, () => CustomShoutNameTextBox.Text = string.Empty);
+            AttachSetDefaultContextMenu(RealizationTextBox, ResetRealizationFieldToDefault);
+            AttachSetDefaultContextMenu(RealizationPlayButton, ResetRealizationFieldToDefault);
+
+            AttachShoutSetDefaultContextMenu("holdit", HoldItPlayButton, HoldItPreviewImage, HoldItNoImageText, HoldItVisualFileTextBlock, HoldItSfxFileTextBlock);
+            AttachShoutSetDefaultContextMenu("objection", ObjectionPlayButton, ObjectionPreviewImage, ObjectionNoImageText, ObjectionVisualFileTextBlock, ObjectionSfxFileTextBlock);
+            AttachShoutSetDefaultContextMenu("takethat", TakeThatPlayButton, TakeThatPreviewImage, TakeThatNoImageText, TakeThatVisualFileTextBlock, TakeThatSfxFileTextBlock);
+            AttachShoutSetDefaultContextMenu("custom", CustomPlayButton, CustomPreviewImage, CustomNoImageText, CustomVisualFileTextBlock, CustomSfxFileTextBlock);
+        }
+
+        private void AttachShoutSetDefaultContextMenu(string shoutKey, params FrameworkElement[] elements)
+        {
+            foreach (FrameworkElement element in elements)
+            {
+                AttachSetDefaultContextMenu(
+                    element,
+                    () =>
+                    {
+                        ResetSingleShoutToDefault(shoutKey);
+                        StatusTextBlock.Text = $"Reset {shoutKey} shout to default values.";
+                    });
+            }
+        }
+
+        private void AttachSetDefaultContextMenu(FrameworkElement element, Action setDefaultAction)
+        {
+            if (element == null)
+            {
+                return;
+            }
+
+            ContextMenu menu = new ContextMenu();
+            menu.Items.Add(CreateContextMenuItem("Set to default", () =>
+            {
+                setDefaultAction();
+            }));
+            element.ContextMenu = menu;
+        }
+
+        private void ResetRealizationFieldToDefault()
+        {
+            realizationSfxPreviewPlayer.Stop();
+            RealizationPlayButton.IsPlaying = false;
+            selectedRealizationSourcePath = string.Empty;
+            RealizationTextBox.Text = string.Empty;
         }
 
         private void ShoutPlayButton_PlayRequested(object sender, EventArgs e)
@@ -7175,6 +9982,21 @@ namespace OceanyaClient
             return ResolveAo2SfxPath(key);
         }
 
+        private AO2BlipPreviewPlayer GetOrCreateShoutSfxPlayer(string key)
+        {
+            if (shoutSfxPreviewPlayers.TryGetValue(key, out AO2BlipPreviewPlayer? existing))
+            {
+                return existing;
+            }
+
+            AO2BlipPreviewPlayer created = new AO2BlipPreviewPlayer
+            {
+                Volume = (float)Math.Clamp(PreviewVolumeSlider.Value / 100d, 0d, 1d)
+            };
+            shoutSfxPreviewPlayers[key] = created;
+            return created;
+        }
+
         private void StartShoutPreview(string key)
         {
             StopShoutPreview(key, resetImage: false);
@@ -7196,10 +10018,11 @@ namespace OceanyaClient
             string? sfxPath = ResolveShoutSfxPathForPreview(key);
             if (!string.IsNullOrWhiteSpace(sfxPath) && File.Exists(sfxPath))
             {
-                if (shoutSfxPreviewPlayer.TrySetBlip(sfxPath))
+                AO2BlipPreviewPlayer player = GetOrCreateShoutSfxPlayer(key);
+                if (player.TrySetBlip(sfxPath))
                 {
-                    sfxDurationMs = shoutSfxPreviewPlayer.GetLoadedDurationMs();
-                    _ = shoutSfxPreviewPlayer.PlayBlip();
+                    sfxDurationMs = player.GetLoadedDurationMs();
+                    _ = player.PlayBlip();
                 }
             }
 
@@ -7218,7 +10041,10 @@ namespace OceanyaClient
         {
             StopShoutVisualCutoffTimer(key);
             StopShoutVisualPlayer(key);
-            shoutSfxPreviewPlayer.Stop();
+            if (shoutSfxPreviewPlayers.TryGetValue(key, out AO2BlipPreviewPlayer? player))
+            {
+                player.Stop();
+            }
 
             PlayStopProgressButton? button = GetShoutPlayButton(key);
             if (button != null)
@@ -7503,8 +10329,12 @@ namespace OceanyaClient
         {
             double clamped = Math.Clamp(normalizedVolume, 0.0, 1.0);
             blipPreviewPlayer.Volume = (float)clamped;
-            shoutSfxPreviewPlayer.Volume = (float)clamped;
+            foreach (AO2BlipPreviewPlayer player in shoutSfxPreviewPlayers.Values)
+            {
+                player.Volume = (float)clamped;
+            }
             realizationSfxPreviewPlayer.Volume = (float)clamped;
+            fileOrganizationAudioPreviewPlayer.Volume = (float)clamped;
             PreviewVolumePercentTextBlock.Text = $"{Math.Round(clamped * 100.0):0}%";
 
             if (persist)
@@ -7600,26 +10430,46 @@ namespace OceanyaClient
 
         private void CopyEmoteAssets(string characterDirectory)
         {
-            string imagesDirectory = Path.Combine(characterDirectory, "Images");
-            string soundsDirectory = Path.Combine(characterDirectory, "Sounds");
-            string emotionsDirectory = Path.Combine(characterDirectory, "emotions");
-            Directory.CreateDirectory(imagesDirectory);
-            Directory.CreateDirectory(soundsDirectory);
-            Directory.CreateDirectory(emotionsDirectory);
-
             for (int i = 0; i < emotes.Count; i++)
             {
                 CharacterCreationEmoteViewModel emote = emotes[i];
-                int emoteId = i + 1;
+                int emoteId = Math.Max(1, emote.Index);
 
-                string preanimTokenForCopy = !string.IsNullOrWhiteSpace(emote.PreAnimationAssetSourcePath)
-                    ? Path.GetFileNameWithoutExtension(emote.PreAnimationAssetSourcePath)
-                    : emote.PreAnimation;
-                string animationTokenForCopy = !string.IsNullOrWhiteSpace(emote.AnimationAssetSourcePath)
-                    ? Path.GetFileNameWithoutExtension(emote.AnimationAssetSourcePath)
-                    : emote.Animation;
-                CopyEmoteImageAsset(emote.PreAnimationAssetSourcePath, imagesDirectory, preanimTokenForCopy);
-                CopyEmoteImageAsset(emote.AnimationAssetSourcePath, imagesDirectory, animationTokenForCopy);
+                if (!string.IsNullOrWhiteSpace(emote.PreAnimationAssetSourcePath) && File.Exists(emote.PreAnimationAssetSourcePath))
+                {
+                    CopyAssetToOrganizedPath(
+                        emote.PreAnimationAssetSourcePath,
+                        characterDirectory,
+                        $"emote:{emoteId}:preanim",
+                        "Images/" + Path.GetFileName(emote.PreAnimationAssetSourcePath));
+                }
+
+                if (!string.IsNullOrWhiteSpace(emote.AnimationAssetSourcePath) && File.Exists(emote.AnimationAssetSourcePath))
+                {
+                    CopyAssetToOrganizedPath(
+                        emote.AnimationAssetSourcePath,
+                        characterDirectory,
+                        $"emote:{emoteId}:anim",
+                        "Images/" + Path.GetFileName(emote.AnimationAssetSourcePath));
+                }
+
+                if (!string.IsNullOrWhiteSpace(emote.FinalAnimationIdleAssetSourcePath) && File.Exists(emote.FinalAnimationIdleAssetSourcePath))
+                {
+                    CopyAssetToOrganizedPath(
+                        emote.FinalAnimationIdleAssetSourcePath,
+                        characterDirectory,
+                        $"emote:{emoteId}:idle",
+                        "Images/(a)/" + Path.GetFileName(emote.FinalAnimationIdleAssetSourcePath));
+                }
+
+                if (!string.IsNullOrWhiteSpace(emote.FinalAnimationTalkingAssetSourcePath) && File.Exists(emote.FinalAnimationTalkingAssetSourcePath))
+                {
+                    CopyAssetToOrganizedPath(
+                        emote.FinalAnimationTalkingAssetSourcePath,
+                        characterDirectory,
+                        $"emote:{emoteId}:talking",
+                        "Images/(b)/" + Path.GetFileName(emote.FinalAnimationTalkingAssetSourcePath));
+                }
 
                 string splitBaseName = !string.IsNullOrWhiteSpace(emote.FinalAnimationIdleAssetSourcePath)
                     ? Path.GetFileNameWithoutExtension(emote.FinalAnimationIdleAssetSourcePath)
@@ -7628,19 +10478,13 @@ namespace OceanyaClient
                         : string.Empty);
                 if (!string.IsNullOrWhiteSpace(splitBaseName))
                 {
-                    if (!string.IsNullOrWhiteSpace(emote.FinalAnimationIdleAssetSourcePath))
-                    {
-                        CopyEmoteImageAsset(emote.FinalAnimationIdleAssetSourcePath, imagesDirectory, "(a)/" + splitBaseName);
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(emote.FinalAnimationTalkingAssetSourcePath))
-                    {
-                        CopyEmoteImageAsset(emote.FinalAnimationTalkingAssetSourcePath, imagesDirectory, "(b)/" + splitBaseName);
-                    }
-
                     if (!string.IsNullOrWhiteSpace(emote.AnimationAssetSourcePath))
                     {
-                        CopyEmoteImageAsset(emote.AnimationAssetSourcePath, imagesDirectory, splitBaseName);
+                        CopyAssetToOrganizedPath(
+                            emote.AnimationAssetSourcePath,
+                            characterDirectory,
+                            $"emote:{emoteId}:splitbase",
+                            "Images/" + Path.GetFileName(emote.AnimationAssetSourcePath));
                     }
                 }
 
@@ -7649,41 +10493,30 @@ namespace OceanyaClient
                     && onImage != null
                     && offImage != null)
                 {
-                    string onPath = Path.Combine(emotionsDirectory, $"button{emoteId}_on.png");
-                    string offPath = Path.Combine(emotionsDirectory, $"button{emoteId}_off.png");
-                    SaveBitmapAsPng(onImage, onPath);
-                    SaveBitmapAsPng(offImage, offPath);
+                    SaveBitmapToOrganizedPath(onImage, characterDirectory, $"button:{emoteId}:on", $"emotions/button{emoteId}_on.png");
+                    SaveBitmapToOrganizedPath(offImage, characterDirectory, $"button:{emoteId}:off", $"emotions/button{emoteId}_off.png");
                 }
 
                 if (!string.IsNullOrWhiteSpace(emote.SfxAssetSourcePath) && File.Exists(emote.SfxAssetSourcePath))
                 {
-                    string extension = Path.GetExtension(emote.SfxAssetSourcePath);
-                    string baseName = Path.GetFileNameWithoutExtension(emote.SfxAssetSourcePath);
-                    string destinationPath = Path.Combine(soundsDirectory, baseName + extension);
-                    File.Copy(emote.SfxAssetSourcePath, destinationPath, overwrite: true);
+                    CopyAssetToOrganizedPath(
+                        emote.SfxAssetSourcePath,
+                        characterDirectory,
+                        $"emote:{emoteId}:sfx",
+                        "Sounds/" + Path.GetFileName(emote.SfxAssetSourcePath));
                 }
             }
         }
 
-        private static void CopyEmoteImageAsset(string? sourcePath, string imagesDirectory, string token)
+        private void CopyAssetToOrganizedPath(string sourcePath, string characterDirectory, string assetKey, string defaultRelativePath)
         {
-            if (string.IsNullOrWhiteSpace(sourcePath)
-                || !File.Exists(sourcePath)
-                || string.IsNullOrWhiteSpace(token)
-                || string.Equals(token, "-", StringComparison.Ordinal))
+            if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
             {
                 return;
             }
 
-            string extension = Path.GetExtension(sourcePath);
-            string normalizedToken = token.Replace('\\', '/');
-            string relativePath = normalizedToken;
-            if (relativePath.StartsWith("Images/", StringComparison.OrdinalIgnoreCase))
-            {
-                relativePath = relativePath.Substring("Images/".Length);
-            }
-
-            string destinationPath = Path.Combine(imagesDirectory, relativePath.Replace('/', Path.DirectorySeparatorChar) + extension);
+            string relativePath = ResolveOutputPathForAsset(assetKey, defaultRelativePath, isFolder: false);
+            string destinationPath = Path.Combine(characterDirectory, relativePath.Replace('/', Path.DirectorySeparatorChar));
             string? destinationDirectory = Path.GetDirectoryName(destinationPath);
             if (!string.IsNullOrWhiteSpace(destinationDirectory))
             {
@@ -7693,16 +10526,80 @@ namespace OceanyaClient
             File.Copy(sourcePath, destinationPath, overwrite: true);
         }
 
+        private void SaveBitmapToOrganizedPath(BitmapSource bitmap, string characterDirectory, string assetKey, string defaultRelativePath)
+        {
+            string relativePath = ResolveOutputPathForAsset(assetKey, defaultRelativePath, isFolder: false);
+            string destinationPath = Path.Combine(characterDirectory, relativePath.Replace('/', Path.DirectorySeparatorChar));
+            string? destinationDirectory = Path.GetDirectoryName(destinationPath);
+            if (!string.IsNullOrWhiteSpace(destinationDirectory))
+            {
+                Directory.CreateDirectory(destinationDirectory);
+            }
+
+            SaveBitmapAsPng(bitmap, destinationPath);
+        }
+
+        private static void EnsureDestinationDirectory(string destinationPath)
+        {
+            string? destinationDirectory = Path.GetDirectoryName(destinationPath);
+            if (!string.IsNullOrWhiteSpace(destinationDirectory))
+            {
+                Directory.CreateDirectory(destinationDirectory);
+            }
+        }
+
+        private void CopyExternalOrganizationEntries(string characterDirectory)
+        {
+            foreach (ExternalOrganizationEntry entry in externalOrganizationEntries)
+            {
+                if (string.IsNullOrWhiteSpace(entry.RelativePath))
+                {
+                    continue;
+                }
+
+                string relative = entry.RelativePath.Trim().Replace('\\', '/').TrimStart('/');
+                if (string.IsNullOrWhiteSpace(relative))
+                {
+                    continue;
+                }
+
+                string destinationPath = Path.Combine(characterDirectory, relative.Replace('/', Path.DirectorySeparatorChar));
+                if (entry.IsFolder)
+                {
+                    Directory.CreateDirectory(destinationPath);
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(entry.SourcePath) || !File.Exists(entry.SourcePath))
+                {
+                    continue;
+                }
+
+                string? destinationDirectory = Path.GetDirectoryName(destinationPath);
+                if (!string.IsNullOrWhiteSpace(destinationDirectory))
+                {
+                    Directory.CreateDirectory(destinationDirectory);
+                }
+
+                File.Copy(entry.SourcePath, destinationPath, overwrite: true);
+            }
+        }
+
         private void CopyCharacterIconAsset(string characterDirectory)
         {
+            if (generatedCharacterIconImage != null)
+            {
+                SaveBitmapToOrganizedPath(generatedCharacterIconImage, characterDirectory, "charicon", "char_icon.png");
+                return;
+            }
+
             if (string.IsNullOrWhiteSpace(selectedCharacterIconSourcePath) || !File.Exists(selectedCharacterIconSourcePath))
             {
                 return;
             }
 
             string extension = Path.GetExtension(selectedCharacterIconSourcePath);
-            string destinationPath = Path.Combine(characterDirectory, "char_icon" + extension);
-            File.Copy(selectedCharacterIconSourcePath, destinationPath, overwrite: true);
+            CopyAssetToOrganizedPath(selectedCharacterIconSourcePath, characterDirectory, "charicon", "char_icon" + extension);
         }
 
         private void CopyShoutVisual(string characterDirectory, string key, string targetBaseName)
@@ -7715,7 +10612,9 @@ namespace OceanyaClient
             }
 
             string extension = Path.GetExtension(sourcePath);
-            string destinationPath = Path.Combine(characterDirectory, targetBaseName + extension);
+            string relativePath = ResolveOutputPathForAsset($"shout:visual:{key}", targetBaseName + extension, isFolder: false);
+            string destinationPath = Path.Combine(characterDirectory, relativePath.Replace('/', Path.DirectorySeparatorChar));
+            EnsureDestinationDirectory(destinationPath);
             File.Copy(sourcePath, destinationPath, overwrite: true);
         }
 
@@ -7729,7 +10628,9 @@ namespace OceanyaClient
             }
 
             string extension = Path.GetExtension(sourcePath);
-            string destinationPath = Path.Combine(characterDirectory, targetBaseName + extension);
+            string relativePath = ResolveOutputPathForAsset($"shout:sfx:{key}", targetBaseName + extension, isFolder: false);
+            string destinationPath = Path.Combine(characterDirectory, relativePath.Replace('/', Path.DirectorySeparatorChar));
+            EnsureDestinationDirectory(destinationPath);
             File.Copy(sourcePath, destinationPath, overwrite: true);
         }
 
@@ -7871,11 +10772,28 @@ namespace OceanyaClient
 
         private void Window_Closing(object? sender, CancelEventArgs e)
         {
+            if (skipCloseConfirmationOnce)
+            {
+                skipCloseConfirmationOnce = false;
+            }
+            else if (!ConfirmCloseIfUncommitted())
+            {
+                e.Cancel = true;
+                return;
+            }
+
             StopBlipPreview();
+            StopFileOrganizationAudioPreview();
+            ClearFileOrganizationPreviewPlayers();
             StopAllEmotePreviewPlayers();
             blipPreviewPlayer.Dispose();
-            shoutSfxPreviewPlayer.Dispose();
+            foreach (AO2BlipPreviewPlayer player in shoutSfxPreviewPlayers.Values.ToArray())
+            {
+                player.Dispose();
+            }
+            shoutSfxPreviewPlayers.Clear();
             realizationSfxPreviewPlayer.Dispose();
+            fileOrganizationAudioPreviewPlayer.Dispose();
             foreach (string key in shoutVisualPlayers.Keys.ToList())
             {
                 StopShoutVisualPlayer(key);
@@ -7955,6 +10873,11 @@ namespace OceanyaClient
             await WaitForm.ShowFormAsync("Generating character folder...", this);
             string? successCharacterDirectory = null;
             Exception? generationException = null;
+            void ShowBlockingGenerateMessage(string text, string title, MessageBoxImage image)
+            {
+                WaitForm.CloseForm();
+                OceanyaMessageBox.Show(this, text, title, MessageBoxButton.OK, image);
+            }
             try
             {
                 await SetGenerateSubtitleAsync("Validating setup and emote data...");
@@ -7962,14 +10885,14 @@ namespace OceanyaClient
 
                 if (emotes.Count == 0)
                 {
-                    OceanyaMessageBox.Show(this, "Add at least one emote before generating.", "Invalid Input", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    ShowBlockingGenerateMessage("Add at least one emote before generating.", "Invalid Input", MessageBoxImage.Warning);
                     return;
                 }
 
                 string folderName = (CharacterFolderNameTextBox.Text ?? string.Empty).Trim();
                 if (string.IsNullOrWhiteSpace(folderName))
                 {
-                    OceanyaMessageBox.Show(this, "Character folder name is required.", "Invalid Input", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    ShowBlockingGenerateMessage("Character folder name is required.", "Invalid Input", MessageBoxImage.Warning);
                     return;
                 }
 
@@ -7981,56 +10904,65 @@ namespace OceanyaClient
 
                 if (string.IsNullOrWhiteSpace(mountPath))
                 {
-                    OceanyaMessageBox.Show(this, "No valid mount path is available.", "Invalid Input", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    ShowBlockingGenerateMessage("No valid mount path is available.", "Invalid Input", MessageBoxImage.Warning);
                     return;
                 }
 
                 string sanitizedFolderToken = SanitizeFolderNameForRelativePath(folderName);
-                List<CharacterCreationEmote> generatedEmotes = emotes.Select(viewModel =>
+                List<CharacterCreationEmote> generatedEmotes = new List<CharacterCreationEmote>();
+                foreach (CharacterCreationEmoteViewModel viewModel in emotes)
                 {
                     CharacterCreationEmote model = viewModel.ToModel();
+                    int emoteId = Math.Max(1, viewModel.Index);
+
                     if (!string.IsNullOrWhiteSpace(viewModel.PreAnimationAssetSourcePath)
                         && File.Exists(viewModel.PreAnimationAssetSourcePath)
                         && !string.IsNullOrWhiteSpace(model.PreAnimation)
                         && !string.Equals(model.PreAnimation, "-", StringComparison.Ordinal))
                     {
-                        string preanimBaseName = Path.GetFileNameWithoutExtension(viewModel.PreAnimationAssetSourcePath);
-                        model.PreAnimation = "Images/" + preanimBaseName;
+                        string preanimPath = ResolveOutputPathForAsset(
+                            $"emote:{emoteId}:preanim",
+                            "Images/" + Path.GetFileName(viewModel.PreAnimationAssetSourcePath),
+                            isFolder: false);
+                        model.PreAnimation = RemoveExtensionFromRelativePath(preanimPath);
                     }
 
-                    if (!string.IsNullOrWhiteSpace(viewModel.AnimationAssetSourcePath)
-                        && File.Exists(viewModel.AnimationAssetSourcePath)
-                        && !string.IsNullOrWhiteSpace(model.Animation))
-                    {
-                        string animBaseName = Path.GetFileNameWithoutExtension(viewModel.AnimationAssetSourcePath);
-                        if (!string.IsNullOrWhiteSpace(viewModel.FinalAnimationIdleAssetSourcePath)
-                            && File.Exists(viewModel.FinalAnimationIdleAssetSourcePath))
-                        {
-                            animBaseName = Path.GetFileNameWithoutExtension(viewModel.FinalAnimationIdleAssetSourcePath);
-                        }
-                        else if (!string.IsNullOrWhiteSpace(viewModel.FinalAnimationTalkingAssetSourcePath)
-                            && File.Exists(viewModel.FinalAnimationTalkingAssetSourcePath))
-                        {
-                            animBaseName = Path.GetFileNameWithoutExtension(viewModel.FinalAnimationTalkingAssetSourcePath);
-                        }
-
-                        model.Animation = "Images/" + animBaseName;
-                    }
-                    else if (!string.IsNullOrWhiteSpace(viewModel.FinalAnimationIdleAssetSourcePath)
+                    string? animationPath = null;
+                    bool hasSplit = (!string.IsNullOrWhiteSpace(viewModel.FinalAnimationIdleAssetSourcePath)
                         && File.Exists(viewModel.FinalAnimationIdleAssetSourcePath))
+                        || (!string.IsNullOrWhiteSpace(viewModel.FinalAnimationTalkingAssetSourcePath)
+                            && File.Exists(viewModel.FinalAnimationTalkingAssetSourcePath));
+                    if (hasSplit)
                     {
-                        model.Animation = "Images/" + Path.GetFileNameWithoutExtension(viewModel.FinalAnimationIdleAssetSourcePath);
+                        string splitDefaultName = !string.IsNullOrWhiteSpace(viewModel.FinalAnimationIdleAssetSourcePath)
+                            ? Path.GetFileName(viewModel.FinalAnimationIdleAssetSourcePath)
+                            : Path.GetFileName(viewModel.FinalAnimationTalkingAssetSourcePath);
+                        animationPath = ResolveOutputPathForAsset(
+                            $"emote:{emoteId}:splitbase",
+                            "Images/" + splitDefaultName,
+                            isFolder: false);
                     }
-                    else if (!string.IsNullOrWhiteSpace(viewModel.FinalAnimationTalkingAssetSourcePath)
-                        && File.Exists(viewModel.FinalAnimationTalkingAssetSourcePath))
+                    else if (!string.IsNullOrWhiteSpace(viewModel.AnimationAssetSourcePath)
+                        && File.Exists(viewModel.AnimationAssetSourcePath))
                     {
-                        model.Animation = "Images/" + Path.GetFileNameWithoutExtension(viewModel.FinalAnimationTalkingAssetSourcePath);
+                        animationPath = ResolveOutputPathForAsset(
+                            $"emote:{emoteId}:anim",
+                            "Images/" + Path.GetFileName(viewModel.AnimationAssetSourcePath),
+                            isFolder: false);
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(animationPath))
+                    {
+                        model.Animation = RemoveExtensionFromRelativePath(animationPath);
                     }
 
                     if (!string.IsNullOrWhiteSpace(viewModel.SfxAssetSourcePath) && File.Exists(viewModel.SfxAssetSourcePath))
                     {
-                        string baseName = Path.GetFileNameWithoutExtension(viewModel.SfxAssetSourcePath);
-                        model.SfxName = $"../../characters/{sanitizedFolderToken}/Sounds/{baseName}";
+                        string sfxPath = ResolveOutputPathForAsset(
+                            $"emote:{emoteId}:sfx",
+                            "Sounds/" + Path.GetFileName(viewModel.SfxAssetSourcePath),
+                            isFolder: false);
+                        model.SfxName = $"../../characters/{sanitizedFolderToken}/{RemoveExtensionFromRelativePath(sfxPath)}";
                     }
 
                     bool hasPreanim = !string.IsNullOrWhiteSpace(model.PreAnimation)
@@ -8053,8 +10985,8 @@ namespace OceanyaClient
                         }
                     }
 
-                    return model;
-                }).ToList();
+                    generatedEmotes.Add(model);
+                }
 
                 CharacterCreationProject project = new CharacterCreationProject
                 {
@@ -8088,8 +11020,9 @@ namespace OceanyaClient
                     && string.Equals((GenderBlipsDropdown.Text ?? string.Empty).Trim(), customBlipOptionText, StringComparison.OrdinalIgnoreCase);
                 if (usingCustomBlipFile)
                 {
-                    string blipBaseName = Path.GetFileNameWithoutExtension(selectedCustomBlipSourcePath);
-                    project.Blips = $"../../characters/{sanitizedFolderToken}/blips/{blipBaseName}";
+                    string blipDefault = $"blips/{Path.GetFileName(selectedCustomBlipSourcePath)}";
+                    string blipRelative = ResolveOutputPathForAsset("blip:custom", blipDefault, isFolder: false);
+                    project.Blips = $"../../characters/{sanitizedFolderToken}/{RemoveExtensionFromRelativePath(blipRelative)}";
                     project.Gender = project.Blips;
                 }
 
@@ -8102,16 +11035,14 @@ namespace OceanyaClient
                 CopyCharacterIconAsset(characterDirectory);
                 await SetGenerateSubtitleAsync("Copying shout assets (root special case)...");
                 CopyShoutAssets(characterDirectory);
+                await SetGenerateSubtitleAsync("Applying file organization extras...");
+                CopyExternalOrganizationEntries(characterDirectory);
 
                 if (usingCustomBlipFile)
                 {
                     await SetGenerateSubtitleAsync("Copying custom blip file...");
-                    string extension = Path.GetExtension(selectedCustomBlipSourcePath);
-                    string sourceFileName = Path.GetFileNameWithoutExtension(selectedCustomBlipSourcePath);
-                    string blipsDirectory = Path.Combine(characterDirectory, "blips");
-                    Directory.CreateDirectory(blipsDirectory);
-                    string destinationPath = Path.Combine(blipsDirectory, sourceFileName + extension);
-                    File.Copy(selectedCustomBlipSourcePath, destinationPath, overwrite: true);
+                    string blipDefault = $"blips/{Path.GetFileName(selectedCustomBlipSourcePath)}";
+                    CopyAssetToOrganizedPath(selectedCustomBlipSourcePath, characterDirectory, "blip:custom", blipDefault);
                 }
 
                 bool hasCustomShoutFiles = selectedShoutVisualSourcePaths.ContainsKey("custom")
@@ -8131,11 +11062,12 @@ namespace OceanyaClient
                 {
                     await SetGenerateSubtitleAsync("Copying realization sound (root special case)...");
                     string extension = Path.GetExtension(selectedRealizationSourcePath);
-                    string destinationPath = Path.Combine(characterDirectory, "realization" + extension);
-                    File.Copy(selectedRealizationSourcePath, destinationPath, overwrite: true);
+                    string realizationDefault = "realization" + extension;
+                    CopyAssetToOrganizedPath(selectedRealizationSourcePath, characterDirectory, "realization:custom", realizationDefault);
 
                     string sanitizedFolder = SanitizeFolderNameForRelativePath(folderName);
-                    string realizationToken = $"../../characters/{sanitizedFolder}/realization";
+                    string realizationRelative = ResolveOutputPathForAsset("realization:custom", realizationDefault, isFolder: false);
+                    string realizationToken = $"../../characters/{sanitizedFolder}/{RemoveExtensionFromRelativePath(realizationRelative)}";
                     AddOrUpdateOptionsValue(Path.Combine(characterDirectory, "char.ini"), "realization", realizationToken);
                 }
 
@@ -8170,6 +11102,7 @@ namespace OceanyaClient
 
             if (!string.IsNullOrWhiteSpace(successCharacterDirectory))
             {
+                lastCommittedStateFingerprint = ComputeCurrentStateFingerprint();
                 OceanyaMessageBox.Show(
                     this,
                     "Character folder created successfully:\n" + successCharacterDirectory,
@@ -8179,17 +11112,137 @@ namespace OceanyaClient
             }
         }
 
+        private string ComputeCurrentStateFingerprint()
+        {
+            try
+            {
+                StringBuilder builder = new StringBuilder();
+                CharacterCreationProject project = BuildProjectForPreview();
+                builder.Append(project.MountPath ?? string.Empty).Append('|');
+                builder.Append(project.CharacterFolderName ?? string.Empty).Append('|');
+                builder.Append(project.ShowName ?? string.Empty).Append('|');
+                builder.Append(project.Side ?? string.Empty).Append('|');
+                builder.Append(project.Blips ?? string.Empty).Append('|');
+                builder.Append(project.Chat ?? string.Empty).Append('|');
+                builder.Append(project.Effects ?? string.Empty).Append('|');
+                builder.Append(project.Realization ?? string.Empty).Append('|');
+                builder.Append(project.Scaling ?? string.Empty).Append('|');
+                builder.Append(project.Stretch ?? string.Empty).Append('|');
+                builder.Append(project.NeedsShowName ?? string.Empty).Append('|');
+                builder.Append(project.Shouts ?? string.Empty).Append('|');
+                builder.Append(project.Emotes.Count).Append('|');
+                foreach (CharacterCreationEmote emote in project.Emotes)
+                {
+                    builder.Append(emote.Name ?? string.Empty).Append(',');
+                    builder.Append(emote.PreAnimation ?? string.Empty).Append(',');
+                    builder.Append(emote.Animation ?? string.Empty).Append(',');
+                    builder.Append(emote.SfxName ?? string.Empty).Append(';');
+                }
+
+                builder.Append('|');
+                foreach (ExternalOrganizationEntry entry in externalOrganizationEntries
+                    .OrderBy(static entry => entry.RelativePath, StringComparer.OrdinalIgnoreCase))
+                {
+                    builder.Append(entry.RelativePath ?? string.Empty).Append(',');
+                    builder.Append(entry.SourcePath ?? string.Empty).Append(',');
+                    builder.Append(entry.IsFolder ? "1" : "0").Append(';');
+                }
+
+                builder.Append('|');
+                foreach ((string key, string value) in generatedOrganizationOverrides
+                    .OrderBy(static pair => pair.Key, StringComparer.OrdinalIgnoreCase))
+                {
+                    builder.Append(key).Append('=').Append(value).Append(';');
+                }
+
+                return builder.ToString();
+            }
+            catch
+            {
+                return "fingerprint_error";
+            }
+        }
+
+        private bool ConfirmCloseIfUncommitted()
+        {
+            string currentFingerprint = ComputeCurrentStateFingerprint();
+            if (string.Equals(currentFingerprint, lastCommittedStateFingerprint, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            MessageBoxResult decision = OceanyaMessageBox.Show(
+                this,
+                "You have uncommitted changes. Close the Character Creator without saving/generating?",
+                "Unsaved Changes",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            return decision == MessageBoxResult.Yes;
+        }
+
         private void Window_KeyDown(object sender, KeyEventArgs e)
         {
+            if (string.Equals(activeSection, "fileorganization", StringComparison.OrdinalIgnoreCase)
+                && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+            {
+                if (e.Key == Key.C)
+                {
+                    CopySelectedFileOrganizationEntry();
+                    e.Handled = true;
+                    return;
+                }
+
+                if (e.Key == Key.X)
+                {
+                    CutSelectedFileOrganizationEntry();
+                    e.Handled = true;
+                    return;
+                }
+
+                if (e.Key == Key.V)
+                {
+                    PasteIntoCurrentFileOrganizationPath();
+                    e.Handled = true;
+                    return;
+                }
+            }
+
             if (e.Key == Key.Escape)
             {
+                if (!ConfirmCloseIfUncommitted())
+                {
+                    e.Handled = true;
+                    return;
+                }
+
                 StopBlipPreview();
+                skipCloseConfirmationOnce = true;
                 Close();
             }
         }
 
         private void DragWindow(object sender, MouseButtonEventArgs e)
         {
+            if (e.OriginalSource is DependencyObject source)
+            {
+                for (DependencyObject? current = source; current != null;)
+                {
+                    if (current.GetType().Name.Contains("Button", StringComparison.Ordinal))
+                    {
+                        return;
+                    }
+
+                    if (current is FrameworkElement element)
+                    {
+                        current = element.Parent ?? element.TemplatedParent as DependencyObject;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+            }
+
             if (e.LeftButton == MouseButtonState.Pressed)
             {
                 DragMove();
@@ -8198,6 +11251,12 @@ namespace OceanyaClient
 
         private void CloseButton_Click(object sender, RoutedEventArgs e)
         {
+            if (!ConfirmCloseIfUncommitted())
+            {
+                return;
+            }
+
+            skipCloseConfirmationOnce = true;
             Close();
         }
 
@@ -8739,10 +11798,243 @@ namespace OceanyaClient
         }
     }
 
+    internal sealed class RowResizeGuideAdorner : Adorner
+    {
+        private static readonly Pen GuidePen = CreatePen();
+        private double guideY;
+
+        public RowResizeGuideAdorner(UIElement adornedElement) : base(adornedElement)
+        {
+            IsHitTestVisible = false;
+        }
+
+        public void SetGuideY(double y)
+        {
+            guideY = Math.Clamp(y, 0, Math.Max(0, AdornedElement.RenderSize.Height - 1));
+            InvalidateVisual();
+        }
+
+        protected override void OnRender(DrawingContext drawingContext)
+        {
+            base.OnRender(drawingContext);
+            double width = Math.Max(0, AdornedElement.RenderSize.Width);
+            drawingContext.DrawLine(GuidePen, new Point(0, guideY), new Point(width, guideY));
+        }
+
+        private static Pen CreatePen()
+        {
+            SolidColorBrush brush = new SolidColorBrush(Color.FromArgb(220, 151, 201, 255));
+            brush.Freeze();
+            Pen pen = new Pen(brush, 2);
+            pen.Freeze();
+            return pen;
+        }
+    }
+
     public sealed class EmoteTileEntryViewModel
     {
         public bool IsAddTile { get; set; }
         public CharacterCreationEmoteViewModel? Emote { get; set; }
+    }
+
+    public sealed class FileOrganizationEntryViewModel
+        : INotifyPropertyChanged
+    {
+        private FileOrganizationEntryKind entryKind;
+        private string iconGlyph = "\uE11B";
+        private ImageSource? previewImage;
+        private string baseTypeDisplayName = "Unknown";
+        private bool isPendingCut;
+        private bool isUnused;
+        private bool isRenaming;
+        private string renameDraft = string.Empty;
+
+        public string Name { get; set; } = string.Empty;
+        public string RelativePath { get; set; } = string.Empty;
+        public string DefaultRelativePath { get; set; } = string.Empty;
+        public string AssetKey { get; set; } = string.Empty;
+        public string TypeText { get; set; } = string.Empty;
+        public string StatusText { get; set; } = string.Empty;
+        public bool IsLocked { get; set; }
+        public bool IsExternal { get; set; }
+        public bool IsFolder { get; set; }
+        public string? SourcePath { get; set; }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        public FileOrganizationEntryKind EntryKind
+        {
+            get => entryKind;
+            set
+            {
+                if (entryKind == value)
+                {
+                    return;
+                }
+
+                entryKind = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(IsImageKind));
+                OnPropertyChanged(nameof(IsAudioKind));
+                OnPropertyChanged(nameof(ShowGlyph));
+            }
+        }
+
+        public string IconGlyph
+        {
+            get => iconGlyph;
+            set
+            {
+                if (string.Equals(iconGlyph, value, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                iconGlyph = value ?? string.Empty;
+                OnPropertyChanged();
+            }
+        }
+
+        public ImageSource? PreviewImage
+        {
+            get => previewImage;
+            set
+            {
+                if (ReferenceEquals(previewImage, value))
+                {
+                    return;
+                }
+
+                previewImage = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(ShowGlyph));
+                OnPropertyChanged(nameof(ShowNoImageLabel));
+            }
+        }
+
+        public string TypeDisplayName
+        {
+            get => IsUnused ? $"{baseTypeDisplayName} (Unused)" : baseTypeDisplayName;
+            set
+            {
+                if (string.Equals(baseTypeDisplayName, value, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                baseTypeDisplayName = value ?? string.Empty;
+                OnPropertyChanged();
+            }
+        }
+
+        public bool IsPendingCut
+        {
+            get => isPendingCut;
+            set
+            {
+                if (isPendingCut == value)
+                {
+                    return;
+                }
+
+                isPendingCut = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public bool IsRenaming
+        {
+            get => isRenaming;
+            set
+            {
+                if (isRenaming == value)
+                {
+                    return;
+                }
+
+                isRenaming = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public string RenameDraft
+        {
+            get => renameDraft;
+            set
+            {
+                if (string.Equals(renameDraft, value, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                renameDraft = value ?? string.Empty;
+                OnPropertyChanged();
+            }
+        }
+
+        public bool IsImageKind => EntryKind == FileOrganizationEntryKind.Image;
+        public bool IsAudioKind => EntryKind == FileOrganizationEntryKind.Audio;
+        public bool ShowGlyph => !IsImageKind || PreviewImage == null;
+        public bool ShowNoImageLabel => IsImageKind && PreviewImage == null;
+        public bool IsUnused
+        {
+            get => isUnused;
+            set
+            {
+                if (isUnused == value)
+                {
+                    return;
+                }
+
+                isUnused = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(TitleBrush));
+                OnPropertyChanged(nameof(SubtitleBrush));
+                OnPropertyChanged(nameof(TypeDisplayName));
+            }
+        }
+        public bool IsInteractionLocked => IsLocked;
+        public Brush TitleBrush => IsUnused
+            ? new SolidColorBrush(Color.FromRgb(248, 236, 192))
+            : (IsInteractionLocked
+                ? new SolidColorBrush(Color.FromRgb(138, 138, 138))
+                : new SolidColorBrush(Color.FromRgb(236, 236, 236)));
+        public Brush SubtitleBrush => IsUnused
+            ? new SolidColorBrush(Color.FromRgb(224, 214, 168))
+            : new SolidColorBrush(Color.FromRgb(159, 176, 194));
+        public string UniqueKey => $"{RelativePath}|{SourcePath}|{IsExternal}";
+
+        private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
+    }
+
+    public sealed class ExternalOrganizationEntry
+    {
+        public string RelativePath { get; set; } = string.Empty;
+        public string? SourcePath { get; set; }
+        public bool IsFolder { get; set; }
+    }
+
+    public sealed class FileOrganizationClipboardEntry
+    {
+        public FileOrganizationEntryViewModel? Entry { get; set; }
+    }
+
+    public sealed class CutSelectionState
+    {
+        public string SourcePath { get; set; } = string.Empty;
+        public Rect NormalizedSelection { get; set; } = Rect.Empty;
+    }
+
+    public enum FileOrganizationEntryKind
+    {
+        Unknown = 0,
+        Folder = 1,
+        Image = 2,
+        Audio = 3,
+        Text = 4
     }
 
     public sealed class NamedIntOption

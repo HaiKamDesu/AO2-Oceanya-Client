@@ -25,6 +25,8 @@
     </shell:WindowChrome.WindowChrome>
 
     <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
+
         <Style x:Key="ModernButton" TargetType="Button">
             <Setter Property="Background" Value="#FF262626"/>
             <Setter Property="Foreground" Value="White"/>
@@ -987,6 +989,178 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <Style x:Key="FileOrgGridStyle" TargetType="DataGrid">
+            <Setter Property="Background" Value="#FF1E1E1E"/>
+            <Setter Property="Foreground" Value="#FFEDEDED"/>
+            <Setter Property="BorderBrush" Value="#3F4A5E72"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="RowBackground" Value="#10000000"/>
+            <Setter Property="AlternatingRowBackground" Value="#15000000"/>
+            <Setter Property="HeadersVisibility" Value="Column"/>
+            <Setter Property="CanUserResizeRows" Value="False"/>
+            <Setter Property="CanUserResizeColumns" Value="True"/>
+            <Setter Property="CanUserSortColumns" Value="False"/>
+            <Setter Property="GridLinesVisibility" Value="Horizontal"/>
+            <Setter Property="HorizontalGridLinesBrush" Value="#254E5D70"/>
+            <Setter Property="VerticalGridLinesBrush" Value="#00000000"/>
+            <Setter Property="MinRowHeight" Value="62"/>
+        </Style>
+
+        <Style x:Key="FileOrgGridRowStyle" TargetType="DataGridRow">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#FFECECEC"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="AllowDrop" Value="True"/>
+            <EventSetter Event="ContextMenuOpening" Handler="FileOrganizationContextMenu_Opening"/>
+            <EventSetter Event="PreviewMouseLeftButtonDown" Handler="FileOrganizationRow_PreviewMouseLeftButtonDown"/>
+            <EventSetter Event="PreviewMouseMove" Handler="FileOrganizationRow_PreviewMouseMove"/>
+            <EventSetter Event="PreviewMouseLeftButtonUp" Handler="FileOrganizationRow_PreviewMouseLeftButtonUp"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#2A3A4A5A"/>
+                </Trigger>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="#35516A84"/>
+                </Trigger>
+                <DataTrigger Binding="{Binding IsInteractionLocked}" Value="True">
+                    <Setter Property="Foreground" Value="#FF8A8A8A"/>
+                    <Setter Property="Opacity" Value="0.62"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsPendingCut}" Value="True">
+                    <Setter Property="Opacity" Value="0.45"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="FileOrgGridCellStyle" TargetType="DataGridCell">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="6,2"/>
+            <Setter Property="Foreground" Value="{Binding RelativeSource={RelativeSource AncestorType=DataGridRow}, Path=Foreground}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="DataGridCell">
+                        <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="FileOrgGridHeaderStyle" TargetType="DataGridColumnHeader">
+            <Setter Property="Foreground" Value="#FFD8D8D8"/>
+            <Setter Property="Background" Value="#FF2F2F2F"/>
+            <Setter Property="BorderBrush" Value="#444444"/>
+            <Setter Property="BorderThickness" Value="0,0,1,1"/>
+            <Setter Property="Padding" Value="8,5"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+
+        <DataTemplate x:Key="FileOrgIconCellTemplate">
+            <Grid Margin="1" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Viewbox Stretch="Uniform" StretchDirection="Both" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="54"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0"
+                                Width="54"
+                                Height="54"
+                                CornerRadius="4"
+                                BorderBrush="#4B617A95"
+                                BorderThickness="1"
+                                Background="#22000000"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center">
+                            <Grid>
+                                <Image Source="{Binding PreviewImage}"
+                                       Stretch="Uniform"
+                                       Visibility="{Binding IsImageKind, Converter={StaticResource BoolToVisibilityConverter}}"/>
+                                <TextBlock Text="{Binding IconGlyph}"
+                                           FontFamily="Segoe MDL2 Assets"
+                                           FontSize="26"
+                                           Foreground="#FFD7E5F4"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           Visibility="{Binding ShowGlyph, Converter={StaticResource BoolToVisibilityConverter}}"/>
+                                <TextBlock Text="No image"
+                                           FontSize="10"
+                                           Foreground="#FFB7C4D3"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           Visibility="{Binding ShowNoImageLabel, Converter={StaticResource BoolToVisibilityConverter}}"/>
+                            </Grid>
+                        </Border>
+                        <local:PlayStopProgressButton Grid.Column="1"
+                                                      Width="36"
+                                                      Height="36"
+                                                      Margin="8,0,0,0"
+                                                      VerticalAlignment="Center"
+                                                      Visibility="{Binding IsAudioKind, Converter={StaticResource BoolToVisibilityConverter}}"
+                                                      Tag="{Binding}"
+                                                      ProgressEnabled="True"
+                                                      AutoProgress="True"
+                                                      PlayRequested="FileOrganizationAudioPlayButton_PlayRequested"
+                                                      StopRequested="FileOrganizationAudioPlayButton_StopRequested"/>
+                    </Grid>
+                </Viewbox>
+            </Grid>
+        </DataTemplate>
+
+        <DataTemplate x:Key="FileOrgNameCellTemplate">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <TextBlock Grid.Row="0"
+                           Text="{Binding Name}"
+                           FontSize="15"
+                           FontWeight="SemiBold"
+                           Foreground="{Binding TitleBrush}"
+                           MouseLeftButtonDown="FileOrgNameTextBlock_MouseLeftButtonDown">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Visible"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsRenaming}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+                <TextBox Grid.Row="0"
+                         x:Name="FileOrgInlineRenameTextBox"
+                         Text="{Binding RenameDraft, UpdateSourceTrigger=PropertyChanged}"
+                         Height="24"
+                         VerticalContentAlignment="Center"
+                         Margin="0,0,0,2"
+                         KeyDown="FileOrgRenameTextBox_KeyDown"
+                         LostKeyboardFocus="FileOrgRenameTextBox_LostKeyboardFocus">
+                    <TextBox.Style>
+                        <Style TargetType="TextBox" BasedOn="{StaticResource ModernTextBox}">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsRenaming}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBox.Style>
+                </TextBox>
+                <TextBlock Grid.Row="1"
+                           Text="{Binding TypeDisplayName}"
+                           FontSize="11"
+                           Foreground="{Binding SubtitleBrush}"
+                           TextTrimming="CharacterEllipsis"/>
+            </Grid>
+        </DataTemplate>
     </Window.Resources>
 
     <Border x:Name="WindowFrameBorder" BorderBrush="#222222" BorderThickness="1" CornerRadius="5">
@@ -1063,6 +1237,11 @@
                                         Style="{StaticResource NavButtonStyle}"
                                         Click="SectionButton_Click"
                                         Visibility="Collapsed"/>
+                                <Button x:Name="SectionFileOrganizationButton"
+                                        Tag="fileorganization"
+                                        Content="4. File Organization"
+                                        Style="{StaticResource NavButtonStyle}"
+                                        Click="SectionButton_Click"/>
                             </StackPanel>
                             <StackPanel Grid.Row="1" Margin="0,8,0,0">
                                 <Button Content="Default Tab" Style="{StaticResource ModernButton}" Margin="0,0,0,8" Click="DefaultTabButton_Click"/>
@@ -1107,6 +1286,11 @@
                                                     <TextBlock Text="1) Character Folder Name" Style="{StaticResource FieldTitleStyle}"/>
                                                 </DockPanel>
                                                 <TextBox x:Name="CharacterFolderNameTextBox" Style="{StaticResource ModernTextBox}" TextChanged="CharacterField_TextChanged"/>
+                                                <TextBlock x:Name="CharacterFolderAvailabilityTextBlock"
+                                                           Margin="0,4,0,0"
+                                                           Foreground="#FFB5D0E8"
+                                                           FontSize="11"
+                                                           TextWrapping="Wrap"/>
                                             </StackPanel>
 
                                             <StackPanel Grid.Row="1" Margin="0,0,0,10">
@@ -1134,18 +1318,24 @@
                                                             ToolTip="Optional character button icon used by AO2 character select. Saved as char_icon in the character root."/>
                                                     <TextBlock Text="4) Character Icon" Style="{StaticResource FieldTitleStyle}"/>
                                                 </DockPanel>
-                                                <Grid>
+                                                <Grid MinHeight="86">
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="66"/>
                                                         <ColumnDefinition Width="*"/>
                                                     </Grid.ColumnDefinitions>
-                                                    <Border Grid.Column="0"
+                                                    <Border x:Name="CharacterIconPreviewBorder"
+                                                            Grid.Column="0"
                                                             Width="62"
                                                             Height="62"
                                                             Background="#26000000"
                                                             BorderBrush="#55404B58"
                                                             BorderThickness="1"
-                                                            CornerRadius="4">
+                                                            CornerRadius="4"
+                                                            Cursor="Hand"
+                                                            MouseLeftButtonUp="CharacterIconPreviewBorder_MouseLeftButtonUp"
+                                                            MouseEnter="CharacterIconPreviewBorder_MouseEnter"
+                                                            MouseLeave="CharacterIconPreviewBorder_MouseLeave"
+                                                            MouseLeftButtonDown="CharacterIconPreviewBorder_MouseLeftButtonDown">
                                                         <Grid>
                                                             <Image x:Name="CharacterIconPreviewImage" Stretch="Uniform"/>
                                                             <TextBlock x:Name="CharacterIconEmptyText"
@@ -1156,13 +1346,26 @@
                                                                        VerticalAlignment="Center"/>
                                                         </Grid>
                                                     </Border>
-                                                    <Button Grid.Column="1"
-                                                            Margin="10,16,0,16"
-                                                            Width="110"
-                                                            HorizontalAlignment="Left"
-                                                            Content="From file..."
-                                                            Style="{StaticResource ModernButton}"
-                                                            Click="CharacterIconFromFileButton_Click"/>
+                                                    <StackPanel Grid.Column="1"
+                                                                Margin="10,8,0,8"
+                                                                Orientation="Vertical"
+                                                                VerticalAlignment="Center">
+                                                        <Button HorizontalAlignment="Left"
+                                                                MinWidth="122"
+                                                                Padding="12,0,12,0"
+                                                                Style="{StaticResource ModernButton}"
+                                                                Content="From file..."
+                                                                Click="CharacterIconFromFileButton_Click"/>
+                                                        <Button x:Name="CharacterIconFromEmoteButton"
+                                                                HorizontalAlignment="Left"
+                                                                MinWidth="122"
+                                                                Margin="0,8,0,0"
+                                                                Padding="12,0,12,0"
+                                                                Style="{StaticResource ModernButton}"
+                                                                Content="From emote..."
+                                                                Click="CharacterIconFromEmoteButton_Click"
+                                                                Visibility="Collapsed"/>
+                                                    </StackPanel>
                                                 </Grid>
                                             </StackPanel>
 
@@ -1609,132 +1812,147 @@
                                                     ToolTip="Choose which emotes receive the bulk button config."/>
                                             <TextBlock Text="Apply To" Style="{StaticResource FieldTitleStyle}"/>
                                         </DockPanel>
-                                        <local:AutoCompleteDropdownField x:Name="ButtonIconsApplyScopeDropdown"/>
+                                        <local:AutoCompleteDropdownField x:Name="ButtonIconsApplyScopeDropdown"
+                                                                         IsTextReadOnly="True"/>
                                     </StackPanel>
 
-                                    <StackPanel Margin="0,0,0,8">
-                                        <DockPanel Margin="0,0,0,4" LastChildFill="False">
-                                            <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
-                                                    ToolTip="Automatic generation background source for the selected emote list."/>
-                                            <TextBlock Text="Background Config" Style="{StaticResource FieldTitleStyle}"/>
-                                        </DockPanel>
-                                        <local:AutoCompleteDropdownField x:Name="ButtonIconsBackgroundDropdown"/>
-                                    </StackPanel>
+                                    <TabControl Margin="0,0,0,10"
+                                                Style="{StaticResource DialogTabControlStyle}"
+                                                ItemContainerStyle="{StaticResource DialogTabItemStyle}">
+                                        <TabItem Header="Background">
+                                            <StackPanel Margin="8,8,8,8">
+                                                <StackPanel Margin="0,0,0,8">
+                                                    <DockPanel Margin="0,0,0,4" LastChildFill="False">
+                                                        <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                                                                ToolTip="Automatic generation background source for the selected emote list."/>
+                                                        <TextBlock Text="Background Config" Style="{StaticResource FieldTitleStyle}"/>
+                                                    </DockPanel>
+                                                    <local:AutoCompleteDropdownField x:Name="ButtonIconsBackgroundDropdown"/>
+                                                </StackPanel>
 
-                                    <Border x:Name="ButtonIconsPresetPreviewCard"
-                                            Visibility="Collapsed"
-                                            Margin="0,0,0,8"
-                                            BorderBrush="#445A7088"
-                                            BorderThickness="1"
-                                            CornerRadius="4"
-                                            Background="#2A101820"
-                                            Padding="8">
-                                        <StackPanel>
-                                            <TextBlock Text="Preset preview" Foreground="#FFD3E5F7" Margin="0,0,0,6"/>
-                                            <Border Height="130" BorderBrush="#39536A84" BorderThickness="1" CornerRadius="4" Background="#1A000000">
-                                                <Image x:Name="ButtonIconsPresetPreviewImage" Stretch="Uniform"/>
-                                            </Border>
-                                        </StackPanel>
-                                    </Border>
+                                                <Border x:Name="ButtonIconsPresetPreviewCard"
+                                                        Visibility="Collapsed"
+                                                        Margin="0,0,0,8"
+                                                        BorderBrush="#445A7088"
+                                                        BorderThickness="1"
+                                                        CornerRadius="4"
+                                                        Background="#2A101820"
+                                                        Padding="8">
+                                                    <StackPanel>
+                                                        <TextBlock Text="Preset preview" Foreground="#FFD3E5F7" Margin="0,0,0,6"/>
+                                                        <Border Height="130" BorderBrush="#39536A84" BorderThickness="1" CornerRadius="4" Background="#1A000000">
+                                                            <Image x:Name="ButtonIconsPresetPreviewImage" Stretch="Uniform"/>
+                                                        </Border>
+                                                    </StackPanel>
+                                                </Border>
 
-                                    <StackPanel x:Name="ButtonIconsSolidColorPanel" Visibility="Collapsed" Margin="0,0,0,8">
-                                        <DockPanel Margin="0,0,0,4" LastChildFill="False">
-                                            <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
-                                                    ToolTip="Pick solid background color for automatic button generation."/>
-                                            <TextBlock Text="Solid Color" Style="{StaticResource FieldTitleStyle}"/>
-                                        </DockPanel>
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="Auto"/>
-                                                <ColumnDefinition Width="Auto"/>
-                                                <ColumnDefinition Width="*"/>
-                                            </Grid.ColumnDefinitions>
-                                            <Button x:Name="ButtonIconsPickColorButton"
-                                                    Width="130"
-                                                    Content="Pick color..."
-                                                    Style="{StaticResource ModernButton}"
-                                                    Click="ButtonIconsPickColorButton_Click"/>
-                                            <Border x:Name="ButtonIconsSolidColorPreview"
-                                                    Grid.Column="1"
-                                                    Width="48"
-                                                    Height="30"
-                                                    Margin="8,0,8,0"
-                                                    BorderBrush="#556F899F"
-                                                    BorderThickness="1"/>
-                                            <TextBlock x:Name="ButtonIconsSolidColorHexTextBlock"
-                                                       Grid.Column="2"
-                                                       VerticalAlignment="Center"
-                                                       Foreground="#FFD3E5F7"/>
-                                        </Grid>
-                                    </StackPanel>
+                                                <StackPanel x:Name="ButtonIconsSolidColorPanel" Visibility="Collapsed" Margin="0,0,0,8">
+                                                    <DockPanel Margin="0,0,0,4" LastChildFill="False">
+                                                        <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                                                                ToolTip="Pick solid background color for automatic button generation."/>
+                                                        <TextBlock Text="Solid Color" Style="{StaticResource FieldTitleStyle}"/>
+                                                    </DockPanel>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                            <ColumnDefinition Width="*"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <Button x:Name="ButtonIconsPickColorButton"
+                                                                Width="130"
+                                                                Content="Pick color..."
+                                                                Style="{StaticResource ModernButton}"
+                                                                Click="ButtonIconsPickColorButton_Click"/>
+                                                        <Border x:Name="ButtonIconsSolidColorPreview"
+                                                                Grid.Column="1"
+                                                                Width="48"
+                                                                Height="30"
+                                                                Margin="8,0,8,0"
+                                                                BorderBrush="#556F899F"
+                                                                BorderThickness="1"/>
+                                                        <TextBlock x:Name="ButtonIconsSolidColorHexTextBlock"
+                                                                   Grid.Column="2"
+                                                                   VerticalAlignment="Center"
+                                                                   Foreground="#FFD3E5F7"/>
+                                                    </Grid>
+                                                </StackPanel>
 
-                                    <StackPanel x:Name="ButtonIconsUploadPanel" Visibility="Collapsed" Margin="0,0,0,8">
-                                        <DockPanel Margin="0,0,0,4" LastChildFill="False">
-                                            <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
-                                                    ToolTip="Upload a shared background image for automatic button generation."/>
-                                            <TextBlock Text="Background Upload" Style="{StaticResource FieldTitleStyle}"/>
-                                        </DockPanel>
-                                        <Button x:Name="ButtonIconsBackgroundUploadButton"
-                                                Width="150"
-                                                Content="Select image..."
-                                                Style="{StaticResource ModernButton}"
-                                                Click="ButtonIconsBackgroundUploadButton_Click"/>
-                                        <TextBlock x:Name="ButtonIconsBackgroundUploadTextBlock"
-                                                   Foreground="#FFC5D6E8"
-                                                   Margin="0,6,0,0"
-                                                   Text="No file selected"/>
-                                    </StackPanel>
-
-                                    <StackPanel Margin="0,0,0,8">
-                                        <DockPanel Margin="0,0,0,4" LastChildFill="False">
-                                            <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
-                                                    ToolTip="Open multi-emote cutting and configure each cutout in sequence."/>
-                                            <TextBlock Text="Emote Cutting" Style="{StaticResource FieldTitleStyle}"/>
-                                        </DockPanel>
-                                        <Button x:Name="ButtonIconsBulkCuttingButton"
-                                                Width="200"
-                                                Content="Configure cutouts..."
-                                                Style="{StaticResource ModernButton}"
-                                                Click="ButtonIconsBulkCuttingButton_Click"/>
-                                        <WrapPanel x:Name="ButtonIconsCutoutPreviewWrapPanel" Margin="0,8,0,0"/>
-                                    </StackPanel>
-
-                                    <StackPanel Margin="0,0,0,10">
-                                        <DockPanel Margin="0,0,0,4" LastChildFill="False">
-                                            <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
-                                                    ToolTip="How button_off is generated from button_on."/>
-                                            <TextBlock Text="Effects Generation" Style="{StaticResource FieldTitleStyle}"/>
-                                        </DockPanel>
-                                        <local:AutoCompleteDropdownField x:Name="ButtonIconsEffectsDropdown"/>
-                                        <StackPanel x:Name="ButtonIconsDarkenPanel" Visibility="Collapsed" Margin="0,6,0,0">
-                                            <TextBlock x:Name="ButtonIconsDarkenValueText" Foreground="#FFD3E5F7" Margin="0,0,0,4" Text="Darkness: 50%"/>
-                                            <Slider x:Name="ButtonIconsDarkenSlider"
-                                                    Minimum="0"
-                                                    Maximum="100"
-                                                    Value="50"
-                                                    TickFrequency="5"
-                                                    IsSnapToTickEnabled="True"
-                                                    ValueChanged="ButtonIconsDarkenSlider_ValueChanged"/>
-                                        </StackPanel>
-                                        <StackPanel x:Name="ButtonIconsOpacityPanel" Visibility="Collapsed" Margin="0,6,0,0">
-                                            <TextBlock x:Name="ButtonIconsOpacityValueText" Foreground="#FFD3E5F7" Margin="0,0,0,4" Text="Opacity: 75%"/>
-                                            <Slider x:Name="ButtonIconsOpacitySlider"
-                                                    Minimum="0"
-                                                    Maximum="100"
-                                                    Value="75"
-                                                    TickFrequency="5"
-                                                    IsSnapToTickEnabled="True"
-                                                    ValueChanged="ButtonIconsOpacitySlider_ValueChanged"/>
-                                        </StackPanel>
-                                        <StackPanel x:Name="ButtonIconsOverlayPanel" Visibility="Collapsed" Margin="0,6,0,0">
-                                            <Button x:Name="ButtonIconsOverlayUploadButton"
-                                                    Width="170"
-                                                    Content="Select overlay..."
-                                                    Style="{StaticResource ModernButton}"
-                                                    Click="ButtonIconsOverlayUploadButton_Click"/>
-                                            <TextBlock x:Name="ButtonIconsOverlayPathTextBlock" Foreground="#FFC5D6E8" Margin="0,6,0,0" Text="No overlay selected"/>
-                                        </StackPanel>
-                                    </StackPanel>
+                                                <StackPanel x:Name="ButtonIconsUploadPanel" Visibility="Collapsed" Margin="0,0,0,8">
+                                                    <DockPanel Margin="0,0,0,4" LastChildFill="False">
+                                                        <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                                                                ToolTip="Upload a shared background image for automatic button generation."/>
+                                                        <TextBlock Text="Background Upload" Style="{StaticResource FieldTitleStyle}"/>
+                                                    </DockPanel>
+                                                    <Button x:Name="ButtonIconsBackgroundUploadButton"
+                                                            Width="150"
+                                                            Content="Select image..."
+                                                            Style="{StaticResource ModernButton}"
+                                                            Click="ButtonIconsBackgroundUploadButton_Click"/>
+                                                    <TextBlock x:Name="ButtonIconsBackgroundUploadTextBlock"
+                                                               Foreground="#FFC5D6E8"
+                                                               Margin="0,6,0,0"
+                                                               Text="No file selected"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </TabItem>
+                                        <TabItem Header="Emote">
+                                            <StackPanel Margin="8,8,8,8">
+                                                <StackPanel Margin="0,0,0,8">
+                                                    <DockPanel Margin="0,0,0,4" LastChildFill="False">
+                                                        <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                                                                ToolTip="Open multi-emote cutting and configure each cutout in sequence."/>
+                                                        <TextBlock Text="Emote Cutting" Style="{StaticResource FieldTitleStyle}"/>
+                                                    </DockPanel>
+                                                    <Button x:Name="ButtonIconsBulkCuttingButton"
+                                                            Width="200"
+                                                            Content="Configure cutouts..."
+                                                            Style="{StaticResource ModernButton}"
+                                                            Click="ButtonIconsBulkCuttingButton_Click"/>
+                                                    <WrapPanel x:Name="ButtonIconsCutoutPreviewWrapPanel" Margin="0,8,0,0" HorizontalAlignment="Center"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </TabItem>
+                                        <TabItem Header="Effect">
+                                            <StackPanel Margin="8,8,8,8">
+                                                <StackPanel Margin="0,0,0,10">
+                                                    <DockPanel Margin="0,0,0,4" LastChildFill="False">
+                                                        <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                                                                ToolTip="How button_off is generated from button_on."/>
+                                                        <TextBlock Text="Effects Generation" Style="{StaticResource FieldTitleStyle}"/>
+                                                    </DockPanel>
+                                                    <local:AutoCompleteDropdownField x:Name="ButtonIconsEffectsDropdown"/>
+                                                    <StackPanel x:Name="ButtonIconsDarkenPanel" Visibility="Collapsed" Margin="0,6,0,0">
+                                                        <TextBlock x:Name="ButtonIconsDarkenValueText" Foreground="#FFD3E5F7" Margin="0,0,0,4" Text="Darkness: 50%"/>
+                                                        <Slider x:Name="ButtonIconsDarkenSlider"
+                                                                Minimum="0"
+                                                                Maximum="100"
+                                                                Value="50"
+                                                                TickFrequency="5"
+                                                                IsSnapToTickEnabled="True"
+                                                                ValueChanged="ButtonIconsDarkenSlider_ValueChanged"/>
+                                                    </StackPanel>
+                                                    <StackPanel x:Name="ButtonIconsOpacityPanel" Visibility="Collapsed" Margin="0,6,0,0">
+                                                        <TextBlock x:Name="ButtonIconsOpacityValueText" Foreground="#FFD3E5F7" Margin="0,0,0,4" Text="Opacity: 75%"/>
+                                                        <Slider x:Name="ButtonIconsOpacitySlider"
+                                                                Minimum="0"
+                                                                Maximum="100"
+                                                                Value="75"
+                                                                TickFrequency="5"
+                                                                IsSnapToTickEnabled="True"
+                                                                ValueChanged="ButtonIconsOpacitySlider_ValueChanged"/>
+                                                    </StackPanel>
+                                                    <StackPanel x:Name="ButtonIconsOverlayPanel" Visibility="Collapsed" Margin="0,6,0,0">
+                                                        <Button x:Name="ButtonIconsOverlayUploadButton"
+                                                                Width="170"
+                                                                Content="Select overlay..."
+                                                                Style="{StaticResource ModernButton}"
+                                                                Click="ButtonIconsOverlayUploadButton_Click"/>
+                                                        <TextBlock x:Name="ButtonIconsOverlayPathTextBlock" Foreground="#FFC5D6E8" Margin="0,6,0,0" Text="No overlay selected"/>
+                                                    </StackPanel>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </TabItem>
+                                    </TabControl>
 
                                     <Button x:Name="ButtonIconsApplyButton"
                                             Width="260"
@@ -1744,6 +1962,90 @@
                                 </StackPanel>
                             </ScrollViewer>
                         </Border>
+
+                        <Border x:Name="FileOrganizationSectionPanel" Background="#A0101010" BorderBrush="#2F4A5E" BorderThickness="1" CornerRadius="4" Padding="10" Visibility="Collapsed">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                </Grid.RowDefinitions>
+                                <Border Grid.Row="0" Margin="0,0,0,8" Padding="8" BorderBrush="#725E3B" BorderThickness="1" CornerRadius="4" Background="#33221800">
+                                    <TextBlock Text="This tab is for organizational purposes only and can be fully ignored if you do not care about folder organization."
+                                               Foreground="#FFE3CAA7"
+                                               TextWrapping="Wrap"/>
+                                </Border>
+                                <Grid Grid.Row="1" Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Button x:Name="FileOrganizationGoUpButton"
+                                            Grid.Column="0"
+                                            Width="34"
+                                            Margin="0,0,8,0"
+                                            Style="{StaticResource ModernButton}"
+                                            Click="FileOrganizationGoUpButton_Click"
+                                            ToolTip="Go up one folder">
+                                        <TextBlock Text="&#xE74A;" FontFamily="Segoe MDL2 Assets"/>
+                                    </Button>
+                                    <Border Grid.Column="1"
+                                            BorderBrush="#3E4A5A6E"
+                                            BorderThickness="1"
+                                            CornerRadius="3"
+                                            Background="#22000000"
+                                            Padding="8,5">
+                                        <TextBlock x:Name="FileOrganizationPathTextBlock"
+                                                   Foreground="#FFD8E6F4"
+                                                   Text="/"/>
+                                    </Border>
+                                    <Button Grid.Column="2"
+                                            Width="34"
+                                            Margin="8,0,0,0"
+                                            Style="{StaticResource ModernButton}"
+                                            Click="RefreshFileOrganizationButton_Click"
+                                            ToolTip="Refresh">
+                                        <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets"/>
+                                    </Button>
+                                    <Button Grid.Column="3"
+                                            Width="34"
+                                            Margin="8,0,0,0"
+                                            Style="{StaticResource ModernButton}"
+                                            Click="ResetFileOrganizationButton_Click"
+                                            ToolTip="Reset File Organization">
+                                        <TextBlock Text="&#xE777;" FontFamily="Segoe MDL2 Assets"/>
+                                    </Button>
+                                </Grid>
+                                <DataGrid x:Name="FileOrganizationListView"
+                                          Grid.Row="2"
+                                          Style="{StaticResource FileOrgGridStyle}"
+                                          RowStyle="{StaticResource FileOrgGridRowStyle}"
+                                          CellStyle="{StaticResource FileOrgGridCellStyle}"
+                                          ColumnHeaderStyle="{StaticResource FileOrgGridHeaderStyle}"
+                                          AutoGenerateColumns="False"
+                                          SelectionMode="Extended"
+                                          SelectionUnit="FullRow"
+                                          IsReadOnly="True"
+                                          AllowDrop="True"
+                                          ContextMenuOpening="FileOrganizationContextMenu_Opening"
+                                          PreviewMouseLeftButtonDown="FileOrganizationListView_PreviewMouseLeftButtonDown"
+                                          PreviewMouseMove="FileOrganizationListView_PreviewMouseMove"
+                                          MouseDoubleClick="FileOrganizationListView_MouseDoubleClick"
+                                          DragOver="FileOrganizationListView_DragOver"
+                                          Drop="FileOrganizationListView_Drop">
+                                    <DataGrid.Columns>
+                                        <DataGridTemplateColumn Header="Icon" Width="112" CanUserResize="True" CellTemplate="{StaticResource FileOrgIconCellTemplate}"/>
+                                        <DataGridTemplateColumn Header="Name" Width="420" MinWidth="260" CanUserResize="True" CellTemplate="{StaticResource FileOrgNameCellTemplate}"/>
+                                        <DataGridTextColumn Header="Path" Width="0" MinWidth="0" Visibility="Collapsed" Binding="{Binding RelativePath}"/>
+                                        <DataGridTextColumn Header="Type" Width="0" MinWidth="0" Visibility="Collapsed" Binding="{Binding TypeText}"/>
+                                        <DataGridTextColumn Header="Status" Width="0" MinWidth="0" Visibility="Collapsed" Binding="{Binding StatusText}"/>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </Grid>
+                        </Border>
+
                     </Grid>
                 </Grid>
 

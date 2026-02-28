@@ -186,6 +186,15 @@ namespace OceanyaClient
         public bool IsMaximized { get; set; }
     }
 
+    public class CharacterCreatorCutSelectionState
+    {
+        public string SourcePath { get; set; } = string.Empty;
+        public double X { get; set; }
+        public double Y { get; set; }
+        public double Width { get; set; }
+        public double Height { get; set; }
+    }
+
     public class SaveData
     {
         //Initial Configuration
@@ -221,6 +230,7 @@ namespace OceanyaClient
         public double CharacterCreatorPreviewVolume { get; set; } = 1.0;
         public double CharacterCreatorEmoteTileWidth { get; set; } = 420;
         public double CharacterCreatorEmoteTileHeight { get; set; } = 430;
+        public double CharacterCreatorCuttingPreviewHeight { get; set; } = 170;
         public bool LoopEmoteVisualizerAnimations { get; set; } = true;
         public bool ViewFolderIntegrityVerifierResults { get; set; }
         public Dictionary<string, int> CharacterFolderPreviewEmoteOverrides { get; set; } =
@@ -230,6 +240,10 @@ namespace OceanyaClient
         public List<string> CharacterFolderActiveTagFilters { get; set; } = new List<string>();
         public double CharacterFolderTagPanelWidth { get; set; } = 260;
         public bool CharacterFolderTagPanelCollapsed { get; set; }
+        public Dictionary<string, VisualizerWindowState> PopupWindowStates { get; set; } =
+            new Dictionary<string, VisualizerWindowState>(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, CharacterCreatorCutSelectionState> CharacterCreatorCutSelections { get; set; } =
+            new Dictionary<string, CharacterCreatorCutSelectionState>(StringComparer.OrdinalIgnoreCase);
     }
 
     public static class SaveFile
@@ -379,6 +393,41 @@ namespace OceanyaClient
             data.CharacterCreatorPreviewVolume = Math.Clamp(data.CharacterCreatorPreviewVolume, 0.0, 1.0);
             data.CharacterCreatorEmoteTileWidth = Math.Clamp(data.CharacterCreatorEmoteTileWidth, 320, 760);
             data.CharacterCreatorEmoteTileHeight = Math.Clamp(data.CharacterCreatorEmoteTileHeight, 330, 820);
+            data.CharacterCreatorCuttingPreviewHeight = Math.Clamp(data.CharacterCreatorCuttingPreviewHeight, 120, 520);
+            data.PopupWindowStates ??= new Dictionary<string, VisualizerWindowState>(StringComparer.OrdinalIgnoreCase);
+            data.PopupWindowStates = data.PopupWindowStates
+                .Where(pair => !string.IsNullOrWhiteSpace(pair.Key) && pair.Value != null)
+                .ToDictionary(
+                    pair => pair.Key.Trim(),
+                    pair =>
+                    {
+                        ClampWindowState(pair.Value);
+                        return pair.Value;
+                    },
+                    StringComparer.OrdinalIgnoreCase);
+            data.CharacterCreatorCutSelections ??=
+                new Dictionary<string, CharacterCreatorCutSelectionState>(StringComparer.OrdinalIgnoreCase);
+            data.CharacterCreatorCutSelections = data.CharacterCreatorCutSelections
+                .Where(pair => !string.IsNullOrWhiteSpace(pair.Key) && pair.Value != null)
+                .ToDictionary(
+                    pair => pair.Key.Trim(),
+                    pair =>
+                    {
+                        CharacterCreatorCutSelectionState state = pair.Value;
+                        state.SourcePath = state.SourcePath?.Trim() ?? string.Empty;
+                        state.X = Math.Clamp(state.X, 0, 1);
+                        state.Y = Math.Clamp(state.Y, 0, 1);
+                        state.Width = Math.Clamp(state.Width, 0, 1);
+                        state.Height = Math.Clamp(state.Height, 0, 1);
+                        return state;
+                    },
+                    StringComparer.OrdinalIgnoreCase);
+            data.CharacterCreatorCutSelections = data.CharacterCreatorCutSelections
+                .Where(pair => pair.Value.Width > 0 && pair.Value.Height > 0)
+                .ToDictionary(
+                    pair => pair.Key,
+                    pair => pair.Value,
+                    StringComparer.OrdinalIgnoreCase);
 
             data.FolderVisualizer ??= new FolderVisualizerConfig();
             data.FolderVisualizer.Presets ??= new List<FolderVisualizerViewPreset>();

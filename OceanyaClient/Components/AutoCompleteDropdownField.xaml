@@ -109,12 +109,14 @@
                         HorizontalAlignment="Stretch"
                         VerticalAlignment="Stretch"
                         Visibility="Collapsed"
+                        PreviewMouseLeftButtonDown="ToggleSurface_PreviewMouseLeftButtonDown"
                         Click="ReadOnlyTextAreaToggleButton_Click"
                         ToolTip="Show all options"/>
 
                 <Button x:Name="ToggleButton"
                         Grid.Column="2"
                         Style="{StaticResource InlineArrowButtonStyle}"
+                        PreviewMouseLeftButtonDown="ToggleSurface_PreviewMouseLeftButtonDown"
                         Click="ToggleButton_Click"
                         ToolTip="Show all options">
                     <Path x:Name="ArrowPath"
