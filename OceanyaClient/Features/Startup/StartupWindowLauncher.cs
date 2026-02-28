@@ -20,6 +20,14 @@ namespace OceanyaClient.Features.Startup
             {
                 startupWindow = new AOCharacterFileCreatorWindow();
             }
+            else if (selected.Id == StartupFunctionalityIds.EmptyWindowTemp)
+            {
+                startupWindow = new GenericOceanyaWindow
+                {
+                    Title = "Empty Window (temp)",
+                    HeaderText = "Empty Window (temp)"
+                };
+            }
             else
             {
                 startupWindow = new MainWindow();
