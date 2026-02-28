@@ -22,7 +22,6 @@ namespace OceanyaClient
         private bool forceOpenAll;
         private bool isHovering;
         private bool isFocused;
-        private bool suppressOpenOnNextToggleClick;
         private static readonly object TraceLock = new object();
         private static readonly string DropdownTracePath = Path.Combine(Path.GetTempPath(), "oceanya_dropdown_trace.log");
         private static readonly bool EnableDropdownTrace = true;
@@ -266,26 +265,9 @@ namespace OceanyaClient
             CommitFromInput();
         }
 
-        private void ToggleSurface_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-        {
-            suppressOpenOnNextToggleClick = SuggestionsPopup.IsOpen;
-            Trace("Toggle_Down");
-        }
-
         private void ToggleSurface_Click(object sender, RoutedEventArgs e)
         {
             Trace("Toggle_Click_Before");
-
-            if (suppressOpenOnNextToggleClick)
-            {
-                suppressOpenOnNextToggleClick = false;
-                SuggestionsPopup.IsOpen = false;
-                SuggestionsListBox.SelectedIndex = -1;
-                navigationSelectionActive = false;
-                e.Handled = true;
-                Trace("Toggle_Click_SuppressedAfterDownClose");
-                return;
-            }
 
             if (SuggestionsPopup.IsOpen)
             {
@@ -501,7 +483,6 @@ namespace OceanyaClient
                 $"ReadOnly={IsTextReadOnly} " +
                 $"Focused={isFocused} " +
                 $"Mouse={Mouse.LeftButton} " +
-                $"SuppressOpen={suppressOpenOnNextToggleClick} " +
                 $"Items={Suggestions.Count} Sel={SuggestionsListBox.SelectedIndex} " +
                 $"Text='{Text}' " +
                 (string.IsNullOrWhiteSpace(extra) ? string.Empty : $"Extra='{extra}'");

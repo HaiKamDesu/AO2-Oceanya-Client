@@ -106,17 +106,17 @@
                 <Button x:Name="ReadOnlyTextAreaToggleButton"
                         Grid.Column="1"
                         Style="{StaticResource InlineArrowButtonStyle}"
+                        ClickMode="Press"
                         HorizontalAlignment="Stretch"
                         VerticalAlignment="Stretch"
                         Visibility="Collapsed"
-                        PreviewMouseLeftButtonDown="ToggleSurface_PreviewMouseLeftButtonDown"
                         Click="ToggleSurface_Click"
                         ToolTip="Show all options"/>
 
                 <Button x:Name="ToggleButton"
                         Grid.Column="2"
                         Style="{StaticResource InlineArrowButtonStyle}"
-                        PreviewMouseLeftButtonDown="ToggleSurface_PreviewMouseLeftButtonDown"
+                        ClickMode="Press"
                         Click="ToggleSurface_Click"
                         ToolTip="Show all options">
                     <Path x:Name="ArrowPath"
