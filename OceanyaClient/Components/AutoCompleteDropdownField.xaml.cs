@@ -2,11 +2,13 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using Common;
 
 namespace OceanyaClient
 {
@@ -20,8 +22,10 @@ namespace OceanyaClient
         private bool forceOpenAll;
         private bool isHovering;
         private bool isFocused;
-        private DateTime lastClosedAtUtc = DateTime.MinValue;
-        private bool suppressNextToggleClick;
+        private bool suppressOpenOnNextToggleClick;
+        private static readonly object TraceLock = new object();
+        private static readonly string DropdownTracePath = Path.Combine(Path.GetTempPath(), "oceanya_dropdown_trace.log");
+        private static readonly bool EnableDropdownTrace = true;
 
         public event EventHandler? TextValueChanged;
 
@@ -67,6 +71,7 @@ namespace OceanyaClient
             InitializeComponent();
             Loaded += AutoCompleteDropdownField_Loaded;
             SuggestionsPopup.Closed += SuggestionsPopup_Closed;
+            SuggestionsPopup.Opened += SuggestionsPopup_Opened;
         }
 
         public string Text
@@ -113,6 +118,7 @@ namespace OceanyaClient
             suppressTextHandlers = false;
             UpdateVisualState();
             ApplyReadOnlyTextAreaState();
+            Trace("Loaded");
         }
 
         private static void OnTextPropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
@@ -221,6 +227,7 @@ namespace OceanyaClient
 
         private void InputTextBox_TextChanged(object sender, TextChangedEventArgs e)
         {
+            Trace("InputTextBox_TextChanged");
             if (suppressTextHandlers)
             {
                 return;
@@ -259,35 +266,24 @@ namespace OceanyaClient
             CommitFromInput();
         }
 
-        private void ToggleButton_Click(object sender, RoutedEventArgs e)
-        {
-            ToggleDropdownAndFocusInput();
-        }
-
-        private void ReadOnlyTextAreaToggleButton_Click(object sender, RoutedEventArgs e)
-        {
-            ToggleDropdownAndFocusInput();
-        }
-
         private void ToggleSurface_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
-            suppressNextToggleClick = false;
-            if (SuggestionsPopup.IsOpen)
-            {
-                suppressNextToggleClick = true;
-                SuggestionsPopup.IsOpen = false;
-                SuggestionsListBox.SelectedIndex = -1;
-                navigationSelectionActive = false;
-                lastClosedAtUtc = DateTime.UtcNow;
-                e.Handled = true;
-            }
+            suppressOpenOnNextToggleClick = SuggestionsPopup.IsOpen;
+            Trace("Toggle_Down");
         }
 
-        private void ToggleDropdownAndFocusInput()
+        private void ToggleSurface_Click(object sender, RoutedEventArgs e)
         {
-            if (suppressNextToggleClick)
+            Trace("Toggle_Click_Before");
+
+            if (suppressOpenOnNextToggleClick)
             {
-                suppressNextToggleClick = false;
+                suppressOpenOnNextToggleClick = false;
+                SuggestionsPopup.IsOpen = false;
+                SuggestionsListBox.SelectedIndex = -1;
+                navigationSelectionActive = false;
+                e.Handled = true;
+                Trace("Toggle_Click_SuppressedAfterDownClose");
                 return;
             }
 
@@ -296,12 +292,8 @@ namespace OceanyaClient
                 SuggestionsPopup.IsOpen = false;
                 SuggestionsListBox.SelectedIndex = -1;
                 navigationSelectionActive = false;
-                lastClosedAtUtc = DateTime.UtcNow;
-                return;
-            }
-
-            if ((DateTime.UtcNow - lastClosedAtUtc).TotalMilliseconds < 120)
-            {
+                e.Handled = true;
+                Trace("Toggle_Click_Close");
                 return;
             }
 
@@ -311,24 +303,71 @@ namespace OceanyaClient
             }
             forceOpenAll = true;
             RefreshSuggestions(string.Empty);
+            e.Handled = true;
+            Trace("Toggle_Click_Open");
         }
 
         private void SuggestionsPopup_Closed(object? sender, EventArgs e)
         {
-            lastClosedAtUtc = DateTime.UtcNow;
             SuggestionsListBox.SelectedIndex = -1;
             navigationSelectionActive = false;
+            Trace("Popup_Closed");
         }
 
-        private void SuggestionItem_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        private void SuggestionsPopup_Opened(object? sender, EventArgs e)
+        {
+            Trace("Popup_Opened");
+        }
+
+        private void SuggestionItem_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             if (sender is not FrameworkElement element || element.DataContext is not string token)
+            {
+                Trace("SuggestionItem_Down_NoToken");
+                return;
+            }
+
+            Trace("SuggestionItem_Down_Commit", token);
+            CommitToken(token);
+            e.Handled = true;
+        }
+
+        private void SuggestionsListBox_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            Trace("List_Down_Before");
+            if (sender is not ListBox listBox)
             {
                 return;
             }
 
-            CommitToken(token);
-            e.Handled = true;
+            DependencyObject? source = e.OriginalSource as DependencyObject;
+            if (source == null)
+            {
+                return;
+            }
+
+            ListBoxItem? item = ItemsControl.ContainerFromElement(listBox, source) as ListBoxItem;
+            if (item?.DataContext is string token && !string.IsNullOrWhiteSpace(token))
+            {
+                Trace("List_Down_Commit", token);
+                CommitToken(token);
+                e.Handled = true;
+            }
+        }
+
+        private void SuggestionsListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            Trace("List_SelectionChanged");
+            if (sender is not ListBox listBox)
+            {
+                return;
+            }
+
+            if (listBox.SelectedItem is string token && !string.IsNullOrWhiteSpace(token))
+            {
+                Trace("List_SelectionChanged_Commit", token);
+                CommitToken(token);
+            }
         }
 
         private void RefreshSuggestions(string input)
@@ -439,6 +478,7 @@ namespace OceanyaClient
 
         private void CommitToken(string value)
         {
+            Trace("CommitToken", value);
             suppressTextHandlers = true;
             InputTextBox.Text = value;
             suppressTextHandlers = false;
@@ -446,6 +486,31 @@ namespace OceanyaClient
             SuggestionsPopup.IsOpen = false;
             SuggestionsListBox.SelectedIndex = -1;
             TextValueChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        private void Trace(string evt, string extra = "")
+        {
+            if (!EnableDropdownTrace)
+            {
+                return;
+            }
+
+            string id = !string.IsNullOrWhiteSpace(Name) ? Name : ("#" + GetHashCode().ToString());
+            string line = $"[DropdownTrace] {DateTime.Now:HH:mm:ss.fff} {id} {evt} " +
+                $"PopupOpen={SuggestionsPopup.IsOpen} " +
+                $"ReadOnly={IsTextReadOnly} " +
+                $"Focused={isFocused} " +
+                $"Mouse={Mouse.LeftButton} " +
+                $"SuppressOpen={suppressOpenOnNextToggleClick} " +
+                $"Items={Suggestions.Count} Sel={SuggestionsListBox.SelectedIndex} " +
+                $"Text='{Text}' " +
+                (string.IsNullOrWhiteSpace(extra) ? string.Empty : $"Extra='{extra}'");
+
+            CustomConsole.WriteLine(line);
+            lock (TraceLock)
+            {
+                File.AppendAllText(DropdownTracePath, line + Environment.NewLine);
+            }
         }
     }
 }

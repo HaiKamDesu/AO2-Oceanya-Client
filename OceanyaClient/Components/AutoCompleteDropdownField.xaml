@@ -110,14 +110,14 @@
                         VerticalAlignment="Stretch"
                         Visibility="Collapsed"
                         PreviewMouseLeftButtonDown="ToggleSurface_PreviewMouseLeftButtonDown"
-                        Click="ReadOnlyTextAreaToggleButton_Click"
+                        Click="ToggleSurface_Click"
                         ToolTip="Show all options"/>
 
                 <Button x:Name="ToggleButton"
                         Grid.Column="2"
                         Style="{StaticResource InlineArrowButtonStyle}"
                         PreviewMouseLeftButtonDown="ToggleSurface_PreviewMouseLeftButtonDown"
-                        Click="ToggleButton_Click"
+                        Click="ToggleSurface_Click"
                         ToolTip="Show all options">
                     <Path x:Name="ArrowPath"
                           Fill="#FFD0D0D0"
@@ -145,10 +145,12 @@
                 <ListBox x:Name="SuggestionsListBox"
                          Style="{StaticResource SuggestionListBoxStyle}"
                          ItemsSource="{Binding Suggestions, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                         PreviewMouseLeftButtonDown="SuggestionsListBox_PreviewMouseLeftButtonDown"
+                         SelectionChanged="SuggestionsListBox_SelectionChanged"
                          ItemTemplate="{StaticResource DefaultSuggestionItemTemplate}">
                     <ListBox.ItemContainerStyle>
                         <Style TargetType="ListBoxItem" BasedOn="{StaticResource SuggestionListBoxItemStyle}">
-                            <EventSetter Event="PreviewMouseLeftButtonUp" Handler="SuggestionItem_PreviewMouseLeftButtonUp"/>
+                            <EventSetter Event="PreviewMouseLeftButtonDown" Handler="SuggestionItem_PreviewMouseLeftButtonDown"/>
                         </Style>
                     </ListBox.ItemContainerStyle>
                 </ListBox>

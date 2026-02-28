@@ -224,6 +224,8 @@ namespace OceanyaClient
         private string suppressFolderOpenFromRenamePath = string.Empty;
         private string lastCommittedStateFingerprint = string.Empty;
         private bool skipCloseConfirmationOnce;
+        private bool preserveFileOrganizationMultiSelectionForDrag;
+        private FileOrganizationEntryViewModel[] fileOrganizationDragSelectionSnapshot = Array.Empty<FileOrganizationEntryViewModel>();
 
         private bool ShouldLoopEmotePreviews => LoopAnimationPreviewsCheckBox?.IsChecked != false;
 
@@ -2321,15 +2323,30 @@ namespace OceanyaClient
 
                 if (current is FrameworkElement element)
                 {
-                    current = element.Parent ?? element.TemplatedParent as DependencyObject;
+                    current = element.Parent
+                        ?? element.TemplatedParent as DependencyObject
+                        ?? VisualTreeHelper.GetParent(current);
                 }
                 else
                 {
-                    break;
+                    current = VisualTreeHelper.GetParent(current);
                 }
             }
 
             return null;
+        }
+
+        private FileOrganizationEntryViewModel? ResolveFileOrganizationEntryFromDropPosition(DragEventArgs e)
+        {
+            Point point = e.GetPosition(FileOrganizationListView);
+            IInputElement? element = FileOrganizationListView.InputHitTest(point);
+            FileOrganizationEntryViewModel? fromHit = ResolveFileOrganizationEntryFromSource(element as DependencyObject);
+            if (fromHit != null)
+            {
+                return fromHit;
+            }
+
+            return ResolveFileOrganizationEntryFromSource(e.OriginalSource);
         }
 
         private void FileOrganizationContextMenu_Opening(object sender, ContextMenuEventArgs e)
@@ -2439,6 +2456,19 @@ namespace OceanyaClient
                 }
             }
 
+            preserveFileOrganizationMultiSelectionForDrag = false;
+            fileOrganizationDragSelectionSnapshot = Array.Empty<FileOrganizationEntryViewModel>();
+            FileOrganizationEntryViewModel? clickedEntry = ResolveFileOrganizationEntryFromSource(e.OriginalSource);
+            if (clickedEntry != null
+                && Keyboard.Modifiers == ModifierKeys.None
+                && FileOrganizationListView.SelectedItems.Count > 1
+                && FileOrganizationListView.SelectedItems.OfType<FileOrganizationEntryViewModel>().Contains(clickedEntry))
+            {
+                preserveFileOrganizationMultiSelectionForDrag = true;
+                fileOrganizationDragSelectionSnapshot = GetSelectedFileOrganizationEntries();
+                e.Handled = true;
+            }
+
             fileOrganizationDragStartPoint = e.GetPosition(FileOrganizationListView);
         }
 
@@ -2461,7 +2491,9 @@ namespace OceanyaClient
                 return;
             }
 
-            FileOrganizationEntryViewModel[] selectedEntries = GetSelectedFileOrganizationEntries()
+            FileOrganizationEntryViewModel[] selectedEntries = (preserveFileOrganizationMultiSelectionForDrag
+                    ? fileOrganizationDragSelectionSnapshot
+                    : GetSelectedFileOrganizationEntries())
                 .Where(static entry => !entry.IsInteractionLocked
                     && (entry.IsExternal || !string.IsNullOrWhiteSpace(entry.AssetKey) || entry.IsFolder))
                 .ToArray();
@@ -2474,6 +2506,8 @@ namespace OceanyaClient
             dataObject.SetData(typeof(FileOrganizationEntryViewModel[]), selectedEntries);
             dataObject.SetData(typeof(FileOrganizationEntryViewModel), selectedEntries[0]);
             DragDrop.DoDragDrop(FileOrganizationListView, dataObject, DragDropEffects.Move);
+            preserveFileOrganizationMultiSelectionForDrag = false;
+            fileOrganizationDragSelectionSnapshot = Array.Empty<FileOrganizationEntryViewModel>();
         }
 
         private void FileOrganizationRow_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -2571,7 +2605,7 @@ namespace OceanyaClient
                 return;
             }
 
-            FileOrganizationEntryViewModel? target = ResolveFileOrganizationEntryFromSource(e.OriginalSource);
+            FileOrganizationEntryViewModel? target = ResolveFileOrganizationEntryFromDropPosition(e);
             bool validTarget = target != null && target.IsFolder && !target.IsInteractionLocked;
             e.Effects = validTarget ? DragDropEffects.Move : DragDropEffects.None;
             e.Handled = true;
@@ -2609,7 +2643,7 @@ namespace OceanyaClient
                 return;
             }
 
-            FileOrganizationEntryViewModel? dropTarget = ResolveFileOrganizationEntryFromSource(e.OriginalSource);
+            FileOrganizationEntryViewModel? dropTarget = ResolveFileOrganizationEntryFromDropPosition(e);
             if (dropTarget == null || !dropTarget.IsFolder || dropTarget.IsInteractionLocked)
             {
                 return;
@@ -6531,30 +6565,55 @@ namespace OceanyaClient
                 Margin = new Thickness(0, 8, 0, 0)
             };
 
-            Thumb previewResizeThumb = new Thumb
+            Border previewResizeGrip = new Border
             {
-                Height = 6,
+                Height = 8,
+                Margin = new Thickness(0, 2, 0, 4),
+                Background = Brushes.Transparent,
                 Cursor = Cursors.SizeNS,
-                Margin = new Thickness(0, 6, 0, 2)
+                Child = new Border
+                {
+                    Height = 2,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Background = new SolidColorBrush(Color.FromArgb(92, 90, 115, 138))
+                }
             };
-            Grid previewResizeGrip = new Grid
+
+            bool resizingPreview = false;
+            Point previewResizeStartPoint = default;
+            double previewResizeStartHeight = previewBorder.Height;
+            previewResizeGrip.MouseLeftButtonDown += (_, e) =>
             {
-                Height = 6,
-                VerticalAlignment = VerticalAlignment.Center
+                resizingPreview = true;
+                previewResizeStartPoint = e.GetPosition(dialog);
+                previewResizeStartHeight = previewBorder.Height;
+                previewResizeGrip.CaptureMouse();
+                e.Handled = true;
             };
-            previewResizeGrip.Children.Add(new Border
+            previewResizeGrip.MouseMove += (_, e) =>
             {
-                Background = new SolidColorBrush(Color.FromArgb(80, 90, 115, 138)),
-                Height = 2,
-                VerticalAlignment = VerticalAlignment.Center
-            });
-            previewResizeGrip.Children.Add(previewResizeThumb);
-            previewResizeThumb.DragDelta += (_, dragEvent) =>
-            {
-                double next = Math.Clamp(previewBorder.Height + dragEvent.VerticalChange, 120, 520);
+                if (!resizingPreview || e.LeftButton != MouseButtonState.Pressed)
+                {
+                    return;
+                }
+
+                Point current = e.GetPosition(dialog);
+                double next = Math.Clamp(previewResizeStartHeight + (current.Y - previewResizeStartPoint.Y), 120, 520);
                 previewBorder.Height = next;
                 SaveFile.Data.CharacterCreatorCuttingPreviewHeight = next;
                 SaveFile.Save();
+                e.Handled = true;
+            };
+            previewResizeGrip.MouseLeftButtonUp += (_, e) =>
+            {
+                if (!resizingPreview)
+                {
+                    return;
+                }
+
+                resizingPreview = false;
+                previewResizeGrip.ReleaseMouseCapture();
+                e.Handled = true;
             };
 
             StackPanel previewPanel = new StackPanel();
@@ -6630,6 +6689,7 @@ namespace OceanyaClient
             Point dragStart;
             bool dragging = false;
             Rect selectionBounds = Rect.Empty;
+            Rect normalizedSelectionBounds = Rect.Empty;
             BitmapSource? currentSelectionCutout = null;
             string currentSourceName = sourceOptions[0].Name;
             string currentSourcePath = sourceOptions[0].Path;
@@ -6711,6 +6771,7 @@ namespace OceanyaClient
                 if (currentFrame == null || !TryGetSavedSelectionForCurrentSource(out Rect normalized))
                 {
                     selectionBounds = Rect.Empty;
+                    normalizedSelectionBounds = Rect.Empty;
                     UpdateSelectionVisual();
                     UpdateCurrentCutoutPreview();
                     UpdateLastSelectionVisual(null);
@@ -6719,6 +6780,7 @@ namespace OceanyaClient
                 }
 
                 Rect viewport = ComputeImageViewport(currentFrame);
+                normalizedSelectionBounds = normalized;
                 selectionBounds = new Rect(
                     viewport.X + (normalized.X * viewport.Width),
                     viewport.Y + (normalized.Y * viewport.Height),
@@ -6728,6 +6790,49 @@ namespace OceanyaClient
                 UpdateCurrentCutoutPreview();
                 UpdateLastSelectionVisual(normalized);
                 UpdateLastCutoutPreviewForCurrentSource();
+            }
+
+            void UpdateSelectionBoundsFromNormalized()
+            {
+                if (currentFrame == null || normalizedSelectionBounds.IsEmpty || normalizedSelectionBounds.Width <= 0 || normalizedSelectionBounds.Height <= 0)
+                {
+                    selectionBounds = Rect.Empty;
+                    UpdateSelectionVisual();
+                    UpdateCurrentCutoutPreview();
+                    return;
+                }
+
+                Rect viewport = ComputeImageViewport(currentFrame);
+                selectionBounds = new Rect(
+                    viewport.X + (normalizedSelectionBounds.X * viewport.Width),
+                    viewport.Y + (normalizedSelectionBounds.Y * viewport.Height),
+                    normalizedSelectionBounds.Width * viewport.Width,
+                    normalizedSelectionBounds.Height * viewport.Height);
+                UpdateSelectionVisual();
+                UpdateCurrentCutoutPreview();
+            }
+
+            void UpdateNormalizedSelectionFromBounds()
+            {
+                if (currentFrame == null || selectionBounds.IsEmpty)
+                {
+                    normalizedSelectionBounds = Rect.Empty;
+                    return;
+                }
+
+                Rect viewport = ComputeImageViewport(currentFrame);
+                Rect selection = Rect.Intersect(selectionBounds, viewport);
+                if (selection.IsEmpty || selection.Width < 2 || selection.Height < 2)
+                {
+                    normalizedSelectionBounds = Rect.Empty;
+                    return;
+                }
+
+                normalizedSelectionBounds = new Rect(
+                    Math.Clamp((selection.X - viewport.X) / viewport.Width, 0, 1),
+                    Math.Clamp((selection.Y - viewport.Y) / viewport.Height, 0, 1),
+                    Math.Clamp(selection.Width / viewport.Width, 0, 1),
+                    Math.Clamp(selection.Height / viewport.Height, 0, 1));
             }
 
             void UpdateSelectionVisual()
@@ -6788,6 +6893,7 @@ namespace OceanyaClient
                 previewController = null;
                 currentFrame = null;
                 selectionBounds = Rect.Empty;
+                normalizedSelectionBounds = Rect.Empty;
                 UpdateSelectionVisual();
 
                 if (AnimationTimelinePreviewController.TryCreate(ResolveAo2PreviewImagePath(path), out AnimationTimelinePreviewController? createdController))
@@ -6857,6 +6963,7 @@ namespace OceanyaClient
                 dragging = true;
                 dragStart = e.GetPosition(selectionCanvas);
                 selectionBounds = new Rect(dragStart, dragStart);
+                normalizedSelectionBounds = Rect.Empty;
                 UpdateSelectionVisual();
                 selectionCanvas.CaptureMouse();
             };
@@ -6875,7 +6982,9 @@ namespace OceanyaClient
                 double height = Math.Sign(dy) * size;
                 Point end = new Point(dragStart.X + width, dragStart.Y + height);
                 selectionBounds = new Rect(dragStart, end);
+                UpdateNormalizedSelectionFromBounds();
                 UpdateSelectionVisual();
+                UpdateCurrentCutoutPreview();
             };
             selectionCanvas.MouseLeftButtonUp += (_, _) =>
             {
@@ -6885,7 +6994,12 @@ namespace OceanyaClient
                     selectionCanvas.ReleaseMouseCapture();
                 }
 
+                UpdateNormalizedSelectionFromBounds();
                 UpdateCurrentCutoutPreview();
+            };
+            selectionCanvas.SizeChanged += (_, _) =>
+            {
+                UpdateSelectionBoundsFromNormalized();
             };
 
             playPauseButton.Click += (_, _) =>
@@ -8906,9 +9020,12 @@ namespace OceanyaClient
                 StackPanel panel = new StackPanel { Margin = new Thickness(6) };
                 if (config.Mode == ButtonIconMode.SingleImage)
                 {
-                    Button upload = CreateDialogButton("Select image...", isPrimary: false);
-                    upload.Width = 150;
-                    upload.Click += (_, _) =>
+                    Grid sourceGrid = new Grid();
+                    sourceGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                    sourceGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                    Button sourceUploadButton = CreateDialogButton("Select image...", isPrimary: false);
+                    sourceUploadButton.Width = 130;
+                    sourceUploadButton.Click += (_, _) =>
                     {
                         OpenFileDialog picker = new OpenFileDialog
                         {
@@ -8921,17 +9038,37 @@ namespace OceanyaClient
                             RefreshFields();
                         }
                     };
-                    TextBlock path = new TextBlock
+                    TextBlock sourcePathText = new TextBlock
                     {
-                        Text = string.IsNullOrWhiteSpace(config.SingleImagePath) ? "No image selected" : Path.GetFileName(config.SingleImagePath),
+                        Margin = new Thickness(10, 0, 0, 0),
+                        VerticalAlignment = VerticalAlignment.Center,
                         Foreground = new SolidColorBrush(Color.FromRgb(198, 212, 224)),
-                        Margin = new Thickness(0, 6, 0, 0)
+                        Text = string.IsNullOrWhiteSpace(config.SingleImagePath) ? "No image selected" : Path.GetFileName(config.SingleImagePath)
                     };
-                    panel.Children.Add(upload);
-                    panel.Children.Add(path);
+                    Grid.SetColumn(sourcePathText, 1);
+                    sourceGrid.Children.Add(sourceUploadButton);
+                    sourceGrid.Children.Add(sourcePathText);
+                    AddSimpleField(panel, "Source image", sourceGrid);
+                    AddEffectsFields(panel);
                 }
                 else
                 {
+                    TabControl tabs = new TabControl
+                    {
+                        Margin = new Thickness(0, 0, 0, 4)
+                    };
+                    if (TryFindResource("DialogTabControlStyle") is Style tabControlStyle)
+                    {
+                        tabs.Style = tabControlStyle;
+                    }
+
+                    if (TryFindResource("DialogTabItemStyle") is Style tabItemStyle)
+                    {
+                        tabs.ItemContainerStyle = tabItemStyle;
+                    }
+
+                    TabItem backgroundTab = new TabItem { Header = "Background" };
+                    StackPanel backgroundContent = new StackPanel { Margin = new Thickness(8, 6, 8, 8) };
                     AutoCompleteDropdownField backgroundDropdown = CreateDialogAutoCompleteField(
                         GetAutomaticBackgroundOptions(),
                         GetAutomaticBackgroundSelectionName(config),
@@ -8942,7 +9079,7 @@ namespace OceanyaClient
                         ApplyAutomaticBackgroundSelection(backgroundDropdown.Text, config);
                         RefreshFields();
                     };
-                    AddSimpleField(panel, "Background config", backgroundDropdown);
+                    AddSimpleField(backgroundContent, "Background config", backgroundDropdown);
 
                     if (config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.SolidColor)
                     {
@@ -8957,10 +9094,13 @@ namespace OceanyaClient
                                 RefreshFields();
                             }
                         };
-                        panel.Children.Add(color);
+                        AddSimpleField(backgroundContent, "Solid color", color);
                     }
                     else if (config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.Upload)
                     {
+                        Grid backgroundUploadGrid = new Grid();
+                        backgroundUploadGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                        backgroundUploadGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
                         Button uploadBackground = CreateDialogButton("Upload background...", isPrimary: false);
                         uploadBackground.Width = 170;
                         uploadBackground.Click += (_, _) =>
@@ -8976,12 +9116,28 @@ namespace OceanyaClient
                                 RefreshFields();
                             }
                         };
-                        panel.Children.Add(uploadBackground);
+                        TextBlock backgroundPathText = new TextBlock
+                        {
+                            Margin = new Thickness(10, 0, 0, 0),
+                            VerticalAlignment = VerticalAlignment.Center,
+                            Foreground = new SolidColorBrush(Color.FromRgb(198, 212, 224)),
+                            Text = string.IsNullOrWhiteSpace(config.AutomaticBackgroundUploadPath)
+                                ? "No image selected"
+                                : Path.GetFileName(config.AutomaticBackgroundUploadPath)
+                        };
+                        Grid.SetColumn(backgroundPathText, 1);
+                        backgroundUploadGrid.Children.Add(uploadBackground);
+                        backgroundUploadGrid.Children.Add(backgroundPathText);
+                        AddSimpleField(backgroundContent, "Background image", backgroundUploadGrid);
                     }
 
-                    Button cutButton = CreateDialogButton("Cut from emote...", isPrimary: false);
-                    cutButton.Width = 160;
-                    cutButton.Margin = new Thickness(0, 6, 0, 0);
+                    backgroundTab.Content = backgroundContent;
+                    tabs.Items.Add(backgroundTab);
+
+                    TabItem emoteTab = new TabItem { Header = "Emote" };
+                    StackPanel emoteContent = new StackPanel { Margin = new Thickness(8, 6, 8, 8) };
+                    Button cutButton = CreateDialogButton("Open Emote Cutting...", isPrimary: false);
+                    cutButton.Width = 180;
                     cutButton.Click += (_, _) =>
                     {
                         BitmapSource? cut = ShowEmoteCuttingDialog(emote, config.AutomaticCutEmoteImage);
@@ -8989,11 +9145,45 @@ namespace OceanyaClient
                         {
                             config.AutomaticCutEmoteImage = cut;
                             RefreshPreview();
+                            RefreshFields();
                         }
                     };
-                    panel.Children.Add(cutButton);
+                    Border cutPreviewCard = new Border
+                    {
+                        Width = 120,
+                        Height = 120,
+                        Margin = new Thickness(0, 8, 0, 0),
+                        BorderBrush = new SolidColorBrush(Color.FromRgb(72, 92, 112)),
+                        BorderThickness = new Thickness(1),
+                        CornerRadius = new CornerRadius(4),
+                        Background = new SolidColorBrush(Color.FromArgb(110, 20, 20, 20)),
+                        Padding = new Thickness(4),
+                        Child = new Image
+                        {
+                            Source = config.AutomaticCutEmoteImage,
+                            Stretch = Stretch.Uniform
+                        }
+                    };
+                    AddSimpleField(emoteContent, "Emote cutting", cutButton);
+                    AddSimpleField(emoteContent, "Current cutout", cutPreviewCard);
+                    emoteTab.Content = emoteContent;
+                    tabs.Items.Add(emoteTab);
+
+                    TabItem effectTab = new TabItem { Header = "Effect" };
+                    StackPanel effectContent = new StackPanel { Margin = new Thickness(8, 6, 8, 8) };
+                    AddEffectsFields(effectContent);
+                    effectTab.Content = effectContent;
+                    tabs.Items.Add(effectTab);
+
+                    panel.Children.Add(tabs);
                 }
 
+                fieldsHost.Child = panel;
+                RefreshPreview();
+            }
+
+            void AddEffectsFields(Panel panel)
+            {
                 AutoCompleteDropdownField effectsDropdown = CreateDialogAutoCompleteField(
                     ButtonEffectsGenerationOptionNames,
                     GetButtonEffectsGenerationName(config.EffectsMode),
@@ -9006,8 +9196,74 @@ namespace OceanyaClient
                 };
                 AddSimpleField(panel, "Effects generation", effectsDropdown);
 
-                fieldsHost.Child = panel;
-                RefreshPreview();
+                if (config.EffectsMode == ButtonEffectsGenerationMode.ReduceOpacity)
+                {
+                    Slider opacitySlider = new Slider
+                    {
+                        Minimum = 0,
+                        Maximum = 100,
+                        Value = config.OpacityPercent,
+                        TickFrequency = 1,
+                        IsSnapToTickEnabled = true
+                    };
+                    opacitySlider.ValueChanged += (_, _) =>
+                    {
+                        config.OpacityPercent = (int)Math.Round(opacitySlider.Value);
+                        RefreshPreview();
+                    };
+                    AddSimpleField(panel, "Opacity", opacitySlider);
+                }
+                else if (config.EffectsMode == ButtonEffectsGenerationMode.Darken)
+                {
+                    Slider darknessSlider = new Slider
+                    {
+                        Minimum = 0,
+                        Maximum = 100,
+                        Value = config.DarknessPercent,
+                        TickFrequency = 1,
+                        IsSnapToTickEnabled = true
+                    };
+                    darknessSlider.ValueChanged += (_, _) =>
+                    {
+                        config.DarknessPercent = (int)Math.Round(darknessSlider.Value);
+                        RefreshPreview();
+                    };
+                    AddSimpleField(panel, "Darkness", darknessSlider);
+                }
+                else if (config.EffectsMode == ButtonEffectsGenerationMode.Overlay)
+                {
+                    Grid overlayGrid = new Grid();
+                    overlayGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                    overlayGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                    Button overlayButton = CreateDialogButton("Select overlay...", isPrimary: false);
+                    overlayButton.Width = 140;
+                    overlayButton.Click += (_, _) =>
+                    {
+                        OpenFileDialog picker = new OpenFileDialog
+                        {
+                            Title = "Select overlay image",
+                            Filter = "Image files (*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp;*.apng)|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp;*.apng|All files (*.*)|*.*"
+                        };
+                        if (picker.ShowDialog() == true)
+                        {
+                            config.OverlayImagePath = picker.FileName;
+                            RefreshFields();
+                        }
+                    };
+                    TextBlock overlayPathText = new TextBlock
+                    {
+                        Margin = new Thickness(10, 0, 0, 0),
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Foreground = new SolidColorBrush(Color.FromRgb(198, 212, 224)),
+                        Text = string.IsNullOrWhiteSpace(config.OverlayImagePath)
+                            ? "No image selected"
+                            : Path.GetFileName(config.OverlayImagePath)
+                    };
+                    Grid.SetColumn(overlayPathText, 1);
+                    overlayGrid.Children.Add(overlayButton);
+                    overlayGrid.Children.Add(overlayPathText);
+                    AddSimpleField(panel, "Overlay", overlayGrid);
+                }
             }
 
             modeDropdown.TextValueChanged += (_, _) =>
@@ -9061,34 +9317,31 @@ namespace OceanyaClient
 
             ListBox emoteList = new ListBox
             {
-                Background = Brushes.Transparent,
+                Background = new SolidColorBrush(Color.FromArgb(36, 0, 0, 0)),
                 BorderBrush = new SolidColorBrush(Color.FromArgb(90, 74, 94, 114)),
                 BorderThickness = new Thickness(1),
                 SelectionMode = SelectionMode.Single,
                 ItemsSource = entries
             };
-            if (TryFindResource("EmoteTileListBoxStyle") is Style emoteListStyle)
-            {
-                emoteList.Style = emoteListStyle;
-            }
-
-            if (TryFindResource("EmoteTileListBoxItemStyle") is Style emoteItemStyle)
-            {
-                emoteList.ItemContainerStyle = emoteItemStyle;
-            }
-
             FrameworkElementFactory wrapPanelFactory = new FrameworkElementFactory(typeof(WrapPanel));
+            wrapPanelFactory.SetValue(WrapPanel.MarginProperty, new Thickness(6));
             emoteList.ItemsPanel = new ItemsPanelTemplate(wrapPanelFactory);
-            emoteList.ItemTemplate = new DataTemplate
-            {
-                VisualTree = new FrameworkElementFactory(typeof(ContentControl))
-            };
-            emoteList.ItemTemplate.VisualTree.SetBinding(
-                ContentControl.ContentProperty,
-                new System.Windows.Data.Binding());
-            emoteList.ItemTemplate.VisualTree.SetValue(
-                ContentControl.ContentTemplateProperty,
-                TryFindResource("EmoteTileContentTemplate"));
+            Style selectorItemStyle = new Style(typeof(ListBoxItem));
+            selectorItemStyle.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(0)));
+            selectorItemStyle.Setters.Add(new Setter(Control.MarginProperty, new Thickness(6)));
+            selectorItemStyle.Setters.Add(new Setter(Control.BackgroundProperty, new SolidColorBrush(Color.FromArgb(26, 0, 0, 0))));
+            selectorItemStyle.Setters.Add(new Setter(Control.BorderBrushProperty, new SolidColorBrush(Color.FromArgb(90, 66, 86, 106))));
+            selectorItemStyle.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(1)));
+            Trigger selectorHover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+            selectorHover.Setters.Add(new Setter(Control.BackgroundProperty, new SolidColorBrush(Color.FromArgb(58, 50, 70, 90))));
+            selectorHover.Setters.Add(new Setter(Control.BorderBrushProperty, new SolidColorBrush(Color.FromArgb(140, 88, 122, 152))));
+            selectorItemStyle.Triggers.Add(selectorHover);
+            Trigger selectorSelected = new Trigger { Property = ListBoxItem.IsSelectedProperty, Value = true };
+            selectorSelected.Setters.Add(new Setter(Control.BackgroundProperty, new SolidColorBrush(Color.FromArgb(76, 56, 94, 126))));
+            selectorSelected.Setters.Add(new Setter(Control.BorderBrushProperty, new SolidColorBrush(Color.FromArgb(182, 128, 178, 220))));
+            selectorItemStyle.Triggers.Add(selectorSelected);
+            emoteList.ItemContainerStyle = selectorItemStyle;
+            emoteList.ItemTemplate = BuildEmoteSelectorTemplate();
 
             emoteList.SelectedItem = entries[0];
             Grid.SetRow(emoteList, 1);
@@ -9107,6 +9360,53 @@ namespace OceanyaClient
             }
 
             return eligibleEmotes[0];
+        }
+
+        private static DataTemplate BuildEmoteSelectorTemplate()
+        {
+            FrameworkElementFactory rootBorder = new FrameworkElementFactory(typeof(Border));
+            rootBorder.SetValue(Border.WidthProperty, 172d);
+            rootBorder.SetValue(Border.HeightProperty, 188d);
+            rootBorder.SetValue(Border.PaddingProperty, new Thickness(8));
+
+            FrameworkElementFactory stack = new FrameworkElementFactory(typeof(StackPanel));
+            stack.SetValue(StackPanel.OrientationProperty, Orientation.Vertical);
+            rootBorder.AppendChild(stack);
+
+            FrameworkElementFactory previewBorder = new FrameworkElementFactory(typeof(Border));
+            previewBorder.SetValue(Border.HeightProperty, 132d);
+            previewBorder.SetValue(Border.BackgroundProperty, new SolidColorBrush(Color.FromArgb(34, 0, 0, 0)));
+            previewBorder.SetValue(Border.BorderBrushProperty, new SolidColorBrush(Color.FromArgb(90, 66, 86, 106)));
+            previewBorder.SetValue(Border.BorderThicknessProperty, new Thickness(1));
+            previewBorder.SetValue(Border.CornerRadiusProperty, new CornerRadius(3));
+            stack.AppendChild(previewBorder);
+
+            FrameworkElementFactory previewGrid = new FrameworkElementFactory(typeof(Grid));
+            previewBorder.AppendChild(previewGrid);
+
+            FrameworkElementFactory image = new FrameworkElementFactory(typeof(Image));
+            image.SetValue(Image.StretchProperty, Stretch.Uniform);
+            image.SetBinding(Image.SourceProperty, new System.Windows.Data.Binding("Emote.AnimationPreview"));
+            previewGrid.AppendChild(image);
+
+            FrameworkElementFactory name = new FrameworkElementFactory(typeof(TextBlock));
+            name.SetValue(TextBlock.MarginProperty, new Thickness(0, 8, 0, 0));
+            name.SetValue(TextBlock.ForegroundProperty, new SolidColorBrush(Color.FromRgb(233, 237, 242)));
+            name.SetValue(TextBlock.FontWeightProperty, FontWeights.SemiBold);
+            name.SetValue(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis);
+            name.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding("Emote.Name"));
+            stack.AppendChild(name);
+
+            FrameworkElementFactory emoteNumber = new FrameworkElementFactory(typeof(TextBlock));
+            emoteNumber.SetValue(TextBlock.MarginProperty, new Thickness(0, 2, 0, 0));
+            emoteNumber.SetValue(TextBlock.ForegroundProperty, new SolidColorBrush(Color.FromRgb(170, 188, 206)));
+            emoteNumber.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding("Emote.EmoteHeader"));
+            stack.AppendChild(emoteNumber);
+
+            return new DataTemplate
+            {
+                VisualTree = rootBorder
+            };
         }
 
         private void InitializeShoutPreviewDefaults()
@@ -10618,6 +10918,63 @@ namespace OceanyaClient
             File.Copy(sourcePath, destinationPath, overwrite: true);
         }
 
+        private void CleanupEmptyStandardAssetFolders(string characterDirectory)
+        {
+            RemoveStandardFolderIfEmpty(characterDirectory, "Images");
+            RemoveStandardFolderIfEmpty(characterDirectory, "Sounds");
+            RemoveStandardFolderIfEmpty(characterDirectory, "emotions");
+        }
+
+        private void RemoveStandardFolderIfEmpty(string characterDirectory, string folderName)
+        {
+            string relativeFolder = NormalizeRelativePath(folderName + "/", isFolder: true);
+            if (IsFolderExplicitlyConfigured(relativeFolder))
+            {
+                return;
+            }
+
+            string fullPath = Path.Combine(characterDirectory, folderName);
+            if (!Directory.Exists(fullPath))
+            {
+                return;
+            }
+
+            RemoveEmptyDirectoryRecursive(fullPath);
+        }
+
+        private bool IsFolderExplicitlyConfigured(string relativeFolder)
+        {
+            string normalized = NormalizeRelativePath(relativeFolder, isFolder: true);
+            return externalOrganizationEntries.Any(entry =>
+                entry.IsFolder
+                && string.Equals(
+                    NormalizeRelativePath(entry.RelativePath, isFolder: true),
+                    normalized,
+                    StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static bool RemoveEmptyDirectoryRecursive(string directoryPath)
+        {
+            if (!Directory.Exists(directoryPath))
+            {
+                return true;
+            }
+
+            foreach (string subDirectory in Directory.GetDirectories(directoryPath))
+            {
+                _ = RemoveEmptyDirectoryRecursive(subDirectory);
+            }
+
+            bool isEmpty = !Directory.EnumerateFileSystemEntries(directoryPath).Any();
+            if (isEmpty)
+            {
+                Directory.Delete(directoryPath, recursive: false);
+                return true;
+            }
+
+            return false;
+        }
+
         private void CopyShoutSfx(string characterDirectory, string key, string targetBaseName)
         {
             if (!selectedShoutSfxSourcePaths.TryGetValue(key, out string? sourcePath)
@@ -11037,6 +11394,7 @@ namespace OceanyaClient
                 CopyShoutAssets(characterDirectory);
                 await SetGenerateSubtitleAsync("Applying file organization extras...");
                 CopyExternalOrganizationEntries(characterDirectory);
+                CleanupEmptyStandardAssetFolders(characterDirectory);
 
                 if (usingCustomBlipFile)
                 {
