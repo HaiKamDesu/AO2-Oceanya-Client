@@ -8,14 +8,21 @@ using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 
 namespace OceanyaClient
 {
-    public partial class DebugConsoleWindow : Window
+    public partial class DebugConsoleWindow : OceanyaWindowContentControl
     {
         private static DebugConsoleWindow? _instance;
         private static readonly object _instanceLock = new object();
+
+        /// <inheritdoc/>
+        public override string HeaderText => "DEBUG CONSOLE";
+
+        /// <inheritdoc/>
+        public override bool IsUserResizeEnabled => false;
 
         // Use a concurrent queue to buffer messages during initialization
         private ConcurrentQueue<string> _pendingMessages = new ConcurrentQueue<string>();
@@ -56,6 +63,8 @@ namespace OceanyaClient
         public DebugConsoleWindow()
         {
             InitializeComponent();
+            Title = "Debug Console";
+            Icon = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/OceanyaO.ico"));
 
             // Initialize document
             InitializeConsoleDocument();

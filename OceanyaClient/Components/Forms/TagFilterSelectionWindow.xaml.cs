@@ -11,7 +11,7 @@ using System.Windows.Input;
 
 namespace OceanyaClient
 {
-    public partial class TagFilterSelectionWindow : Window, INotifyPropertyChanged
+    public partial class TagFilterSelectionWindow : OceanyaWindowContentControl, INotifyPropertyChanged
     {
         private readonly Dictionary<string, int> allTagCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         private bool suppressTagInputHandlers;
@@ -115,6 +115,7 @@ namespace OceanyaClient
             VisualizerWindowState? savedWindowState = null)
         {
             InitializeComponent();
+            Title = "Filters & Sorting";
             DataContext = this;
             ApplySavedWindowState(savedWindowState);
 
@@ -191,6 +192,12 @@ namespace OceanyaClient
             RefreshExcludeSuggestions(ExcludeTagInputTextBox?.Text ?? string.Empty);
             UpdateSelectionSummary();
         }
+
+        /// <inheritdoc/>
+        public override string HeaderText => "FILTERS & SORTING";
+
+        /// <inheritdoc/>
+        public override bool IsUserResizeEnabled => true;
 
         public VisualizerWindowState CaptureWindowState()
         {
@@ -831,39 +838,6 @@ namespace OceanyaClient
             FilterRoot = FilterRoot.Clone();
             EnsureParents(FilterRoot, null);
             DialogResult = true;
-            Close();
-        }
-
-        private void DragWindow(object sender, MouseButtonEventArgs e)
-        {
-            if (e.OriginalSource is DependencyObject source)
-            {
-                for (DependencyObject? current = source; current != null;)
-                {
-                    if (current.GetType().Name.Contains("Button", StringComparison.Ordinal))
-                    {
-                        return;
-                    }
-
-                    if (current is FrameworkElement element)
-                    {
-                        current = element.Parent ?? element.TemplatedParent as DependencyObject;
-                    }
-                    else
-                    {
-                        break;
-                    }
-                }
-            }
-
-            if (e.ChangedButton == MouseButton.Left)
-            {
-                DragMove();
-            }
-        }
-
-        private void CloseButton_Click(object sender, RoutedEventArgs e)
-        {
             Close();
         }
 

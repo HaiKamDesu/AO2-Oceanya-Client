@@ -15,7 +15,7 @@ namespace OceanyaClient
     /// <summary>
     /// Interaction logic for InitialConfigurationWindow.xaml
     /// </summary>
-    public partial class InitialConfigurationWindow : Window
+    public partial class InitialConfigurationWindow : OceanyaWindowContentControl
     {
         private const double MultiClientWindowHeight = 358;
         private const double CharacterViewerWindowHeight = 286;
@@ -26,9 +26,17 @@ namespace OceanyaClient
         public InitialConfigurationWindow()
         {
             InitializeComponent();
-            WindowHelper.AddWindow(this);
+            Title = "Initial Configuration";
+            Icon = new System.Windows.Media.Imaging.BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/OceanyaO.ico"));
+            Closing += Window_Closing;
             LoadSavefile();
         }
+
+        /// <inheritdoc/>
+        public override string HeaderText => "INITIAL CONFIGURATION";
+
+        /// <inheritdoc/>
+        public override bool IsUserResizeEnabled => false;
 
         private void BrowseButton_Click(object sender, RoutedEventArgs e)
         {
@@ -123,7 +131,13 @@ namespace OceanyaClient
 
             if (shouldRefreshAssets)
             {
-                await ClientAssetRefreshService.RefreshCharactersAndBackgroundsAsync(this);
+                Window? refreshOwner = HostWindow ?? Application.Current?.MainWindow;
+                if (refreshOwner == null)
+                {
+                    return;
+                }
+
+                await ClientAssetRefreshService.RefreshCharactersAndBackgroundsAsync(refreshOwner);
             }
 
             Window startupWindow = StartupWindowLauncher.CreateStartupWindow(
@@ -163,7 +177,7 @@ namespace OceanyaClient
 
             ServerSelectionDialog dialog = new ServerSelectionDialog(configIniPath, currentEndpoint)
             {
-                Owner = this
+                Owner = HostWindow
             };
 
             bool? result = dialog.ShowDialog();
@@ -349,7 +363,7 @@ namespace OceanyaClient
         {
             AdvancedFeatureFlagsWindow window = new AdvancedFeatureFlagsWindow
             {
-                Owner = this
+                Owner = HostWindow
             };
             window.ShowDialog();
         }
@@ -437,7 +451,7 @@ namespace OceanyaClient
 
         private bool isClosing;
 
-        private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
+        private void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
         {
             if (isClosing)
             {

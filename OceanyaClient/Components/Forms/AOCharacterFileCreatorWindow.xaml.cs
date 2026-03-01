@@ -18,7 +18,6 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using System.Windows.Shell;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using AOBot_Testing.Structures;
@@ -28,7 +27,7 @@ using OceanyaClient.Features.Startup;
 
 namespace OceanyaClient
 {
-    public partial class AOCharacterFileCreatorWindow : Window, IStartupFunctionalityWindow
+    public partial class AOCharacterFileCreatorWindow : OceanyaWindowContentControl, IStartupFunctionalityWindow
     {
         // AO2 hard-codes interjection maximum visual frame duration to 1500 ms (courtroom.h shout_max_time).
         private const int Ao2ShoutVisualCutoffMs = 1500;
@@ -280,7 +279,10 @@ namespace OceanyaClient
         public AOCharacterFileCreatorWindow()
         {
             InitializeComponent();
-            WindowHelper.AddWindow(this);
+            Title = "AO Character File Creator";
+            SourceInitialized += Window_SourceInitialized;
+            StateChanged += Window_StateChanged;
+            Closing += Window_Closing;
 
             EmoteTilesListBox.ItemsSource = emoteTiles;
             AdvancedEntriesListBox.ItemsSource = advancedEntries;
@@ -344,6 +346,12 @@ namespace OceanyaClient
             lastCommittedStateFingerprint = ComputeCurrentStateFingerprint();
         }
 
+        /// <inheritdoc/>
+        public override string HeaderText => "AO CHARACTER FILE CREATOR";
+
+        /// <inheritdoc/>
+        public override bool IsUserResizeEnabled => true;
+
         private void LoadPersistedCutSelections()
         {
             savedCutSelectionByEmoteKey.Clear();
@@ -381,10 +389,15 @@ namespace OceanyaClient
             FinishedLoading?.Invoke();
         }
 
-        protected override void OnSourceInitialized(EventArgs e)
+        private void Window_SourceInitialized(object? sender, EventArgs e)
         {
-            base.OnSourceInitialized(e);
-            IntPtr handle = new WindowInteropHelper(this).Handle;
+            Window? host = HostWindow;
+            if (host == null)
+            {
+                return;
+            }
+
+            IntPtr handle = new WindowInteropHelper(host).Handle;
             HwndSource? source = HwndSource.FromHwnd(handle);
             source?.AddHook(WndProc);
         }
@@ -3102,7 +3115,7 @@ namespace OceanyaClient
             DockPanel buttons = isReadOnly
                 ? BuildDialogButtonsCentered(dialog)
                 : BuildDialogButtons(dialog);
-            dialog.Content = BuildStyledDialogContent(dialog, dialog.Title, grid, buttons);
+            BuildStyledDialogContent(dialog, dialog.Title, grid, buttons);
             bool? result = dialog.ShowDialog();
             if (result != true)
             {
@@ -4946,7 +4959,7 @@ namespace OceanyaClient
             durationTextBox.TextChanged += (_, _) => ApplyDurationCutoffToPreview();
 
             DockPanel buttons = BuildDialogButtons(dialog);
-            dialog.Content = BuildStyledDialogContent(dialog, dialog.Title, grid, buttons);
+            BuildStyledDialogContent(dialog, dialog.Title, grid, buttons);
 
             bool? result;
             try
@@ -5000,7 +5013,7 @@ namespace OceanyaClient
                 !string.IsNullOrWhiteSpace(emote.BlipsOverride));
 
             DockPanel buttons = BuildDialogButtons(dialog);
-            dialog.Content = BuildStyledDialogContent(dialog, dialog.Title, grid, buttons);
+            BuildStyledDialogContent(dialog, dialog.Title, grid, buttons);
 
             if (dialog.ShowDialog() != true)
             {
@@ -5283,7 +5296,7 @@ namespace OceanyaClient
                 hostGrid);
 
             DockPanel buttons = BuildDialogButtons(dialog);
-            dialog.Content = BuildStyledDialogContent(dialog, dialog.Title, grid, buttons);
+            BuildStyledDialogContent(dialog, dialog.Title, grid, buttons);
             bool? result = dialog.ShowDialog();
             StopAllPlayers();
             if (result != true)
@@ -5719,7 +5732,7 @@ namespace OceanyaClient
             previewLoopCheckBox.Unchecked += (_, _) => animationPreviewController?.SetLoop(false);
 
             DockPanel buttons = BuildDialogButtons(dialog);
-            dialog.Content = BuildStyledDialogContent(dialog, dialog.Title, grid, buttons);
+            BuildStyledDialogContent(dialog, dialog.Title, grid, buttons);
 
             bool? result = dialog.ShowDialog();
             animationPreviewController?.Dispose();
@@ -5792,7 +5805,7 @@ namespace OceanyaClient
                 isReadOnly: true);
 
             DockPanel buttons = BuildDialogButtons(dialog);
-            dialog.Content = BuildStyledDialogContent(dialog, dialog.Title, grid, buttons);
+            BuildStyledDialogContent(dialog, dialog.Title, grid, buttons);
 
             if (dialog.ShowDialog() != true)
             {
@@ -6380,7 +6393,7 @@ namespace OceanyaClient
             RefreshModeFields();
 
             DockPanel buttons = BuildDialogButtons(dialog);
-            dialog.Content = BuildStyledDialogContent(dialog, dialog.Title, grid, buttons);
+            BuildStyledDialogContent(dialog, dialog.Title, grid, buttons);
             if (dialog.ShowDialog() != true)
             {
                 return;
@@ -7035,7 +7048,7 @@ namespace OceanyaClient
             LoadSource(initial.Path);
 
             DockPanel buttons = BuildDialogButtons(dialog);
-            dialog.Content = BuildStyledDialogContent(dialog, dialog.Title, grid, buttons);
+            BuildStyledDialogContent(dialog, dialog.Title, grid, buttons);
             bool? result;
             try
             {
@@ -7534,7 +7547,7 @@ namespace OceanyaClient
 
             UpdateVisuals();
             DockPanel buttons = BuildDialogButtonsCentered(dialog);
-            dialog.Content = BuildStyledDialogContent(dialog, dialog.Title, root, buttons);
+            BuildStyledDialogContent(dialog, dialog.Title, root, buttons);
             if (dialog.ShowDialog() != true)
             {
                 return null;
@@ -7545,54 +7558,25 @@ namespace OceanyaClient
 
         private Window CreateEmoteDialog(string title, double width, double height)
         {
-            Window dialog = new Window
+            Window? ownerWindow = HostWindow ?? this;
+            GenericOceanyaWindow dialog = new GenericOceanyaWindow
             {
-                Owner = this,
+                Owner = ownerWindow,
                 Title = title,
+                HeaderText = title,
                 Width = width,
                 Height = height,
                 MinWidth = Math.Min(width, 520),
                 MinHeight = Math.Min(height, 240),
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                ResizeMode = ResizeMode.CanResize,
-                WindowStyle = WindowStyle.None,
-                AllowsTransparency = true,
-                Background = Brushes.Transparent,
-                Foreground = Brushes.White,
-                ShowInTaskbar = false
+                ShowInTaskbar = false,
+                IsUserResizeEnabled = true,
+                IsUserMoveEnabled = true,
+                IsCloseButtonVisible = true,
+                BodyMargin = new Thickness(0)
             };
-            AttachMaximizeBoundsHook(dialog);
-            WindowChrome.SetWindowChrome(
-                dialog,
-                new WindowChrome
-                {
-                    CaptionHeight = 30,
-                    ResizeBorderThickness = new Thickness(6),
-                    CornerRadius = new CornerRadius(0),
-                    GlassFrameThickness = new Thickness(0),
-                    UseAeroCaptionButtons = false
-                });
+
             return dialog;
-        }
-
-        private static void AttachMaximizeBoundsHook(Window dialog)
-        {
-            dialog.SourceInitialized += (_, _) =>
-            {
-                IntPtr handle = new WindowInteropHelper(dialog).Handle;
-                HwndSource? source = HwndSource.FromHwnd(handle);
-                source?.AddHook((IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled) =>
-                {
-                    const int WM_GETMINMAXINFO = 0x0024;
-                    if (msg == WM_GETMINMAXINFO)
-                    {
-                        WmGetMinMaxInfo(hwnd, lParam);
-                        handled = true;
-                    }
-
-                    return IntPtr.Zero;
-                });
-            };
         }
 
         private static string BuildPopupStateKey(string id)
@@ -7896,131 +7880,8 @@ namespace OceanyaClient
             return panel;
         }
 
-        private UIElement BuildStyledDialogContent(Window dialog, string title, UIElement body, UIElement buttons)
+        private void BuildStyledDialogContent(Window dialog, string title, UIElement body, UIElement buttons)
         {
-            Border outerBorder = new Border
-            {
-                BorderBrush = new SolidColorBrush(Color.FromRgb(34, 34, 34)),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(5)
-            };
-
-            Grid root = new Grid
-            {
-                Margin = new Thickness(0, 0, -1, -1)
-            };
-            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(30) });
-            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-
-            root.Children.Add(new System.Windows.Shapes.Rectangle
-            {
-                Fill = new ImageBrush
-                {
-                    ImageSource = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/scoienceblur.jpg")),
-                    Opacity = 0.5,
-                    Stretch = Stretch.UniformToFill
-                }
-            });
-            root.Children.Add(new System.Windows.Shapes.Rectangle
-            {
-                Fill = new SolidColorBrush(Color.FromArgb(127, 0, 0, 0))
-            });
-            root.Children.Add(new System.Windows.Shapes.Rectangle
-            {
-                Margin = new Thickness(0, 30, 0, 44),
-                Fill = new ImageBrush
-                {
-                    ImageSource = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/Logo_O.png")),
-                    Opacity = 0.08,
-                    Stretch = Stretch.Uniform
-                }
-            });
-
-            Border topBar = new Border
-            {
-                Background = new SolidColorBrush(Color.FromArgb(204, 0, 0, 0))
-            };
-            topBar.MouseLeftButtonDown += (_, e) =>
-            {
-                if (e.LeftButton == MouseButtonState.Pressed)
-                {
-                    if (FindAncestor<Button>(e.OriginalSource as DependencyObject) != null)
-                    {
-                        return;
-                    }
-
-                    try
-                    {
-                        dialog.DragMove();
-                    }
-                    catch
-                    {
-                        // ignored
-                    }
-                }
-            };
-            Grid.SetRow(topBar, 0);
-            root.Children.Add(topBar);
-
-            Grid topBarGrid = new Grid();
-            topBar.Child = topBarGrid;
-            topBarGrid.Children.Add(new System.Windows.Shapes.Rectangle
-            {
-                HorizontalAlignment = HorizontalAlignment.Left,
-                Width = 129,
-                Height = 30,
-                VerticalAlignment = VerticalAlignment.Center,
-                Fill = new ImageBrush
-                {
-                    ImageSource = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/Logo_Oceanya.png"))
-                }
-            });
-            topBarGrid.Children.Add(new System.Windows.Shapes.Rectangle
-            {
-                HorizontalAlignment = HorizontalAlignment.Left,
-                Width = 157,
-                Height = 23,
-                VerticalAlignment = VerticalAlignment.Top,
-                Margin = new Thickness(129, 6, 0, 0),
-                Fill = new ImageBrush
-                {
-                    ImageSource = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/Logo_Laboratories.png")),
-                    Stretch = Stretch.Uniform
-                }
-            });
-            topBarGrid.Children.Add(new TextBlock
-            {
-                Text = title,
-                Foreground = new SolidColorBrush(Color.FromRgb(218, 218, 218)),
-                FontSize = 12,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            });
-
-            Button closeButton = new Button
-            {
-                Width = 30,
-                HorizontalAlignment = HorizontalAlignment.Right,
-                Content = "✕"
-            };
-            WindowChrome.SetIsHitTestVisibleInChrome(closeButton, true);
-            if (TryFindResource("CloseButtonStyle") is Style closeStyle)
-            {
-                closeButton.Style = closeStyle;
-            }
-            closeButton.Click += (_, _) =>
-            {
-                try
-                {
-                    dialog.DialogResult = false;
-                }
-                catch
-                {
-                    dialog.Close();
-                }
-            };
-            topBarGrid.Children.Add(closeButton);
-
             Border panel = new Border
             {
                 Margin = new Thickness(10),
@@ -8030,8 +7891,6 @@ namespace OceanyaClient
                 CornerRadius = new CornerRadius(4),
                 Padding = new Thickness(10)
             };
-            Grid.SetRow(panel, 1);
-            root.Children.Add(panel);
 
             Grid panelGrid = new Grid();
             panelGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -8050,8 +7909,15 @@ namespace OceanyaClient
             panelGrid.Children.Add(buttons);
 
             panel.Child = panelGrid;
-            outerBorder.Child = root;
-            return outerBorder;
+            if (dialog is GenericOceanyaWindow genericDialog)
+            {
+                genericDialog.HeaderText = title;
+                genericDialog.BodyMargin = new Thickness(0);
+                genericDialog.BodyContent = panel;
+                return;
+            }
+
+            dialog.Content = panel;
         }
 
         private Button CreateDialogButton(string text, bool isPrimary)
@@ -9276,7 +9142,7 @@ namespace OceanyaClient
             RefreshFields();
 
             DockPanel buttons = BuildDialogButtons(dialog);
-            dialog.Content = BuildStyledDialogContent(dialog, dialog.Title, grid, buttons);
+            BuildStyledDialogContent(dialog, dialog.Title, grid, buttons);
             if (dialog.ShowDialog() != true)
             {
                 return null;
@@ -9348,7 +9214,7 @@ namespace OceanyaClient
             grid.Children.Add(emoteList);
 
             DockPanel buttons = BuildDialogButtons(dialog);
-            dialog.Content = BuildStyledDialogContent(dialog, dialog.Title, grid, buttons);
+            BuildStyledDialogContent(dialog, dialog.Title, grid, buttons);
             if (dialog.ShowDialog() != true)
             {
                 return null;
@@ -11163,26 +11029,8 @@ namespace OceanyaClient
 
         private void ApplyWorkAreaMaxBounds()
         {
-            WindowChrome? chrome = WindowChrome.GetWindowChrome(this);
-            if (WindowState == WindowState.Maximized)
-            {
-                if (chrome != null)
-                {
-                    chrome.ResizeBorderThickness = new Thickness(0);
-                }
-
-                WindowFrameBorder.BorderThickness = new Thickness(0);
-                WindowFrameBorder.CornerRadius = new CornerRadius(0);
-                return;
-            }
-
-            if (chrome != null)
-            {
-                chrome.ResizeBorderThickness = new Thickness(6);
-            }
-
-            WindowFrameBorder.BorderThickness = new Thickness(1);
-            WindowFrameBorder.CornerRadius = new CornerRadius(5);
+            MaxHeight = double.PositiveInfinity;
+            MaxWidth = double.PositiveInfinity;
         }
 
         private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)

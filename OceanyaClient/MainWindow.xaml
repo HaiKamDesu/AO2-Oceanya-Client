@@ -1,14 +1,9 @@
-﻿<Window x:Class="OceanyaClient.MainWindow"
+﻿<local:OceanyaWindowContentControl x:Class="OceanyaClient.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:OceanyaClient"
         xmlns:components="clr-namespace:OceanyaClient.Components"
-        Title="Oceanya Online"
-        Height="690" Width="510"
-        Icon="/Resources/OceanyaO.ico"
-        ResizeMode="NoResize"
-        WindowStartupLocation="CenterScreen"
-        WindowStyle="None"
-        AllowsTransparency="True"
+        Height="628" Width="510"
         Background="Transparent">
 
     <!-- 
@@ -16,7 +11,7 @@
          define the close button style, text styles, animations, etc.
       2) You can omit or customize these if you do not need them for MainWindow.
     -->
-    <Window.Resources>
+    <local:OceanyaWindowContentControl.Resources>
         <!-- Button style with a dark overlay on hover and press -->
         <Style x:Key="ModernButton" TargetType="{x:Type Button}">
             <Setter Property="Background" Value="#FF262626"/>
@@ -41,33 +36,6 @@
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter Property="Background" Value="#FF171717" TargetName="ButtonBorder"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <!-- Close Button Style -->
-        <Style x:Key="CloseButtonStyle" TargetType="{x:Type Button}">
-            <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Foreground" Value="White"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="{x:Type Button}">
-                        <Border x:Name="ButtonBorder" 
-                                Background="{TemplateBinding Background}" 
-                                BorderBrush="{TemplateBinding BorderBrush}" 
-                                BorderThickness="{TemplateBinding BorderThickness}">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="#FFE81123" TargetName="ButtonBorder"/>
-                            </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter Property="Background" Value="#FFC41E3A" TargetName="ButtonBorder"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -116,28 +84,25 @@
                 </Trigger>
             </Style.Triggers>
         </Style>
-    </Window.Resources>
+    </local:OceanyaWindowContentControl.Resources>
 
     <!-- Optional fade-in trigger (remove if not desired) -->
-    <Window.Triggers>
+    <local:OceanyaWindowContentControl.Triggers>
         <EventTrigger RoutedEvent="Window.Loaded">
             <BeginStoryboard Storyboard="{StaticResource FadeIn}"/>
         </EventTrigger>
-    </Window.Triggers>
+    </local:OceanyaWindowContentControl.Triggers>
 
-    <Window.Opacity>1</Window.Opacity>
+    <local:OceanyaWindowContentControl.Opacity>1</local:OceanyaWindowContentControl.Opacity>
 
     <!-- Outer border for the "rounded corners + black outline" look -->
     <Border BorderBrush="#222222" BorderThickness="1" CornerRadius="5">
-        <Grid Margin="0,0,-1,-1">
+        <Grid Margin="0">
 
-            <!-- 
-              OPTIONAL: If you want the same "blur" background effect behind your top bar,
-              replicate these rectangles. Otherwise, remove them.
-            -->
+            <!-- Optional body background treatment. -->
             <Rectangle x:Name="imgScienceBlur" 
                        HorizontalAlignment="Center" Width="527" Height="670" 
-                       VerticalAlignment="Top" Margin="0,30,0,0">
+                       VerticalAlignment="Top" Margin="0">
                 <Rectangle.Fill>
                     <ImageBrush ImageSource="/Resources/scoienceblur.jpg" Opacity="0.5"/>
                 </Rectangle.Fill>
@@ -145,7 +110,7 @@
 
             <Rectangle x:Name="imgScienceBlur_darken"
                        HorizontalAlignment="Center" Width="527" Height="670" 
-                       VerticalAlignment="Top" Margin="0,30,0,0" Fill="#7F000000"/>
+                       VerticalAlignment="Top" Margin="0" Fill="#7F000000"/>
 
             <Rectangle HorizontalAlignment="Center" Width="369" Height="276"
                        VerticalAlignment="Top" Margin="0,-21,0,0">
@@ -154,43 +119,9 @@
                 </Rectangle.Fill>
             </Rectangle>
 
-            <!-- Title Bar (the top bar) -->
-            <Border Height="30" VerticalAlignment="Top" Background="#CC000000" MouseLeftButtonDown="DragWindow">
-                <Grid>
-                    <!-- Left side: Oceanya logo -->
-                    <Rectangle HorizontalAlignment="Left" Width="129" Height="30" VerticalAlignment="Center">
-                        <Rectangle.Fill>
-                            <ImageBrush ImageSource="/Resources/Logo_Oceanya.png"/>
-                        </Rectangle.Fill>
-                    </Rectangle>
-
-                    <!-- Close button on the right -->
-                    <Button x:Name="CloseButton"
-                            Content="✕"
-                            HorizontalAlignment="Right"
-                            Width="30"
-                            Style="{StaticResource CloseButtonStyle}"
-                            Click="CloseButton_Click"/>
-
-                    <!-- Additional text or second part of the logo -->
-                    <Rectangle HorizontalAlignment="Left" Width="157" Height="23" VerticalAlignment="Top" Margin="129,6,0,0">
-                        <Rectangle.Fill>
-                            <ImageBrush ImageSource="/Resources/Logo_Laboratories.png" Stretch="Uniform"/>
-                        </Rectangle.Fill>
-                    </Rectangle>
-                </Grid>
-            </Border>
-
-            <!-- 
-              Main Content: your original Canvas from MainWindow. 
-              Move it down by giving it a top margin so it appears below the top bar. 
-            -->
-            <Canvas x:Name="MainCanvas" Margin="0,30,0,0" Background="#FF585858">
-                <!-- 
-                  The entire content from your original MainWindow's Canvas goes here.
-                  Just place it exactly as before; only the top-level <Canvas> is changed 
-                  to have Margin="0,30,0,0".
-                -->
+            <!-- Main body content only; shared window chrome comes from GenericOceanyaWindow. -->
+            <Canvas x:Name="MainCanvas" Margin="0" Background="#FF585858">
+                <!-- Entire original body content lives here. -->
 
 
                 <Rectangle x:Name="bgRectangleOOC" Height="333" Canvas.Left="287" Width="222" Fill="#FF8B8B8B"/>
@@ -587,4 +518,4 @@
             </Canvas>
         </Grid>
     </Border>
-</Window>
+</local:OceanyaWindowContentControl>

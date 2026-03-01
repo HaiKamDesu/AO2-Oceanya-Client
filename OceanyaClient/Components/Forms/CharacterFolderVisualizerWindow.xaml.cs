@@ -21,7 +21,6 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using System.Windows.Shell;
 using System.Windows.Threading;
 using AOBot_Testing.Structures;
 using Common;
@@ -32,7 +31,7 @@ namespace OceanyaClient
     /// <summary>
     /// Displays a configurable Windows-like visualizer for local AO character folders.
     /// </summary>
-    public partial class CharacterFolderVisualizerWindow : Window, IStartupFunctionalityWindow
+    public partial class CharacterFolderVisualizerWindow : OceanyaWindowContentControl, IStartupFunctionalityWindow
     {
         public event Action? FinishedLoading;
         private const string FallbackFolderPackUri =
@@ -58,8 +57,12 @@ namespace OceanyaClient
         private readonly Dictionary<string, ImageSource> imageCache =
             new Dictionary<string, ImageSource>(StringComparer.OrdinalIgnoreCase);
         private readonly object imageCacheLock = new object();
+        private readonly object progressiveLoadKeyLock = new object();
         private readonly List<FolderVisualizerItem> allItems = new List<FolderVisualizerItem>();
         private CancellationTokenSource? progressiveImageLoadCancellation;
+        private readonly HashSet<string> progressiveLoadedItemKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly DispatcherTimer progressiveLoadReprioritizeTimer;
+        private ScrollViewer? folderListScrollViewer;
 
         private bool hasLoaded;
         private bool hasRaisedFinishedLoading;
@@ -203,6 +206,10 @@ namespace OceanyaClient
             Action<FolderVisualizerItem>? setCharacterInClient = null)
         {
             InitializeComponent();
+            Title = "Character Folder Visualizer";
+            SourceInitialized += Window_SourceInitialized;
+            StateChanged += Window_StateChanged;
+            Closed += Window_Closed;
             this.onAssetsRefreshed = onAssetsRefreshed;
             this.canSetCharacterInClient = canSetCharacterInClient;
             this.setCharacterInClient = setCharacterInClient;
@@ -216,6 +223,11 @@ namespace OceanyaClient
                 Interval = TimeSpan.FromMilliseconds(320)
             };
             tagSaveDebounceTimer.Tick += TagSaveDebounceTimer_Tick;
+            progressiveLoadReprioritizeTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(80)
+            };
+            progressiveLoadReprioritizeTimer.Tick += ProgressiveLoadReprioritizeTimer_Tick;
 
             visualizerConfig = CloneConfig(SaveFile.Data.FolderVisualizer);
             ShowIntegrityVerifierResults = SaveFile.Data.ViewFolderIntegrityVerifierResults;
@@ -230,11 +242,21 @@ namespace OceanyaClient
             BindViewPresets();
         }
 
-        protected override void OnSourceInitialized(EventArgs e)
-        {
-            base.OnSourceInitialized(e);
+        /// <inheritdoc/>
+        public override string HeaderText => "CHARACTER FOLDER VISUALIZER";
 
-            IntPtr handle = new WindowInteropHelper(this).Handle;
+        /// <inheritdoc/>
+        public override bool IsUserResizeEnabled => true;
+
+        private void Window_SourceInitialized(object? sender, EventArgs e)
+        {
+            Window? host = HostWindow;
+            if (host == null)
+            {
+                return;
+            }
+
+            IntPtr handle = new WindowInteropHelper(host).Handle;
             HwndSource? source = HwndSource.FromHwnd(handle);
             source?.AddHook(WndProc);
         }
@@ -250,6 +272,7 @@ namespace OceanyaClient
 
             hasLoaded = true;
             await LoadCharacterItemsAsync();
+            EnsureFolderListScrollViewerHooked();
 
             if (!hasRaisedFinishedLoading)
             {
@@ -603,28 +626,8 @@ namespace OceanyaClient
 
         private void ApplyWorkAreaMaxBounds()
         {
-            WindowChrome? chrome = WindowChrome.GetWindowChrome(this);
-            if (WindowState == WindowState.Maximized)
-            {
-                if (chrome != null)
-                {
-                    chrome.ResizeBorderThickness = new Thickness(0);
-                }
-
-                WindowFrameBorder.BorderThickness = new Thickness(0);
-                WindowFrameBorder.CornerRadius = new CornerRadius(0);
-                return;
-            }
-
             MaxHeight = double.PositiveInfinity;
             MaxWidth = double.PositiveInfinity;
-            if (chrome != null)
-            {
-                chrome.ResizeBorderThickness = new Thickness(6);
-            }
-
-            WindowFrameBorder.BorderThickness = new Thickness(1);
-            WindowFrameBorder.CornerRadius = new CornerRadius(5);
         }
 
         private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -709,6 +712,10 @@ namespace OceanyaClient
                 {
                     WaitForm.SetSubtitle("Using cached character index...");
                 allItems.Clear();
+                lock (progressiveLoadKeyLock)
+                {
+                    progressiveLoadedItemKeys.Clear();
+                }
                 allItems.AddRange(cachedItems);
                 RecomputeDerivedItemFields();
                 itemsView = null;
@@ -739,6 +746,10 @@ namespace OceanyaClient
                     cachedSignature = signature;
                     cachedItems = diskCachedItems;
                     allItems.Clear();
+                    lock (progressiveLoadKeyLock)
+                    {
+                        progressiveLoadedItemKeys.Clear();
+                    }
                     allItems.AddRange(diskCachedItems);
                     RecomputeDerivedItemFields();
                     itemsView = null;
@@ -770,6 +781,10 @@ namespace OceanyaClient
                 SaveProjectedItemsToDisk(signature, projected);
 
                 allItems.Clear();
+                lock (progressiveLoadKeyLock)
+                {
+                    progressiveLoadedItemKeys.Clear();
+                }
                 allItems.AddRange(projected);
                 RecomputeDerivedItemFields();
                 itemsView = null;
@@ -790,22 +805,34 @@ namespace OceanyaClient
 
         private string BuildCharacterSignature(IReadOnlyList<CharacterFolder> characters)
         {
-            HashCode hashCode = new HashCode();
-            hashCode.Add(characters.Count);
+            StringBuilder payloadBuilder = new StringBuilder(characters.Count * 96);
+            payloadBuilder.Append("v2").Append('|').Append(characters.Count).Append('|');
 
-            foreach (CharacterFolder folder in characters)
+            IEnumerable<CharacterFolder> orderedCharacters = characters
+                .OrderBy(folder => folder.DirectoryPath ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(folder => folder.Name ?? string.Empty, StringComparer.OrdinalIgnoreCase);
+
+            foreach (CharacterFolder folder in orderedCharacters)
             {
-                hashCode.Add(folder.Name, StringComparer.OrdinalIgnoreCase);
-                hashCode.Add(folder.DirectoryPath, StringComparer.OrdinalIgnoreCase);
-                hashCode.Add(folder.CharIconPath, StringComparer.OrdinalIgnoreCase);
-                hashCode.Add(folder.ViewportIdleSpritePath, StringComparer.OrdinalIgnoreCase);
+                string normalizedName = (folder.Name ?? string.Empty).Trim().ToLowerInvariant();
+                string normalizedDirectoryPath = (folder.DirectoryPath ?? string.Empty).Trim().ToLowerInvariant();
+                string normalizedIconPath = (folder.CharIconPath ?? string.Empty).Trim().ToLowerInvariant();
+                string normalizedIdlePath = (folder.ViewportIdleSpritePath ?? string.Empty).Trim().ToLowerInvariant();
+
+                payloadBuilder.Append(normalizedName).Append('|');
+                payloadBuilder.Append(normalizedDirectoryPath).Append('|');
+                payloadBuilder.Append(normalizedIconPath).Append('|');
+                payloadBuilder.Append(normalizedIdlePath).Append('|');
                 if (TryGetFolderPreviewOverrideEmoteId(folder.DirectoryPath, out int overrideEmoteId))
                 {
-                    hashCode.Add(overrideEmoteId);
+                    payloadBuilder.Append(overrideEmoteId);
                 }
+
+                payloadBuilder.Append(';');
             }
 
-            return hashCode.ToHashCode().ToString();
+            byte[] signatureBytes = SHA256.HashData(Encoding.UTF8.GetBytes(payloadBuilder.ToString()));
+            return Convert.ToHexString(signatureBytes).ToLowerInvariant();
         }
 
         private List<FolderVisualizerItem> BuildCharacterItems(List<CharacterFolder> sourceCharacters)
@@ -968,6 +995,7 @@ namespace OceanyaClient
             ScrollViewer.SetHorizontalScrollBarVisibility(FolderListView, ScrollBarVisibility.Disabled);
             FolderListView.ItemsSource = null;
             FolderListView.ItemsSource = GetOrCreateItemsView();
+            EnsureFolderListScrollViewerHooked();
             UpdateSummaryText();
         }
 
@@ -982,6 +1010,7 @@ namespace OceanyaClient
             ScrollViewer.SetHorizontalScrollBarVisibility(FolderListView, ScrollBarVisibility.Auto);
             FolderListView.ItemsSource = null;
             FolderListView.ItemsSource = GetOrCreateItemsView();
+            EnsureFolderListScrollViewerHooked();
             ApplySortToCurrentView();
             UpdateSummaryText();
         }
@@ -2828,6 +2857,7 @@ namespace OceanyaClient
         {
             if (FolderListView.View != null)
             {
+                RequestProgressiveImageLoadReprioritization();
                 return;
             }
 
@@ -2841,6 +2871,7 @@ namespace OceanyaClient
             double targetOffset = Math.Clamp(scrollViewer.VerticalOffset + delta, 0, scrollViewer.ScrollableHeight);
             scrollViewer.ScrollToVerticalOffset(targetOffset);
             e.Handled = true;
+            RequestProgressiveImageLoadReprioritization();
         }
 
         private static bool IsWithinControl<TControl>(DependencyObject? source) where TControl : DependencyObject
@@ -3191,9 +3222,15 @@ namespace OceanyaClient
             Close();
         }
 
-        protected override void OnClosed(EventArgs e)
+        private void Window_Closed(object? sender, EventArgs e)
         {
             progressiveImageLoadCancellation?.Cancel();
+            progressiveLoadReprioritizeTimer.Stop();
+            if (folderListScrollViewer != null)
+            {
+                folderListScrollViewer.ScrollChanged -= FolderListScrollViewer_ScrollChanged;
+                folderListScrollViewer = null;
+            }
             tagSaveDebounceTimer.Stop();
             UntrackTableColumnWidth();
             PersistVisualizerConfig();
@@ -3203,7 +3240,6 @@ namespace OceanyaClient
                 SaveFile.Data.FolderVisualizerWindowState = CaptureWindowState();
                 SaveFile.Save();
             }
-            base.OnClosed(e);
         }
 
         private void OpenCharIniButton_Click(object sender, RoutedEventArgs e)
@@ -3489,8 +3525,8 @@ namespace OceanyaClient
                     IntegrityHasFailures = item.IntegrityHasFailures,
                     IntegrityFailureCount = item.IntegrityFailureCount,
                     IntegrityFailureMessages = item.IntegrityFailureMessages ?? string.Empty,
-                    IconImage = LoadImage(item.IconPath ?? string.Empty, 48),
-                    PreviewImage = LoadImage(item.PreviewPath ?? string.Empty, 220)
+                    IconImage = FallbackFolderImage,
+                    PreviewImage = FallbackFolderImage
                 }).ToList();
 
                 return projectedItems.Count > 0;
@@ -3683,7 +3719,11 @@ namespace OceanyaClient
             progressiveImageLoadCancellation?.Cancel();
             progressiveImageLoadCancellation = new CancellationTokenSource();
             CancellationToken cancellationToken = progressiveImageLoadCancellation.Token;
-            List<FolderVisualizerItem> snapshot = allItems.ToList();
+            List<FolderVisualizerItem> snapshot = BuildPrioritizedImageLoadSnapshot();
+            if (snapshot.Count == 0)
+            {
+                return;
+            }
 
             _ = Task.Run(async () =>
             {
@@ -3695,6 +3735,17 @@ namespace OceanyaClient
                     }
 
                     FolderVisualizerItem item = snapshot[i];
+                    string itemKey = BuildProgressiveLoadItemKey(item);
+                    lock (progressiveLoadKeyLock)
+                    {
+                        if (progressiveLoadedItemKeys.Contains(itemKey))
+                        {
+                            continue;
+                        }
+
+                        progressiveLoadedItemKeys.Add(itemKey);
+                    }
+
                     ImageSource iconImage = LoadImage(item.IconPath, 48);
                     ImageSource previewImage = LoadImage(item.PreviewPath, 220);
 
@@ -3710,6 +3761,169 @@ namespace OceanyaClient
                     }
                 }
             }, cancellationToken);
+        }
+
+        private void EnsureFolderListScrollViewerHooked()
+        {
+            ScrollViewer? discovered = FindDescendant<ScrollViewer>(FolderListView);
+            if (ReferenceEquals(discovered, folderListScrollViewer))
+            {
+                return;
+            }
+
+            if (folderListScrollViewer != null)
+            {
+                folderListScrollViewer.ScrollChanged -= FolderListScrollViewer_ScrollChanged;
+            }
+
+            folderListScrollViewer = discovered;
+            if (folderListScrollViewer != null)
+            {
+                folderListScrollViewer.ScrollChanged += FolderListScrollViewer_ScrollChanged;
+            }
+        }
+
+        private void FolderListScrollViewer_ScrollChanged(object sender, ScrollChangedEventArgs e)
+        {
+            if (Math.Abs(e.VerticalChange) < 0.01 && Math.Abs(e.HorizontalChange) < 0.01)
+            {
+                return;
+            }
+
+            RequestProgressiveImageLoadReprioritization();
+        }
+
+        private void RequestProgressiveImageLoadReprioritization()
+        {
+            if (!hasLoaded || allItems.Count == 0)
+            {
+                return;
+            }
+
+            progressiveLoadReprioritizeTimer.Stop();
+            progressiveLoadReprioritizeTimer.Start();
+        }
+
+        private void ProgressiveLoadReprioritizeTimer_Tick(object? sender, EventArgs e)
+        {
+            progressiveLoadReprioritizeTimer.Stop();
+            StartProgressiveImageLoading();
+        }
+
+        private List<FolderVisualizerItem> BuildPrioritizedImageLoadSnapshot()
+        {
+            EnsureFolderListScrollViewerHooked();
+
+            List<FolderVisualizerItem> orderedItems = new List<FolderVisualizerItem>();
+            HashSet<string> seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (FolderVisualizerItem visibleItem in GetVisibleItemsOrderedTopToBottom())
+            {
+                TryAddItemForProgressiveLoad(visibleItem, orderedItems, seenKeys);
+            }
+
+            foreach (FolderVisualizerItem item in allItems)
+            {
+                TryAddItemForProgressiveLoad(item, orderedItems, seenKeys);
+            }
+
+            return orderedItems;
+        }
+
+        private void TryAddItemForProgressiveLoad(
+            FolderVisualizerItem item,
+            ICollection<FolderVisualizerItem> targetItems,
+            ISet<string> seenKeys)
+        {
+            string key = BuildProgressiveLoadItemKey(item);
+            if (!seenKeys.Add(key))
+            {
+                return;
+            }
+
+            lock (progressiveLoadKeyLock)
+            {
+                if (progressiveLoadedItemKeys.Contains(key))
+                {
+                    return;
+                }
+            }
+
+            targetItems.Add(item);
+        }
+
+        private List<FolderVisualizerItem> GetVisibleItemsOrderedTopToBottom()
+        {
+            if (folderListScrollViewer == null)
+            {
+                return new List<FolderVisualizerItem>();
+            }
+
+            List<(double top, FolderVisualizerItem item)> visibleItems = new List<(double top, FolderVisualizerItem item)>();
+            foreach (ListViewItem container in FindVisualChildren<ListViewItem>(FolderListView))
+            {
+                if (container.DataContext is not FolderVisualizerItem item
+                    || container.ActualHeight <= 0
+                    || container.ActualWidth <= 0)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    Rect bounds = container.TransformToAncestor(folderListScrollViewer)
+                        .TransformBounds(new Rect(0, 0, container.ActualWidth, container.ActualHeight));
+                    if (bounds.Bottom < 0 || bounds.Top > folderListScrollViewer.ViewportHeight)
+                    {
+                        continue;
+                    }
+
+                    visibleItems.Add((bounds.Top, item));
+                }
+                catch (InvalidOperationException)
+                {
+                    // The container may no longer be connected during virtualization churn.
+                }
+            }
+
+            return visibleItems
+                .OrderBy(entry => entry.top)
+                .Select(entry => entry.item)
+                .ToList();
+        }
+
+        private static IEnumerable<TChild> FindVisualChildren<TChild>(DependencyObject root)
+            where TChild : DependencyObject
+        {
+            if (root == null)
+            {
+                yield break;
+            }
+
+            int childCount = VisualTreeHelper.GetChildrenCount(root);
+            for (int i = 0; i < childCount; i++)
+            {
+                DependencyObject child = VisualTreeHelper.GetChild(root, i);
+                if (child is TChild typed)
+                {
+                    yield return typed;
+                }
+
+                foreach (TChild nested in FindVisualChildren<TChild>(child))
+                {
+                    yield return nested;
+                }
+            }
+        }
+
+        private static string BuildProgressiveLoadItemKey(FolderVisualizerItem item)
+        {
+            return string.Concat(
+                NormalizeFolderOverrideKey(item.DirectoryPath),
+                "|",
+                item.IconPath ?? string.Empty,
+                "|",
+                item.PreviewPath ?? string.Empty);
         }
 
         internal static ImageSource LoadEmbeddedImage(string uri)

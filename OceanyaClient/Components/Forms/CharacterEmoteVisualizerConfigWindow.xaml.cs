@@ -12,7 +12,7 @@ namespace OceanyaClient
     /// <summary>
     /// Configures view presets for the character emote visualizer.
     /// </summary>
-    public partial class CharacterEmoteVisualizerConfigWindow : Window
+    public partial class CharacterEmoteVisualizerConfigWindow : OceanyaWindowContentControl
     {
         private readonly EmoteVisualizerConfig workingConfig;
         private readonly List<EmoteColumnEditorItem> columnEditorItems = new List<EmoteColumnEditorItem>();
@@ -27,9 +27,16 @@ namespace OceanyaClient
         public CharacterEmoteVisualizerConfigWindow(EmoteVisualizerConfig sourceConfig)
         {
             InitializeComponent();
+            Title = "Configure Emote Views";
             workingConfig = CloneConfig(sourceConfig);
             BindPresetList();
         }
+
+        /// <inheritdoc/>
+        public override string HeaderText => "CONFIGURE EMOTE VISUALIZER VIEWS";
+
+        /// <inheritdoc/>
+        public override bool IsUserResizeEnabled => true;
 
         private void BindPresetList()
         {
@@ -399,40 +406,6 @@ namespace OceanyaClient
         {
             DialogResult = false;
             Close();
-        }
-
-        private void CloseButton_Click(object sender, RoutedEventArgs e)
-        {
-            DialogResult = false;
-            Close();
-        }
-
-        private void DragWindow(object sender, MouseButtonEventArgs e)
-        {
-            if (e.OriginalSource is DependencyObject source)
-            {
-                for (DependencyObject? current = source; current != null;)
-                {
-                    if (current.GetType().Name.Contains("Button", StringComparison.Ordinal))
-                    {
-                        return;
-                    }
-
-                    if (current is FrameworkElement element)
-                    {
-                        current = element.Parent ?? element.TemplatedParent as DependencyObject;
-                    }
-                    else
-                    {
-                        break;
-                    }
-                }
-            }
-
-            if (e.ChangedButton == MouseButton.Left)
-            {
-                DragMove();
-            }
         }
 
         private static EmoteVisualizerConfig CloneConfig(EmoteVisualizerConfig source)

@@ -1,22 +1,16 @@
-﻿<Window x:Class="OceanyaClient.DebugConsoleWindow"
+﻿<local:OceanyaWindowContentControl x:Class="OceanyaClient.DebugConsoleWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:OceanyaClient"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="Debug Console"
         Height="400" 
         Width="600"
-        ResizeMode="NoResize"
-        WindowStartupLocation="CenterScreen"
-        Icon="/Resources/OceanyaO.ico"
-        WindowStyle="None"
-        AllowsTransparency="True"
-        Background="Transparent"
         Loaded="Window_Loaded"
         Closing="Window_Closing">
 
-    <Window.Resources>
+    <local:OceanyaWindowContentControl.Resources>
         <!-- Console RichTextBox style -->
         <Style x:Key="ConsoleRichTextBoxStyle" TargetType="{x:Type RichTextBox}">
             <Setter Property="Background" Value="#33262626"/>
@@ -68,64 +62,17 @@
         <Storyboard x:Key="FadeOut">
             <DoubleAnimation Storyboard.TargetProperty="Opacity" From="1" To="0" Duration="0:0:0.3"/>
         </Storyboard>
-    </Window.Resources>
+    </local:OceanyaWindowContentControl.Resources>
 
-    <Window.Triggers>
+    <local:OceanyaWindowContentControl.Triggers>
         <EventTrigger RoutedEvent="Window.Loaded">
             <BeginStoryboard Storyboard="{StaticResource FadeIn}"/>
         </EventTrigger>
-    </Window.Triggers>
+    </local:OceanyaWindowContentControl.Triggers>
 
-    <Window.Opacity>1</Window.Opacity>
+    <local:OceanyaWindowContentControl.Opacity>1</local:OceanyaWindowContentControl.Opacity>
 
-    <Border BorderBrush="#222222" BorderThickness="1" CornerRadius="5">
-        <Grid>
-            <!-- Background Image with Blur -->
-            <Rectangle x:Name="imgScienceBlur" 
-                       HorizontalAlignment="Center" Width="600" Height="370" 
-                       VerticalAlignment="Top" Margin="0,30,0,0">
-                <Rectangle.Fill>
-                    <ImageBrush ImageSource="/Resources/scoienceblur.jpg" Opacity="0.5"/>
-                </Rectangle.Fill>
-            </Rectangle>
-
-            <!-- Darkening Overlay -->
-            <Rectangle x:Name="imgScienceBlur_darken"
-                       HorizontalAlignment="Center" Width="600" Height="370" 
-                       VerticalAlignment="Top" Margin="0,30,0,0" Fill="#7F000000"/>
-
-            <!-- Background Logo -->
-            <Rectangle HorizontalAlignment="Center" Width="400" Height="400"
-                       VerticalAlignment="Top" Margin="0,-21,0,0">
-                <Rectangle.Fill>
-                    <ImageBrush ImageSource="/Resources/Logo_O.png" Stretch="Uniform" Opacity="0.1"/>
-                </Rectangle.Fill>
-            </Rectangle>
-
-            <!-- Title Bar -->
-            <Border Height="30" VerticalAlignment="Top" Background="#CC000000" MouseLeftButtonDown="DragWindow">
-                <Grid>
-                    <Rectangle HorizontalAlignment="Left" Width="129" Height="30" VerticalAlignment="Center">
-                        <Rectangle.Fill>
-                            <ImageBrush ImageSource="/Resources/Logo_Oceanya.png"/>
-                        </Rectangle.Fill>
-                    </Rectangle>
-                    <Button x:Name="CloseButton"
-                            Content="✕"
-                            HorizontalAlignment="Right"
-                            Width="30"
-                            Style="{StaticResource CloseButtonStyle}"
-                            Click="CloseButton_Click"/>
-                    <Rectangle HorizontalAlignment="Left" Width="157" Height="23" VerticalAlignment="Top" Margin="129,6,0,0">
-                        <Rectangle.Fill>
-                            <ImageBrush ImageSource="/Resources/Logo_Laboratories.png" Stretch="Uniform"/>
-                        </Rectangle.Fill>
-                    </Rectangle>
-                </Grid>
-            </Border>
-
-            <!-- Main Content: RichTextBox with FlowDocument -->
-            <Grid Margin="10,40,10,10">
+    <Grid Margin="10,10,10,10">
                 <RichTextBox x:Name="ConsoleTextBox"
                          Style="{StaticResource ConsoleRichTextBoxStyle}"
                          Background="#26262626">
@@ -137,7 +84,5 @@
                     </RichTextBox.Resources>
                     <!-- The document will be set programmatically -->
                 </RichTextBox>
-            </Grid>
-        </Grid>
-    </Border>
-</Window>
+    </Grid>
+</local:OceanyaWindowContentControl>

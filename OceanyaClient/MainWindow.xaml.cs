@@ -22,7 +22,7 @@ using ToggleButton = System.Windows.Controls.Primitives.ToggleButton;
 
 namespace OceanyaClient
 {
-    public partial class MainWindow : Window, IStartupFunctionalityWindow
+    public partial class MainWindow : OceanyaWindowContentControl, IStartupFunctionalityWindow
     {
         public event Action? FinishedLoading;
 
@@ -74,7 +74,8 @@ namespace OceanyaClient
         public MainWindow()
         {
             InitializeComponent();
-            WindowHelper.AddWindow(this);
+            Title = "Oceanya Online";
+            Icon = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/OceanyaO.ico"));
             Loaded += MainWindow_Loaded;
 
             objectionModifiers = new List<ToggleButton> { HoldIt, Objection, TakeThat, Custom };
@@ -232,6 +233,12 @@ namespace OceanyaClient
             btnDebug.Visibility = debug ? Visibility.Visible : Visibility.Collapsed;
             RefreshAreaNavigatorForCurrentClient();
         }
+
+        /// <inheritdoc/>
+        public override string HeaderText => "OCEANYA ONLINE";
+
+        /// <inheritdoc/>
+        public override bool IsUserResizeEnabled => false;
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
@@ -447,9 +454,9 @@ namespace OceanyaClient
         {
             isDreddFeatureEnabled = SaveFile.Data.AdvancedFeatures.IsEnabled(AdvancedFeatureIds.DreddBackgroundOverlayOverride);
             DreddStickyOverlayCheckBox.IsChecked = SaveFile.Data.DreddBackgroundOverlayOverride.StickyOverlay;
-            Height = isDreddFeatureEnabled ? 690 : 658;
-            imgScienceBlur.Height = isDreddFeatureEnabled ? 670 : 638;
-            imgScienceBlur_darken.Height = isDreddFeatureEnabled ? 670 : 638;
+            Height = isDreddFeatureEnabled ? 658 : 628;
+            imgScienceBlur.Height = isDreddFeatureEnabled ? 658 : 628;
+            imgScienceBlur_darken.Height = isDreddFeatureEnabled ? 658 : 628;
 
             RefreshDreddOverlayForCurrentContext(promptForUnknownOverlay: false);
             UpdateDreddFeatureVisibility();
@@ -793,7 +800,7 @@ namespace OceanyaClient
         {
             DreddOverlayDatabaseWindow window = new DreddOverlayDatabaseWindow
             {
-                Owner = this
+                Owner = HostWindow
             };
             bool? result = window.ShowDialog();
             if (result == true)
@@ -1054,7 +1061,13 @@ namespace OceanyaClient
         private async Task AddClientAsync(string clientName)
         {
             IsEnabled = false;  
-            await WaitForm.ShowFormAsync("Connecting client...", this);
+            Window? waitOwner = HostWindow ?? Application.Current?.MainWindow;
+            if (waitOwner == null)
+            {
+                return;
+            }
+
+            await WaitForm.ShowFormAsync("Connecting client...", waitOwner);
 
             try
             {
@@ -1779,7 +1792,7 @@ namespace OceanyaClient
                 CanSetVisualizerCharacter,
                 SetVisualizerCharacterInClient)
             {
-                Owner = this
+                Owner = HostWindow
             };
             visualizerWindow.ShowDialog();
         }
@@ -1977,7 +1990,7 @@ namespace OceanyaClient
         {
             DreddOverlayChangesWindow window = new DreddOverlayChangesWindow
             {
-                Owner = this
+                Owner = HostWindow
             };
             window.ShowDialog();
         }
@@ -2146,7 +2159,7 @@ namespace OceanyaClient
         {
             DoomWindow doomWindow = new DoomWindow
             {
-                Owner = this
+                Owner = HostWindow
             };
             doomWindow.Show();
             doomWindow.Activate();

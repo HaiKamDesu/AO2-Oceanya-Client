@@ -162,7 +162,8 @@ namespace UnitTests
             Assert.That(option.RequiresServerEndpoint, Is.False);
 
             Window window = StartupWindowLauncher.CreateStartupWindow(StartupFunctionalityIds.CharacterFileCreator);
-            Assert.That(window, Is.TypeOf<AOCharacterFileCreatorWindow>());
+            Assert.That(window, Is.TypeOf<GenericOceanyaWindow>());
+            Assert.That(((GenericOceanyaWindow)window).BodyContent, Is.TypeOf<AOCharacterFileCreatorWindow>());
             window.Close();
 
             Assert.That(

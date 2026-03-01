@@ -1,20 +1,19 @@
 using System;
 using System.Windows;
-using System.Windows.Input;
-using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
 
 namespace OceanyaClient
 {
     /// <summary>
-    /// Interaction logic for AddServerDialog.xaml
+    /// Content control for adding/editing a server endpoint entry.
     /// </summary>
-    public partial class AddServerDialog : Window
+    public partial class AddServerDialog : OceanyaWindowContentControl
     {
-        public string ServerName { get; private set; } = string.Empty;
-        public string ServerEndpoint { get; private set; } = string.Empty;
+        private readonly string headerText;
 
-        private bool isClosing;
-
+        /// <summary>
+        /// Initializes a new instance of the <see cref="AddServerDialog"/> class.
+        /// </summary>
         public AddServerDialog(
             string windowTitle = "Add Server",
             string actionText = "ADD SERVER",
@@ -22,104 +21,49 @@ namespace OceanyaClient
             string defaultEndpoint = "ws://192.0.0.1:4455")
         {
             InitializeComponent();
-            WindowHelper.AddWindow(this);
-            Title = windowTitle;
+            headerText = windowTitle.ToUpperInvariant();
             ActionButton.Content = actionText;
             ServerNameTextBox.Text = defaultName;
             ServerEndpointTextBox.Text = defaultEndpoint;
 
-            ServerNameTextBox.Dispatcher.BeginInvoke(new Action(() =>
+            Loaded += (_, _) =>
             {
                 ServerNameTextBox.Focus();
                 ServerNameTextBox.SelectAll();
-            }));
+            };
         }
+
+        /// <summary>
+        /// Gets the resulting server name.
+        /// </summary>
+        public string ServerName { get; private set; } = string.Empty;
+
+        /// <summary>
+        /// Gets the resulting server endpoint.
+        /// </summary>
+        public string ServerEndpoint { get; private set; } = string.Empty;
+
+        /// <inheritdoc/>
+        public override string HeaderText => headerText;
+
+        /// <inheritdoc/>
+        public override bool IsUserResizeEnabled => false;
 
         private void OkButton_Click(object sender, RoutedEventArgs e)
         {
             ServerName = ServerNameTextBox.Text?.Trim() ?? string.Empty;
             ServerEndpoint = ServerEndpointTextBox.Text?.Trim() ?? string.Empty;
-            DialogResult = true;
-            CloseWithAnimation();
+            RequestHostClose(true);
         }
 
         private void CancelButton_Click(object sender, RoutedEventArgs e)
         {
-            DialogResult = false;
-            CloseWithAnimation();
+            RequestHostClose(false);
         }
 
-        private void DragWindow(object sender, MouseButtonEventArgs e)
-        {
-            if (e.OriginalSource is DependencyObject source)
-            {
-                for (DependencyObject? current = source; current != null;)
-                {
-                    if (current.GetType().Name.Contains("Button", StringComparison.Ordinal))
-                    {
-                        return;
-                    }
-
-                    if (current is FrameworkElement element)
-                    {
-                        current = element.Parent ?? element.TemplatedParent as DependencyObject;
-                    }
-                    else
-                    {
-                        break;
-                    }
-                }
-            }
-
-            if (e.LeftButton == MouseButtonState.Pressed)
-            {
-                DragMove();
-            }
-        }
-
-        private void CloseButton_Click(object sender, RoutedEventArgs e)
-        {
-            DialogResult = false;
-            CloseWithAnimation();
-        }
-
-        private void Window_Loaded(object sender, RoutedEventArgs e)
-        {
-        }
-
-        private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
-        {
-            if (isClosing)
-            {
-                return;
-            }
-
-            e.Cancel = true;
-            CloseWithAnimation();
-        }
-
-        private void CloseWithAnimation()
-        {
-            if (isClosing)
-            {
-                return;
-            }
-
-            isClosing = true;
-            bool? currentResult = DialogResult;
-            Storyboard fadeOut = (Storyboard)FindResource("FadeOut");
-            fadeOut.Completed += (s, _) =>
-            {
-                Dispatcher.Invoke(() =>
-                {
-                    isClosing = true;
-                    DialogResult = currentResult;
-                    Close();
-                });
-            };
-            fadeOut.Begin(this);
-        }
-
+        /// <summary>
+        /// Shows the add/edit server dialog with the shared generic window host.
+        /// </summary>
         public static bool ShowDialog(
             Window owner,
             out string serverName,
@@ -129,16 +73,24 @@ namespace OceanyaClient
             string defaultName = "My Server",
             string defaultEndpoint = "ws://192.0.0.1:4455")
         {
-            AddServerDialog dialog = new AddServerDialog(windowTitle, actionText, defaultName, defaultEndpoint)
+            AddServerDialog content = new AddServerDialog(windowTitle, actionText, defaultName, defaultEndpoint);
+            OceanyaWindowPresentationOptions options = new OceanyaWindowPresentationOptions
             {
-                Owner = owner
+                Owner = owner,
+                Title = windowTitle,
+                HeaderText = windowTitle.ToUpperInvariant(),
+                Width = 420,
+                Height = 260,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                IsUserResizeEnabled = false,
+                Icon = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/OceanyaO.ico"))
             };
 
-            bool? result = dialog.ShowDialog();
+            bool? result = OceanyaWindowManager.ShowDialog(content, options);
             if (result == true)
             {
-                serverName = dialog.ServerName;
-                serverEndpoint = dialog.ServerEndpoint;
+                serverName = content.ServerName;
+                serverEndpoint = content.ServerEndpoint;
                 return true;
             }
 

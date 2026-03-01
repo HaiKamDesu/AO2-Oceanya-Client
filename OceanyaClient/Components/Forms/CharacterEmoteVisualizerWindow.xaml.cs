@@ -16,7 +16,6 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using System.Windows.Shell;
 using System.Windows.Threading;
 using AOBot_Testing.Structures;
 using Common;
@@ -26,7 +25,7 @@ namespace OceanyaClient
     /// <summary>
     /// Displays emote previews for a single character folder.
     /// </summary>
-    public partial class CharacterEmoteVisualizerWindow : Window
+    public partial class CharacterEmoteVisualizerWindow : OceanyaWindowContentControl
     {
         private const string FallbackFolderPackUri =
             "pack://application:,,,/OceanyaClient;component/Resources/Buttons/smallFolder.png";
@@ -140,6 +139,10 @@ namespace OceanyaClient
         public CharacterEmoteVisualizerWindow(CharacterFolder sourceCharacter)
         {
             InitializeComponent();
+            Title = "Character Emote Visualizer";
+            SourceInitialized += Window_SourceInitialized;
+            StateChanged += Window_StateChanged;
+            Closed += Window_Closed;
             character = EnsureCharacterLoaded(sourceCharacter ?? throw new ArgumentNullException(nameof(sourceCharacter)));
             visualizerConfig = CloneConfig(SaveFile.Data.EmoteVisualizer);
             loopAnimations = SaveFile.Data.LoopEmoteVisualizerAnimations;
@@ -147,6 +150,12 @@ namespace OceanyaClient
             ApplySavedWindowState();
             BindViewPresets();
         }
+
+        /// <inheritdoc/>
+        public override string HeaderText => "CHARACTER EMOTE VISUALIZER";
+
+        /// <inheritdoc/>
+        public override bool IsUserResizeEnabled => true;
 
         private static CharacterFolder EnsureCharacterLoaded(CharacterFolder source)
         {
@@ -170,11 +179,15 @@ namespace OceanyaClient
             return source;
         }
 
-        protected override void OnSourceInitialized(EventArgs e)
+        private void Window_SourceInitialized(object? sender, EventArgs e)
         {
-            base.OnSourceInitialized(e);
+            Window? host = HostWindow;
+            if (host == null)
+            {
+                return;
+            }
 
-            IntPtr handle = new WindowInteropHelper(this).Handle;
+            IntPtr handle = new WindowInteropHelper(host).Handle;
             HwndSource? source = HwndSource.FromHwnd(handle);
             source?.AddHook(WndProc);
         }
@@ -242,28 +255,8 @@ namespace OceanyaClient
 
         private void ApplyWorkAreaMaxBounds()
         {
-            WindowChrome? chrome = WindowChrome.GetWindowChrome(this);
-            if (WindowState == WindowState.Maximized)
-            {
-                if (chrome != null)
-                {
-                    chrome.ResizeBorderThickness = new Thickness(0);
-                }
-
-                WindowFrameBorder.BorderThickness = new Thickness(0);
-                WindowFrameBorder.CornerRadius = new CornerRadius(0);
-                return;
-            }
-
             MaxHeight = double.PositiveInfinity;
             MaxWidth = double.PositiveInfinity;
-            if (chrome != null)
-            {
-                chrome.ResizeBorderThickness = new Thickness(6);
-            }
-
-            WindowFrameBorder.BorderThickness = new Thickness(1);
-            WindowFrameBorder.CornerRadius = new CornerRadius(5);
         }
 
         private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -1601,7 +1594,8 @@ namespace OceanyaClient
 
             SaveFile.Save();
             CharacterFolderVisualizerWindow.InvalidateCachedItems();
-            if (Owner is CharacterFolderVisualizerWindow folderWindow)
+            if (Owner is GenericOceanyaWindow hostWindow
+                && hostWindow.BodyContent is CharacterFolderVisualizerWindow folderWindow)
             {
                 _ = folderWindow.ApplyPreviewOverrideForCharacterDirectoryAsync(character.DirectoryPath);
             }
@@ -1795,40 +1789,12 @@ namespace OceanyaClient
             SaveFile.Save();
         }
 
-        private void DragWindow(object sender, MouseButtonEventArgs e)
-        {
-            if (e.OriginalSource is DependencyObject source)
-            {
-                for (DependencyObject? current = source; current != null;)
-                {
-                    if (current.GetType().Name.Contains("Button", StringComparison.Ordinal))
-                    {
-                        return;
-                    }
-
-                    if (current is FrameworkElement element)
-                    {
-                        current = element.Parent ?? element.TemplatedParent as DependencyObject;
-                    }
-                    else
-                    {
-                        break;
-                    }
-                }
-            }
-
-            if (e.ChangedButton == MouseButton.Left)
-            {
-                DragMove();
-            }
-        }
-
         private void CloseButton_Click(object sender, RoutedEventArgs e)
         {
             Close();
         }
 
-        protected override void OnClosed(EventArgs e)
+        private void Window_Closed(object? sender, EventArgs e)
         {
             StopAndClearAnimationPlayers();
             UntrackTableColumnWidth();
@@ -1838,7 +1804,6 @@ namespace OceanyaClient
                 SaveFile.Data.EmoteVisualizerWindowState = CaptureWindowState();
                 SaveFile.Save();
             }
-            base.OnClosed(e);
         }
 
         private static ImageSource CreateTransparentPlaceholderImage()

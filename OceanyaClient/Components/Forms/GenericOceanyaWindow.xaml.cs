@@ -1,6 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -14,6 +15,31 @@ namespace OceanyaClient
     /// </summary>
     public partial class GenericOceanyaWindow : Window
     {
+        /// <summary>
+        /// Shared header height used by the generic shell.
+        /// </summary>
+        public const double SharedHeaderHeight = 30d;
+
+        /// <summary>
+        /// Shared frame border thickness used by the generic shell.
+        /// </summary>
+        public const double SharedFrameBorderThickness = 1d;
+
+        /// <summary>
+        /// Enables Generic Oceanya shared chrome behavior on any <see cref="Window"/> using the shared template.
+        /// </summary>
+        public static readonly DependencyProperty EnableSharedChromeBehaviorProperty = DependencyProperty.RegisterAttached(
+            "EnableSharedChromeBehavior",
+            typeof(bool),
+            typeof(GenericOceanyaWindow),
+            new PropertyMetadata(false, OnEnableSharedChromeBehaviorChanged));
+
+        private static readonly DependencyProperty SharedChromeControllerProperty = DependencyProperty.RegisterAttached(
+            "SharedChromeController",
+            typeof(SharedChromeBehaviorController),
+            typeof(GenericOceanyaWindow),
+            new PropertyMetadata(null));
+
         /// <summary>
         /// Header text shown in the top bar.
         /// </summary>
@@ -39,7 +65,7 @@ namespace OceanyaClient
             nameof(BodyMargin),
             typeof(Thickness),
             typeof(GenericOceanyaWindow),
-            new PropertyMetadata(new Thickness(10)));
+            new PropertyMetadata(new Thickness(0)));
 
         /// <summary>
         /// Controls whether the user can resize this window. Enabled by default.
@@ -142,11 +168,49 @@ namespace OceanyaClient
             set => SetValue(IsCloseButtonVisibleProperty, value);
         }
 
+        /// <summary>
+        /// Gets a value indicating whether Generic Oceanya shared chrome behavior is enabled on a window.
+        /// </summary>
+        public static bool GetEnableSharedChromeBehavior(DependencyObject dependencyObject)
+        {
+            return (bool)dependencyObject.GetValue(EnableSharedChromeBehaviorProperty);
+        }
+
+        /// <summary>
+        /// Sets a value indicating whether Generic Oceanya shared chrome behavior is enabled on a window.
+        /// </summary>
+        public static void SetEnableSharedChromeBehavior(DependencyObject dependencyObject, bool value)
+        {
+            dependencyObject.SetValue(EnableSharedChromeBehaviorProperty, value);
+        }
+
         private static void OnWindowInteractionSettingsChanged(DependencyObject dependencyObject, DependencyPropertyChangedEventArgs e)
         {
             if (dependencyObject is GenericOceanyaWindow window)
             {
                 window.ApplyInteractionSettings();
+            }
+        }
+
+        private static void OnEnableSharedChromeBehaviorChanged(DependencyObject dependencyObject, DependencyPropertyChangedEventArgs e)
+        {
+            if (dependencyObject is not Window window || window is GenericOceanyaWindow)
+            {
+                return;
+            }
+
+            if ((bool)e.NewValue)
+            {
+                SharedChromeBehaviorController controller = new SharedChromeBehaviorController(window);
+                window.SetValue(SharedChromeControllerProperty, controller);
+                controller.Attach();
+                return;
+            }
+
+            if (window.GetValue(SharedChromeControllerProperty) is SharedChromeBehaviorController existingController)
+            {
+                existingController.Detach();
+                window.ClearValue(SharedChromeControllerProperty);
             }
         }
 
@@ -375,6 +439,184 @@ namespace OceanyaClient
             public GenericRect rcMonitor;
             public GenericRect rcWork;
             public int dwFlags;
+        }
+
+        private sealed class SharedChromeBehaviorController
+        {
+            private readonly Window window;
+            private Border? headerDragSurface;
+            private FrameworkElement? headerGrid;
+            private FrameworkElement? oceanyaLogoRectangle;
+            private FrameworkElement? laboratoriesLogoRectangle;
+            private FrameworkElement? headerTitleTextBlock;
+            private Button? closeButton;
+            private bool isHookAttached;
+
+            public SharedChromeBehaviorController(Window window)
+            {
+                this.window = window;
+            }
+
+            public void Attach()
+            {
+                window.Loaded += Window_Loaded;
+                window.Closed += Window_Closed;
+                window.SizeChanged += Window_SizeChanged;
+                window.StateChanged += Window_StateChanged;
+                window.SourceInitialized += Window_SourceInitialized;
+                ResolveTemplateParts();
+                UpdateHeaderCollisionOpacity();
+            }
+
+            public void Detach()
+            {
+                window.Loaded -= Window_Loaded;
+                window.Closed -= Window_Closed;
+                window.SizeChanged -= Window_SizeChanged;
+                window.StateChanged -= Window_StateChanged;
+                window.SourceInitialized -= Window_SourceInitialized;
+
+                if (headerDragSurface != null)
+                {
+                    headerDragSurface.MouseLeftButtonDown -= HeaderDragSurface_MouseLeftButtonDown;
+                }
+
+            }
+
+            private void Window_Loaded(object sender, RoutedEventArgs e)
+            {
+                ResolveTemplateParts();
+                UpdateHeaderCollisionOpacity();
+            }
+
+            private void Window_Closed(object? sender, EventArgs e)
+            {
+                Detach();
+            }
+
+            private void Window_SizeChanged(object sender, SizeChangedEventArgs e)
+            {
+                UpdateHeaderCollisionOpacity();
+            }
+
+            private void Window_StateChanged(object? sender, EventArgs e)
+            {
+                UpdateHeaderCollisionOpacity();
+            }
+
+            private void Window_SourceInitialized(object? sender, EventArgs e)
+            {
+                if (isHookAttached)
+                {
+                    return;
+                }
+
+                IntPtr handle = new WindowInteropHelper(window).Handle;
+                HwndSource? source = HwndSource.FromHwnd(handle);
+                source?.AddHook(WndProc);
+                isHookAttached = true;
+            }
+
+            private void ResolveTemplateParts()
+            {
+                if (window.Template == null)
+                {
+                    return;
+                }
+
+                headerDragSurface = window.Template.FindName("HeaderDragSurface", window) as Border;
+                headerGrid = window.Template.FindName("HeaderGrid", window) as FrameworkElement;
+                oceanyaLogoRectangle = window.Template.FindName("OceanyaLogoRectangle", window) as FrameworkElement;
+                laboratoriesLogoRectangle = window.Template.FindName("LaboratoriesLogoRectangle", window) as FrameworkElement;
+                headerTitleTextBlock = window.Template.FindName("HeaderTitleTextBlock", window) as FrameworkElement;
+                closeButton = window.Template.FindName("CloseButton", window) as Button;
+
+                if (headerDragSurface != null)
+                {
+                    headerDragSurface.MouseLeftButtonDown -= HeaderDragSurface_MouseLeftButtonDown;
+                    headerDragSurface.MouseLeftButtonDown += HeaderDragSurface_MouseLeftButtonDown;
+                }
+
+            }
+
+            private void HeaderDragSurface_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+            {
+                if (e.LeftButton != MouseButtonState.Pressed)
+                {
+                    return;
+                }
+
+                if (e.OriginalSource is DependencyObject source)
+                {
+                    for (DependencyObject? current = source; current != null;)
+                    {
+                        if (current.GetType().Name.Contains("Button", StringComparison.Ordinal))
+                        {
+                            return;
+                        }
+
+                        if (current is FrameworkElement element)
+                        {
+                            current = element.Parent ?? element.TemplatedParent as DependencyObject;
+                        }
+                        else
+                        {
+                            break;
+                        }
+                    }
+                }
+
+                window.DragMove();
+            }
+
+            private void UpdateHeaderCollisionOpacity()
+            {
+                if (!window.IsLoaded
+                    || headerGrid == null
+                    || oceanyaLogoRectangle == null
+                    || laboratoriesLogoRectangle == null
+                    || headerTitleTextBlock == null
+                    || closeButton == null)
+                {
+                    return;
+                }
+
+                Rect oceanyaBounds = GetBoundsInHeader(oceanyaLogoRectangle);
+                Rect laboratoriesBounds = GetBoundsInHeader(laboratoriesLogoRectangle);
+                Rect titleBounds = GetBoundsInHeader(headerTitleTextBlock);
+                Rect closeBounds = GetBoundsInHeader(closeButton);
+
+                bool hideTitle = Intersects(titleBounds, oceanyaBounds) || Intersects(titleBounds, laboratoriesBounds);
+                bool hideLaboratoriesLogo = Intersects(laboratoriesBounds, closeBounds);
+                bool hideOceanyaLogo = Intersects(oceanyaBounds, closeBounds);
+
+                FadeElementTo(headerTitleTextBlock, hideTitle ? 0 : 1);
+                FadeElementTo(laboratoriesLogoRectangle, hideLaboratoriesLogo ? 0 : 1);
+                FadeElementTo(oceanyaLogoRectangle, hideOceanyaLogo ? 0 : 1);
+            }
+
+            private Rect GetBoundsInHeader(FrameworkElement element)
+            {
+                if (headerGrid == null || element.ActualWidth <= 0 || element.ActualHeight <= 0 || !element.IsVisible)
+                {
+                    return Rect.Empty;
+                }
+
+                GeneralTransform transform = element.TransformToAncestor(headerGrid);
+                return transform.TransformBounds(new Rect(0, 0, element.ActualWidth, element.ActualHeight));
+            }
+
+            private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+            {
+                const int WM_GETMINMAXINFO = 0x0024;
+                if (msg == WM_GETMINMAXINFO)
+                {
+                    WmGetMinMaxInfo(hwnd, lParam);
+                    handled = true;
+                }
+
+                return IntPtr.Zero;
+            }
         }
     }
 }

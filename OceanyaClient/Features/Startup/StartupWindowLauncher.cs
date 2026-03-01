@@ -12,32 +12,31 @@ namespace OceanyaClient.Features.Startup
         {
             StartupFunctionalityOption selected = StartupFunctionalityCatalog.GetByIdOrDefault(functionalityId);
             Window startupWindow;
+            IStartupFunctionalityWindow? startupFunctionalityWindow = null;
             if (selected.Id == StartupFunctionalityIds.CharacterDatabaseViewer)
             {
-                startupWindow = new CharacterFolderVisualizerWindow(onAssetsRefreshed: null);
+                CharacterFolderVisualizerWindow content = new CharacterFolderVisualizerWindow(onAssetsRefreshed: null);
+                startupFunctionalityWindow = content;
+                startupWindow = OceanyaWindowManager.CreateWindow(content);
             }
             else if (selected.Id == StartupFunctionalityIds.CharacterFileCreator)
             {
-                startupWindow = new AOCharacterFileCreatorWindow();
-            }
-            else if (selected.Id == StartupFunctionalityIds.EmptyWindowTemp)
-            {
-                startupWindow = new GenericOceanyaWindow
-                {
-                    Title = "Empty Window (temp)",
-                    HeaderText = "Empty Window (temp)"
-                };
+                AOCharacterFileCreatorWindow content = new AOCharacterFileCreatorWindow();
+                startupFunctionalityWindow = content;
+                startupWindow = OceanyaWindowManager.CreateWindow(content);
             }
             else
             {
-                startupWindow = new MainWindow();
+                MainWindow content = new MainWindow();
+                startupFunctionalityWindow = content;
+                startupWindow = OceanyaWindowManager.CreateWindow(content);
             }
 
             if (onFunctionalityReady != null)
             {
-                if (startupWindow is IStartupFunctionalityWindow notifyReady)
+                if (startupFunctionalityWindow != null)
                 {
-                    notifyReady.FinishedLoading += onFunctionalityReady;
+                    startupFunctionalityWindow.FinishedLoading += onFunctionalityReady;
                 }
                 else
                 {
