@@ -3259,6 +3259,8 @@ namespace OceanyaClient
         private void Window_Closed(object? sender, EventArgs e)
         {
             progressiveImageLoadCancellation?.Cancel();
+            progressiveImageLoadCancellation?.Dispose();
+            progressiveImageLoadCancellation = null;
             progressiveLoadReprioritizeTimer.Stop();
             if (folderListScrollViewer != null)
             {
@@ -3266,6 +3268,13 @@ namespace OceanyaClient
                 folderListScrollViewer = null;
             }
             tagSaveDebounceTimer.Stop();
+            foreach (FolderVisualizerItem item in allItems)
+            {
+                item.IconImage = FallbackFolderImage;
+                item.PreviewImage = FallbackFolderImage;
+            }
+            allItems.Clear();
+            FolderListView.ItemsSource = null;
             UntrackTableColumnWidth();
             PersistVisualizerConfig();
             PersistTagState(saveToDisk: true);

@@ -1,7 +1,9 @@
 using System;
 using System.ComponentModel;
+using System.Runtime;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Media;
 
 namespace OceanyaClient
@@ -391,6 +393,8 @@ namespace OceanyaClient
         private void HostWindow_Closed(object? sender, EventArgs e)
         {
             Closed?.Invoke(sender, e);
+            ReleaseVisualResourcesForHostClose(this);
+            ForceManagedCleanupAfterClose();
         }
 
         private OceanyaWindowPresentationOptions BuildDefaultPresentationOptions(bool modal)
@@ -430,6 +434,63 @@ namespace OceanyaClient
         public static implicit operator Window?(OceanyaWindowContentControl? control)
         {
             return control?.HostWindow;
+        }
+
+        private static void ReleaseVisualResourcesForHostClose(DependencyObject root)
+        {
+            try
+            {
+                if (root is ItemsControl itemsControl)
+                {
+                    BindingOperations.ClearBinding(itemsControl, ItemsControl.ItemsSourceProperty);
+                    itemsControl.ItemsSource = null;
+                }
+
+                if (root is Image image)
+                {
+                    image.Source = null;
+                }
+
+                if (root is Border border && border.Background is ImageBrush imageBrush)
+                {
+                    imageBrush.ImageSource = null;
+                }
+
+                if (root is Panel panel)
+                {
+                    for (int i = 0; i < panel.Children.Count; i++)
+                    {
+                        ReleaseVisualResourcesForHostClose(panel.Children[i]);
+                    }
+
+                    return;
+                }
+
+                int childCount = VisualTreeHelper.GetChildrenCount(root);
+                for (int i = 0; i < childCount; i++)
+                {
+                    ReleaseVisualResourcesForHostClose(VisualTreeHelper.GetChild(root, i));
+                }
+            }
+            catch
+            {
+                // Best effort cleanup on close; never throw from host close path.
+            }
+        }
+
+        private static void ForceManagedCleanupAfterClose()
+        {
+            try
+            {
+                GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+            }
+            catch
+            {
+                // Best effort only.
+            }
         }
     }
 

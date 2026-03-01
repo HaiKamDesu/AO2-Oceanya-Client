@@ -31,7 +31,6 @@ namespace OceanyaClient
         private const double MinimumWindowWidth = 900;
         private const double MinimumWindowHeight = 560;
         private const int ViewportAnimationRetentionRows = 6;
-        private const int MaxViewportAutoplayItems = 2;
         private const int ViewportResidencyRefreshDebounceMilliseconds = 45;
         private const string FallbackFolderPackUri =
             "pack://application:,,,/OceanyaClient;component/Resources/Buttons/smallFolder.png";
@@ -336,6 +335,8 @@ namespace OceanyaClient
                 allItems.AddRange(BuildEmoteItems(character));
                 integrityReport = await Task.Run(() => CharacterIntegrityVerifier.RunAndPersist(character));
                 ApplyIntegrityReportToEmoteItems();
+                WaitForm.SetSubtitle("Loading emote images...");
+                await PreloadAllEmoteImagesAsync();
 
                 itemsView = null;
                 SummaryText.Text = $"{character.Name} - Emotes indexed: {allItems.Count}";
@@ -1160,6 +1161,65 @@ namespace OceanyaClient
                 FallbackImage);
         }
 
+        private async Task PreloadAllEmoteImagesAsync()
+        {
+            List<EmoteVisualizerItem> snapshot = allItems.ToList();
+            if (snapshot.Count == 0)
+            {
+                return;
+            }
+
+            List<PreloadedEmoteImageData> loaded = await Task.Run(() =>
+            {
+                List<PreloadedEmoteImageData> data = new List<PreloadedEmoteImageData>(snapshot.Count);
+                for (int i = 0; i < snapshot.Count; i++)
+                {
+                    EmoteVisualizerItem item = snapshot[i];
+                    ImageSource iconImage = LoadImage(item.IconPath, decodePixelWidth: 0);
+                    string iconDimensions = GetImageDimensionsText(item.IconPath);
+                    string preDimensions = item.HasPreAnimation
+                        ? GetImageDimensionsText(item.PreAnimationPath)
+                        : "No preanim";
+                    string animationDimensions = GetImageDimensionsText(item.AnimationPath);
+                    ImageSource preImage = item.HasPreAnimation
+                        ? LoadImage(item.PreAnimationPath, decodePixelWidth: 0)
+                        : TransparentImage;
+                    ImageSource animationImage = LoadImage(item.AnimationPath, decodePixelWidth: 0);
+                    data.Add(new PreloadedEmoteImageData(
+                        item.Id,
+                        iconImage,
+                        preImage,
+                        animationImage,
+                        iconDimensions,
+                        preDimensions,
+                        animationDimensions));
+                }
+
+                return data;
+            });
+
+            Dictionary<int, EmoteVisualizerItem> itemsById = allItems.ToDictionary(item => item.Id);
+            for (int i = 0; i < loaded.Count; i++)
+            {
+                PreloadedEmoteImageData entry = loaded[i];
+                if (itemsById.TryGetValue(entry.Id, out EmoteVisualizerItem? target))
+                {
+                    target.IconImage = entry.IconImage;
+                    target.IconDimensions = entry.IconDimensions;
+                    target.PreAnimationDimensions = entry.PreAnimationDimensions;
+                    target.AnimationDimensions = entry.AnimationDimensions;
+                    target.PreAnimationImage = entry.PreAnimationImage;
+                    target.AnimationImage = entry.AnimationImage;
+                }
+
+                if ((i + 1) % 8 == 0 || i == loaded.Count - 1)
+                {
+                    WaitForm.SetSubtitle($"Loading emote images... {i + 1}/{loaded.Count}");
+                    await Dispatcher.Yield(DispatcherPriority.Background);
+                }
+            }
+        }
+
         private void StopAndClearAnimationPlayers()
         {
             foreach (EmoteVisualizerItem item in allItems)
@@ -1240,35 +1300,19 @@ namespace OceanyaClient
                 retainedViewportEmoteIds.Add(id);
             }
 
-            List<EmoteVisualizerItem> visibleItems = GetVisibleItemsOrderedTopToBottom();
-            HashSet<int> visibleIds = visibleItems.Select(item => item.Id).ToHashSet();
-            int? selectedId = (EmoteListView.SelectedItem as EmoteVisualizerItem)?.Id;
-            HashSet<int> autoplayIds = BuildViewportAutoplayItemIds(visibleItems, selectedId, MaxViewportAutoplayItems);
             foreach (EmoteVisualizerItem item in allItems)
             {
                 if (retainedIds.Contains(item.Id))
                 {
-                    if (autoplayIds.Contains(item.Id) && visibleIds.Contains(item.Id))
-                    {
-                        bool includePreAnimation = selectedId.HasValue && selectedId.Value == item.Id;
-                        EnsureAnimationPlayersForItem(item, includePreAnimation);
-                    }
-                    else
-                    {
-                        StopAnimationPlayer(item, isPreAnimation: true);
-                        StopAnimationPlayer(item, isPreAnimation: false);
-                    }
-
+                    EnsureAnimationPlayersForItem(item, includePreAnimation: true);
                     continue;
                 }
 
                 StopAnimationPlayer(item, isPreAnimation: true);
                 StopAnimationPlayer(item, isPreAnimation: false);
-                item.PreAnimationImage = item.HasPreAnimation ? FallbackImage : TransparentImage;
-                item.AnimationImage = FallbackImage;
             }
 
-            StartViewportPreviewLoading(retainedItems, retainedIds);
+            // Images are fully preloaded at startup; residency only controls animation player lifetime.
         }
 
         private void StartViewportPreviewLoading(
@@ -2196,6 +2240,35 @@ namespace OceanyaClient
         internal void ReleaseTransientResourcesForTests(bool clearItems)
         {
             ReleaseTransientResources(clearItems);
+        }
+
+        private readonly struct PreloadedEmoteImageData
+        {
+            public PreloadedEmoteImageData(
+                int id,
+                ImageSource iconImage,
+                ImageSource preAnimationImage,
+                ImageSource animationImage,
+                string iconDimensions,
+                string preAnimationDimensions,
+                string animationDimensions)
+            {
+                Id = id;
+                IconImage = iconImage;
+                PreAnimationImage = preAnimationImage;
+                AnimationImage = animationImage;
+                IconDimensions = iconDimensions;
+                PreAnimationDimensions = preAnimationDimensions;
+                AnimationDimensions = animationDimensions;
+            }
+
+            public int Id { get; }
+            public ImageSource IconImage { get; }
+            public ImageSource PreAnimationImage { get; }
+            public ImageSource AnimationImage { get; }
+            public string IconDimensions { get; }
+            public string PreAnimationDimensions { get; }
+            public string AnimationDimensions { get; }
         }
 
         private static ImageSource CreateTransparentPlaceholderImage()

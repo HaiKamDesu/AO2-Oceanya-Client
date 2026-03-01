@@ -155,6 +155,42 @@ namespace UnitTests
             window.Close();
         }
 
+        [Test]
+        public void ReleaseTransientResourcesForTests_AllowsLargePreviewBitmapsToBeCollected()
+        {
+            CharacterFolder folder = BuildCharacterFolderWithEmotes();
+            CharacterEmoteVisualizerWindow window = new CharacterEmoteVisualizerWindow(folder);
+            List<EmoteVisualizerItem> items = new List<EmoteVisualizerItem>();
+            List<WeakReference> imageRefs = new List<WeakReference>();
+            for (int i = 0; i < 10; i++)
+            {
+                ImageSource icon = CreateLargeBitmap(1600, 900);
+                ImageSource pre = CreateLargeBitmap(1600, 900);
+                ImageSource anim = CreateLargeBitmap(1600, 900);
+                imageRefs.Add(new WeakReference(icon));
+                imageRefs.Add(new WeakReference(pre));
+                imageRefs.Add(new WeakReference(anim));
+                items.Add(new EmoteVisualizerItem
+                {
+                    Id = i + 1,
+                    HasPreAnimation = true,
+                    IconImage = icon,
+                    PreAnimationImage = pre,
+                    AnimationImage = anim
+                });
+            }
+
+            window.SetEmoteItemsForTests(items);
+            window.ReleaseTransientResourcesForTests(clearItems: true);
+            items = new List<EmoteVisualizerItem>();
+            ForceFullCollection();
+
+            Assert.That(window.EmoteItems.Count, Is.EqualTo(0));
+            int aliveCount = imageRefs.Count(reference => reference.IsAlive);
+            Assert.That(aliveCount, Is.LessThan(imageRefs.Count / 3));
+            window.Close();
+        }
+
         private CharacterFolder BuildCharacterFolderWithEmotes()
         {
             string characterDirectory = Path.Combine(tempRoot, "characters", "Apollo");
@@ -201,6 +237,31 @@ namespace UnitTests
             PngBitmapEncoder encoder = new PngBitmapEncoder();
             encoder.Frames.Add(BitmapFrame.Create(bitmap));
             encoder.Save(stream);
+        }
+
+        private static ImageSource CreateLargeBitmap(int width, int height)
+        {
+            WriteableBitmap bitmap = new WriteableBitmap(width, height, 96, 96, PixelFormats.Bgra32, null);
+            int stride = width * 4;
+            byte[] pixels = new byte[stride * height];
+            for (int i = 0; i < pixels.Length; i += 4)
+            {
+                pixels[i] = 5;
+                pixels[i + 1] = 20;
+                pixels[i + 2] = 80;
+                pixels[i + 3] = 255;
+            }
+
+            bitmap.WritePixels(new Int32Rect(0, 0, width, height), pixels, stride, 0);
+            bitmap.Freeze();
+            return bitmap;
+        }
+
+        private static void ForceFullCollection()
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
         }
 
         private sealed class TestAnimationPlayer : IAnimationPlayer

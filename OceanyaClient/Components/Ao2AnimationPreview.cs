@@ -990,6 +990,9 @@ namespace OceanyaClient
         {
             StopPlayback();
             FrameChanged = null;
+            frames.Clear();
+            frameDurations.Clear();
+            frameIndex = 0;
         }
 
         private void StartPlayback()
@@ -1177,6 +1180,9 @@ namespace OceanyaClient
             StopPlayback();
             gifImage.Dispose();
             FrameChanged = null;
+            frames.Clear();
+            frameDurations.Clear();
+            frameIndex = 0;
         }
 
         private void StartPlayback()
