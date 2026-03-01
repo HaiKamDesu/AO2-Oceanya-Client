@@ -32,6 +32,8 @@ namespace OceanyaClient
             "pack://application:,,,/OceanyaClient;component/Resources/Buttons/smallFolder.png";
         private const double DefaultFrameDelayMilliseconds = 100d;
         private const int StaticPreviewCacheEntryLimit = 256;
+        private const int MaxAnimatedPreviewDimension = 360;
+        private const int MaxAnimatedPreviewFrames = 180;
 
         private static readonly ImageSource FallbackImage = LoadEmbeddedFallback();
         private static readonly object StaticPreviewCacheLock = new object();
@@ -466,14 +468,49 @@ namespace OceanyaClient
                     return false;
                 }
 
-                List<BitmapSource> decodedFrames = new List<BitmapSource>(source.Count);
-                List<TimeSpan> decodedDurations = new List<TimeSpan>(source.Count);
-                foreach (MagickImage image in source)
+                List<int> selectedFrameIndices = BuildSelectedFrameIndices(source.Count, MaxAnimatedPreviewFrames);
+                if (selectedFrameIndices.Count == 0)
                 {
-                    int width = Math.Max(1, (int)image.Width);
-                    int height = Math.Max(1, (int)image.Height);
+                    return false;
+                }
+
+                List<BitmapSource> decodedFrames = new List<BitmapSource>(selectedFrameIndices.Count);
+                List<TimeSpan> decodedDurations = new List<TimeSpan>(selectedFrameIndices.Count);
+                for (int i = 0; i < selectedFrameIndices.Count; i++)
+                {
+                    int selectedIndex = selectedFrameIndices[i];
+                    int nextSelectedIndexExclusive = i + 1 < selectedFrameIndices.Count
+                        ? selectedFrameIndices[i + 1]
+                        : source.Count;
+
+                    TimeSpan sampledDuration = TimeSpan.Zero;
+                    for (int sourceIndex = selectedIndex; sourceIndex < nextSelectedIndexExclusive; sourceIndex++)
+                    {
+                        sampledDuration += ReadMagickDelay(source[sourceIndex]);
+                    }
+
+                    if (sampledDuration <= TimeSpan.Zero)
+                    {
+                        sampledDuration = TimeSpan.FromMilliseconds(DefaultFrameDelayMilliseconds);
+                    }
+
+                    using MagickImage frameImage = (MagickImage)source[selectedIndex].Clone();
+                    int sourceWidth = Math.Max(1, (int)frameImage.Width);
+                    int sourceHeight = Math.Max(1, (int)frameImage.Height);
+                    (int targetWidth, int targetHeight) = ComputePreviewDimensions(
+                        sourceWidth,
+                        sourceHeight,
+                        MaxAnimatedPreviewDimension);
+                    if (targetWidth != sourceWidth || targetHeight != sourceHeight)
+                    {
+                        frameImage.FilterType = FilterType.Triangle;
+                        frameImage.Resize((uint)targetWidth, (uint)targetHeight);
+                    }
+
+                    int width = Math.Max(1, (int)frameImage.Width);
+                    int height = Math.Max(1, (int)frameImage.Height);
                     int stride = width * 4;
-                    byte[]? pixels = image.GetPixels().ToByteArray(PixelMapping.BGRA);
+                    byte[]? pixels = frameImage.GetPixels().ToByteArray(PixelMapping.BGRA);
                     if (pixels == null || pixels.Length == 0)
                     {
                         continue;
@@ -489,12 +526,12 @@ namespace OceanyaClient
                         pixels,
                         stride);
                     decodedFrames.Add(NormalizeBitmapForUi(frame));
-                    decodedDurations.Add(ReadMagickDelay(image));
+                    decodedDurations.Add(sampledDuration);
                 }
 
                 frames = decodedFrames;
                 frameDurations = decodedDurations;
-                return decodedFrames.Count > 0;
+                return decodedFrames.Count > 0 && decodedFrames.Count == decodedDurations.Count;
             }
             catch
             {
@@ -502,7 +539,52 @@ namespace OceanyaClient
             }
         }
 
-        private static TimeSpan ReadMagickDelay(MagickImage image)
+        private static List<int> BuildSelectedFrameIndices(int sourceFrameCount, int maxFrames)
+        {
+            int safeFrameCount = Math.Max(0, sourceFrameCount);
+            int safeMaxFrames = Math.Max(1, maxFrames);
+            if (safeFrameCount <= safeMaxFrames)
+            {
+                return Enumerable.Range(0, safeFrameCount).ToList();
+            }
+
+            List<int> selected = new List<int>(safeMaxFrames);
+            double stride = safeFrameCount / (double)safeMaxFrames;
+            for (int i = 0; i < safeMaxFrames; i++)
+            {
+                int sourceIndex = Math.Min(safeFrameCount - 1, (int)Math.Round(i * stride));
+                if (selected.Count == 0 || selected[selected.Count - 1] != sourceIndex)
+                {
+                    selected.Add(sourceIndex);
+                }
+            }
+
+            if (selected.Count == 0 || selected[selected.Count - 1] != safeFrameCount - 1)
+            {
+                selected.Add(safeFrameCount - 1);
+            }
+
+            return selected;
+        }
+
+        private static (int width, int height) ComputePreviewDimensions(int sourceWidth, int sourceHeight, int maxDimension)
+        {
+            int safeWidth = Math.Max(1, sourceWidth);
+            int safeHeight = Math.Max(1, sourceHeight);
+            int largestSide = Math.Max(safeWidth, safeHeight);
+            int safeMaxDimension = Math.Max(1, maxDimension);
+            if (largestSide <= safeMaxDimension)
+            {
+                return (safeWidth, safeHeight);
+            }
+
+            double scale = safeMaxDimension / (double)largestSide;
+            int width = Math.Max(1, (int)Math.Round(safeWidth * scale));
+            int height = Math.Max(1, (int)Math.Round(safeHeight * scale));
+            return (width, height);
+        }
+
+        private static TimeSpan ReadMagickDelay(IMagickImage<byte> image)
         {
             int ticksPerSecond = (int)image.AnimationTicksPerSecond;
             if (ticksPerSecond <= 0)

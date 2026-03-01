@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Windows;
@@ -187,6 +188,39 @@ namespace UnitTests
             Assert.DoesNotThrow(() => safeViewModeCombo.SelectedItem = normalPreset);
             Assert.That(safeFolderListView.View, Is.Null, "Icon mode should not use GridView.");
             Assert.That(safeFolderListView.ItemTemplate, Is.Not.Null, "Icon mode should use tile DataTemplate.");
+
+            window.Close();
+        }
+
+        [Test]
+        public void ViewModeCombo_NullSelection_DoesNotResetSavedPreset()
+        {
+            BuildCharacterFolder(
+                name: "Gumshoe",
+                createCharIcon: true,
+                createIdleSprite: true,
+                out _,
+                out _);
+            RefreshCharactersFromTempRoot();
+
+            CharacterFolderVisualizerWindow window = new CharacterFolderVisualizerWindow(null);
+            window.LoadCharacterItemsForTests();
+
+            ComboBox? viewModeCombo = window.FindName("ViewModeCombo") as ComboBox;
+            Assert.That(viewModeCombo, Is.Not.Null);
+            ComboBox safeViewModeCombo = viewModeCombo!;
+
+            FolderVisualizerViewPreset? gridPreset = safeViewModeCombo.Items
+                .OfType<FolderVisualizerViewPreset>()
+                .FirstOrDefault(preset => preset.Mode == FolderVisualizerLayoutMode.Normal);
+            Assert.That(gridPreset, Is.Not.Null);
+
+            safeViewModeCombo.SelectedItem = gridPreset;
+            Assert.That(SaveFile.Data.FolderVisualizer.SelectedPresetId, Is.EqualTo(gridPreset!.Id));
+
+            safeViewModeCombo.SelectedItem = null;
+            Assert.That(SaveFile.Data.FolderVisualizer.SelectedPresetId, Is.EqualTo(gridPreset.Id));
+            Assert.That(SaveFile.Data.FolderVisualizer.SelectedPresetName, Is.EqualTo(gridPreset.Name));
 
             window.Close();
         }

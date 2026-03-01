@@ -42,14 +42,8 @@ namespace OceanyaClient
         private const int FolderTagCacheVersion = 1;
         private const string UntaggedFilterToken = "(none)";
         private const int ViewportRetentionRows = 8;
-        private static readonly bool EnablePreviewDebugLog = true;
         private static readonly JsonSerializerOptions CacheJsonOptions = new JsonSerializerOptions { WriteIndented = false };
         private static readonly JsonSerializerOptions FolderTagCacheJsonOptions = new JsonSerializerOptions { WriteIndented = true };
-        private static readonly string PreviewDebugLogPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "OceanyaClient",
-            "debug",
-            "folder_preview_debug.log");
 
         private static string diskCacheFilePath = string.Empty;
         private static bool diskCachePathInitialized;
@@ -242,7 +236,6 @@ namespace OceanyaClient
             UpdateActiveTagFiltersText();
             RefreshSelectedFolderTagPanel();
             BindViewPresets();
-            InitializePreviewDebugLog();
         }
 
         /// <inheritdoc/>
@@ -267,8 +260,6 @@ namespace OceanyaClient
         private async void Window_Loaded(object sender, RoutedEventArgs e)
         {
             ApplyWorkAreaMaxBounds();
-            LogPreviewDebug("CharacterFolderVisualizer window loaded.");
-
             if (hasLoaded)
             {
                 return;
@@ -869,7 +860,7 @@ namespace OceanyaClient
 
         private async void ViewModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (suppressViewSelectionChanged)
+            if (suppressViewSelectionChanged || ViewModeCombo.SelectedItem is not FolderVisualizerViewPreset)
             {
                 return;
             }
@@ -885,12 +876,6 @@ namespace OceanyaClient
             }
 
             FolderVisualizerViewPreset? selectedPreset = ViewModeCombo.SelectedItem as FolderVisualizerViewPreset;
-            if (selectedPreset == null && visualizerConfig.Presets.Count > 0)
-            {
-                selectedPreset = visualizerConfig.Presets[0];
-                ViewModeCombo.SelectedItem = selectedPreset;
-            }
-
             if (selectedPreset == null)
             {
                 return;
@@ -3750,16 +3735,10 @@ namespace OceanyaClient
         private ImageSource LoadImage(string path, int decodePixelWidth)
         {
             string normalizedPath = path?.Trim() ?? string.Empty;
-            Stopwatch stopwatch = Stopwatch.StartNew();
             ImageSource image = Ao2AnimationPreview.LoadStaticPreviewImage(
                 normalizedPath,
                 decodePixelWidth,
                 FallbackFolderImage);
-            if (stopwatch.ElapsedMilliseconds > 120)
-            {
-                string extension = Path.GetExtension(normalizedPath).ToLowerInvariant();
-                LogPreviewDebug($"Slow image load: {stopwatch.ElapsedMilliseconds}ms ext={extension} path='{normalizedPath}'");
-            }
 
             return image;
         }
@@ -3786,7 +3765,6 @@ namespace OceanyaClient
                     }
 
                     FolderVisualizerItem item = snapshot[i];
-                    Stopwatch itemStopwatch = Stopwatch.StartNew();
                     ImageSource iconImage = LoadImage(item.IconPath, 48);
                     ImageSource previewImage = LoadImage(item.PreviewPath, 220);
 
@@ -3806,8 +3784,6 @@ namespace OceanyaClient
                         item.IconImage = iconImage;
                         item.PreviewImage = previewImage;
                     }, DispatcherPriority.Background, cancellationToken);
-                    LogPreviewDebug($"Loaded item '{item.Name}' in {itemStopwatch.ElapsedMilliseconds}ms");
-
                     if ((i + 1) % 24 == 0)
                     {
                         await Task.Delay(1, cancellationToken);
@@ -3899,61 +3875,6 @@ namespace OceanyaClient
                 {
                     progressiveLoadedItemKeys.Remove(key);
                 }
-            }
-        }
-
-        private static void LogPreviewDebug(string message)
-        {
-            if (!EnablePreviewDebugLog)
-            {
-                return;
-            }
-
-            try
-            {
-                string? directory = Path.GetDirectoryName(PreviewDebugLogPath);
-                if (!string.IsNullOrWhiteSpace(directory))
-                {
-                    Directory.CreateDirectory(directory);
-                }
-
-                string line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [T{Environment.CurrentManagedThreadId}] {message}";
-                File.AppendAllText(PreviewDebugLogPath, line + Environment.NewLine);
-            }
-            catch
-            {
-                // ignored
-            }
-        }
-
-        private static void InitializePreviewDebugLog()
-        {
-            if (!EnablePreviewDebugLog)
-            {
-                return;
-            }
-
-            try
-            {
-                string? directory = Path.GetDirectoryName(PreviewDebugLogPath);
-                if (!string.IsNullOrWhiteSpace(directory))
-                {
-                    Directory.CreateDirectory(directory);
-                }
-
-                FileInfo info = new FileInfo(PreviewDebugLogPath);
-                if (info.Exists && info.Length > 1_500_000)
-                {
-                    info.Delete();
-                }
-
-                File.AppendAllText(
-                    PreviewDebugLogPath,
-                    $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [T{Environment.CurrentManagedThreadId}] --- session start ---{Environment.NewLine}");
-            }
-            catch
-            {
-                // ignored
             }
         }
 

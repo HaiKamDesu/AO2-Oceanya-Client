@@ -20,6 +20,21 @@ namespace UnitTests
         private const int Iterations = 50;
 
         [Test]
+        public void Akechi_Normal_And_Happy_Webp_ShouldCreatePlayers_WithTransparentFrames()
+        {
+            string? normalPath = ResolveAkechiAssetPath("Normal.webp");
+            string? happyPath = ResolveAkechiAssetPath("Happy.webp");
+            if (normalPath == null || happyPath == null)
+            {
+                Assert.Ignore("Akechi Normal.webp/Happy.webp were not found on this machine.");
+                return;
+            }
+
+            AssertWebpPreviewFrameLooksValid(normalPath, requireAnimationPlayer: true);
+            AssertWebpPreviewFrameLooksValid(happyPath, requireAnimationPlayer: false);
+        }
+
+        [Test]
         [Explicit("Temporary diagnostics for Akechi WebP/APNG transparency behavior.")]
         public void Diagnose_Akechi_Normal_And_Happy_Webp_RenderingConsistency()
         {
@@ -44,6 +59,55 @@ namespace UnitTests
             TestContext.WriteLine($"Akechi diagnostics report: {reportPath}");
 
             Assert.Pass($"Diagnostics generated at: {reportPath}");
+        }
+
+        private static void AssertWebpPreviewFrameLooksValid(string path, bool requireAnimationPlayer)
+        {
+            bool created = Ao2AnimationPreview.TryCreateAnimationPlayer(path, loop: true, out IAnimationPlayer? player);
+            if (requireAnimationPlayer)
+            {
+                Assert.That(created, Is.True, $"Expected animation player creation for '{path}'.");
+                Assert.That(player, Is.Not.Null, $"Expected non-null animation player for '{path}'.");
+            }
+
+            if (created && player != null)
+            {
+                try
+                {
+                    AssertTransparentNonBlackFrame(player.CurrentFrame, path);
+                    return;
+                }
+                finally
+                {
+                    player.Stop();
+                }
+            }
+
+            if (Ao2AnimationPreview.TryLoadFirstFrame(path, out ImageSource? firstFrame, out _)
+                && firstFrame != null)
+            {
+                AssertTransparentNonBlackFrame(firstFrame, path);
+                return;
+            }
+
+            ImageSource fallback = Ao2AnimationPreview.LoadStaticPreviewImage(path, decodePixelWidth: 0);
+            AssertTransparentNonBlackFrame(fallback, path);
+        }
+
+        private static void AssertTransparentNonBlackFrame(ImageSource frame, string path)
+        {
+            BitmapStats frameStats = ExtractStats(frame, out _, out _);
+            int pixelCount = Math.Max(1, frameStats.Width * frameStats.Height);
+            double opaqueBlackRatio = frameStats.OpaqueBlackPixels / (double)pixelCount;
+
+            Assert.That(
+                frameStats.TransparentPixels,
+                Is.GreaterThan(0),
+                $"Expected at least some transparency in first preview frame for '{path}'.");
+            Assert.That(
+                opaqueBlackRatio,
+                Is.LessThan(0.90d),
+                $"Detected likely black-background frame for '{path}' (opaque black ratio {opaqueBlackRatio:P2}).");
         }
 
         private static string RunDiagnosticsForAsset(string assetPath, string outputRoot)

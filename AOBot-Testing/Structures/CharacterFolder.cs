@@ -83,7 +83,6 @@ namespace AOBot_Testing.Structures
                     {
                         CharacterFolder config = Structures.CharacterFolder.Create(iniFilePath);
                         seenNames.Add(folderName);
-                        CustomConsole.Debug($"Parsed Character: {config.Name} ({characterFolder})");
                         refreshedCharacters.Add(config);
                         onParsedCharacter?.Invoke(config);
                     }

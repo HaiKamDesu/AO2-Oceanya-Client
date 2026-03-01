@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using AOBot_Testing.Structures;
@@ -188,6 +190,31 @@ namespace UnitTests
             Assert.That(window.EmoteItems.Count, Is.EqualTo(0));
             int aliveCount = imageRefs.Count(reference => reference.IsAlive);
             Assert.That(aliveCount, Is.LessThan(imageRefs.Count / 3));
+            window.Close();
+        }
+
+        [Test]
+        public void ViewModeCombo_NullSelection_DoesNotResetSavedPreset()
+        {
+            CharacterFolder folder = BuildCharacterFolderWithEmotes();
+            CharacterEmoteVisualizerWindow window = new CharacterEmoteVisualizerWindow(folder);
+
+            ComboBox? viewModeCombo = window.FindName("ViewModeCombo") as ComboBox;
+            Assert.That(viewModeCombo, Is.Not.Null);
+            ComboBox safeViewModeCombo = viewModeCombo!;
+
+            EmoteVisualizerViewPreset? normalPreset = safeViewModeCombo.Items
+                .OfType<EmoteVisualizerViewPreset>()
+                .FirstOrDefault(preset => preset.Mode == FolderVisualizerLayoutMode.Normal);
+            Assert.That(normalPreset, Is.Not.Null);
+
+            safeViewModeCombo.SelectedItem = normalPreset;
+            Assert.That(SaveFile.Data.EmoteVisualizer.SelectedPresetId, Is.EqualTo(normalPreset!.Id));
+
+            safeViewModeCombo.SelectedItem = null;
+            Assert.That(SaveFile.Data.EmoteVisualizer.SelectedPresetId, Is.EqualTo(normalPreset.Id));
+            Assert.That(SaveFile.Data.EmoteVisualizer.SelectedPresetName, Is.EqualTo(normalPreset.Name));
+
             window.Close();
         }
 
