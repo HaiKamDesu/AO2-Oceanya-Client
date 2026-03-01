@@ -812,50 +812,54 @@ namespace OceanyaClient
                     WaitForm.SetSubtitle($"Parsed Folder: {characterFolder.Name} ({i + 1}/{total})");
                 }
 
-                string previewPath = ResolvePreferredPreviewPath(characterFolder);
-
-                string iconPath = characterFolder.CharIconPath ?? string.Empty;
-                string charIniPath = characterFolder.PathToConfigIni ?? string.Empty;
-                DateTime lastModified = File.Exists(charIniPath)
-                    ? File.GetLastWriteTime(charIniPath)
-                    : Directory.GetLastWriteTime(characterFolder.DirectoryPath ?? string.Empty);
-                int emoteCount = characterFolder.configINI?.EmotionsCount ?? 0;
-                long sizeBytes = GetDirectorySizeSafe(characterFolder.DirectoryPath ?? string.Empty);
-                string readmePath = ResolveCharacterReadmePath(characterFolder.DirectoryPath ?? string.Empty);
-                CharacterIntegrityReport? integrityReport = null;
-                CharacterIntegrityVerifier.TryLoadPersistedReport(characterFolder.DirectoryPath ?? string.Empty, out integrityReport);
-                string integrityFailureMessages = BuildIntegrityFailureMessages(integrityReport);
-
-                items.Add(new FolderVisualizerItem
-                {
-                    Index = i + 1,
-                    IndexText = (i + 1).ToString(),
-                    RowPositionText = (i + 1).ToString(),
-                    Name = characterFolder.Name,
-                    DirectoryPath = characterFolder.DirectoryPath ?? string.Empty,
-                    IconPath = iconPath,
-                    PreviewPath = previewPath,
-                    CharIniPath = charIniPath,
-                    HasCharIni = !string.IsNullOrWhiteSpace(charIniPath) && File.Exists(charIniPath),
-                    LastModified = lastModified,
-                    LastModifiedText = lastModified.ToString("yyyy-MM-dd HH:mm"),
-                    EmoteCount = emoteCount,
-                    EmoteCountText = emoteCount.ToString(),
-                    SizeBytes = sizeBytes,
-                    SizeText = FormatBytes(sizeBytes),
-                    ReadmePath = readmePath,
-                    HasReadme = !string.IsNullOrWhiteSpace(readmePath),
-                    IconTypeText = ResolveIconType(iconPath),
-                    TagsText = string.Empty,
-                    IntegrityHasFailures = integrityReport?.HasFailures == true,
-                    IntegrityFailureCount = integrityReport?.FailureCount ?? 0,
-                    IntegrityFailureMessages = integrityFailureMessages,
-                    IconImage = FallbackFolderImage,
-                    PreviewImage = FallbackFolderImage
-                });
+                items.Add(CreateFolderVisualizerItem(characterFolder, i + 1));
             }
 
             return items;
+        }
+
+        private static FolderVisualizerItem CreateFolderVisualizerItem(CharacterFolder characterFolder, int index)
+        {
+            string previewPath = ResolvePreferredPreviewPath(characterFolder);
+            string iconPath = characterFolder.CharIconPath ?? string.Empty;
+            string charIniPath = characterFolder.PathToConfigIni ?? string.Empty;
+            DateTime lastModified = File.Exists(charIniPath)
+                ? File.GetLastWriteTime(charIniPath)
+                : Directory.GetLastWriteTime(characterFolder.DirectoryPath ?? string.Empty);
+            int emoteCount = characterFolder.configINI?.EmotionsCount ?? 0;
+            long sizeBytes = GetDirectorySizeSafe(characterFolder.DirectoryPath ?? string.Empty);
+            string readmePath = ResolveCharacterReadmePath(characterFolder.DirectoryPath ?? string.Empty);
+            CharacterIntegrityReport? integrityReport = null;
+            CharacterIntegrityVerifier.TryLoadPersistedReport(characterFolder.DirectoryPath ?? string.Empty, out integrityReport);
+            string integrityFailureMessages = BuildIntegrityFailureMessages(integrityReport);
+
+            return new FolderVisualizerItem
+            {
+                Index = index,
+                IndexText = index.ToString(),
+                RowPositionText = index.ToString(),
+                Name = characterFolder.Name,
+                DirectoryPath = characterFolder.DirectoryPath ?? string.Empty,
+                IconPath = iconPath,
+                PreviewPath = previewPath,
+                CharIniPath = charIniPath,
+                HasCharIni = !string.IsNullOrWhiteSpace(charIniPath) && File.Exists(charIniPath),
+                LastModified = lastModified,
+                LastModifiedText = lastModified.ToString("yyyy-MM-dd HH:mm"),
+                EmoteCount = emoteCount,
+                EmoteCountText = emoteCount.ToString(),
+                SizeBytes = sizeBytes,
+                SizeText = FormatBytes(sizeBytes),
+                ReadmePath = readmePath,
+                HasReadme = !string.IsNullOrWhiteSpace(readmePath),
+                IconTypeText = ResolveIconType(iconPath),
+                TagsText = string.Empty,
+                IntegrityHasFailures = integrityReport?.HasFailures == true,
+                IntegrityFailureCount = integrityReport?.FailureCount ?? 0,
+                IntegrityFailureMessages = integrityFailureMessages,
+                IconImage = FallbackFolderImage,
+                PreviewImage = FallbackFolderImage
+            };
         }
 
         private async void ViewModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -2967,22 +2971,35 @@ namespace OceanyaClient
             setCharacterMenuItem.Click += (_, _) => setCharacterInClient?.Invoke(item);
             menu.Items.Add(setCharacterMenuItem);
 
+            bool canOpenCharacterFolderInEditor =
+                !string.IsNullOrWhiteSpace(item.DirectoryPath)
+                && Directory.Exists(item.DirectoryPath)
+                && File.Exists(item.CharIniPath);
+
+            AddContextCategoryHeader(menu, "Oceanya Editor", addLeadingSeparator: true);
+
+            MenuItem newCharacterFolderMenuItem = new MenuItem
+            {
+                Header = "New Character Folder"
+            };
+            newCharacterFolderMenuItem.Click += async (_, _) => await OpenCharacterFolderCreatorAsync();
+            menu.Items.Add(newCharacterFolderMenuItem);
+
             MenuItem editCharacterFolderMenuItem = new MenuItem
             {
-                Header = "Edit character folder",
-                IsEnabled = !string.IsNullOrWhiteSpace(item.DirectoryPath)
-                    && Directory.Exists(item.DirectoryPath)
-                    && File.Exists(item.CharIniPath)
+                Header = "Edit Character Folder",
+                IsEnabled = canOpenCharacterFolderInEditor
             };
             editCharacterFolderMenuItem.Click += async (_, _) => await OpenCharacterFolderInCreatorAsync(item);
             menu.Items.Add(editCharacterFolderMenuItem);
 
-            MenuItem newCharacterFolderMenuItem = new MenuItem
+            MenuItem duplicateCharacterFolderMenuItem = new MenuItem
             {
-                Header = "New character folder"
+                Header = "Duplicate Character Folder",
+                IsEnabled = canOpenCharacterFolderInEditor
             };
-            newCharacterFolderMenuItem.Click += async (_, _) => await OpenCharacterFolderCreatorAsync();
-            menu.Items.Add(newCharacterFolderMenuItem);
+            duplicateCharacterFolderMenuItem.Click += async (_, _) => await OpenCharacterFolderDuplicateInCreatorAsync(item);
+            menu.Items.Add(duplicateCharacterFolderMenuItem);
 
             AddContextCategoryHeader(menu, "Character View", addLeadingSeparator: true);
 
@@ -3090,12 +3107,7 @@ namespace OceanyaClient
             Window editorWindow = OceanyaWindowManager.CreateWindow(creator);
             editorWindow.Owner = this;
             _ = editorWindow.ShowDialog();
-
-            if (creator.EditApplyCompleted)
-            {
-                await LoadCharacterItemsAsync(forceRebuild: true);
-                onAssetsRefreshed?.Invoke();
-            }
+            await ApplyCreatorResultAsync(creator);
         }
 
         private async Task OpenCharacterFolderCreatorAsync()
@@ -3104,8 +3116,71 @@ namespace OceanyaClient
             Window creatorWindow = OceanyaWindowManager.CreateWindow(creator);
             creatorWindow.Owner = this;
             _ = creatorWindow.ShowDialog();
+            await ApplyCreatorResultAsync(creator);
+        }
 
-            await LoadCharacterItemsAsync(forceRebuild: true);
+        private async Task OpenCharacterFolderDuplicateInCreatorAsync(FolderVisualizerItem item)
+        {
+            if (item == null)
+            {
+                return;
+            }
+
+            string directoryPath = item.DirectoryPath?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(directoryPath) || !Directory.Exists(directoryPath))
+            {
+                OceanyaMessageBox.Show(
+                    this,
+                    "Character folder was not found on disk.",
+                    "Duplicate Character Folder",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            await WaitForm.ShowFormAsync("Opening character editor...", this);
+            AOCharacterFileCreatorWindow creator = new AOCharacterFileCreatorWindow();
+            bool loadedSuccessfully;
+            string errorMessage;
+            try
+            {
+                WaitForm.SetSubtitle("Loading duplicate template: " + item.Name);
+                await Dispatcher.Yield(DispatcherPriority.Background);
+                loadedSuccessfully = creator.TryLoadCharacterFolderForDuplication(directoryPath, out errorMessage);
+            }
+            finally
+            {
+                WaitForm.CloseForm();
+            }
+
+            if (!loadedSuccessfully)
+            {
+                OceanyaMessageBox.Show(
+                    this,
+                    "Could not load the selected character for duplication.\n"
+                    + (string.IsNullOrWhiteSpace(errorMessage) ? "Unknown error." : errorMessage),
+                    "Duplicate Character Folder",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            Window creatorWindow = OceanyaWindowManager.CreateWindow(creator);
+            creatorWindow.Owner = this;
+            _ = creatorWindow.ShowDialog();
+            await ApplyCreatorResultAsync(creator);
+        }
+
+        private async Task ApplyCreatorResultAsync(AOCharacterFileCreatorWindow creator)
+        {
+            if (creator == null || !creator.CharacterGenerationCompleted)
+            {
+                return;
+            }
+
+            await UpsertCharacterItemAsync(
+                creator.LastAppliedCharacterDirectoryPath,
+                creator.PreviousAppliedCharacterDirectoryPath);
             onAssetsRefreshed?.Invoke();
         }
 
@@ -3252,6 +3327,74 @@ namespace OceanyaClient
                 currentItem.PreviewPath = previewPath;
                 currentItem.PreviewImage = previewImage;
             }
+        }
+
+        private async Task UpsertCharacterItemAsync(string? targetDirectoryPath, string? previousDirectoryPath)
+        {
+            string targetKey = NormalizeFolderOverrideKey(targetDirectoryPath);
+            if (string.IsNullOrWhiteSpace(targetKey))
+            {
+                return;
+            }
+
+            string previousKey = NormalizeFolderOverrideKey(previousDirectoryPath);
+            if (!string.IsNullOrWhiteSpace(previousKey)
+                && !string.Equals(previousKey, targetKey, StringComparison.OrdinalIgnoreCase))
+            {
+                allItems.RemoveAll(item =>
+                    string.Equals(
+                        NormalizeFolderOverrideKey(item.DirectoryPath),
+                        previousKey,
+                        StringComparison.OrdinalIgnoreCase));
+            }
+
+            CharacterFolder? characterFolder = CharacterFolder.FullList.FirstOrDefault(folder =>
+                string.Equals(NormalizeFolderOverrideKey(folder.DirectoryPath), targetKey, StringComparison.OrdinalIgnoreCase));
+            if (characterFolder == null)
+            {
+                allItems.RemoveAll(item =>
+                    string.Equals(
+                        NormalizeFolderOverrideKey(item.DirectoryPath),
+                        targetKey,
+                        StringComparison.OrdinalIgnoreCase));
+                RecomputeDerivedItemFields();
+                RefreshSelectedFolderTagPanel();
+                RefreshVisibleItems();
+                return;
+            }
+
+            FolderVisualizerItem refreshedItem = CreateFolderVisualizerItem(characterFolder, index: 1);
+            refreshedItem.IconImage = await Task.Run(() => LoadImage(refreshedItem.IconPath, 48));
+            refreshedItem.PreviewImage = await Task.Run(() => LoadImage(refreshedItem.PreviewPath, 220));
+
+            int existingIndex = allItems.FindIndex(item =>
+                string.Equals(
+                    NormalizeFolderOverrideKey(item.DirectoryPath),
+                    targetKey,
+                    StringComparison.OrdinalIgnoreCase));
+            if (existingIndex >= 0)
+            {
+                allItems[existingIndex] = refreshedItem;
+            }
+            else
+            {
+                allItems.Add(refreshedItem);
+            }
+
+            allItems.Sort((left, right) => string.Compare(left.Name, right.Name, StringComparison.OrdinalIgnoreCase));
+            lock (progressiveLoadKeyLock)
+            {
+                progressiveLoadedItemKeys.Remove(targetKey);
+                if (!string.IsNullOrWhiteSpace(previousKey))
+                {
+                    progressiveLoadedItemKeys.Remove(previousKey);
+                }
+            }
+
+            InvalidateCachedItems();
+            RecomputeDerivedItemFields();
+            RefreshSelectedFolderTagPanel();
+            RefreshVisibleItems();
         }
 
         private void CloseButton_Click(object sender, RoutedEventArgs e)

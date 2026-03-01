@@ -38,6 +38,9 @@ namespace OceanyaClient
         private const double MinTileHeight = 330;
         private const double MaxTileHeight = 820;
         private const int EmotePreviewDecodePixelWidth = 256;
+        private const string FileOrganizationDebugLogName = "oceanya_character_creator_fileorg_debug.log";
+        private static readonly string[] StandardAssetRootFolders = { "Images/", "Sounds/" };
+        private static readonly object FileOrganizationDebugLogSync = new object();
 
         public event Action? FinishedLoading;
 
@@ -97,6 +100,9 @@ namespace OceanyaClient
         private readonly ObservableCollection<ExternalOrganizationEntry> externalOrganizationEntries =
             new ObservableCollection<ExternalOrganizationEntry>();
         private readonly Dictionary<string, string> generatedOrganizationOverrides = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> suppressedGeneratedAssetKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> stagedTextAssetSourcePathsByRelativePath =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private readonly List<FileOrganizationEntryViewModel> allFileOrganizationEntries = new List<FileOrganizationEntryViewModel>();
         private readonly ObservableCollection<string> mountPathOptions = new ObservableCollection<string>();
         private readonly ObservableCollection<string> sideOptions = new ObservableCollection<string>();
@@ -218,6 +224,9 @@ namespace OceanyaClient
         private bool hasLoadedExistingFileOrganizationState;
         private string originalEditCharacterDirectoryPath = string.Empty;
         private string originalEditCharacterFolderName = string.Empty;
+        private string loadedSourceCharacterDirectoryPath = string.Empty;
+        private string lastAppliedCharacterDirectoryPath = string.Empty;
+        private string previousAppliedCharacterDirectoryPath = string.Empty;
         private readonly Dictionary<string, CutSelectionState> savedCutSelectionByEmoteKey =
             new Dictionary<string, CutSelectionState>(StringComparer.OrdinalIgnoreCase);
         private Thumb? activeFileOrganizationRowResizeThumb;
@@ -286,6 +295,9 @@ namespace OceanyaClient
         }
 
         public bool EditApplyCompleted => editApplyCompleted;
+        public bool CharacterGenerationCompleted => !string.IsNullOrWhiteSpace(lastAppliedCharacterDirectoryPath);
+        public string LastAppliedCharacterDirectoryPath => lastAppliedCharacterDirectoryPath;
+        public string PreviousAppliedCharacterDirectoryPath => previousAppliedCharacterDirectoryPath;
 
         public AOCharacterFileCreatorWindow()
         {
@@ -623,10 +635,12 @@ namespace OceanyaClient
             errorMessage = string.Empty;
             try
             {
+                WriteFileOrganizationDebugLog($"TryLoadCharacterFolderForEditing start input={characterDirectoryPath}");
                 string normalizedDirectoryPath = Path.GetFullPath((characterDirectoryPath ?? string.Empty).Trim());
                 if (string.IsNullOrWhiteSpace(normalizedDirectoryPath) || !Directory.Exists(normalizedDirectoryPath))
                 {
                     errorMessage = "Character folder was not found on disk.";
+                    WriteFileOrganizationDebugLog($"TryLoadCharacterFolderForEditing failed missing-folder path={normalizedDirectoryPath}");
                     return false;
                 }
 
@@ -634,6 +648,7 @@ namespace OceanyaClient
                 if (string.IsNullOrWhiteSpace(charIniPath) || !File.Exists(charIniPath))
                 {
                     errorMessage = "char.ini was not found in this character folder.";
+                    WriteFileOrganizationDebugLog($"TryLoadCharacterFolderForEditing failed missing-charini root={normalizedDirectoryPath}");
                     return false;
                 }
 
@@ -645,6 +660,7 @@ namespace OceanyaClient
                 editApplyCompleted = false;
                 originalEditCharacterDirectoryPath = normalizedDirectoryPath;
                 originalEditCharacterFolderName = Path.GetFileName(normalizedDirectoryPath);
+                loadedSourceCharacterDirectoryPath = normalizedDirectoryPath;
                 if (!string.IsNullOrWhiteSpace(inferredMountPath) &&
                     !mountPathOptions.Contains(inferredMountPath, StringComparer.OrdinalIgnoreCase))
                 {
@@ -704,6 +720,8 @@ namespace OceanyaClient
                 LoadEmotesFromCharacter(sourceFolder, iniDocument, normalizedDirectoryPath);
                 LoadAdvancedEntriesFromIni(iniDocument);
                 InitializeFileOrganizationFromExistingFolder(normalizedDirectoryPath);
+                WriteFileOrganizationDebugLog(
+                    $"TryLoadCharacterFolderForEditing loaded root={normalizedDirectoryPath} mode=edit generatedOverrides={generatedOrganizationOverrides.Count} suppressed={suppressedGeneratedAssetKeys.Count} external={externalOrganizationEntries.Count}");
 
                 ApplyEditModeUiState();
                 RefreshChatPreview();
@@ -711,14 +729,44 @@ namespace OceanyaClient
                 SetActiveSection("setup");
                 lastCommittedStateFingerprint = ComputeCurrentStateFingerprint();
                 StatusTextBlock.Text = $"Loaded character folder for editing: {originalEditCharacterFolderName}";
+                WriteFileOrganizationDebugLog($"TryLoadCharacterFolderForEditing success root={normalizedDirectoryPath}");
                 return true;
             }
             catch (Exception ex)
             {
                 CustomConsole.Error("Failed to load character folder for editing.", ex);
                 errorMessage = ex.Message;
+                WriteFileOrganizationDebugLog($"TryLoadCharacterFolderForEditing exception input={characterDirectoryPath} error={ex.Message}");
                 return false;
             }
+        }
+
+        public bool TryLoadCharacterFolderForDuplication(string characterDirectoryPath, out string errorMessage)
+        {
+            WriteFileOrganizationDebugLog($"TryLoadCharacterFolderForDuplication start source={characterDirectoryPath}");
+            if (!TryLoadCharacterFolderForEditing(characterDirectoryPath, out errorMessage))
+            {
+                WriteFileOrganizationDebugLog($"TryLoadCharacterFolderForDuplication failed source={characterDirectoryPath} error={errorMessage}");
+                return false;
+            }
+
+            isEditMode = false;
+            editApplyCompleted = false;
+            originalEditCharacterDirectoryPath = string.Empty;
+            originalEditCharacterFolderName = string.Empty;
+
+            string sourceFolderName = Path.GetFileName((characterDirectoryPath ?? string.Empty).TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar));
+            string mountPath = ResolveSelectedMountPathForCreation();
+            CharacterFolderNameTextBox.Text = BuildDuplicateFolderName(sourceFolderName, mountPath);
+
+            ApplyCreateModeUiState();
+            UpdateFolderAvailabilityStatus();
+            StatusTextBlock.Text = "Loaded character folder for duplication.";
+            WriteFileOrganizationDebugLog(
+                $"TryLoadCharacterFolderForDuplication success source={characterDirectoryPath} folderName={CharacterFolderNameTextBox.Text} loadedSourceRoot={loadedSourceCharacterDirectoryPath} generatedOverrides={generatedOrganizationOverrides.Count} suppressed={suppressedGeneratedAssetKeys.Count}");
+            return true;
         }
 
         private static string ResolveCharacterIniPath(string characterDirectoryPath)
@@ -911,7 +959,9 @@ namespace OceanyaClient
             RefreshEmoteLabels();
             if (emotes.Count > 0)
             {
+                EnsureEmotePreviewPlayersInitialized();
                 SelectEmoteTile(emotes[0]);
+                RestartEmotePreviewPlayers(emotes[0]);
             }
         }
 
@@ -1135,18 +1185,29 @@ namespace OceanyaClient
 
         private void InitializeFileOrganizationFromExistingFolder(string characterDirectoryPath)
         {
+            ClearStagedTextAssetEdits();
             generatedOrganizationOverrides.Clear();
+            suppressedGeneratedAssetKeys.Clear();
             externalOrganizationEntries.Clear();
             hasLoadedExistingFileOrganizationState = false;
+            WriteFileOrganizationDebugLog("----------------------------------------------------------------");
+            WriteFileOrganizationDebugLog($"InitializeFileOrganizationFromExistingFolder start root={characterDirectoryPath}");
 
             string normalizedRoot = NormalizePathForCompare(characterDirectoryPath);
             if (string.IsNullOrWhiteSpace(normalizedRoot) || !Directory.Exists(normalizedRoot))
             {
+                WriteFileOrganizationDebugLog($"InitializeFileOrganizationFromExistingFolder root-missing normalized={normalizedRoot}");
                 RefreshFileOrganizationEntries();
                 return;
             }
 
+            string[] topLevelDirectories = Directory.GetDirectories(normalizedRoot);
+            string[] topLevelFiles = Directory.GetFiles(normalizedRoot);
+            WriteFileOrganizationDebugLog(
+                $"InitializeFileOrganizationFromExistingFolder root-ready normalized={normalizedRoot} topDirs={topLevelDirectories.Length} topFiles={topLevelFiles.Length} dirs=[{string.Join(", ", topLevelDirectories.Select(Path.GetFileName))}]");
+
             List<FileOrganizationEntryViewModel> generatedEntries = BuildGeneratedFileOrganizationEntries();
+            WriteFileOrganizationDebugLog($"InitializeFileOrganizationFromExistingFolder generatedEntries={generatedEntries.Count}");
             Dictionary<string, string> usedFilePathByAssetKey = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             HashSet<string> usedFolderPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             HashSet<string> generatedFolderPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1186,15 +1247,23 @@ namespace OceanyaClient
                     existingFilesByName);
                 if (string.IsNullOrWhiteSpace(resolvedRelative))
                 {
+                    if (!string.IsNullOrWhiteSpace(generated.AssetKey))
+                    {
+                        suppressedGeneratedAssetKeys.Add(generated.AssetKey);
+                        WriteFileOrganizationDebugLog($"Suppress generated-missing key={generated.AssetKey} default={generated.DefaultRelativePath} relative={generated.RelativePath}");
+                    }
+
                     continue;
                 }
 
+                suppressedGeneratedAssetKeys.Remove(generated.AssetKey);
                 usedFilePathByAssetKey[generated.AssetKey] = resolvedRelative;
-                string defaultRelative = NormalizeRelativePath(generated.DefaultRelativePath, isFolder: false);
-                if (!string.IsNullOrWhiteSpace(generated.AssetKey)
-                    && !string.Equals(defaultRelative, resolvedRelative, StringComparison.OrdinalIgnoreCase))
+                if (!string.IsNullOrWhiteSpace(generated.AssetKey))
                 {
+                    // Preserve the exact discovered path mapping so later UI refreshes do not drift back to defaults.
                     generatedOrganizationOverrides[generated.AssetKey] = resolvedRelative;
+                    WriteFileOrganizationDebugLog(
+                        $"Resolve generated key={generated.AssetKey} resolved={resolvedRelative} default={generated.DefaultRelativePath} source={generated.SourcePath}");
                 }
             }
 
@@ -1247,6 +1316,13 @@ namespace OceanyaClient
 
             foreach (string existingFolder in existingFolders)
             {
+                if (IsPhantomStandardAssetFolder(normalizedRoot, existingFolder))
+                {
+                    WriteFileOrganizationDebugLog(
+                        $"InitializeFileOrganizationFromExistingFolder skip-phantom-folder relative={existingFolder}");
+                    continue;
+                }
+
                 if (trackedFolders.Contains(existingFolder))
                 {
                     continue;
@@ -1261,6 +1337,8 @@ namespace OceanyaClient
             }
 
             hasLoadedExistingFileOrganizationState = true;
+            WriteFileOrganizationDebugLog(
+                $"InitializeFileOrganizationFromExistingFolder done usedFiles={usedFiles.Count} external={externalOrganizationEntries.Count} overrides={generatedOrganizationOverrides.Count} suppressed={suppressedGeneratedAssetKeys.Count}");
             RefreshFileOrganizationEntries();
         }
 
@@ -1571,6 +1649,55 @@ namespace OceanyaClient
             UpdateFolderAvailabilityStatus();
         }
 
+        private void ApplyCreateModeUiState()
+        {
+            Title = "AO Character File Creator";
+            if (GenerateButton != null)
+            {
+                GenerateButton.Content = "Generate Character Folder";
+            }
+
+            string mountPath = ResolveSelectedMountPathForCreation();
+            if (MountPathResolvedTextBlock != null)
+            {
+                MountPathResolvedTextBlock.Text = string.IsNullOrWhiteSpace(mountPath)
+                    ? "Select where the new character folder should be created."
+                    : "The character folder will be created in: " + BuildCharactersDirectoryDisplayPath(mountPath);
+            }
+        }
+
+        private static string BuildDuplicateFolderName(string sourceFolderName, string mountPath)
+        {
+            string baseName = string.IsNullOrWhiteSpace(sourceFolderName)
+                ? "new_character"
+                : sourceFolderName.Trim();
+            string candidate = baseName + " - Copy";
+            if (string.IsNullOrWhiteSpace(mountPath))
+            {
+                return candidate;
+            }
+
+            string charactersDirectory = Path.Combine(mountPath, "characters");
+            string candidatePath = Path.Combine(charactersDirectory, candidate);
+            if (!Directory.Exists(candidatePath))
+            {
+                return candidate;
+            }
+
+            int suffix = 2;
+            while (true)
+            {
+                string indexedCandidate = $"{baseName} - Copy {suffix}";
+                string indexedPath = Path.Combine(charactersDirectory, indexedCandidate);
+                if (!Directory.Exists(indexedPath))
+                {
+                    return indexedCandidate;
+                }
+
+                suffix++;
+            }
+        }
+
         private void UpdateFolderAvailabilityStatus()
         {
             if (CharacterFolderAvailabilityTextBlock == null)
@@ -1656,6 +1783,227 @@ namespace OceanyaClient
             {
                 return path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             }
+        }
+
+        private void ClearStagedTextAssetEdits()
+        {
+            foreach ((_, string stagedPath) in stagedTextAssetSourcePathsByRelativePath)
+            {
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(stagedPath) && File.Exists(stagedPath))
+                    {
+                        File.Delete(stagedPath);
+                    }
+                }
+                catch
+                {
+                    // Best-effort cleanup only.
+                }
+            }
+
+            stagedTextAssetSourcePathsByRelativePath.Clear();
+        }
+
+        private void StageTextOrganizationEntryContent(FileOrganizationEntryViewModel entry, string content)
+        {
+            if (entry == null || entry.IsFolder)
+            {
+                return;
+            }
+
+            string normalizedRelativePath = NormalizeRelativePath(entry.RelativePath, isFolder: false);
+            if (string.IsNullOrWhiteSpace(normalizedRelativePath))
+            {
+                return;
+            }
+
+            string extension = Path.GetExtension(normalizedRelativePath);
+            if (string.IsNullOrWhiteSpace(extension))
+            {
+                extension = ".txt";
+            }
+
+            string stagedPath = Path.Combine(Path.GetTempPath(), $"oceanya_staged_text_{Guid.NewGuid():N}{extension}");
+            File.WriteAllText(stagedPath, content);
+
+            if (stagedTextAssetSourcePathsByRelativePath.TryGetValue(normalizedRelativePath, out string? previousPath)
+                && !string.IsNullOrWhiteSpace(previousPath)
+                && !string.Equals(previousPath, stagedPath, StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    if (File.Exists(previousPath))
+                    {
+                        File.Delete(previousPath);
+                    }
+                }
+                catch
+                {
+                    // Best-effort cleanup only.
+                }
+            }
+
+            stagedTextAssetSourcePathsByRelativePath[normalizedRelativePath] = stagedPath;
+            entry.SourcePath = stagedPath;
+            foreach (ExternalOrganizationEntry externalEntry in externalOrganizationEntries)
+            {
+                if (!externalEntry.IsFolder
+                    && string.Equals(
+                        NormalizeRelativePath(externalEntry.RelativePath, isFolder: false),
+                        normalizedRelativePath,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    externalEntry.SourcePath = stagedPath;
+                }
+            }
+
+            WriteFileOrganizationDebugLog($"StageTextOrganizationEntryContent relative={normalizedRelativePath} staged={stagedPath}");
+        }
+
+        private void RemoveStagedTextEditForRelativePath(string relativePath)
+        {
+            string normalizedRelativePath = NormalizeRelativePath(relativePath, isFolder: false);
+            if (!stagedTextAssetSourcePathsByRelativePath.TryGetValue(normalizedRelativePath, out string? stagedPath))
+            {
+                return;
+            }
+
+            stagedTextAssetSourcePathsByRelativePath.Remove(normalizedRelativePath);
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(stagedPath) && File.Exists(stagedPath))
+                {
+                    File.Delete(stagedPath);
+                }
+            }
+            catch
+            {
+                // Best-effort cleanup only.
+            }
+        }
+
+        private void MoveStagedTextEditRelativePath(string oldRelativePath, string newRelativePath, bool isFolder)
+        {
+            string oldNormalized = NormalizeRelativePath(oldRelativePath, isFolder);
+            string newNormalized = NormalizeRelativePath(newRelativePath, isFolder);
+            if (string.IsNullOrWhiteSpace(oldNormalized)
+                || string.IsNullOrWhiteSpace(newNormalized)
+                || string.Equals(oldNormalized, newNormalized, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            if (!isFolder)
+            {
+                if (stagedTextAssetSourcePathsByRelativePath.TryGetValue(oldNormalized, out string? stagedPath))
+                {
+                    stagedTextAssetSourcePathsByRelativePath.Remove(oldNormalized);
+                    stagedTextAssetSourcePathsByRelativePath[newNormalized] = stagedPath;
+                }
+
+                return;
+            }
+
+            Dictionary<string, string> movedEntries = stagedTextAssetSourcePathsByRelativePath
+                .Where(pair => pair.Key.StartsWith(oldNormalized, StringComparison.OrdinalIgnoreCase))
+                .ToDictionary(
+                    pair => pair.Key,
+                    pair => pair.Value,
+                    StringComparer.OrdinalIgnoreCase);
+            foreach ((string sourceKey, string stagedPath) in movedEntries)
+            {
+                stagedTextAssetSourcePathsByRelativePath.Remove(sourceKey);
+                string suffix = sourceKey.Substring(oldNormalized.Length);
+                stagedTextAssetSourcePathsByRelativePath[newNormalized + suffix] = stagedPath;
+            }
+        }
+
+        private void ApplyStagedTextSourcePathOverride(FileOrganizationEntryViewModel entry)
+        {
+            if (entry == null || entry.IsFolder || !IsTextOrganizationEntry(entry))
+            {
+                return;
+            }
+
+            string normalizedRelativePath = NormalizeRelativePath(entry.RelativePath, isFolder: false);
+            if (stagedTextAssetSourcePathsByRelativePath.TryGetValue(normalizedRelativePath, out string? stagedPath)
+                && !string.IsNullOrWhiteSpace(stagedPath)
+                && File.Exists(stagedPath))
+            {
+                entry.SourcePath = stagedPath;
+            }
+        }
+
+        private static bool IsStandardAssetRootFolder(string relativeFolderPath)
+        {
+            string normalized = NormalizeRelativePath(relativeFolderPath, isFolder: true);
+            foreach (string standardFolder in StandardAssetRootFolders)
+            {
+                if (string.Equals(normalized, NormalizeRelativePath(standardFolder, isFolder: true), StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool DirectoryContainsAnyFiles(string folderPath)
+        {
+            return Directory.Exists(folderPath)
+                && Directory.EnumerateFiles(folderPath, "*", SearchOption.AllDirectories).Any();
+        }
+
+        private static bool IsPhantomStandardAssetFolder(string sourceRoot, string relativeFolderPath)
+        {
+            if (string.IsNullOrWhiteSpace(sourceRoot) || !IsStandardAssetRootFolder(relativeFolderPath))
+            {
+                return false;
+            }
+
+            string normalizedFolder = NormalizeRelativePath(relativeFolderPath, isFolder: true);
+            string absoluteFolder = Path.Combine(sourceRoot, normalizedFolder.TrimEnd('/').Replace('/', Path.DirectorySeparatorChar));
+            if (!Directory.Exists(absoluteFolder))
+            {
+                return true;
+            }
+
+            return !DirectoryContainsAnyFiles(absoluteFolder);
+        }
+
+        private static string GetFileOrganizationDebugLogPath()
+        {
+            return Path.Combine(Path.GetTempPath(), FileOrganizationDebugLogName);
+        }
+
+        private static void WriteFileOrganizationDebugLog(string message)
+        {
+            try
+            {
+                string path = GetFileOrganizationDebugLogPath();
+                string line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {message}{Environment.NewLine}";
+                lock (FileOrganizationDebugLogSync)
+                {
+                    File.AppendAllText(path, line);
+                }
+            }
+            catch
+            {
+                // Debug logging must never affect editor behavior.
+            }
+        }
+
+        private static string FormatEntryForDebug(FileOrganizationEntryViewModel entry)
+        {
+            if (entry == null)
+            {
+                return "<null>";
+            }
+
+            string source = string.IsNullOrWhiteSpace(entry.SourcePath) ? "-" : entry.SourcePath;
+            string key = string.IsNullOrWhiteSpace(entry.AssetKey) ? "-" : entry.AssetKey;
+            return $"key={key} path={entry.RelativePath} default={entry.DefaultRelativePath} folder={entry.IsFolder} locked={entry.IsLocked} external={entry.IsExternal} source={source}";
         }
 
         private void SectionButton_Click(object sender, RoutedEventArgs e)
@@ -1909,9 +2257,12 @@ namespace OceanyaClient
             ResetEffectsToDefaults();
             ResetEmotesToDefaults();
             ResetBulkButtonIconsConfigToDefaults();
+            ClearStagedTextAssetEdits();
             externalOrganizationEntries.Clear();
             generatedOrganizationOverrides.Clear();
+            suppressedGeneratedAssetKeys.Clear();
             currentFileOrganizationPath = string.Empty;
+            loadedSourceCharacterDirectoryPath = string.Empty;
             ResetFrameAndAdvancedToDefaults();
             StatusTextBlock.Text = "All tabs reset to defaults.";
         }
@@ -2258,6 +2609,8 @@ namespace OceanyaClient
 
         private void RefreshFileOrganizationEntries()
         {
+            WriteFileOrganizationDebugLog(
+                $"RefreshFileOrganizationEntries start external={externalOrganizationEntries.Count} overrides={generatedOrganizationOverrides.Count} suppressed={suppressedGeneratedAssetKeys.Count}");
             StopFileOrganizationAudioPreview();
             ClearFileOrganizationPreviewPlayers();
             allFileOrganizationEntries.Clear();
@@ -2278,10 +2631,12 @@ namespace OceanyaClient
                     DefaultRelativePath = external.RelativePath
                 };
                 InitializeFileOrganizationEntryVisual(externalEntry);
+                ApplyStagedTextSourcePathOverride(externalEntry);
                 allFileOrganizationEntries.Add(externalEntry);
             }
 
             EnsureParentFolderEntries(allFileOrganizationEntries);
+            PrunePhantomStandardAssetEntries(allFileOrganizationEntries);
             UpdateUnusedFlags(allFileOrganizationEntries);
             if (!string.IsNullOrWhiteSpace(currentFileOrganizationPath)
                 && !allFileOrganizationEntries.Any(entry => entry.IsFolder
@@ -2290,7 +2645,74 @@ namespace OceanyaClient
                 currentFileOrganizationPath = string.Empty;
             }
 
+            List<string> topLevelFolders = allFileOrganizationEntries
+                .Where(static entry => entry.IsFolder)
+                .Select(static entry => NormalizeRelativePath(entry.RelativePath, isFolder: true))
+                .Where(path => string.IsNullOrWhiteSpace(GetParentDirectoryPath(path, isFolder: true)))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            WriteFileOrganizationDebugLog(
+                $"RefreshFileOrganizationEntries end total={allFileOrganizationEntries.Count} topFolders=[{string.Join(", ", topLevelFolders)}]");
+
             RefreshFileOrganizationCurrentFolderView();
+        }
+
+        private void PrunePhantomStandardAssetEntries(List<FileOrganizationEntryViewModel> entries)
+        {
+            if (!hasLoadedExistingFileOrganizationState || entries.Count == 0)
+            {
+                return;
+            }
+
+            string sourceRoot = !string.IsNullOrWhiteSpace(originalEditCharacterDirectoryPath)
+                ? originalEditCharacterDirectoryPath
+                : loadedSourceCharacterDirectoryPath;
+            if (string.IsNullOrWhiteSpace(sourceRoot) || !Directory.Exists(sourceRoot))
+            {
+                return;
+            }
+
+            foreach (string standardFolder in StandardAssetRootFolders)
+            {
+                string normalizedFolder = NormalizeRelativePath(standardFolder, isFolder: true);
+                string absoluteFolder = Path.Combine(sourceRoot, normalizedFolder.TrimEnd('/').Replace('/', Path.DirectorySeparatorChar));
+
+                bool hasExternalFilesUnderFolder = entries.Any(entry =>
+                    entry.IsExternal
+                    && !entry.IsFolder
+                    && NormalizeRelativePath(entry.RelativePath, entry.IsFolder).StartsWith(normalizedFolder, StringComparison.OrdinalIgnoreCase));
+                if (hasExternalFilesUnderFolder)
+                {
+                    WriteFileOrganizationDebugLog($"PrunePhantomStandardAssetEntries keep external-under-folder standard={normalizedFolder}");
+                    continue;
+                }
+
+                bool folderContainsFiles = DirectoryContainsAnyFiles(absoluteFolder);
+                if (folderContainsFiles)
+                {
+                    WriteFileOrganizationDebugLog(
+                        $"PrunePhantomStandardAssetEntries keep folder-has-files standard={normalizedFolder} absolute={absoluteFolder}");
+                    continue;
+                }
+
+                int removed = entries.RemoveAll(entry =>
+                {
+                    string normalizedPath = NormalizeRelativePath(entry.RelativePath, entry.IsFolder);
+                    return normalizedPath.StartsWith(normalizedFolder, StringComparison.OrdinalIgnoreCase);
+                });
+                List<ExternalOrganizationEntry> externalToRemove = externalOrganizationEntries
+                    .Where(entry => NormalizeRelativePath(entry.RelativePath, entry.IsFolder)
+                        .StartsWith(normalizedFolder, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                int externalRemoved = externalToRemove.Count;
+                foreach (ExternalOrganizationEntry removable in externalToRemove)
+                {
+                    _ = externalOrganizationEntries.Remove(removable);
+                }
+                WriteFileOrganizationDebugLog(
+                    $"PrunePhantomStandardAssetEntries removed={removed} externalRemoved={externalRemoved} standard={normalizedFolder} absoluteExists={Directory.Exists(absoluteFolder)} folderHasFiles={folderContainsFiles}");
+            }
         }
 
         private List<FileOrganizationEntryViewModel> BuildGeneratedFileOrganizationEntries()
@@ -2403,10 +2825,21 @@ namespace OceanyaClient
             AddShoutOrganizationEntries(result);
             AddOptionalGeneratedOrganizationEntries(result);
 
-            return result
+            List<FileOrganizationEntryViewModel> finalEntries = result
+                .Where(entry => string.IsNullOrWhiteSpace(entry.AssetKey)
+                    || !suppressedGeneratedAssetKeys.Contains(entry.AssetKey))
                 .GroupBy(static entry => entry.RelativePath, StringComparer.OrdinalIgnoreCase)
                 .Select(static group => group.First())
                 .ToList();
+
+            WriteFileOrganizationDebugLog(
+                $"BuildGeneratedFileOrganizationEntries result={finalEntries.Count} raw={result.Count} suppressedKeys={suppressedGeneratedAssetKeys.Count}");
+            foreach (FileOrganizationEntryViewModel entry in finalEntries)
+            {
+                WriteFileOrganizationDebugLog("GeneratedEntry " + FormatEntryForDebug(entry));
+            }
+
+            return finalEntries;
         }
 
         private void AddGeneratedOrganizationFile(
@@ -2416,12 +2849,13 @@ namespace OceanyaClient
             string? sourcePath,
             bool locked)
         {
-            string resolved = ResolveOutputPathForAsset(assetKey, defaultRelativePath, isFolder: false);
+            string effectiveDefaultRelativePath = ResolveLoadedCharacterRelativePathOrDefault(defaultRelativePath, sourcePath);
+            string resolved = ResolveOutputPathForAsset(assetKey, effectiveDefaultRelativePath, isFolder: false);
             FileOrganizationEntryViewModel entry = new FileOrganizationEntryViewModel
             {
                 Name = Path.GetFileName(resolved),
                 RelativePath = resolved,
-                DefaultRelativePath = NormalizeRelativePath(defaultRelativePath, isFolder: false),
+                DefaultRelativePath = NormalizeRelativePath(effectiveDefaultRelativePath, isFolder: false),
                 TypeText = "File",
                 StatusText = locked ? "Generated (locked)" : "Generated",
                 IsLocked = locked,
@@ -2431,7 +2865,60 @@ namespace OceanyaClient
                 AssetKey = assetKey
             };
             InitializeFileOrganizationEntryVisual(entry);
+            ApplyStagedTextSourcePathOverride(entry);
             entries.Add(entry);
+        }
+
+        private string ResolveLoadedCharacterRelativePathOrDefault(string defaultRelativePath, string? sourcePath)
+        {
+            if (string.IsNullOrWhiteSpace(sourcePath))
+            {
+                return defaultRelativePath;
+            }
+
+            string sourceCharacterRoot = !string.IsNullOrWhiteSpace(originalEditCharacterDirectoryPath)
+                ? originalEditCharacterDirectoryPath
+                : loadedSourceCharacterDirectoryPath;
+            if (string.IsNullOrWhiteSpace(sourceCharacterRoot))
+            {
+                return defaultRelativePath;
+            }
+
+            string normalizedRoot = NormalizePathForCompare(sourceCharacterRoot);
+            string normalizedSourcePath = NormalizePathForCompare(sourcePath);
+            if (string.IsNullOrWhiteSpace(normalizedRoot)
+                || string.IsNullOrWhiteSpace(normalizedSourcePath)
+                || !File.Exists(normalizedSourcePath)
+                || !IsPathInsideRoot(normalizedRoot, normalizedSourcePath))
+            {
+                return defaultRelativePath;
+            }
+
+            string relativePath = NormalizeRelativePath(Path.GetRelativePath(normalizedRoot, normalizedSourcePath), isFolder: false);
+            return string.IsNullOrWhiteSpace(relativePath) ? defaultRelativePath : relativePath;
+        }
+
+        private static bool IsPathInsideRoot(string rootPath, string candidatePath)
+        {
+            if (string.IsNullOrWhiteSpace(rootPath) || string.IsNullOrWhiteSpace(candidatePath))
+            {
+                return false;
+            }
+
+            string normalizedRoot = NormalizePathForCompare(rootPath);
+            string normalizedCandidate = NormalizePathForCompare(candidatePath);
+            if (string.IsNullOrWhiteSpace(normalizedRoot) || string.IsNullOrWhiteSpace(normalizedCandidate))
+            {
+                return false;
+            }
+
+            if (string.Equals(normalizedRoot, normalizedCandidate, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            string rootWithSeparator = normalizedRoot + Path.DirectorySeparatorChar;
+            return normalizedCandidate.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase);
         }
 
         private void AddGeneratedOrganizationFolder(List<FileOrganizationEntryViewModel> entries, string assetKey, string defaultRelativePath, bool locked)
@@ -2709,6 +3196,7 @@ namespace OceanyaClient
             }
 
             if (string.Equals(extension, ".txt", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(extension, ".md", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(extension, ".ini", StringComparison.OrdinalIgnoreCase))
             {
                 entry.EntryKind = FileOrganizationEntryKind.Text;
@@ -2789,7 +3277,10 @@ namespace OceanyaClient
 
         private void RefreshFileOrganizationButton_Click(object sender, RoutedEventArgs e)
         {
-            if (externalOrganizationEntries.Count > 0 || generatedOrganizationOverrides.Count > 0)
+            if (externalOrganizationEntries.Count > 0
+                || generatedOrganizationOverrides.Count > 0
+                || suppressedGeneratedAssetKeys.Count > 0
+                || stagedTextAssetSourcePathsByRelativePath.Count > 0)
             {
                 MessageBoxResult decision = OceanyaMessageBox.Show(
                     this,
@@ -2804,6 +3295,8 @@ namespace OceanyaClient
 
                 externalOrganizationEntries.Clear();
                 generatedOrganizationOverrides.Clear();
+                suppressedGeneratedAssetKeys.Clear();
+                ClearStagedTextAssetEdits();
                 currentFileOrganizationPath = string.Empty;
             }
 
@@ -2817,7 +3310,10 @@ namespace OceanyaClient
 
         private void ResetFileOrganizationToDefaults()
         {
-            if (externalOrganizationEntries.Count == 0 && generatedOrganizationOverrides.Count == 0)
+            if (externalOrganizationEntries.Count == 0
+                && generatedOrganizationOverrides.Count == 0
+                && suppressedGeneratedAssetKeys.Count == 0
+                && stagedTextAssetSourcePathsByRelativePath.Count == 0)
             {
                 currentFileOrganizationPath = string.Empty;
                 RefreshFileOrganizationEntries();
@@ -2840,6 +3336,8 @@ namespace OceanyaClient
 
             externalOrganizationEntries.Clear();
             generatedOrganizationOverrides.Clear();
+            suppressedGeneratedAssetKeys.Clear();
+            ClearStagedTextAssetEdits();
             hasLoadedExistingFileOrganizationState = false;
             currentFileOrganizationPath = string.Empty;
             fileOrganizationClipboardEntries.Clear();
@@ -3141,6 +3639,11 @@ namespace OceanyaClient
                 {
                     externalOrganizationEntries.Remove(external);
                 }
+
+                if (!removableEntry.IsFolder)
+                {
+                    RemoveStagedTextEditForRelativePath(removableEntry.RelativePath);
+                }
             }
 
             RefreshFileOrganizationEntries();
@@ -3179,6 +3682,10 @@ namespace OceanyaClient
             foreach (ExternalOrganizationEntry external in removable)
             {
                 externalOrganizationEntries.Remove(external);
+                if (!external.IsFolder)
+                {
+                    RemoveStagedTextEditForRelativePath(external.RelativePath);
+                }
             }
             fileOrganizationClipboardEntries.Clear();
             fileOrganizationClipboardIsCut = false;
@@ -3204,6 +3711,7 @@ namespace OceanyaClient
                 }
 
                 external.RelativePath = normalizedPath;
+                MoveStagedTextEditRelativePath(oldNormalized, normalizedPath, selectedEntry.IsFolder);
                 if (selectedEntry.IsFolder)
                 {
                     UpdateFolderDescendants(oldNormalized, normalizedPath, forExternalEntries: true, forGeneratedOverrides: false);
@@ -3391,6 +3899,40 @@ namespace OceanyaClient
             return ResolveFileOrganizationEntryFromSource(e.OriginalSource);
         }
 
+        private static FileOrganizationEntryViewModel[] GetDraggedFileOrganizationEntries(DragEventArgs e)
+        {
+            if (e.Data.GetDataPresent(typeof(FileOrganizationEntryViewModel[]))
+                && e.Data.GetData(typeof(FileOrganizationEntryViewModel[])) is FileOrganizationEntryViewModel[] manyEntries)
+            {
+                return manyEntries.Where(static entry => entry != null).ToArray();
+            }
+
+            if (e.Data.GetDataPresent(typeof(FileOrganizationEntryViewModel))
+                && e.Data.GetData(typeof(FileOrganizationEntryViewModel)) is FileOrganizationEntryViewModel singleEntry)
+            {
+                return new[] { singleEntry };
+            }
+
+            return Array.Empty<FileOrganizationEntryViewModel>();
+        }
+
+        private static bool IsInvalidFolderSelfDrop(FileOrganizationEntryViewModel draggedEntry, string destinationPath)
+        {
+            if (draggedEntry == null || !draggedEntry.IsFolder)
+            {
+                return false;
+            }
+
+            string sourceFolder = NormalizeRelativePath(draggedEntry.RelativePath, isFolder: true);
+            string targetFolder = NormalizeRelativePath(destinationPath, isFolder: true);
+            if (string.IsNullOrWhiteSpace(sourceFolder) || string.IsNullOrWhiteSpace(targetFolder))
+            {
+                return false;
+            }
+
+            return targetFolder.StartsWith(sourceFolder, StringComparison.OrdinalIgnoreCase);
+        }
+
         private void FileOrganizationContextMenu_Opening(object sender, ContextMenuEventArgs e)
         {
             OpenFileOrganizationContextMenu(sender, e.OriginalSource);
@@ -3440,14 +3982,9 @@ namespace OceanyaClient
             MenuItem openItem = CreateContextMenuItem("Open", () =>
             {
                 FileOrganizationEntryViewModel? target = fileOrganizationContextEntry;
-                if (target?.IsFolder == true)
+                if (target != null)
                 {
-                    currentFileOrganizationPath = NormalizeRelativePath(target.RelativePath, isFolder: true);
-                    RefreshFileOrganizationCurrentFolderView();
-                }
-                else if (target != null && IsCharIniOrganizationEntry(target))
-                {
-                    OpenCharIniPreviewButton_Click(this, new RoutedEventArgs());
+                    OpenFileOrganizationEntry(target);
                 }
             });
             MenuItem renameItem = CreateContextMenuItem("Rename", () => RenameOrganizationEntryButton_Click(this, new RoutedEventArgs()));
@@ -3456,7 +3993,8 @@ namespace OceanyaClient
             bool canEditSelected = selected != null
                 && !selected.IsInteractionLocked
                 && (selected.IsExternal || !string.IsNullOrWhiteSpace(selected.AssetKey) || selected.IsFolder);
-            openItem.IsEnabled = selected?.IsFolder == true || (selected != null && IsCharIniOrganizationEntry(selected));
+            openItem.IsEnabled = selected != null
+                && (selected.IsFolder || IsCharIniOrganizationEntry(selected) || IsTextOrganizationEntry(selected));
             menu.Items.Add(openItem);
             renameItem.IsEnabled = canEditSelected;
             moveItem.IsEnabled = canEditSelected;
@@ -3649,6 +4187,27 @@ namespace OceanyaClient
 
             FileOrganizationEntryViewModel? target = ResolveFileOrganizationEntryFromDropPosition(e);
             bool validTarget = target != null && target.IsFolder && !target.IsInteractionLocked;
+            if (validTarget && target != null)
+            {
+                FileOrganizationEntryViewModel[] draggedEntries = GetDraggedFileOrganizationEntries(e);
+                string baseFolder = NormalizeRelativePath(target.RelativePath, isFolder: true);
+                foreach (FileOrganizationEntryViewModel draggedEntry in draggedEntries)
+                {
+                    if (draggedEntry == null)
+                    {
+                        continue;
+                    }
+
+                    string fileName = Path.GetFileName(draggedEntry.RelativePath.TrimEnd('/', '\\'));
+                    string destination = baseFolder + fileName + (draggedEntry.IsFolder ? "/" : string.Empty);
+                    if (IsInvalidFolderSelfDrop(draggedEntry, destination))
+                    {
+                        validTarget = false;
+                        break;
+                    }
+                }
+            }
+
             e.Effects = validTarget ? DragDropEffects.Move : DragDropEffects.None;
             e.Handled = true;
         }
@@ -3669,18 +4228,8 @@ namespace OceanyaClient
                 return;
             }
 
-            FileOrganizationEntryViewModel[] draggedEntries;
-            if (e.Data.GetDataPresent(typeof(FileOrganizationEntryViewModel[]))
-                && e.Data.GetData(typeof(FileOrganizationEntryViewModel[])) is FileOrganizationEntryViewModel[] manyEntries)
-            {
-                draggedEntries = manyEntries;
-            }
-            else if (e.Data.GetDataPresent(typeof(FileOrganizationEntryViewModel))
-                && e.Data.GetData(typeof(FileOrganizationEntryViewModel)) is FileOrganizationEntryViewModel singleEntry)
-            {
-                draggedEntries = new[] { singleEntry };
-            }
-            else
+            FileOrganizationEntryViewModel[] draggedEntries = GetDraggedFileOrganizationEntries(e);
+            if (draggedEntries.Length == 0)
             {
                 return;
             }
@@ -3709,6 +4258,11 @@ namespace OceanyaClient
 
                 string fileName = Path.GetFileName(draggedEntry.RelativePath.TrimEnd('/', '\\'));
                 string destination = baseFolder + fileName + (draggedEntry.IsFolder ? "/" : string.Empty);
+                if (IsInvalidFolderSelfDrop(draggedEntry, destination))
+                {
+                    continue;
+                }
+
                 movedAny |= UpdateOrganizationPathForEntry(draggedEntry, destination);
             }
 
@@ -3922,10 +4476,7 @@ namespace OceanyaClient
 
             if (!entry.IsFolder)
             {
-                if (IsCharIniOrganizationEntry(entry))
-                {
-                    OpenCharIniPreviewButton_Click(this, new RoutedEventArgs());
-                }
+                OpenFileOrganizationEntry(entry);
                 return;
             }
 
@@ -3955,6 +4506,161 @@ namespace OceanyaClient
                 NormalizeRelativePath(entry.RelativePath, isFolder: false),
                 "char.ini",
                 StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool OpenFileOrganizationEntry(FileOrganizationEntryViewModel entry)
+        {
+            if (entry == null)
+            {
+                return false;
+            }
+
+            if (entry.IsFolder)
+            {
+                currentFileOrganizationPath = NormalizeRelativePath(entry.RelativePath, isFolder: true);
+                RefreshFileOrganizationCurrentFolderView();
+                return true;
+            }
+
+            if (IsCharIniOrganizationEntry(entry))
+            {
+                OpenCharIniPreviewButton_Click(this, new RoutedEventArgs());
+                return true;
+            }
+
+            if (!IsTextOrganizationEntry(entry))
+            {
+                return false;
+            }
+
+            if (!TryResolveTextOrganizationEntrySourcePath(entry, out string? sourcePath, out string errorMessage)
+                || string.IsNullOrWhiteSpace(sourcePath))
+            {
+                OceanyaMessageBox.Show(this, errorMessage, "Open Text File", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return false;
+            }
+
+            string initialContent;
+            try
+            {
+                initialContent = File.ReadAllText(sourcePath);
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Error($"Failed to read text asset for file organization: {sourcePath}", ex);
+                OceanyaMessageBox.Show(
+                    this,
+                    "Could not read this text file.\n" + ex.Message,
+                    "Open Text File",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                return false;
+            }
+
+            bool isReadOnly = entry.IsInteractionLocked;
+            string? updatedContent = ShowTextDocumentDialog(
+                isReadOnly ? "Text File Preview" : "Edit Text File",
+                Path.GetFileName(sourcePath),
+                isReadOnly
+                    ? "Read-only preview for locked/generated text assets."
+                    : "Edit the file content and click Save to apply changes.",
+                initialContent,
+                isReadOnly: isReadOnly);
+            if (isReadOnly || updatedContent == null || string.Equals(updatedContent, initialContent, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            try
+            {
+                StageTextOrganizationEntryContent(entry, updatedContent);
+                StatusTextBlock.Text = $"Staged text file changes: {Path.GetFileName(sourcePath)}";
+                return true;
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Error($"Failed to save text asset for file organization: {sourcePath}", ex);
+                OceanyaMessageBox.Show(
+                    this,
+                    "Could not save this text file.\n" + ex.Message,
+                    "Edit Text File",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                return false;
+            }
+        }
+
+        private static bool IsTextOrganizationEntry(FileOrganizationEntryViewModel entry)
+        {
+            if (entry == null || entry.IsFolder)
+            {
+                return false;
+            }
+
+            string probePath = !string.IsNullOrWhiteSpace(entry.SourcePath)
+                ? entry.SourcePath
+                : entry.RelativePath;
+            string extension = Path.GetExtension(probePath ?? string.Empty);
+            return string.Equals(extension, ".txt", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(extension, ".md", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(extension, ".ini", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool TryResolveTextOrganizationEntrySourcePath(
+            FileOrganizationEntryViewModel entry,
+            out string? sourcePath,
+            out string errorMessage)
+        {
+            sourcePath = null;
+            errorMessage = string.Empty;
+            if (entry == null || entry.IsFolder)
+            {
+                errorMessage = "Selected entry is not a text file.";
+                return false;
+            }
+
+            string normalizedRelativePath = NormalizeRelativePath(entry.RelativePath, isFolder: false);
+            if (stagedTextAssetSourcePathsByRelativePath.TryGetValue(normalizedRelativePath, out string? stagedPath)
+                && !string.IsNullOrWhiteSpace(stagedPath)
+                && File.Exists(stagedPath))
+            {
+                sourcePath = stagedPath;
+                return true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(entry.SourcePath) && File.Exists(entry.SourcePath))
+            {
+                sourcePath = entry.SourcePath;
+                return true;
+            }
+
+            if (IsCharIniOrganizationEntry(entry))
+            {
+                errorMessage = "char.ini preview is generated in-memory and is not directly editable from this list.";
+                return false;
+            }
+
+            string mountPath = ResolveSelectedMountPathForCreation();
+            string folderName = (CharacterFolderNameTextBox.Text ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(mountPath) || string.IsNullOrWhiteSpace(folderName))
+            {
+                errorMessage = "Could not resolve a source file path for this text asset.";
+                return false;
+            }
+
+            string absoluteCandidate = Path.Combine(
+                mountPath,
+                "characters",
+                folderName,
+                entry.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(absoluteCandidate))
+            {
+                sourcePath = absoluteCandidate;
+                return true;
+            }
+
+            errorMessage = "Could not locate a physical source file for this text asset.";
+            return false;
         }
 
         private void FileOrgRowResizeThumb_DragStarted(object sender, DragStartedEventArgs e)
@@ -4142,7 +4848,7 @@ namespace OceanyaClient
             box.Height = 520;
             AddDialogFieldContainer(grid, 0, label, description, box);
             DockPanel buttons = isReadOnly
-                ? BuildDialogButtonsCentered(dialog)
+                ? BuildDialogButtonsReadOnly(dialog)
                 : BuildDialogButtons(dialog);
             BuildStyledDialogContent(dialog, dialog.Title, grid, buttons);
             bool? result = dialog.ShowDialog();
@@ -4474,6 +5180,8 @@ namespace OceanyaClient
                 suppressEmoteTileSelectionChanged = false;
             }
 
+            EnsureEmotePreviewPlayersInitialized();
+            RestartEmotePreviewPlayers(GetSelectedEmote());
             UpdateSelectedEmoteHeader();
         }
 
@@ -5731,6 +6439,31 @@ namespace OceanyaClient
             }
         }
 
+        private void EnsureEmotePreviewPlayersInitialized()
+        {
+            foreach (CharacterCreationEmoteViewModel emote in emotes)
+            {
+                foreach (string zone in new[] { "preanim", "anim" })
+                {
+                    string key = GetEmotePreviewPlayerKey(emote, zone);
+                    if (emotePreviewPlayers.ContainsKey(key))
+                    {
+                        continue;
+                    }
+
+                    string? sourcePath = string.Equals(zone, "preanim", StringComparison.OrdinalIgnoreCase)
+                        ? emote.PreAnimationAssetSourcePath
+                        : emote.AnimationAssetSourcePath;
+                    if (string.IsNullOrWhiteSpace(sourcePath))
+                    {
+                        continue;
+                    }
+
+                    UpdateAnimatedPreviewPlayer(emote, zone, sourcePath);
+                }
+            }
+        }
+
         private void StopAllEmotePreviewPlayers()
         {
             foreach (IAnimationPlayer player in emotePreviewPlayers.Values.ToArray())
@@ -5770,8 +6503,7 @@ namespace OceanyaClient
                 return;
             }
 
-            string extension = Path.GetExtension(resolvedSourcePath).ToLowerInvariant();
-            if (extension != ".gif" && extension != ".webp" && extension != ".apng")
+            if (!Ao2AnimationPreview.IsPotentialAnimatedPath(resolvedSourcePath))
             {
                 return;
             }
@@ -9202,6 +9934,30 @@ namespace OceanyaClient
             return panel;
         }
 
+        private DockPanel BuildDialogButtonsReadOnly(Window dialog)
+        {
+            DockPanel panel = new DockPanel
+            {
+                LastChildFill = false,
+                Margin = new Thickness(12, 2, 12, 4)
+            };
+
+            Button closeButton = CreateDialogButton("Close", isPrimary: false);
+            closeButton.Width = 120;
+            closeButton.IsCancel = true;
+            closeButton.IsDefault = true;
+            closeButton.Click += (_, _) => dialog.DialogResult = false;
+
+            StackPanel buttonRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
+            buttonRow.Children.Add(closeButton);
+            panel.Children.Add(buttonRow);
+            return panel;
+        }
+
         private void BuildStyledDialogContent(Window dialog, string title, UIElement body, UIElement buttons)
         {
             Border panel = new Border
@@ -12475,6 +13231,8 @@ namespace OceanyaClient
 
         private async void GenerateButton_Click(object sender, RoutedEventArgs e)
         {
+            lastAppliedCharacterDirectoryPath = string.Empty;
+            previousAppliedCharacterDirectoryPath = string.Empty;
             await WaitForm.ShowFormAsync(isEditMode ? "Applying character folder edits..." : "Generating character folder...", this);
             string? successCharacterDirectory = null;
             Exception? generationException = null;
@@ -12737,14 +13495,24 @@ namespace OceanyaClient
                     successCharacterDirectory = workingDirectory;
                 }
 
-                await SetGenerateSubtitleAsync("Refreshing character index...");
+                await SetGenerateSubtitleAsync("Updating character index...");
                 try
                 {
-                    CharacterFolder.RefreshCharacterList();
+                    string? previousDirectory = isEditMode ? originalEditCharacterDirectoryPath : string.Empty;
+                    if (!CharacterFolder.TryUpsertCharacterFolderInCache(
+                            successCharacterDirectory ?? string.Empty,
+                            previousDirectory,
+                            out _,
+                            out string cacheError))
+                    {
+                        CustomConsole.Warning(
+                            "Character folder creation succeeded, but incremental character cache update failed: "
+                            + cacheError);
+                    }
                 }
                 catch (Exception ex)
                 {
-                    CustomConsole.Warning("Character folder creation succeeded, but character refresh failed.", ex);
+                    CustomConsole.Warning("Character folder creation succeeded, but character cache update failed.", ex);
                 }
 
                 StatusTextBlock.Text = isEditMode
@@ -12776,6 +13544,10 @@ namespace OceanyaClient
 
             if (!string.IsNullOrWhiteSpace(successCharacterDirectory))
             {
+                lastAppliedCharacterDirectoryPath = successCharacterDirectory;
+                previousAppliedCharacterDirectoryPath = isEditMode
+                    ? (originalEditCharacterDirectoryPath ?? string.Empty)
+                    : string.Empty;
                 lastCommittedStateFingerprint = ComputeCurrentStateFingerprint();
                 OceanyaMessageBox.Show(
                     this,
