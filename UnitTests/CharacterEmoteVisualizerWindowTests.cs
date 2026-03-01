@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Windows;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using AOBot_Testing.Structures;
 using NUnit.Framework;
 using OceanyaClient;
@@ -64,6 +67,94 @@ namespace UnitTests
             window.Close();
         }
 
+        [Test]
+        public void BuildEmoteItems_LeadingSlashAnimationToken_ResolvesAoIdleAsset()
+        {
+            string characterDirectory = Path.Combine(tempRoot, "characters", "Akechi");
+            Directory.CreateDirectory(characterDirectory);
+            File.WriteAllBytes(Path.Combine(characterDirectory, "(a)Normal.webp"), new byte[] { 1, 2, 3, 4 });
+
+            string iniPath = Path.Combine(characterDirectory, "char.ini");
+            string ini =
+                "[Options]\n" +
+                "showname=Akechi\n" +
+                "gender=unknown\n" +
+                "side=def\n" +
+                "[Emotions]\n" +
+                "number=1\n" +
+                "1=Normal#-#/Normal#0#1\n";
+            File.WriteAllText(iniPath, ini);
+
+            CharacterFolder folder = CharacterFolder.Create(iniPath);
+            CharacterEmoteVisualizerWindow window = new CharacterEmoteVisualizerWindow(folder);
+            System.Collections.Generic.List<EmoteVisualizerItem> items = window.BuildEmoteItems(folder);
+
+            Assert.That(items.Count, Is.EqualTo(1));
+            Assert.That(items[0].AnimationPath, Is.EqualTo(Path.Combine(characterDirectory, "(a)Normal.webp")));
+            window.Close();
+        }
+
+        [Test]
+        public void BuildViewportAutoplayItemIds_PrioritizesSelectedAndCapsCount()
+        {
+            List<EmoteVisualizerItem> visibleItems = new List<EmoteVisualizerItem>
+            {
+                new EmoteVisualizerItem { Id = 10 },
+                new EmoteVisualizerItem { Id = 11 },
+                new EmoteVisualizerItem { Id = 12 },
+                new EmoteVisualizerItem { Id = 13 }
+            };
+
+            HashSet<int> autoplay = CharacterEmoteVisualizerWindow.BuildViewportAutoplayItemIds(
+                visibleItems,
+                selectedId: 12,
+                maxItems: 2);
+
+            Assert.That(autoplay.Count, Is.EqualTo(2));
+            Assert.That(autoplay.Contains(12), Is.True);
+            Assert.That(autoplay.Contains(10), Is.True);
+        }
+
+        [Test]
+        public void ReleaseTransientResourcesForTests_StopsPlayersAndClearsCacheAndItems()
+        {
+            CharacterFolder folder = BuildCharacterFolderWithEmotes();
+            CharacterEmoteVisualizerWindow window = new CharacterEmoteVisualizerWindow(folder);
+
+            CreateSolidPng(Path.Combine(folder.DirectoryPath, "temp_preview.png"));
+            ImageSource cached = Ao2AnimationPreview.LoadStaticPreviewImage(
+                Path.Combine(folder.DirectoryPath, "temp_preview.png"),
+                decodePixelWidth: 64);
+            Assert.That(cached, Is.Not.Null);
+            Assert.That(Ao2AnimationPreview.GetStaticPreviewCacheEntryCountForTests(), Is.GreaterThan(0));
+
+            TestAnimationPlayer prePlayer = new TestAnimationPlayer();
+            TestAnimationPlayer animPlayer = new TestAnimationPlayer();
+            EmoteVisualizerItem item = new EmoteVisualizerItem
+            {
+                Id = 1,
+                HasPreAnimation = true,
+                IconImage = cached,
+                PreAnimationImage = cached,
+                AnimationImage = cached,
+                PreAnimationPlayer = prePlayer,
+                AnimationPlayer = animPlayer
+            };
+
+            window.SetEmoteItemsForTests(new[] { item });
+            window.ReleaseTransientResourcesForTests(clearItems: false);
+
+            Assert.That(prePlayer.StopCallCount, Is.EqualTo(1));
+            Assert.That(animPlayer.StopCallCount, Is.EqualTo(1));
+            Assert.That(item.PreAnimationPlayer, Is.Null);
+            Assert.That(item.AnimationPlayer, Is.Null);
+            Assert.That(Ao2AnimationPreview.GetStaticPreviewCacheEntryCountForTests(), Is.EqualTo(0));
+
+            window.ReleaseTransientResourcesForTests(clearItems: true);
+            Assert.That(window.EmoteItems.Count, Is.EqualTo(0));
+            window.Close();
+        }
+
         private CharacterFolder BuildCharacterFolderWithEmotes()
         {
             string characterDirectory = Path.Combine(tempRoot, "characters", "Apollo");
@@ -91,6 +182,49 @@ namespace UnitTests
             File.WriteAllText(iniPath, ini);
 
             return CharacterFolder.Create(iniPath);
+        }
+
+        private static void CreateSolidPng(string path)
+        {
+            WriteableBitmap bitmap = new WriteableBitmap(4, 4, 96, 96, PixelFormats.Bgra32, null);
+            byte[] pixels = new byte[4 * 4 * 4];
+            for (int i = 0; i < pixels.Length; i += 4)
+            {
+                pixels[i] = 16;
+                pixels[i + 1] = 32;
+                pixels[i + 2] = 48;
+                pixels[i + 3] = 255;
+            }
+
+            bitmap.WritePixels(new Int32Rect(0, 0, 4, 4), pixels, 4 * 4, 0);
+            using FileStream stream = File.Create(path);
+            PngBitmapEncoder encoder = new PngBitmapEncoder();
+            encoder.Frames.Add(BitmapFrame.Create(bitmap));
+            encoder.Save(stream);
+        }
+
+        private sealed class TestAnimationPlayer : IAnimationPlayer
+        {
+            public event Action<ImageSource>? FrameChanged;
+
+            public int StopCallCount { get; private set; }
+
+            public ImageSource CurrentFrame => new DrawingImage();
+
+            public void SetLoop(bool shouldLoop)
+            {
+                _ = shouldLoop;
+            }
+
+            public void Restart()
+            {
+            }
+
+            public void Stop()
+            {
+                StopCallCount++;
+                FrameChanged = null;
+            }
         }
     }
 }

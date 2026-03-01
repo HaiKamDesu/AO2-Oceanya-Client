@@ -33,6 +33,7 @@
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
     <PackageReference Include="libbass" Version="2.4.17" />
     <PackageReference Include="libbassopus" Version="2.4.3" />
+    <PackageReference Include="Magick.NET-Q8-AnyCPU" Version="14.10.3" />
     <PackageReference Include="MaterialDesignColors" Version="5.2.1" />
     <PackageReference Include="MaterialDesignThemes" Version="5.2.1" />
     <PackageReference Include="ManagedBass" Version="3.0.0" />
@@ -71,16 +72,8 @@
   </ItemGroup>
 
   <Target Name="EnsureX64BassInRootOutput" AfterTargets="Build">
-    <Copy SourceFiles="$(OutputPath)win-x64\bass.dll"
-          DestinationFiles="$(OutputPath)bass.dll"
-          OverwriteReadOnlyFiles="true"
-          SkipUnchangedFiles="false"
-          Condition="Exists('$(OutputPath)win-x64\bass.dll')" />
-    <Copy SourceFiles="$(OutputPath)win-x64\bassopus.dll"
-          DestinationFiles="$(OutputPath)bassopus.dll"
-          OverwriteReadOnlyFiles="true"
-          SkipUnchangedFiles="false"
-          Condition="Exists('$(OutputPath)win-x64\bassopus.dll')" />
+    <Copy SourceFiles="$(OutputPath)win-x64\bass.dll" DestinationFiles="$(OutputPath)bass.dll" OverwriteReadOnlyFiles="true" SkipUnchangedFiles="false" Condition="Exists('$(OutputPath)win-x64\bass.dll')" />
+    <Copy SourceFiles="$(OutputPath)win-x64\bassopus.dll" DestinationFiles="$(OutputPath)bassopus.dll" OverwriteReadOnlyFiles="true" SkipUnchangedFiles="false" Condition="Exists('$(OutputPath)win-x64\bassopus.dll')" />
   </Target>
 
 </Project>

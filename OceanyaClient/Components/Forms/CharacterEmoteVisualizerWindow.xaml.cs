@@ -7,6 +7,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
+using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -29,6 +30,9 @@ namespace OceanyaClient
     {
         private const double MinimumWindowWidth = 900;
         private const double MinimumWindowHeight = 560;
+        private const int ViewportAnimationRetentionRows = 6;
+        private const int MaxViewportAutoplayItems = 2;
+        private const int ViewportResidencyRefreshDebounceMilliseconds = 45;
         private const string FallbackFolderPackUri =
             "pack://application:,,,/OceanyaClient;component/Resources/Buttons/smallFolder.png";
 
@@ -37,15 +41,17 @@ namespace OceanyaClient
         private static readonly ImageSource TransparentImage = CreateTransparentPlaceholderImage();
 
         private CharacterFolder character;
-        private readonly Dictionary<string, ImageSource> imageCache =
-            new Dictionary<string, ImageSource>(StringComparer.OrdinalIgnoreCase);
         private readonly List<EmoteVisualizerItem> allItems = new List<EmoteVisualizerItem>();
+        private CancellationTokenSource? viewportPreviewLoadCancellation;
+        private readonly HashSet<int> retainedViewportEmoteIds = new HashSet<int>();
         private readonly Dictionary<GridViewColumn, EmoteVisualizerTableColumnConfig> tableColumnMap =
             new Dictionary<GridViewColumn, EmoteVisualizerTableColumnConfig>();
         private readonly Dictionary<GridViewColumn, EventHandler> columnWidthHandlers =
             new Dictionary<GridViewColumn, EventHandler>();
-        private readonly List<IAnimationPlayer> animationPlayers = new List<IAnimationPlayer>();
+        private readonly DispatcherTimer viewportResidencyRefreshDebounceTimer;
+        private ScrollViewer? emoteListScrollViewer;
         private bool loopAnimations;
+        private int viewportPreviewLoadGeneration;
 
         private bool hasLoaded;
         private bool applyingSavedWindowState;
@@ -66,6 +72,12 @@ namespace OceanyaClient
         private RowResizeGuideAdorner? rowResizeGuideAdorner;
 
         internal IReadOnlyList<EmoteVisualizerItem> EmoteItems => allItems;
+
+        internal void SetEmoteItemsForTests(IEnumerable<EmoteVisualizerItem> items)
+        {
+            allItems.Clear();
+            allItems.AddRange(items ?? Enumerable.Empty<EmoteVisualizerItem>());
+        }
 
         public static readonly DependencyProperty TileWidthProperty = DependencyProperty.Register(
             nameof(TileWidth), typeof(double), typeof(CharacterEmoteVisualizerWindow), new PropertyMetadata(235d));
@@ -151,6 +163,11 @@ namespace OceanyaClient
             visualizerConfig = CloneConfig(SaveFile.Data.EmoteVisualizer);
             loopAnimations = SaveFile.Data.LoopEmoteVisualizerAnimations;
             LoopAnimationsCheckBox.IsChecked = loopAnimations;
+            viewportResidencyRefreshDebounceTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(ViewportResidencyRefreshDebounceMilliseconds)
+            };
+            viewportResidencyRefreshDebounceTimer.Tick += ViewportResidencyRefreshDebounceTimer_Tick;
             ApplySavedWindowState();
             BindViewPresets();
         }
@@ -327,6 +344,7 @@ namespace OceanyaClient
                 await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
                 ApplySelectedViewPreset();
                 await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
+                RefreshViewportAnimationResidency();
                 ApplyLoopAnimationsSetting(loopAnimations);
             }
             finally
@@ -361,15 +379,11 @@ namespace OceanyaClient
                 bool hasPreAnimation = !string.IsNullOrWhiteSpace(emote.PreAnimation)
                     && !string.Equals(emote.PreAnimation.Trim(), "-", StringComparison.Ordinal);
 
-                ImageSource iconImage = LoadImage(iconPath, 72);
-                (ImageSource preImage, IAnimationPlayer? prePlayer) = LoadPreviewImage(preAnimationPath, 240);
-                (ImageSource animationImage, IAnimationPlayer? animationPlayer) = LoadPreviewImage(animationPath, 240);
-                if (!hasPreAnimation)
-                {
-                    preImage = TransparentImage;
-                    prePlayer?.Stop();
-                    prePlayer = null;
-                }
+                ImageSource iconImage = FallbackImage;
+                ImageSource preImage = hasPreAnimation ? FallbackImage : TransparentImage;
+                ImageSource animationImage = FallbackImage;
+                IAnimationPlayer? prePlayer = null;
+                IAnimationPlayer? animationPlayer = null;
 
                 EmoteVisualizerItem item = new EmoteVisualizerItem
                 {
@@ -382,29 +396,17 @@ namespace OceanyaClient
                     NameWithId = $"{id}: {displayName}",
                     HasPreAnimation = hasPreAnimation,
                     IconPath = iconPath,
-                    IconDimensions = GetImageDimensionsText(iconPath),
+                    IconDimensions = "-",
                     PreAnimationPath = preAnimationPath,
-                    PreAnimationDimensions = hasPreAnimation
-                        ? GetImageDimensionsText(preAnimationPath)
-                        : "No preanim",
+                    PreAnimationDimensions = hasPreAnimation ? "-" : "No preanim",
                     AnimationPath = animationPath,
-                    AnimationDimensions = GetImageDimensionsText(animationPath),
+                    AnimationDimensions = "-",
                     IconImage = iconImage,
                     PreAnimationImage = preImage,
                     AnimationImage = animationImage,
                     PreAnimationPlayer = prePlayer,
                     AnimationPlayer = animationPlayer
                 };
-
-                if (prePlayer != null)
-                {
-                    prePlayer.FrameChanged += frame => item.PreAnimationImage = frame;
-                }
-
-                if (animationPlayer != null)
-                {
-                    animationPlayer.FrameChanged += frame => item.AnimationImage = frame;
-                }
 
                 items.Add(item);
             }
@@ -475,6 +477,8 @@ namespace OceanyaClient
             ScrollViewer.SetHorizontalScrollBarVisibility(EmoteListView, ScrollBarVisibility.Disabled);
             EmoteListView.ItemsSource = null;
             EmoteListView.ItemsSource = GetOrCreateItemsView();
+            EnsureEmoteListScrollViewerHooked();
+            Dispatcher.BeginInvoke(new Action(RefreshViewportAnimationResidency), DispatcherPriority.Background);
         }
 
         private void ApplyTablePreset(EmoteVisualizerViewPreset preset)
@@ -489,6 +493,8 @@ namespace OceanyaClient
             EmoteListView.ItemsSource = null;
             EmoteListView.ItemsSource = GetOrCreateItemsView();
             ApplySortToCurrentView();
+            EnsureEmoteListScrollViewerHooked();
+            Dispatcher.BeginInvoke(new Action(RefreshViewportAnimationResidency), DispatcherPriority.Background);
         }
 
         private Style BuildDetailsContainerStyle(EmoteVisualizerTableViewConfig table)
@@ -1080,6 +1086,7 @@ namespace OceanyaClient
             ICollectionView view = GetOrCreateItemsView();
             view.Refresh();
             UpdateVisibleRowPositions();
+            RefreshViewportAnimationResidency();
         }
 
         private void TrackColumnWidth(GridViewColumn column, EmoteVisualizerTableColumnConfig config)
@@ -1147,50 +1154,19 @@ namespace OceanyaClient
         private ImageSource LoadImage(string path, int decodePixelWidth)
         {
             string normalizedPath = path?.Trim() ?? string.Empty;
-            string cacheKey = decodePixelWidth.ToString() + "|" + normalizedPath;
-
-            if (imageCache.TryGetValue(cacheKey, out ImageSource? cachedImage))
-            {
-                return cachedImage;
-            }
-
-            ImageSource loadedImage = Ao2AnimationPreview.LoadStaticPreviewImage(
+            return Ao2AnimationPreview.LoadStaticPreviewImage(
                 normalizedPath,
                 decodePixelWidth,
                 FallbackImage);
-
-            imageCache[cacheKey] = loadedImage;
-            return loadedImage;
-        }
-
-        private (ImageSource image, IAnimationPlayer? player) LoadPreviewImage(string path, int decodePixelWidth)
-        {
-            string normalizedPath = Ao2AnimationPreview.ResolveAo2ImagePath(path) ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(normalizedPath) || !File.Exists(normalizedPath))
-            {
-                return (FallbackImage, null);
-            }
-
-            if (Ao2AnimationPreview.TryCreateAnimationPlayer(normalizedPath, loopAnimations, out IAnimationPlayer? genericPlayer))
-            {
-                if (genericPlayer != null)
-                {
-                    animationPlayers.Add(genericPlayer);
-                    return (genericPlayer.CurrentFrame, genericPlayer);
-                }
-            }
-            
-            return (LoadImage(normalizedPath, decodePixelWidth), null);
         }
 
         private void StopAndClearAnimationPlayers()
         {
-            foreach (IAnimationPlayer player in animationPlayers)
+            foreach (EmoteVisualizerItem item in allItems)
             {
-                player.Stop();
+                StopAnimationPlayer(item, isPreAnimation: true);
+                StopAnimationPlayer(item, isPreAnimation: false);
             }
-
-            animationPlayers.Clear();
         }
 
         private void ApplyLoopAnimationsSetting(bool loop)
@@ -1212,15 +1188,364 @@ namespace OceanyaClient
             ApplyLoopAnimationsSetting(shouldLoop);
         }
 
-        private void EmoteListView_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private void EnsureEmoteListScrollViewerHooked()
         {
-            if (EmoteListView.SelectedItem is not EmoteVisualizerItem item)
+            ScrollViewer? discovered = FindDescendant<ScrollViewer>(EmoteListView);
+            if (ReferenceEquals(discovered, emoteListScrollViewer))
             {
                 return;
             }
 
+            if (emoteListScrollViewer != null)
+            {
+                emoteListScrollViewer.ScrollChanged -= EmoteListScrollViewer_ScrollChanged;
+            }
+
+            emoteListScrollViewer = discovered;
+            if (emoteListScrollViewer != null)
+            {
+                emoteListScrollViewer.ScrollChanged += EmoteListScrollViewer_ScrollChanged;
+            }
+        }
+
+        private void EmoteListScrollViewer_ScrollChanged(object sender, ScrollChangedEventArgs e)
+        {
+            if (Math.Abs(e.VerticalChange) < 0.01 && Math.Abs(e.HorizontalChange) < 0.01)
+            {
+                return;
+            }
+
+            RequestViewportAnimationResidencyRefresh();
+        }
+
+        private void RequestViewportAnimationResidencyRefresh()
+        {
+            viewportResidencyRefreshDebounceTimer.Stop();
+            viewportResidencyRefreshDebounceTimer.Start();
+        }
+
+        private void ViewportResidencyRefreshDebounceTimer_Tick(object? sender, EventArgs e)
+        {
+            viewportResidencyRefreshDebounceTimer.Stop();
+            RefreshViewportAnimationResidency();
+        }
+
+        private void RefreshViewportAnimationResidency()
+        {
+            IReadOnlyList<EmoteVisualizerItem> retainedItems = GetViewportRetainedItems();
+            HashSet<int> retainedIds = retainedItems.Select(item => item.Id).ToHashSet();
+            retainedViewportEmoteIds.Clear();
+            foreach (int id in retainedIds)
+            {
+                retainedViewportEmoteIds.Add(id);
+            }
+
+            List<EmoteVisualizerItem> visibleItems = GetVisibleItemsOrderedTopToBottom();
+            HashSet<int> visibleIds = visibleItems.Select(item => item.Id).ToHashSet();
+            int? selectedId = (EmoteListView.SelectedItem as EmoteVisualizerItem)?.Id;
+            HashSet<int> autoplayIds = BuildViewportAutoplayItemIds(visibleItems, selectedId, MaxViewportAutoplayItems);
+            foreach (EmoteVisualizerItem item in allItems)
+            {
+                if (retainedIds.Contains(item.Id))
+                {
+                    if (autoplayIds.Contains(item.Id) && visibleIds.Contains(item.Id))
+                    {
+                        bool includePreAnimation = selectedId.HasValue && selectedId.Value == item.Id;
+                        EnsureAnimationPlayersForItem(item, includePreAnimation);
+                    }
+                    else
+                    {
+                        StopAnimationPlayer(item, isPreAnimation: true);
+                        StopAnimationPlayer(item, isPreAnimation: false);
+                    }
+
+                    continue;
+                }
+
+                StopAnimationPlayer(item, isPreAnimation: true);
+                StopAnimationPlayer(item, isPreAnimation: false);
+                item.PreAnimationImage = item.HasPreAnimation ? FallbackImage : TransparentImage;
+                item.AnimationImage = FallbackImage;
+            }
+
+            StartViewportPreviewLoading(retainedItems, retainedIds);
+        }
+
+        private void StartViewportPreviewLoading(
+            IReadOnlyList<EmoteVisualizerItem> retainedItems,
+            IReadOnlySet<int> retainedIds)
+        {
+            viewportPreviewLoadGeneration++;
+            int generation = viewportPreviewLoadGeneration;
+            viewportPreviewLoadCancellation?.Cancel();
+            viewportPreviewLoadCancellation?.Dispose();
+            viewportPreviewLoadCancellation = new CancellationTokenSource();
+            CancellationToken cancellationToken = viewportPreviewLoadCancellation.Token;
+
+            List<(int id, string iconPath, bool hasPreAnimation, string preAnimationPath, string animationPath)> queue = retainedItems
+                .Select(item => (item.Id, item.IconPath, item.HasPreAnimation, item.PreAnimationPath, item.AnimationPath))
+                .ToList();
+            Dictionary<int, EmoteVisualizerItem> itemsById = allItems.ToDictionary(item => item.Id);
+
+            _ = Task.Run(async () =>
+            {
+                for (int i = 0; i < queue.Count; i++)
+                {
+                    if (cancellationToken.IsCancellationRequested || generation != viewportPreviewLoadGeneration)
+                    {
+                        return;
+                    }
+
+                    (int id, string iconPath, bool hasPreAnimation, string preAnimationPath, string animationPath) entry = queue[i];
+                    ImageSource iconImage = LoadImage(entry.iconPath, 72);
+                    string iconDimensions = GetImageDimensionsText(entry.iconPath);
+                    string preDimensions = entry.hasPreAnimation
+                        ? GetImageDimensionsText(entry.preAnimationPath)
+                        : "No preanim";
+                    string animationDimensions = GetImageDimensionsText(entry.animationPath);
+                    ImageSource preImage = entry.hasPreAnimation
+                        ? LoadImage(entry.preAnimationPath, 240)
+                        : TransparentImage;
+                    ImageSource animationImage = LoadImage(entry.animationPath, 240);
+
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        if (!retainedIds.Contains(entry.id)
+                            || !retainedViewportEmoteIds.Contains(entry.id)
+                            || generation != viewportPreviewLoadGeneration)
+                        {
+                            return;
+                        }
+
+                        if (!itemsById.TryGetValue(entry.id, out EmoteVisualizerItem? target))
+                        {
+                            return;
+                        }
+
+                        target.IconImage = iconImage;
+                        target.IconDimensions = iconDimensions;
+                        target.PreAnimationDimensions = preDimensions;
+                        target.AnimationDimensions = animationDimensions;
+
+                        if (target.PreAnimationPlayer == null)
+                        {
+                            target.PreAnimationImage = preImage;
+                        }
+
+                        if (target.AnimationPlayer == null)
+                        {
+                            target.AnimationImage = animationImage;
+                        }
+                    }, DispatcherPriority.Background, cancellationToken);
+
+                    if ((i + 1) % 12 == 0)
+                    {
+                        await Task.Delay(1, cancellationToken);
+                    }
+                }
+            }, cancellationToken);
+        }
+
+        private IReadOnlyList<EmoteVisualizerItem> GetViewportRetainedItems()
+        {
+            ICollectionView view = GetOrCreateItemsView();
+            List<EmoteVisualizerItem> currentItems = view.OfType<EmoteVisualizerItem>().ToList();
+            if (currentItems.Count == 0)
+            {
+                return Array.Empty<EmoteVisualizerItem>();
+            }
+
+            List<EmoteVisualizerItem> visibleItems = GetVisibleItemsOrderedTopToBottom();
+            if (visibleItems.Count == 0)
+            {
+                return currentItems.Take(Math.Min(currentItems.Count, ViewportAnimationRetentionRows * 2)).ToList();
+            }
+
+            Dictionary<int, int> indexById = new Dictionary<int, int>();
+            for (int i = 0; i < currentItems.Count; i++)
+            {
+                if (!indexById.ContainsKey(currentItems[i].Id))
+                {
+                    indexById[currentItems[i].Id] = i;
+                }
+            }
+
+            int minIndex = currentItems.Count - 1;
+            int maxIndex = 0;
+            bool foundAny = false;
+            foreach (EmoteVisualizerItem visibleItem in visibleItems)
+            {
+                if (!indexById.TryGetValue(visibleItem.Id, out int index))
+                {
+                    continue;
+                }
+
+                foundAny = true;
+                if (index < minIndex)
+                {
+                    minIndex = index;
+                }
+
+                if (index > maxIndex)
+                {
+                    maxIndex = index;
+                }
+            }
+
+            if (!foundAny)
+            {
+                return currentItems.Take(Math.Min(currentItems.Count, ViewportAnimationRetentionRows * 2)).ToList();
+            }
+
+            int startIndex = Math.Max(0, minIndex - ViewportAnimationRetentionRows);
+            int endIndex = Math.Min(currentItems.Count - 1, maxIndex + ViewportAnimationRetentionRows);
+            List<EmoteVisualizerItem> retained = new List<EmoteVisualizerItem>(endIndex - startIndex + 1);
+            for (int i = startIndex; i <= endIndex; i++)
+            {
+                retained.Add(currentItems[i]);
+            }
+
+            return retained;
+        }
+
+        private List<EmoteVisualizerItem> GetVisibleItemsOrderedTopToBottom()
+        {
+            if (emoteListScrollViewer == null)
+            {
+                return new List<EmoteVisualizerItem>();
+            }
+
+            List<(double top, EmoteVisualizerItem item)> visibleItems = new List<(double top, EmoteVisualizerItem item)>();
+            foreach (ListViewItem container in FindVisualChildren<ListViewItem>(EmoteListView))
+            {
+                if (container.DataContext is not EmoteVisualizerItem item
+                    || container.ActualHeight <= 0
+                    || container.ActualWidth <= 0)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    Rect bounds = container.TransformToAncestor(emoteListScrollViewer)
+                        .TransformBounds(new Rect(0, 0, container.ActualWidth, container.ActualHeight));
+                    if (bounds.Bottom < 0 || bounds.Top > emoteListScrollViewer.ViewportHeight)
+                    {
+                        continue;
+                    }
+
+                    visibleItems.Add((bounds.Top, item));
+                }
+                catch (InvalidOperationException)
+                {
+                    // ignored during virtualization churn
+                }
+            }
+
+            return visibleItems
+                .OrderBy(entry => entry.top)
+                .Select(entry => entry.item)
+                .ToList();
+        }
+
+        private void EnsureAnimationPlayersForItem(EmoteVisualizerItem item)
+        {
+            EnsureAnimationPlayersForItem(item, includePreAnimation: true);
+        }
+
+        private void EnsureAnimationPlayersForItem(EmoteVisualizerItem item, bool includePreAnimation)
+        {
+            if (includePreAnimation
+                && item.HasPreAnimation
+                && item.PreAnimationPlayer == null
+                && IsPotentialAnimatedPath(item.PreAnimationPath))
+            {
+                string? resolvedPreAnimationPath = Ao2AnimationPreview.ResolveAo2ImagePath(item.PreAnimationPath);
+                if (!string.IsNullOrWhiteSpace(resolvedPreAnimationPath)
+                    && Ao2AnimationPreview.TryCreateAnimationPlayer(resolvedPreAnimationPath, loopAnimations, out IAnimationPlayer? prePlayer)
+                    && prePlayer != null)
+                {
+                    item.PreAnimationPlayer = prePlayer;
+                    prePlayer.FrameChanged += frame => item.PreAnimationImage = frame;
+                    item.PreAnimationImage = prePlayer.CurrentFrame;
+                }
+            }
+
+            if (item.AnimationPlayer == null && IsPotentialAnimatedPath(item.AnimationPath))
+            {
+                string? resolvedAnimationPath = Ao2AnimationPreview.ResolveAo2ImagePath(item.AnimationPath);
+                if (!string.IsNullOrWhiteSpace(resolvedAnimationPath)
+                    && Ao2AnimationPreview.TryCreateAnimationPlayer(resolvedAnimationPath, loopAnimations, out IAnimationPlayer? animationPlayer)
+                    && animationPlayer != null)
+                {
+                    item.AnimationPlayer = animationPlayer;
+                    animationPlayer.FrameChanged += frame => item.AnimationImage = frame;
+                    item.AnimationImage = animationPlayer.CurrentFrame;
+                }
+            }
+        }
+
+        internal static HashSet<int> BuildViewportAutoplayItemIds(
+            IReadOnlyList<EmoteVisualizerItem> visibleItems,
+            int? selectedId,
+            int maxItems)
+        {
+            HashSet<int> result = new HashSet<int>();
+            int limit = Math.Max(0, maxItems);
+            if (limit == 0)
+            {
+                return result;
+            }
+
+            if (selectedId.HasValue && visibleItems.Any(item => item.Id == selectedId.Value))
+            {
+                result.Add(selectedId.Value);
+            }
+
+            foreach (EmoteVisualizerItem item in visibleItems)
+            {
+                if (result.Count >= limit)
+                {
+                    break;
+                }
+
+                result.Add(item.Id);
+            }
+
+            return result;
+        }
+
+        private static void StopAnimationPlayer(EmoteVisualizerItem item, bool isPreAnimation)
+        {
+            IAnimationPlayer? player = isPreAnimation ? item.PreAnimationPlayer : item.AnimationPlayer;
+            if (player == null)
+            {
+                return;
+            }
+
+            player.Stop();
+            if (isPreAnimation)
+            {
+                item.PreAnimationPlayer = null;
+            }
+            else
+            {
+                item.AnimationPlayer = null;
+            }
+        }
+
+        private void EmoteListView_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (EmoteListView.SelectedItem is not EmoteVisualizerItem item)
+            {
+                RefreshViewportAnimationResidency();
+                return;
+            }
+
+            EnsureAnimationPlayersForItem(item);
             item.PreAnimationPlayer?.Restart();
             item.AnimationPlayer?.Restart();
+            RefreshViewportAnimationResidency();
         }
 
         private void EmoteListView_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
@@ -1372,6 +1697,30 @@ namespace OceanyaClient
             }
 
             return null;
+        }
+
+        private static IEnumerable<TChild> FindVisualChildren<TChild>(DependencyObject root)
+            where TChild : DependencyObject
+        {
+            if (root == null)
+            {
+                yield break;
+            }
+
+            int childCount = VisualTreeHelper.GetChildrenCount(root);
+            for (int i = 0; i < childCount; i++)
+            {
+                DependencyObject child = VisualTreeHelper.GetChild(root, i);
+                if (child is TChild typed)
+                {
+                    yield return typed;
+                }
+
+                foreach (TChild nested in FindVisualChildren<TChild>(child))
+                {
+                    yield return nested;
+                }
+            }
         }
 
         private sealed class RowResizeGuideAdorner : Adorner
@@ -1773,7 +2122,6 @@ namespace OceanyaClient
             try
             {
                 character = EnsureCharacterLoaded(character);
-                imageCache.Clear();
                 await LoadEmoteItemsAsync();
             }
             catch (Exception ex)
@@ -1800,7 +2148,12 @@ namespace OceanyaClient
 
         private void Window_Closed(object? sender, EventArgs e)
         {
-            StopAndClearAnimationPlayers();
+            ReleaseTransientResources(clearItems: true);
+            if (emoteListScrollViewer != null)
+            {
+                emoteListScrollViewer.ScrollChanged -= EmoteListScrollViewer_ScrollChanged;
+                emoteListScrollViewer = null;
+            }
             UntrackTableColumnWidth();
             PersistVisualizerConfig();
             if (!applyingSavedWindowState)
@@ -1808,6 +2161,41 @@ namespace OceanyaClient
                 SaveFile.Data.EmoteVisualizerWindowState = CaptureWindowState();
                 SaveFile.Save();
             }
+        }
+
+        private void ReleaseTransientResources(bool clearItems)
+        {
+            viewportResidencyRefreshDebounceTimer.Stop();
+            viewportPreviewLoadGeneration++;
+            viewportPreviewLoadCancellation?.Cancel();
+            viewportPreviewLoadCancellation?.Dispose();
+            viewportPreviewLoadCancellation = null;
+            retainedViewportEmoteIds.Clear();
+            StopAndClearAnimationPlayers();
+
+            if (clearItems)
+            {
+                foreach (EmoteVisualizerItem item in allItems)
+                {
+                    item.IconImage = FallbackImage;
+                    item.PreAnimationImage = item.HasPreAnimation ? FallbackImage : TransparentImage;
+                    item.AnimationImage = FallbackImage;
+                }
+
+                allItems.Clear();
+                itemsView = null;
+                if (EmoteListView != null)
+                {
+                    EmoteListView.ItemsSource = null;
+                }
+            }
+
+            Ao2AnimationPreview.ClearStaticPreviewCache();
+        }
+
+        internal void ReleaseTransientResourcesForTests(bool clearItems)
+        {
+            ReleaseTransientResources(clearItems);
         }
 
         private static ImageSource CreateTransparentPlaceholderImage()
@@ -1909,6 +2297,8 @@ namespace OceanyaClient
 
     public sealed class EmoteVisualizerItem : INotifyPropertyChanged
     {
+        private ImageSource iconImage = CharacterFolderVisualizerWindow.LoadEmbeddedImage(
+            "pack://application:,,,/OceanyaClient;component/Resources/Buttons/smallFolder.png");
         private ImageSource preAnimationImage = CharacterFolderVisualizerWindow.LoadEmbeddedImage(
             "pack://application:,,,/OceanyaClient;component/Resources/Buttons/smallFolder.png");
         private ImageSource animationImage = CharacterFolderVisualizerWindow.LoadEmbeddedImage(
@@ -1916,6 +2306,9 @@ namespace OceanyaClient
         private bool integrityHasFailures;
         private string indexText = string.Empty;
         private string rowPositionText = string.Empty;
+        private string iconDimensions = "-";
+        private string preAnimationDimensions = "-";
+        private string animationDimensions = "-";
 
         public int Index { get; set; }
         public string IndexText
@@ -1954,13 +2347,67 @@ namespace OceanyaClient
         public string NameWithId { get; set; } = string.Empty;
         public bool HasPreAnimation { get; set; }
         public string IconPath { get; set; } = string.Empty;
-        public string IconDimensions { get; set; } = "-";
+        public string IconDimensions
+        {
+            get => iconDimensions;
+            set
+            {
+                string safeValue = value ?? "-";
+                if (string.Equals(iconDimensions, safeValue, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                iconDimensions = safeValue;
+                OnPropertyChanged();
+            }
+        }
         public string PreAnimationPath { get; set; } = string.Empty;
-        public string PreAnimationDimensions { get; set; } = "-";
+        public string PreAnimationDimensions
+        {
+            get => preAnimationDimensions;
+            set
+            {
+                string safeValue = value ?? "-";
+                if (string.Equals(preAnimationDimensions, safeValue, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                preAnimationDimensions = safeValue;
+                OnPropertyChanged();
+            }
+        }
         public string AnimationPath { get; set; } = string.Empty;
-        public string AnimationDimensions { get; set; } = "-";
-        public ImageSource IconImage { get; set; } = CharacterFolderVisualizerWindow.LoadEmbeddedImage(
-            "pack://application:,,,/OceanyaClient;component/Resources/Buttons/smallFolder.png");
+        public string AnimationDimensions
+        {
+            get => animationDimensions;
+            set
+            {
+                string safeValue = value ?? "-";
+                if (string.Equals(animationDimensions, safeValue, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                animationDimensions = safeValue;
+                OnPropertyChanged();
+            }
+        }
+        public ImageSource IconImage
+        {
+            get => iconImage;
+            set
+            {
+                if (ReferenceEquals(iconImage, value))
+                {
+                    return;
+                }
+
+                iconImage = value;
+                OnPropertyChanged();
+            }
+        }
         public ImageSource PreAnimationImage
         {
             get => preAnimationImage;

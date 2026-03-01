@@ -41,11 +41,16 @@ namespace OceanyaClient
         private const int VisualizerDiskCacheVersion = 1;
         private const int FolderTagCacheVersion = 1;
         private const string UntaggedFilterToken = "(none)";
+        private const int ViewportRetentionRows = 8;
+        private static readonly bool EnablePreviewDebugLog = true;
         private static readonly JsonSerializerOptions CacheJsonOptions = new JsonSerializerOptions { WriteIndented = false };
         private static readonly JsonSerializerOptions FolderTagCacheJsonOptions = new JsonSerializerOptions { WriteIndented = true };
+        private static readonly string PreviewDebugLogPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "OceanyaClient",
+            "debug",
+            "folder_preview_debug.log");
 
-        private static string cachedSignature = string.Empty;
-        private static List<FolderVisualizerItem> cachedItems = new List<FolderVisualizerItem>();
         private static string diskCacheFilePath = string.Empty;
         private static bool diskCachePathInitialized;
         private static string folderTagCacheFilePath = string.Empty;
@@ -54,9 +59,6 @@ namespace OceanyaClient
         private readonly Action? onAssetsRefreshed;
         private readonly Func<FolderVisualizerItem, bool>? canSetCharacterInClient;
         private readonly Action<FolderVisualizerItem>? setCharacterInClient;
-        private readonly Dictionary<string, ImageSource> imageCache =
-            new Dictionary<string, ImageSource>(StringComparer.OrdinalIgnoreCase);
-        private readonly object imageCacheLock = new object();
         private readonly object progressiveLoadKeyLock = new object();
         private readonly List<FolderVisualizerItem> allItems = new List<FolderVisualizerItem>();
         private CancellationTokenSource? progressiveImageLoadCancellation;
@@ -240,6 +242,7 @@ namespace OceanyaClient
             UpdateActiveTagFiltersText();
             RefreshSelectedFolderTagPanel();
             BindViewPresets();
+            InitializePreviewDebugLog();
         }
 
         /// <inheritdoc/>
@@ -264,6 +267,7 @@ namespace OceanyaClient
         private async void Window_Loaded(object sender, RoutedEventArgs e)
         {
             ApplyWorkAreaMaxBounds();
+            LogPreviewDebug("CharacterFolderVisualizer window loaded.");
 
             if (hasLoaded)
             {
@@ -705,46 +709,12 @@ namespace OceanyaClient
             List<CharacterFolder> characters = CharacterFolder.FullList;
             string signature = BuildCharacterSignature(characters);
 
-            if (!forceRebuild && cachedItems.Count > 0 && string.Equals(cachedSignature, signature, StringComparison.Ordinal))
-            {
-                await WaitForm.ShowFormAsync("Loading character folder visualizer...", this);
-                try
-                {
-                    WaitForm.SetSubtitle("Using cached character index...");
-                allItems.Clear();
-                lock (progressiveLoadKeyLock)
-                {
-                    progressiveLoadedItemKeys.Clear();
-                }
-                allItems.AddRange(cachedItems);
-                RecomputeDerivedItemFields();
-                itemsView = null;
-                UpdateSummaryText();
-                PruneTagAssignmentsToExistingItems();
-                RefreshSelectedFolderTagPanel();
-
-                WaitForm.SetSubtitle("Rendering selected view...");
-                await Dispatcher.Yield(DispatcherPriority.Background);
-                ApplySelectedViewPreset();
-                await Dispatcher.Yield(DispatcherPriority.Background);
-                StartProgressiveImageLoading();
-            }
-            finally
-            {
-                WaitForm.CloseForm();
-            }
-
-                return;
-            }
-
             if (!forceRebuild && TryLoadProjectedItemsFromDisk(signature, out List<FolderVisualizerItem>? diskCachedItems))
             {
                 await WaitForm.ShowFormAsync("Loading character folder visualizer...", this);
                 try
                 {
                     WaitForm.SetSubtitle("Loading indexed data from disk cache...");
-                    cachedSignature = signature;
-                    cachedItems = diskCachedItems;
                     allItems.Clear();
                     lock (progressiveLoadKeyLock)
                     {
@@ -776,8 +746,6 @@ namespace OceanyaClient
             {
                 List<FolderVisualizerItem> projected = await Task.Run(() => BuildCharacterItems(characters));
 
-                cachedSignature = signature;
-                cachedItems = projected;
                 SaveProjectedItemsToDisk(signature, projected);
 
                 allItems.Clear();
@@ -2124,7 +2092,6 @@ namespace OceanyaClient
             {
                 await ClientAssetRefreshService.RefreshCharactersAndBackgroundsAsync(this);
 
-                imageCache.Clear();
                 InvalidateCachedItems();
 
                 await LoadCharacterItemsAsync(forceRebuild: true);
@@ -2222,6 +2189,7 @@ namespace OceanyaClient
                 ICollectionView view = GetOrCreateItemsView();
                 view.Refresh();
                 UpdateSummaryText();
+                UpdateViewportImageResidency();
                 RequestProgressiveImageLoadReprioritization();
             }));
         }
@@ -2646,6 +2614,7 @@ namespace OceanyaClient
             ICollectionView view = GetOrCreateItemsView();
             view.Refresh();
             UpdateSummaryText();
+            UpdateViewportImageResidency();
             RequestProgressiveImageLoadReprioritization();
         }
 
@@ -2662,6 +2631,7 @@ namespace OceanyaClient
                 view.Refresh();
                 UpdateSummaryText();
                 await Dispatcher.Yield(DispatcherPriority.Background);
+                UpdateViewportImageResidency();
                 RequestProgressiveImageLoadReprioritization();
             }
             finally
@@ -2800,6 +2770,7 @@ namespace OceanyaClient
             view.Refresh();
             FolderListView.Items.Refresh();
             UpdateSummaryText();
+            UpdateViewportImageResidency();
             RequestProgressiveImageLoadReprioritization();
         }
 
@@ -3097,8 +3068,22 @@ namespace OceanyaClient
                 return;
             }
 
+            await WaitForm.ShowFormAsync("Opening character editor...", this);
             AOCharacterFileCreatorWindow creator = new AOCharacterFileCreatorWindow();
-            if (!creator.TryLoadCharacterFolderForEditing(directoryPath, out string errorMessage))
+            bool loadedSuccessfully;
+            string errorMessage;
+            try
+            {
+                WaitForm.SetSubtitle("Loading character folder: " + item.Name);
+                await Dispatcher.Yield(DispatcherPriority.Background);
+                loadedSuccessfully = creator.TryLoadCharacterFolderForEditing(directoryPath, out errorMessage);
+            }
+            finally
+            {
+                WaitForm.CloseForm();
+            }
+
+            if (!loadedSuccessfully)
             {
                 OceanyaMessageBox.Show(
                     this,
@@ -3264,14 +3249,6 @@ namespace OceanyaClient
                 currentItem.PreviewPath = previewPath;
                 currentItem.PreviewImage = previewImage;
             }
-
-            FolderVisualizerItem? cachedItem = cachedItems.FirstOrDefault(item =>
-                string.Equals(NormalizeFolderOverrideKey(item.DirectoryPath), key, StringComparison.OrdinalIgnoreCase));
-            if (cachedItem != null)
-            {
-                cachedItem.PreviewPath = previewPath;
-                cachedItem.PreviewImage = previewImage;
-            }
         }
 
         private void CloseButton_Click(object sender, RoutedEventArgs e)
@@ -3409,7 +3386,6 @@ namespace OceanyaClient
                         onParsedCharacter: character => WaitForm.SetSubtitle("Parsed Folder: " + character.Name),
                         onChangedMountPath: path => WaitForm.SetSubtitle("Changed mount path: " + path)));
 
-                imageCache.Clear();
                 InvalidateCachedItems();
                 itemsView = null;
 
@@ -3439,8 +3415,6 @@ namespace OceanyaClient
 
         internal static void InvalidateCachedItems()
         {
-            cachedSignature = string.Empty;
-            cachedItems = new List<FolderVisualizerItem>();
             EnsureDiskCacheFilePath();
             try
             {
@@ -3749,26 +3723,18 @@ namespace OceanyaClient
         private ImageSource LoadImage(string path, int decodePixelWidth)
         {
             string normalizedPath = path?.Trim() ?? string.Empty;
-            string cacheKey = decodePixelWidth.ToString() + "|" + normalizedPath;
-
-            lock (imageCacheLock)
-            {
-                if (imageCache.TryGetValue(cacheKey, out ImageSource? cachedImage))
-                {
-                    return cachedImage;
-                }
-            }
-
-            ImageSource loadedImage = Ao2AnimationPreview.LoadStaticPreviewImage(
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            ImageSource image = Ao2AnimationPreview.LoadStaticPreviewImage(
                 normalizedPath,
                 decodePixelWidth,
                 FallbackFolderImage);
-
-            lock (imageCacheLock)
+            if (stopwatch.ElapsedMilliseconds > 120)
             {
-                imageCache[cacheKey] = loadedImage;
+                string extension = Path.GetExtension(normalizedPath).ToLowerInvariant();
+                LogPreviewDebug($"Slow image load: {stopwatch.ElapsedMilliseconds}ms ext={extension} path='{normalizedPath}'");
             }
-            return loadedImage;
+
+            return image;
         }
 
         private void StartProgressiveImageLoading()
@@ -3776,6 +3742,7 @@ namespace OceanyaClient
             progressiveImageLoadCancellation?.Cancel();
             progressiveImageLoadCancellation = new CancellationTokenSource();
             CancellationToken cancellationToken = progressiveImageLoadCancellation.Token;
+            UpdateViewportImageResidency();
             List<FolderVisualizerItem> snapshot = BuildPrioritizedImageLoadSnapshot();
             if (snapshot.Count == 0)
             {
@@ -3792,25 +3759,27 @@ namespace OceanyaClient
                     }
 
                     FolderVisualizerItem item = snapshot[i];
-                    string itemKey = BuildProgressiveLoadItemKey(item);
-                    lock (progressiveLoadKeyLock)
-                    {
-                        if (progressiveLoadedItemKeys.Contains(itemKey))
-                        {
-                            continue;
-                        }
-
-                        progressiveLoadedItemKeys.Add(itemKey);
-                    }
-
+                    Stopwatch itemStopwatch = Stopwatch.StartNew();
                     ImageSource iconImage = LoadImage(item.IconPath, 48);
                     ImageSource previewImage = LoadImage(item.PreviewPath, 220);
 
                     await Dispatcher.InvokeAsync(() =>
                     {
+                        string itemKey = BuildProgressiveLoadItemKey(item);
+                        lock (progressiveLoadKeyLock)
+                        {
+                            if (progressiveLoadedItemKeys.Contains(itemKey))
+                            {
+                                return;
+                            }
+
+                            progressiveLoadedItemKeys.Add(itemKey);
+                        }
+
                         item.IconImage = iconImage;
                         item.PreviewImage = previewImage;
                     }, DispatcherPriority.Background, cancellationToken);
+                    LogPreviewDebug($"Loaded item '{item.Name}' in {itemStopwatch.ElapsedMilliseconds}ms");
 
                     if ((i + 1) % 24 == 0)
                     {
@@ -3847,6 +3816,7 @@ namespace OceanyaClient
                 return;
             }
 
+            UpdateViewportImageResidency();
             RequestProgressiveImageLoadReprioritization();
         }
 
@@ -3873,24 +3843,153 @@ namespace OceanyaClient
 
             List<FolderVisualizerItem> orderedItems = new List<FolderVisualizerItem>();
             HashSet<string> seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (FolderVisualizerItem visibleItem in GetVisibleItemsOrderedTopToBottom())
+            foreach (FolderVisualizerItem retainedItem in GetViewportRetainedItems())
             {
-                TryAddItemForProgressiveLoad(visibleItem, orderedItems, seenKeys);
-            }
-
-            IReadOnlyList<FolderVisualizerItem> currentViewItems = GetCurrentViewItemsInOrder();
-            foreach (FolderVisualizerItem item in currentViewItems)
-            {
-                TryAddItemForProgressiveLoad(item, orderedItems, seenKeys);
-            }
-
-            foreach (FolderVisualizerItem item in allItems)
-            {
-                TryAddItemForProgressiveLoad(item, orderedItems, seenKeys);
+                TryAddItemForProgressiveLoad(retainedItem, orderedItems, seenKeys);
             }
 
             return orderedItems;
+        }
+
+        private void UpdateViewportImageResidency()
+        {
+            IReadOnlyList<FolderVisualizerItem> retainedItems = GetViewportRetainedItems();
+            HashSet<string> retainedKeys = retainedItems
+                .Select(BuildProgressiveLoadItemKey)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            foreach (FolderVisualizerItem item in allItems)
+            {
+                string key = BuildProgressiveLoadItemKey(item);
+                if (retainedKeys.Contains(key))
+                {
+                    continue;
+                }
+
+                item.IconImage = FallbackFolderImage;
+                item.PreviewImage = FallbackFolderImage;
+                lock (progressiveLoadKeyLock)
+                {
+                    progressiveLoadedItemKeys.Remove(key);
+                }
+            }
+        }
+
+        private static void LogPreviewDebug(string message)
+        {
+            if (!EnablePreviewDebugLog)
+            {
+                return;
+            }
+
+            try
+            {
+                string? directory = Path.GetDirectoryName(PreviewDebugLogPath);
+                if (!string.IsNullOrWhiteSpace(directory))
+                {
+                    Directory.CreateDirectory(directory);
+                }
+
+                string line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [T{Environment.CurrentManagedThreadId}] {message}";
+                File.AppendAllText(PreviewDebugLogPath, line + Environment.NewLine);
+            }
+            catch
+            {
+                // ignored
+            }
+        }
+
+        private static void InitializePreviewDebugLog()
+        {
+            if (!EnablePreviewDebugLog)
+            {
+                return;
+            }
+
+            try
+            {
+                string? directory = Path.GetDirectoryName(PreviewDebugLogPath);
+                if (!string.IsNullOrWhiteSpace(directory))
+                {
+                    Directory.CreateDirectory(directory);
+                }
+
+                FileInfo info = new FileInfo(PreviewDebugLogPath);
+                if (info.Exists && info.Length > 1_500_000)
+                {
+                    info.Delete();
+                }
+
+                File.AppendAllText(
+                    PreviewDebugLogPath,
+                    $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [T{Environment.CurrentManagedThreadId}] --- session start ---{Environment.NewLine}");
+            }
+            catch
+            {
+                // ignored
+            }
+        }
+
+        private IReadOnlyList<FolderVisualizerItem> GetViewportRetainedItems()
+        {
+            IReadOnlyList<FolderVisualizerItem> currentItems = GetCurrentViewItemsInOrder();
+            if (currentItems.Count == 0)
+            {
+                return Array.Empty<FolderVisualizerItem>();
+            }
+
+            List<FolderVisualizerItem> visibleItems = GetVisibleItemsOrderedTopToBottom();
+            if (visibleItems.Count == 0)
+            {
+                return currentItems.Take(Math.Min(currentItems.Count, ViewportRetentionRows * 2)).ToList();
+            }
+
+            Dictionary<string, int> indexByKey = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < currentItems.Count; i++)
+            {
+                string key = BuildProgressiveLoadItemKey(currentItems[i]);
+                if (!indexByKey.ContainsKey(key))
+                {
+                    indexByKey[key] = i;
+                }
+            }
+
+            int minIndex = currentItems.Count - 1;
+            int maxIndex = 0;
+            bool foundAny = false;
+            foreach (FolderVisualizerItem visibleItem in visibleItems)
+            {
+                if (!indexByKey.TryGetValue(BuildProgressiveLoadItemKey(visibleItem), out int visibleIndex))
+                {
+                    continue;
+                }
+
+                foundAny = true;
+                if (visibleIndex < minIndex)
+                {
+                    minIndex = visibleIndex;
+                }
+
+                if (visibleIndex > maxIndex)
+                {
+                    maxIndex = visibleIndex;
+                }
+            }
+
+            if (!foundAny)
+            {
+                return currentItems.Take(Math.Min(currentItems.Count, ViewportRetentionRows * 2)).ToList();
+            }
+
+            int startIndex = Math.Max(0, minIndex - ViewportRetentionRows);
+            int endIndex = Math.Min(currentItems.Count - 1, maxIndex + ViewportRetentionRows);
+            List<FolderVisualizerItem> retained = new List<FolderVisualizerItem>(endIndex - startIndex + 1);
+            for (int i = startIndex; i <= endIndex; i++)
+            {
+                retained.Add(currentItems[i]);
+            }
+
+            return retained;
         }
 
         private IReadOnlyList<FolderVisualizerItem> GetCurrentViewItemsInOrder()

@@ -37,6 +37,7 @@ namespace OceanyaClient
         private const double MaxTileWidth = 760;
         private const double MinTileHeight = 330;
         private const double MaxTileHeight = 820;
+        private const int EmotePreviewDecodePixelWidth = 256;
 
         public event Action? FinishedLoading;
 
@@ -870,7 +871,7 @@ namespace OceanyaClient
                 }
 
                 viewModel.AnimationAssetSourcePath =
-                    ResolveImageTokenPathWithinCharacterDirectory(characterDirectoryPath, source.Animation);
+                    ResolveAnimationTokenPathWithinCharacterDirectory(characterDirectoryPath, source.Animation);
                 ResolveSplitAnimationAssets(characterDirectoryPath, source.Animation, viewModel);
                 viewModel.AnimationPreview = TryLoadPreviewImage(
                     viewModel.AnimationAssetSourcePath
@@ -905,8 +906,6 @@ namespace OceanyaClient
                 }
 
                 emotes.Add(viewModel);
-                UpdateAnimatedPreviewPlayer(viewModel, "preanim", viewModel.PreAnimationAssetSourcePath);
-                UpdateAnimatedPreviewPlayer(viewModel, "anim", viewModel.AnimationAssetSourcePath);
             }
 
             RefreshEmoteLabels();
@@ -1012,6 +1011,16 @@ namespace OceanyaClient
             HashSet<string> usedFolderPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             HashSet<string> generatedFolderPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             HashSet<string> generatedFilePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            List<string> existingFiles = Directory
+                .EnumerateFiles(normalizedRoot, "*", SearchOption.AllDirectories)
+                .Select(path => NormalizeRelativePath(Path.GetRelativePath(normalizedRoot, path), isFolder: false))
+                .ToList();
+            Dictionary<string, List<string>> existingFilesByName = existingFiles
+                .GroupBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    static group => group.Key,
+                    static group => group.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+                    StringComparer.OrdinalIgnoreCase);
 
             foreach (FileOrganizationEntryViewModel generated in generatedEntries)
             {
@@ -1033,7 +1042,8 @@ namespace OceanyaClient
                     normalizedRoot,
                     generated,
                     generatedEntries,
-                    generatedFilePaths);
+                    generatedFilePaths,
+                    existingFilesByName);
                 if (string.IsNullOrWhiteSpace(resolvedRelative))
                 {
                     continue;
@@ -1061,10 +1071,6 @@ namespace OceanyaClient
             HashSet<string> usedFiles = usedFilePathByAssetKey.Values
                 .Select(path => NormalizeRelativePath(path, isFolder: false))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            List<string> existingFiles = Directory
-                .EnumerateFiles(normalizedRoot, "*", SearchOption.AllDirectories)
-                .Select(path => NormalizeRelativePath(Path.GetRelativePath(normalizedRoot, path), isFolder: false))
-                .ToList();
             foreach (string existingRelative in existingFiles)
             {
                 if (usedFiles.Contains(existingRelative))
@@ -1122,7 +1128,8 @@ namespace OceanyaClient
             string characterRoot,
             FileOrganizationEntryViewModel generated,
             IReadOnlyList<FileOrganizationEntryViewModel> generatedEntries,
-            ISet<string> generatedFilePaths)
+            ISet<string> generatedFilePaths,
+            IReadOnlyDictionary<string, List<string>> existingFilesByName)
         {
             if (generated == null || generated.IsFolder)
             {
@@ -1156,9 +1163,11 @@ namespace OceanyaClient
                 fileName = generated.Name;
             }
 
-            IEnumerable<string> candidates = Directory
-                .EnumerateFiles(characterRoot, fileName, SearchOption.AllDirectories)
-                .Select(path => NormalizeRelativePath(Path.GetRelativePath(characterRoot, path), isFolder: false));
+            if (!existingFilesByName.TryGetValue(fileName, out List<string>? candidates) || candidates.Count == 0)
+            {
+                return null;
+            }
+
             List<string> nonConflicting = candidates
                 .Where(path => !generatedFilePaths.Contains(path)
                     || string.Equals(path, defaultRelative, StringComparison.OrdinalIgnoreCase))
@@ -1309,6 +1318,26 @@ namespace OceanyaClient
 
         private static string? ResolveAudioTokenPathWithinCharacterDirectory(string characterDirectoryPath, string token)
             => ResolveTokenPathWithinCharacterDirectory(characterDirectoryPath, token, isAudio: true);
+
+        private static string? ResolveAnimationTokenPathWithinCharacterDirectory(string characterDirectoryPath, string token)
+        {
+            string normalized = (token ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(normalized) || string.Equals(normalized, "-", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            string resolved = CharacterAssetPathResolver.ResolveCharacterAnimationPath(
+                characterDirectoryPath,
+                normalized,
+                includePlaceholder: false);
+            if (!string.IsNullOrWhiteSpace(resolved))
+            {
+                return resolved;
+            }
+
+            return ResolveImageTokenPathWithinCharacterDirectory(characterDirectoryPath, normalized);
+        }
 
         private static string? ResolveTokenPathWithinCharacterDirectory(string characterDirectoryPath, string token, bool isAudio)
         {
@@ -1542,7 +1571,14 @@ namespace OceanyaClient
             else if (string.Equals(section, "fileorganization", StringComparison.OrdinalIgnoreCase))
             {
                 currentFileOrganizationPath = string.Empty;
-                RefreshFileOrganizationEntries();
+                if (allFileOrganizationEntries.Count == 0)
+                {
+                    RefreshFileOrganizationEntries();
+                }
+                else
+                {
+                    RefreshFileOrganizationCurrentFolderView();
+                }
                 StatusTextBlock.Text = "Organize the final generated folder structure.";
             }
             else
@@ -2510,19 +2546,6 @@ namespace OceanyaClient
                 string? resolvedPath = ResolveAo2PreviewImagePath(entry.SourcePath);
                 if (!string.IsNullOrWhiteSpace(resolvedPath))
                 {
-                    if (Ao2AnimationPreview.TryCreateAnimationPlayer(resolvedPath, loop: true, out IAnimationPlayer? player)
-                        && player != null)
-                    {
-                        entry.PreviewImage = player.CurrentFrame;
-                        string animationKey = entry.UniqueKey;
-                        fileOrganizationPreviewPlayers[animationKey] = player;
-                        player.FrameChanged += frame => Dispatcher.Invoke(() =>
-                        {
-                            entry.PreviewImage = frame;
-                        });
-                        return;
-                    }
-
                     entry.PreviewImage = Ao2AnimationPreview.LoadStaticPreviewImage(resolvedPath, decodePixelWidth: 120);
                 }
 
@@ -5753,7 +5776,7 @@ namespace OceanyaClient
 
         private static ImageSource? TryLoadPreviewImage(string path)
         {
-            return Ao2AnimationPreview.LoadStaticPreviewImage(path, decodePixelWidth: 0);
+            return Ao2AnimationPreview.LoadStaticPreviewImage(path, decodePixelWidth: EmotePreviewDecodePixelWidth);
         }
 
         private void ImportImageAssetForZone(CharacterCreationEmoteViewModel emote, string zoneTag)
