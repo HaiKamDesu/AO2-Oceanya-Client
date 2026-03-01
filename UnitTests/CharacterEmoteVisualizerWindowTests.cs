@@ -118,6 +118,54 @@ namespace UnitTests
         }
 
         [Test]
+        public void BuildRetainedAnimationItemIds_TableMode_KeepsAllItemsAnimating()
+        {
+            List<EmoteVisualizerItem> allItems = new List<EmoteVisualizerItem>
+            {
+                new EmoteVisualizerItem { Id = 1 },
+                new EmoteVisualizerItem { Id = 2 },
+                new EmoteVisualizerItem { Id = 3 }
+            };
+            List<EmoteVisualizerItem> retained = new List<EmoteVisualizerItem> { allItems[0] };
+            List<EmoteVisualizerItem> visible = new List<EmoteVisualizerItem> { allItems[0] };
+
+            HashSet<int> result = CharacterEmoteVisualizerWindow.BuildRetainedAnimationItemIds(
+                allItems,
+                retained,
+                visible,
+                selectedId: null,
+                layoutMode: FolderVisualizerLayoutMode.Table);
+
+            Assert.That(result.SetEquals(new[] { 1, 2, 3 }), Is.True);
+        }
+
+        [Test]
+        public void BuildRetainedAnimationItemIds_NormalMode_UsesVisibleAutoplayIntersection()
+        {
+            List<EmoteVisualizerItem> allItems = new List<EmoteVisualizerItem>
+            {
+                new EmoteVisualizerItem { Id = 1 },
+                new EmoteVisualizerItem { Id = 2 },
+                new EmoteVisualizerItem { Id = 3 }
+            };
+            List<EmoteVisualizerItem> retained = new List<EmoteVisualizerItem>
+            {
+                allItems[0],
+                allItems[1]
+            };
+            List<EmoteVisualizerItem> visible = new List<EmoteVisualizerItem> { allItems[1] };
+
+            HashSet<int> result = CharacterEmoteVisualizerWindow.BuildRetainedAnimationItemIds(
+                allItems,
+                retained,
+                visible,
+                selectedId: null,
+                layoutMode: FolderVisualizerLayoutMode.Normal);
+
+            Assert.That(result.SetEquals(new[] { 2 }), Is.True);
+        }
+
+        [Test]
         public void ReleaseTransientResourcesForTests_StopsPlayersAndClearsCacheAndItems()
         {
             CharacterFolder folder = BuildCharacterFolderWithEmotes();

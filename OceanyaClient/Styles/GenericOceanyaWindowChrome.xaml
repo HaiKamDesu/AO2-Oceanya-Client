@@ -96,6 +96,24 @@
                                             </Rectangle.Fill>
                                         </Rectangle>
 
+                                        <TextBlock x:Name="HeaderVersionTextBlock"
+                                                   Text="{x:Static local:GenericOceanyaWindow.ClientVersionDisplayText}"
+                                                   Foreground="#FFE9EEF5"
+                                                   FontSize="11"
+                                                   FontWeight="SemiBold"
+                                                   HorizontalAlignment="Left"
+                                                   VerticalAlignment="Center"
+                                                   Margin="286,0,0,0"
+                                                   IsHitTestVisible="False">
+                                            <TextBlock.Effect>
+                                                <DropShadowEffect BlurRadius="6"
+                                                                  Direction="270"
+                                                                  Opacity="0.8"
+                                                                  ShadowDepth="1"
+                                                                  Color="#FF0A0A0A"/>
+                                            </TextBlock.Effect>
+                                        </TextBlock>
+
                                         <TextBlock x:Name="HeaderTitleTextBlock"
                                                    Text="{TemplateBinding Title}"
                                                    Foreground="#FFDADADA"

@@ -20,6 +20,14 @@ public static class WindowHelper
 
     private static void PositionWindow(Window window)
     {
+        if (window.WindowStartupLocation == WindowStartupLocation.Manual
+            && IsFinite(window.Left)
+            && IsFinite(window.Top))
+        {
+            // Respect explicitly restored manual popup position.
+            return;
+        }
+
         int index = -1;
 
         window.Dispatcher.Invoke(() =>
@@ -98,6 +106,11 @@ public static class WindowHelper
             window.Left = (screenWidth - window.ActualWidth) / 2;
             window.Top = (screenHeight - window.ActualHeight) / 2;
         });
+    }
+
+    private static bool IsFinite(double value)
+    {
+        return !double.IsNaN(value) && !double.IsInfinity(value);
     }
 
     public static void RemoveWindow(Window window)

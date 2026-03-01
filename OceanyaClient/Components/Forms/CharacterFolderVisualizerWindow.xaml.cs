@@ -3937,7 +3937,8 @@ namespace OceanyaClient
 
         private void EnsureFolderListScrollViewerHooked()
         {
-            ScrollViewer? discovered = FindDescendant<ScrollViewer>(FolderListView);
+            ScrollViewer? discovered = FolderListView.Template?.FindName("PART_ScrollViewer", FolderListView) as ScrollViewer;
+            discovered ??= FindDescendant<ScrollViewer>(FolderListView);
             if (ReferenceEquals(discovered, folderListScrollViewer))
             {
                 return;
@@ -4029,9 +4030,18 @@ namespace OceanyaClient
                 return Array.Empty<FolderVisualizerItem>();
             }
 
+            bool isTableMode = FolderListView.View != null;
+            IReadOnlyList<FolderVisualizerItem> scrollMetricRetained = isTableMode
+                ? TryBuildRetainedItemsFromScrollMetrics(currentItems)
+                : Array.Empty<FolderVisualizerItem>();
             List<FolderVisualizerItem> visibleItems = GetVisibleItemsOrderedTopToBottom();
             if (visibleItems.Count == 0)
             {
+                if (scrollMetricRetained.Count > 0)
+                {
+                    return scrollMetricRetained;
+                }
+
                 return currentItems.Take(Math.Min(currentItems.Count, ViewportRetentionRows * 2)).ToList();
             }
 
@@ -4069,6 +4079,11 @@ namespace OceanyaClient
 
             if (!foundAny)
             {
+                if (scrollMetricRetained.Count > 0)
+                {
+                    return scrollMetricRetained;
+                }
+
                 return currentItems.Take(Math.Min(currentItems.Count, ViewportRetentionRows * 2)).ToList();
             }
 
@@ -4080,7 +4095,143 @@ namespace OceanyaClient
                 retained.Add(currentItems[i]);
             }
 
+            if (isTableMode && scrollMetricRetained.Count > 0)
+            {
+                return MergeRetainedItemsInCurrentOrder(currentItems, retained, scrollMetricRetained);
+            }
+
             return retained;
+        }
+
+        private IReadOnlyList<FolderVisualizerItem> TryBuildRetainedItemsFromScrollMetrics(IReadOnlyList<FolderVisualizerItem> currentItems)
+        {
+            if (folderListScrollViewer == null || currentItems.Count == 0 || FolderListView.View == null)
+            {
+                return Array.Empty<FolderVisualizerItem>();
+            }
+
+            double verticalOffset = folderListScrollViewer.VerticalOffset;
+            double viewportHeight = folderListScrollViewer.ViewportHeight;
+            if (!IsFinite(verticalOffset) || !IsFinite(viewportHeight) || viewportHeight <= 0)
+            {
+                return Array.Empty<FolderVisualizerItem>();
+            }
+
+            bool canContentScroll = ScrollViewer.GetCanContentScroll(FolderListView);
+            int firstVisibleIndex;
+            int estimatedVisibleRows;
+            if (canContentScroll)
+            {
+                firstVisibleIndex = (int)Math.Floor(verticalOffset);
+                estimatedVisibleRows = (int)Math.Ceiling(viewportHeight) + 1;
+            }
+            else
+            {
+                double rowHeight = Math.Max(1, DetailsRowHeight);
+                firstVisibleIndex = (int)Math.Floor(verticalOffset / rowHeight);
+                estimatedVisibleRows = (int)Math.Ceiling(viewportHeight / rowHeight) + 1;
+            }
+
+            (int startIndex, int endIndex) = ComputeRetainedRangeFromViewportMetrics(
+                currentItems.Count,
+                firstVisibleIndex,
+                estimatedVisibleRows,
+                ViewportRetentionRows);
+            if (endIndex < startIndex)
+            {
+                return Array.Empty<FolderVisualizerItem>();
+            }
+
+            List<FolderVisualizerItem> retained = new List<FolderVisualizerItem>(endIndex - startIndex + 1);
+            for (int i = startIndex; i <= endIndex; i++)
+            {
+                retained.Add(currentItems[i]);
+            }
+
+            return retained;
+        }
+
+        internal static (int StartIndex, int EndIndex) ComputeRetainedRangeFromViewportMetrics(
+            int itemCount,
+            int firstVisibleIndex,
+            int estimatedVisibleRows,
+            int retentionRows)
+        {
+            if (itemCount <= 0)
+            {
+                return (0, -1);
+            }
+
+            int clampedFirstVisibleIndex = Math.Clamp(firstVisibleIndex, 0, itemCount - 1);
+            int visibleRowCount = Math.Max(1, estimatedVisibleRows);
+            int clampedRetentionRows = Math.Max(0, retentionRows);
+            int lastVisibleIndex = Math.Min(itemCount - 1, clampedFirstVisibleIndex + visibleRowCount - 1);
+            int startIndex = Math.Max(0, clampedFirstVisibleIndex - clampedRetentionRows);
+            int endIndex = Math.Min(itemCount - 1, lastVisibleIndex + clampedRetentionRows);
+            return (startIndex, endIndex);
+        }
+
+        internal static IReadOnlyList<int> MergeRetainedIndicesByCurrentOrder(
+            IReadOnlyList<int> currentOrder,
+            IReadOnlyCollection<int> firstSet,
+            IReadOnlyCollection<int> secondSet)
+        {
+            HashSet<int> merged = new HashSet<int>(firstSet);
+            merged.UnionWith(secondSet);
+            if (merged.Count == 0)
+            {
+                return Array.Empty<int>();
+            }
+
+            List<int> ordered = new List<int>(merged.Count);
+            for (int i = 0; i < currentOrder.Count; i++)
+            {
+                int id = currentOrder[i];
+                if (merged.Contains(id))
+                {
+                    ordered.Add(id);
+                }
+            }
+
+            return ordered;
+        }
+
+        private static IReadOnlyList<FolderVisualizerItem> MergeRetainedItemsInCurrentOrder(
+            IReadOnlyList<FolderVisualizerItem> currentOrder,
+            IReadOnlyCollection<FolderVisualizerItem> firstSet,
+            IReadOnlyCollection<FolderVisualizerItem> secondSet)
+        {
+            HashSet<string> mergedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (FolderVisualizerItem item in firstSet)
+            {
+                mergedKeys.Add(BuildProgressiveLoadItemKey(item));
+            }
+
+            foreach (FolderVisualizerItem item in secondSet)
+            {
+                mergedKeys.Add(BuildProgressiveLoadItemKey(item));
+            }
+
+            if (mergedKeys.Count == 0)
+            {
+                return Array.Empty<FolderVisualizerItem>();
+            }
+
+            List<FolderVisualizerItem> ordered = new List<FolderVisualizerItem>(mergedKeys.Count);
+            foreach (FolderVisualizerItem item in currentOrder)
+            {
+                if (mergedKeys.Contains(BuildProgressiveLoadItemKey(item)))
+                {
+                    ordered.Add(item);
+                }
+            }
+
+            return ordered;
+        }
+
+        private static bool IsFinite(double value)
+        {
+            return !double.IsNaN(value) && !double.IsInfinity(value);
         }
 
         private IReadOnlyList<FolderVisualizerItem> GetCurrentViewItemsInOrder()
@@ -4124,33 +4275,49 @@ namespace OceanyaClient
         {
             if (folderListScrollViewer == null)
             {
-                return new List<FolderVisualizerItem>();
+                EnsureFolderListScrollViewerHooked();
             }
 
             List<(double top, FolderVisualizerItem item)> visibleItems = new List<(double top, FolderVisualizerItem item)>();
-            foreach (ListViewItem container in FindVisualChildren<ListViewItem>(FolderListView))
+            foreach ((ListViewItem container, FolderVisualizerItem item) entry in GetRealizedListViewItemPairs())
             {
-                if (container.DataContext is not FolderVisualizerItem item
-                    || container.ActualHeight <= 0
-                    || container.ActualWidth <= 0)
+                ListViewItem container = entry.container;
+                FolderVisualizerItem item = entry.item;
+                if (container.ActualHeight <= 0 || container.ActualWidth <= 0)
                 {
                     continue;
                 }
 
-                try
+                if (folderListScrollViewer == null)
                 {
-                    Rect bounds = container.TransformToAncestor(folderListScrollViewer)
-                        .TransformBounds(new Rect(0, 0, container.ActualWidth, container.ActualHeight));
-                    if (bounds.Bottom < 0 || bounds.Top > folderListScrollViewer.ViewportHeight)
-                    {
-                        continue;
-                    }
-
-                    visibleItems.Add((bounds.Top, item));
+                    visibleItems.Add((container.TranslatePoint(new Point(0, 0), FolderListView).Y, item));
                 }
-                catch (InvalidOperationException)
+                else
                 {
-                    // The container may no longer be connected during virtualization churn.
+                    try
+                    {
+                        Rect bounds = container.TransformToAncestor(folderListScrollViewer)
+                            .TransformBounds(new Rect(0, 0, container.ActualWidth, container.ActualHeight));
+                        if (bounds.Bottom < 0 || bounds.Top > folderListScrollViewer.ViewportHeight)
+                        {
+                            continue;
+                        }
+
+                        visibleItems.Add((bounds.Top, item));
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        // ignored during virtualization churn
+                    }
+                }
+            }
+
+            if (visibleItems.Count == 0)
+            {
+                int fallbackIndex = 0;
+                foreach ((ListViewItem _, FolderVisualizerItem item) in GetRealizedListViewItemPairs())
+                {
+                    visibleItems.Add((fallbackIndex++, item));
                 }
             }
 
@@ -4158,6 +4325,30 @@ namespace OceanyaClient
                 .OrderBy(entry => entry.top)
                 .Select(entry => entry.item)
                 .ToList();
+        }
+
+        private IEnumerable<(ListViewItem container, FolderVisualizerItem item)> GetRealizedListViewItemPairs()
+        {
+            foreach (object rawItem in FolderListView.Items)
+            {
+                if (rawItem is not FolderVisualizerItem item)
+                {
+                    continue;
+                }
+
+                if (FolderListView.ItemContainerGenerator.ContainerFromItem(item) is ListViewItem generatedContainer)
+                {
+                    yield return (generatedContainer, item);
+                }
+            }
+
+            foreach (ListViewItem container in FindVisualChildren<ListViewItem>(FolderListView))
+            {
+                if (container.DataContext is FolderVisualizerItem item)
+                {
+                    yield return (container, item);
+                }
+            }
         }
 
         private static IEnumerable<TChild> FindVisualChildren<TChild>(DependencyObject root)

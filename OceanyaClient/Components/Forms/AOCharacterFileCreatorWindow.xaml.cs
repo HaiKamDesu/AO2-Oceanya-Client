@@ -166,8 +166,12 @@ namespace OceanyaClient
         };
         private static readonly IReadOnlyDictionary<string, string> ButtonBackgroundPresetAssetMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["Oceanya Logo (preset)"] = "pack://application:,,,/OceanyaClient;component/Resources/Logo_O.png",
-            ["Oceanya Full Logo (preset)"] = "pack://application:,,,/OceanyaClient;component/Resources/OceanyaFullLogo.png"
+            ["Athena Base (preset)"] =
+                "pack://application:,,,/OceanyaClient;component/Resources/ButtonBackgroundPresets/AthenaBase.png",
+            ["Juror Base (preset)"] =
+                "pack://application:,,,/OceanyaClient;component/Resources/ButtonBackgroundPresets/Jurorbase.png",
+            ["Oceanyan BG (preset)"] =
+                "pack://application:,,,/OceanyaClient;component/Resources/ButtonBackgroundPresets/OceanyanBG.png"
         };
         private const int EmoteModIdle = 0;
         private const int EmoteModPreanim = 1;
@@ -2354,15 +2358,30 @@ namespace OceanyaClient
             ButtonIconsSolidColorPanel.Visibility = bulkButtonIconConfig.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.SolidColor
                 ? Visibility.Visible
                 : Visibility.Collapsed;
-            ButtonIconsUploadPanel.Visibility = bulkButtonIconConfig.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.Upload
+            bool usesUploadStyleBackgroundControl = bulkButtonIconConfig.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.Upload
+                || bulkButtonIconConfig.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.PresetList;
+            bool presetBackgroundSelected = bulkButtonIconConfig.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.PresetList;
+            ButtonIconsUploadPanel.Visibility = usesUploadStyleBackgroundControl
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+            ButtonIconsBackgroundUploadButton.IsEnabled = !presetBackgroundSelected;
+            ButtonIconsBackgroundUploadButton.Content = presetBackgroundSelected ? "Preset image (locked)" : "Select image...";
 
             ButtonIconsSolidColorPreview.Background = new SolidColorBrush(bulkButtonIconConfig.AutomaticSolidColor);
             ButtonIconsSolidColorHexTextBlock.Text = ToHexColor(bulkButtonIconConfig.AutomaticSolidColor);
-            ButtonIconsBackgroundUploadTextBlock.Text = string.IsNullOrWhiteSpace(bulkButtonBackgroundUploadPath)
-                ? "No file selected"
-                : Path.GetFileName(bulkButtonBackgroundUploadPath);
+            if (presetBackgroundSelected)
+            {
+                string presetPath = ResolveBackgroundPresetPath(bulkButtonIconConfig.AutomaticBackgroundPreset);
+                ButtonIconsBackgroundUploadTextBlock.Text = string.IsNullOrWhiteSpace(presetPath)
+                    ? "Preset missing"
+                    : Path.GetFileName(presetPath);
+            }
+            else
+            {
+                ButtonIconsBackgroundUploadTextBlock.Text = string.IsNullOrWhiteSpace(bulkButtonBackgroundUploadPath)
+                    ? "No file selected"
+                    : Path.GetFileName(bulkButtonBackgroundUploadPath);
+            }
 
             ButtonIconsDarkenPanel.Visibility = bulkButtonIconConfig.EffectsMode == ButtonEffectsGenerationMode.Darken
                 ? Visibility.Visible
@@ -9646,12 +9665,14 @@ namespace OceanyaClient
                 : window.RestoreBounds;
             double capturedWidth = bounds.Width > 0 ? bounds.Width : window.Width;
             double capturedHeight = bounds.Height > 0 ? bounds.Height : window.Height;
+            double? capturedLeft = IsFinite(bounds.X) ? bounds.X : null;
+            double? capturedTop = IsFinite(bounds.Y) ? bounds.Y : null;
             return new VisualizerWindowState
             {
                 Width = Math.Max(window.MinWidth, capturedWidth),
                 Height = Math.Max(window.MinHeight, capturedHeight),
-                Left = bounds.X,
-                Top = bounds.Y,
+                Left = capturedLeft,
+                Top = capturedTop,
                 IsMaximized = window.WindowState == WindowState.Maximized
             };
         }
@@ -9665,7 +9686,10 @@ namespace OceanyaClient
 
             window.Width = Math.Max(window.MinWidth, state.Width);
             window.Height = Math.Max(window.MinHeight, state.Height);
-            if (state.Left.HasValue && state.Top.HasValue)
+            if (state.Left.HasValue
+                && state.Top.HasValue
+                && IsFinite(state.Left.Value)
+                && IsFinite(state.Top.Value))
             {
                 window.WindowStartupLocation = WindowStartupLocation.Manual;
                 window.Left = state.Left.Value;
@@ -9682,6 +9706,11 @@ namespace OceanyaClient
         {
             SaveFile.Data.PopupWindowStates[popupStateKey] = CapturePopupWindowState(window);
             SaveFile.Save();
+        }
+
+        private static bool IsFinite(double value)
+        {
+            return !double.IsNaN(value) && !double.IsInfinity(value);
         }
 
         private static Grid BuildDialogGrid(int rowCount)
@@ -10169,18 +10198,23 @@ namespace OceanyaClient
 
         private static IReadOnlyList<string> GetAutomaticBackgroundOptions()
         {
-            return new List<string>
+            List<string> options = new List<string>
             {
                 "None",
                 "Solid color",
                 "Upload"
             };
+            options.AddRange(ButtonBackgroundPresetAssetMap.Keys);
+            return options;
         }
 
         private static string GetAutomaticBackgroundSelectionName(ButtonIconGenerationConfig config)
         {
             return config.AutomaticBackgroundMode switch
             {
+                ButtonAutomaticBackgroundMode.PresetList => ButtonBackgroundPresetAssetMap.ContainsKey(config.AutomaticBackgroundPreset)
+                    ? config.AutomaticBackgroundPreset
+                    : ButtonBackgroundPresetAssetMap.Keys.FirstOrDefault() ?? "None",
                 ButtonAutomaticBackgroundMode.SolidColor => "Solid color",
                 ButtonAutomaticBackgroundMode.Upload => "Upload",
                 _ => "None"
@@ -10205,6 +10239,13 @@ namespace OceanyaClient
             if (string.Equals(selected, "None", StringComparison.OrdinalIgnoreCase))
             {
                 config.AutomaticBackgroundMode = ButtonAutomaticBackgroundMode.None;
+                return;
+            }
+
+            if (ButtonBackgroundPresetAssetMap.ContainsKey(selected))
+            {
+                config.AutomaticBackgroundMode = ButtonAutomaticBackgroundMode.PresetList;
+                config.AutomaticBackgroundPreset = selected;
                 return;
             }
 
@@ -11025,7 +11066,30 @@ namespace OceanyaClient
                     };
                     AddSimpleField(backgroundContent, "Background config", backgroundDropdown);
 
-                    if (config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.SolidColor)
+                    if (config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.PresetList)
+                    {
+                        string presetPath = ResolveBackgroundPresetPath(config.AutomaticBackgroundPreset);
+                        Grid presetGrid = new Grid();
+                        presetGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                        presetGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                        Button presetButton = CreateDialogButton("Preset image (locked)", isPrimary: false);
+                        presetButton.Width = 170;
+                        presetButton.IsEnabled = false;
+                        TextBlock presetPathText = new TextBlock
+                        {
+                            Margin = new Thickness(10, 0, 0, 0),
+                            VerticalAlignment = VerticalAlignment.Center,
+                            Foreground = new SolidColorBrush(Color.FromRgb(198, 212, 224)),
+                            Text = string.IsNullOrWhiteSpace(presetPath)
+                                ? "Preset missing"
+                                : Path.GetFileName(presetPath)
+                        };
+                        Grid.SetColumn(presetPathText, 1);
+                        presetGrid.Children.Add(presetButton);
+                        presetGrid.Children.Add(presetPathText);
+                        AddSimpleField(backgroundContent, "Background image", presetGrid);
+                    }
+                    else if (config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.SolidColor)
                     {
                         Button color = CreateDialogButton("Pick color...", isPrimary: false);
                         color.Width = 130;

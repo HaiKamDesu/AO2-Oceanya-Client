@@ -1,6 +1,7 @@
 <Window x:Class="OceanyaClient.GenericOceanyaWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:OceanyaClient"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         Title="Generic Oceanya Window"
         Width="900"
@@ -104,6 +105,22 @@
                                             Stretch="Uniform"/>
                             </Rectangle.Fill>
                         </Rectangle>
+                        <TextBlock x:Name="HeaderVersionTextBlock"
+                                   Text="{x:Static local:GenericOceanyaWindow.ClientVersionDisplayText}"
+                                   Foreground="#FFE9EEF5"
+                                   FontSize="11"
+                                   FontWeight="SemiBold"
+                                   HorizontalAlignment="Left"
+                                   VerticalAlignment="Top"
+                                   Margin="290,12,0,0">
+                            <TextBlock.Effect>
+                                <DropShadowEffect BlurRadius="6"
+                                                  Direction="270"
+                                                  Opacity="0.8"
+                                                  ShadowDepth="1"
+                                                  Color="#FF0A0A0A"/>
+                            </TextBlock.Effect>
+                        </TextBlock>
                         <TextBlock x:Name="HeaderTitleTextBlock"
                                    Text="{Binding HeaderText, RelativeSource={RelativeSource AncestorType=Window}}"
                                    Foreground="#FFDADADA"

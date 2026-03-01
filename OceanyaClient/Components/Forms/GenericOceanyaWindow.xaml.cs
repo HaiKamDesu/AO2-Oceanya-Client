@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -15,6 +17,10 @@ namespace OceanyaClient
     /// </summary>
     public partial class GenericOceanyaWindow : Window
     {
+        private const int HeaderPriorityCloseButton = 1;
+        private const int HeaderPriorityBranding = 2;
+        private const int HeaderPriorityTitle = 3;
+
         /// <summary>
         /// Shared header height used by the generic shell.
         /// </summary>
@@ -24,6 +30,11 @@ namespace OceanyaClient
         /// Shared frame border thickness used by the generic shell.
         /// </summary>
         public const double SharedFrameBorderThickness = 1d;
+
+        /// <summary>
+        /// Gets the client version text shown in the shared header.
+        /// </summary>
+        public static string ClientVersionDisplayText { get; } = ResolveClientVersionDisplayText();
 
         /// <summary>
         /// Enables Generic Oceanya shared chrome behavior on any <see cref="Window"/> using the shared template.
@@ -313,18 +324,16 @@ namespace OceanyaClient
                 return;
             }
 
-            Rect oceanyaBounds = GetBoundsInHeader(OceanyaLogoRectangle);
-            Rect laboratoriesBounds = GetBoundsInHeader(LaboratoriesLogoRectangle);
-            Rect titleBounds = GetBoundsInHeader(HeaderTitleTextBlock);
-            Rect closeBounds = GetBoundsInHeader(CloseButton);
+            HeaderCollisionTarget[] targets = new HeaderCollisionTarget[]
+            {
+                new HeaderCollisionTarget(CloseButton, HeaderPriorityCloseButton),
+                new HeaderCollisionTarget(OceanyaLogoRectangle, HeaderPriorityBranding),
+                new HeaderCollisionTarget(LaboratoriesLogoRectangle, HeaderPriorityBranding),
+                new HeaderCollisionTarget(HeaderVersionTextBlock, HeaderPriorityBranding),
+                new HeaderCollisionTarget(HeaderTitleTextBlock, HeaderPriorityTitle)
+            };
 
-            bool hideTitle = Intersects(titleBounds, oceanyaBounds) || Intersects(titleBounds, laboratoriesBounds);
-            bool hideLaboratoriesLogo = Intersects(laboratoriesBounds, closeBounds);
-            bool hideOceanyaLogo = Intersects(oceanyaBounds, closeBounds);
-
-            FadeElementTo(HeaderTitleTextBlock, hideTitle ? 0 : 1);
-            FadeElementTo(LaboratoriesLogoRectangle, hideLaboratoriesLogo ? 0 : 1);
-            FadeElementTo(OceanyaLogoRectangle, hideOceanyaLogo ? 0 : 1);
+            ApplyCollisionPriorityFade(targets, GetBoundsInHeader);
         }
 
         private Rect GetBoundsInHeader(FrameworkElement element)
@@ -358,6 +367,84 @@ namespace OceanyaClient
             };
 
             element.BeginAnimation(OpacityProperty, fadeAnimation);
+        }
+
+        private static void ApplyCollisionPriorityFade(
+            IReadOnlyList<HeaderCollisionTarget> targets,
+            Func<FrameworkElement, Rect> boundsResolver)
+        {
+            int targetCount = targets.Count;
+            bool[] shouldHide = new bool[targetCount];
+            Rect[] bounds = new Rect[targetCount];
+
+            for (int i = 0; i < targetCount; i++)
+            {
+                bounds[i] = boundsResolver(targets[i].Element);
+            }
+
+            for (int leftIndex = 0; leftIndex < targetCount; leftIndex++)
+            {
+                for (int rightIndex = leftIndex + 1; rightIndex < targetCount; rightIndex++)
+                {
+                    if (!Intersects(bounds[leftIndex], bounds[rightIndex]))
+                    {
+                        continue;
+                    }
+
+                    int leftPriority = targets[leftIndex].Priority;
+                    int rightPriority = targets[rightIndex].Priority;
+
+                    if (leftPriority == rightPriority)
+                    {
+                        continue;
+                    }
+
+                    if (leftPriority < rightPriority)
+                    {
+                        shouldHide[rightIndex] = true;
+                    }
+                    else
+                    {
+                        shouldHide[leftIndex] = true;
+                    }
+                }
+            }
+
+            for (int i = 0; i < targetCount; i++)
+            {
+                FadeElementTo(targets[i].Element, shouldHide[i] ? 0d : 1d);
+            }
+        }
+
+        private static string ResolveClientVersionDisplayText()
+        {
+            Assembly? assembly = Assembly.GetEntryAssembly() ?? Assembly.GetExecutingAssembly();
+            if (assembly == null)
+            {
+                return "v?.?";
+            }
+
+            AssemblyInformationalVersionAttribute? informationalVersionAttribute =
+                assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>();
+            string informationalVersion = informationalVersionAttribute?.InformationalVersion?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(informationalVersion))
+            {
+                int metadataSeparatorIndex = informationalVersion.IndexOf('+');
+                string normalizedInformational = metadataSeparatorIndex >= 0
+                    ? informationalVersion[..metadataSeparatorIndex]
+                    : informationalVersion;
+                return normalizedInformational.StartsWith("v", StringComparison.OrdinalIgnoreCase)
+                    ? normalizedInformational
+                    : $"v{normalizedInformational}";
+            }
+
+            Version? assemblyVersion = assembly.GetName().Version;
+            if (assemblyVersion != null)
+            {
+                return $"v{assemblyVersion.Major}.{assemblyVersion.Minor}";
+            }
+
+            return "v?.?";
         }
 
         private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -441,6 +528,19 @@ namespace OceanyaClient
             public int dwFlags;
         }
 
+        private readonly struct HeaderCollisionTarget
+        {
+            public HeaderCollisionTarget(FrameworkElement element, int priority)
+            {
+                Element = element;
+                Priority = priority;
+            }
+
+            public FrameworkElement Element { get; }
+
+            public int Priority { get; }
+        }
+
         private sealed class SharedChromeBehaviorController
         {
             private readonly Window window;
@@ -448,6 +548,7 @@ namespace OceanyaClient
             private FrameworkElement? headerGrid;
             private FrameworkElement? oceanyaLogoRectangle;
             private FrameworkElement? laboratoriesLogoRectangle;
+            private FrameworkElement? headerVersionTextBlock;
             private FrameworkElement? headerTitleTextBlock;
             private Button? closeButton;
             private bool isHookAttached;
@@ -528,6 +629,7 @@ namespace OceanyaClient
                 headerGrid = window.Template.FindName("HeaderGrid", window) as FrameworkElement;
                 oceanyaLogoRectangle = window.Template.FindName("OceanyaLogoRectangle", window) as FrameworkElement;
                 laboratoriesLogoRectangle = window.Template.FindName("LaboratoriesLogoRectangle", window) as FrameworkElement;
+                headerVersionTextBlock = window.Template.FindName("HeaderVersionTextBlock", window) as FrameworkElement;
                 headerTitleTextBlock = window.Template.FindName("HeaderTitleTextBlock", window) as FrameworkElement;
                 closeButton = window.Template.FindName("CloseButton", window) as Button;
 
@@ -575,24 +677,23 @@ namespace OceanyaClient
                     || headerGrid == null
                     || oceanyaLogoRectangle == null
                     || laboratoriesLogoRectangle == null
+                    || headerVersionTextBlock == null
                     || headerTitleTextBlock == null
                     || closeButton == null)
                 {
                     return;
                 }
 
-                Rect oceanyaBounds = GetBoundsInHeader(oceanyaLogoRectangle);
-                Rect laboratoriesBounds = GetBoundsInHeader(laboratoriesLogoRectangle);
-                Rect titleBounds = GetBoundsInHeader(headerTitleTextBlock);
-                Rect closeBounds = GetBoundsInHeader(closeButton);
+                HeaderCollisionTarget[] targets = new HeaderCollisionTarget[]
+                {
+                    new HeaderCollisionTarget(closeButton, HeaderPriorityCloseButton),
+                    new HeaderCollisionTarget(oceanyaLogoRectangle, HeaderPriorityBranding),
+                    new HeaderCollisionTarget(laboratoriesLogoRectangle, HeaderPriorityBranding),
+                    new HeaderCollisionTarget(headerVersionTextBlock, HeaderPriorityBranding),
+                    new HeaderCollisionTarget(headerTitleTextBlock, HeaderPriorityTitle)
+                };
 
-                bool hideTitle = Intersects(titleBounds, oceanyaBounds) || Intersects(titleBounds, laboratoriesBounds);
-                bool hideLaboratoriesLogo = Intersects(laboratoriesBounds, closeBounds);
-                bool hideOceanyaLogo = Intersects(oceanyaBounds, closeBounds);
-
-                FadeElementTo(headerTitleTextBlock, hideTitle ? 0 : 1);
-                FadeElementTo(laboratoriesLogoRectangle, hideLaboratoriesLogo ? 0 : 1);
-                FadeElementTo(oceanyaLogoRectangle, hideOceanyaLogo ? 0 : 1);
+                ApplyCollisionPriorityFade(targets, GetBoundsInHeader);
             }
 
             private Rect GetBoundsInHeader(FrameworkElement element)

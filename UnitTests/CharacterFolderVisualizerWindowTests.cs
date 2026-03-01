@@ -225,6 +225,43 @@ namespace UnitTests
             window.Close();
         }
 
+        [Test]
+        public void ComputeRetainedRangeFromViewportMetrics_ComputesViewportPlusRetention()
+        {
+            (int startIndex, int endIndex) = CharacterFolderVisualizerWindow.ComputeRetainedRangeFromViewportMetrics(
+                itemCount: 50,
+                firstVisibleIndex: 10,
+                estimatedVisibleRows: 16,
+                retentionRows: 8);
+
+            Assert.That(startIndex, Is.EqualTo(2));
+            Assert.That(endIndex, Is.EqualTo(33));
+        }
+
+        [Test]
+        public void ComputeRetainedRangeFromViewportMetrics_ClampsAtBounds()
+        {
+            (int startIndex, int endIndex) = CharacterFolderVisualizerWindow.ComputeRetainedRangeFromViewportMetrics(
+                itemCount: 12,
+                firstVisibleIndex: -5,
+                estimatedVisibleRows: 20,
+                retentionRows: 8);
+
+            Assert.That(startIndex, Is.EqualTo(0));
+            Assert.That(endIndex, Is.EqualTo(11));
+        }
+
+        [Test]
+        public void MergeRetainedIndicesByCurrentOrder_PreservesOrderAndUnionsSets()
+        {
+            IReadOnlyList<int> merged = CharacterFolderVisualizerWindow.MergeRetainedIndicesByCurrentOrder(
+                currentOrder: new[] { 10, 11, 12, 13, 14 },
+                firstSet: new[] { 10, 12 },
+                secondSet: new[] { 11, 14 });
+
+            Assert.That(merged, Is.EqualTo(new[] { 10, 11, 12, 14 }));
+        }
+
         private void RefreshCharactersFromTempRoot()
         {
             Globals.BaseFolders = new List<string> { tempRoot };

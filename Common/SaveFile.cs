@@ -979,12 +979,12 @@ namespace OceanyaClient
         {
             state.Width = Math.Clamp(state.Width, 760, 6000);
             state.Height = Math.Clamp(state.Height, 520, 4000);
-            if (state.Left.HasValue && double.IsInfinity(state.Left.Value))
+            if (state.Left.HasValue && (double.IsInfinity(state.Left.Value) || double.IsNaN(state.Left.Value)))
             {
                 state.Left = null;
             }
 
-            if (state.Top.HasValue && double.IsInfinity(state.Top.Value))
+            if (state.Top.HasValue && (double.IsInfinity(state.Top.Value) || double.IsNaN(state.Top.Value)))
             {
                 state.Top = null;
             }

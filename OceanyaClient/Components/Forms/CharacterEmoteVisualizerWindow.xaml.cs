@@ -1315,12 +1315,15 @@ namespace OceanyaClient
             }
 
             IReadOnlyList<EmoteVisualizerItem> retainedItems = GetViewportRetainedItems();
-            HashSet<int> retainedIds = retainedItems.Select(item => item.Id).ToHashSet();
             IReadOnlyList<EmoteVisualizerItem> visibleItems = GetVisibleItemsOrderedTopToBottom();
             int? selectedId = (EmoteListView.SelectedItem as EmoteVisualizerItem)?.Id;
-            HashSet<int> autoplayIds = visibleItems.Count > 0
-                ? BuildViewportAutoplayItemIds(visibleItems, selectedId, int.MaxValue)
-                : retainedIds.ToHashSet();
+            FolderVisualizerLayoutMode layoutMode = GetCurrentLayoutMode();
+            HashSet<int> retainedIds = BuildRetainedAnimationItemIds(
+                allItems,
+                retainedItems,
+                visibleItems,
+                selectedId,
+                layoutMode);
             retainedViewportEmoteIds.Clear();
             foreach (int id in retainedIds)
             {
@@ -1329,7 +1332,7 @@ namespace OceanyaClient
 
             foreach (EmoteVisualizerItem item in allItems)
             {
-                if (retainedIds.Contains(item.Id) && autoplayIds.Contains(item.Id))
+                if (retainedIds.Contains(item.Id))
                 {
                     EnsureAnimationPlayersForItem(item, includePreAnimation: true);
                     continue;
@@ -1340,6 +1343,16 @@ namespace OceanyaClient
             }
 
             // Images are fully preloaded at startup; residency only controls animation player lifetime.
+        }
+
+        private FolderVisualizerLayoutMode GetCurrentLayoutMode()
+        {
+            if (ViewModeCombo.SelectedItem is EmoteVisualizerViewPreset preset)
+            {
+                return preset.Mode;
+            }
+
+            return FolderVisualizerLayoutMode.Normal;
         }
 
         private void StartViewportPreviewLoading(
@@ -1728,6 +1741,26 @@ namespace OceanyaClient
             }
 
             return result;
+        }
+
+        internal static HashSet<int> BuildRetainedAnimationItemIds(
+            IReadOnlyList<EmoteVisualizerItem> allItems,
+            IReadOnlyList<EmoteVisualizerItem> viewportRetainedItems,
+            IReadOnlyList<EmoteVisualizerItem> visibleItems,
+            int? selectedId,
+            FolderVisualizerLayoutMode layoutMode)
+        {
+            if (layoutMode == FolderVisualizerLayoutMode.Table)
+            {
+                return allItems.Select(item => item.Id).ToHashSet();
+            }
+
+            HashSet<int> retainedIds = viewportRetainedItems.Select(item => item.Id).ToHashSet();
+            HashSet<int> autoplayIds = visibleItems.Count > 0
+                ? BuildViewportAutoplayItemIds(visibleItems, selectedId, int.MaxValue)
+                : retainedIds.ToHashSet();
+            retainedIds.IntersectWith(autoplayIds);
+            return retainedIds;
         }
 
         private static void StopAnimationPlayer(EmoteVisualizerItem item, bool isPreAnimation)
