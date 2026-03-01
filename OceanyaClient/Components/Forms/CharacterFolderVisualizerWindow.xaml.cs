@@ -2992,6 +2992,13 @@ namespace OceanyaClient
             editCharacterFolderMenuItem.Click += async (_, _) => await OpenCharacterFolderInCreatorAsync(item);
             menu.Items.Add(editCharacterFolderMenuItem);
 
+            MenuItem newCharacterFolderMenuItem = new MenuItem
+            {
+                Header = "New character folder"
+            };
+            newCharacterFolderMenuItem.Click += async (_, _) => await OpenCharacterFolderCreatorAsync();
+            menu.Items.Add(newCharacterFolderMenuItem);
+
             AddContextCategoryHeader(menu, "Character View", addLeadingSeparator: true);
 
             MenuItem openCharIniMenuItem = new MenuItem
@@ -3104,6 +3111,17 @@ namespace OceanyaClient
                 await LoadCharacterItemsAsync(forceRebuild: true);
                 onAssetsRefreshed?.Invoke();
             }
+        }
+
+        private async Task OpenCharacterFolderCreatorAsync()
+        {
+            AOCharacterFileCreatorWindow creator = new AOCharacterFileCreatorWindow();
+            Window creatorWindow = OceanyaWindowManager.CreateWindow(creator);
+            creatorWindow.Owner = this;
+            _ = creatorWindow.ShowDialog();
+
+            await LoadCharacterItemsAsync(forceRebuild: true);
+            onAssetsRefreshed?.Invoke();
         }
 
         private void AddContextCategoryHeader(ContextMenu menu, string text, bool addLeadingSeparator)

@@ -151,11 +151,18 @@ namespace OceanyaClient
                 return false;
             }
 
-            if (BitmapFrameAnimationPlayer.TryCreate(resolvedPath, loop, out BitmapFrameAnimationPlayer? bitmapPlayer)
-                && bitmapPlayer != null)
+            // Keep WebP/APNG on the frame-decoder path, but keep GIF on the legacy gif-specific player
+            // first so long-running gif previews remain reliable.
+            if (extension == ".webp" || extension == ".apng")
             {
-                player = bitmapPlayer;
-                return true;
+                if (BitmapFrameAnimationPlayer.TryCreate(resolvedPath, loop, out BitmapFrameAnimationPlayer? bitmapPlayer)
+                    && bitmapPlayer != null)
+                {
+                    player = bitmapPlayer;
+                    return true;
+                }
+
+                return false;
             }
 
             if (extension == ".gif")
@@ -168,6 +175,13 @@ namespace OceanyaClient
                 catch
                 {
                     // ignored
+                }
+
+                if (BitmapFrameAnimationPlayer.TryCreate(resolvedPath, loop, out BitmapFrameAnimationPlayer? bitmapPlayer)
+                    && bitmapPlayer != null)
+                {
+                    player = bitmapPlayer;
+                    return true;
                 }
             }
 
@@ -1080,7 +1094,8 @@ namespace OceanyaClient
                 return;
             }
 
-            sharedTimer = new DispatcherTimer(DispatcherPriority.Background)
+            Dispatcher dispatcher = Application.Current?.Dispatcher ?? Dispatcher.CurrentDispatcher;
+            sharedTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher)
             {
                 Interval = SharedTickInterval
             };
@@ -1116,11 +1131,14 @@ namespace OceanyaClient
         private static readonly List<GifAnimationPlayer> ActivePlayers = new List<GifAnimationPlayer>();
         private static DispatcherTimer? sharedTimer;
         private static readonly TimeSpan SharedTickInterval = TimeSpan.FromMilliseconds(15);
+        // Preview players do not need full-resolution/full-frame GIF decoding; cap both to prevent UI stalls.
+        private const int MaxGifPreviewDimension = 360;
+        private const int MaxGifPreviewFrames = 180;
 
         private readonly DrawingImage gifImage;
         private readonly List<BitmapSource> frames = new List<BitmapSource>();
         private readonly List<TimeSpan> frameDurations = new List<TimeSpan>();
-        private readonly int frameCount;
+        private int frameCount;
         private int frameIndex;
         private bool loop;
         private bool endedWithoutLoop;
@@ -1137,15 +1155,32 @@ namespace OceanyaClient
         {
             this.loop = loop;
             gifImage = DrawingImage.FromFile(gifPath);
-            frameCount = gifImage.GetFrameCount(DrawingFrameDimension.Time);
+            int sourceFrameCount = gifImage.GetFrameCount(DrawingFrameDimension.Time);
 
-            if (frameCount <= 0)
+            if (sourceFrameCount <= 0)
             {
                 throw new InvalidOperationException("Gif has no decodable frames.");
             }
 
-            frameDurations.AddRange(ReadFrameDelays(gifImage, frameCount));
-            CacheFrames();
+            List<int> selectedFrameIndices = BuildSelectedFrameIndices(sourceFrameCount);
+            List<TimeSpan> sourceDelays = ReadFrameDelays(gifImage, sourceFrameCount);
+            frameDurations.AddRange(SampleFrameDurations(sourceDelays, selectedFrameIndices));
+            CacheFrames(selectedFrameIndices);
+            frameCount = frames.Count;
+            if (frameCount == 0)
+            {
+                throw new InvalidOperationException("Gif produced no preview frames.");
+            }
+
+            if (frameDurations.Count != frameCount)
+            {
+                frameDurations.Clear();
+                for (int i = 0; i < frameCount; i++)
+                {
+                    frameDurations.Add(TimeSpan.FromMilliseconds(100));
+                }
+            }
+
             frameIndex = 0;
             StartPlayback();
         }
@@ -1237,16 +1272,20 @@ namespace OceanyaClient
             FrameChanged?.Invoke(frames[Math.Clamp(frameIndex, 0, frameCount - 1)]);
         }
 
-        private void CacheFrames()
+        private void CacheFrames(IReadOnlyList<int> selectedFrameIndices)
         {
-            for (int i = 0; i < frameCount; i++)
+            (int targetWidth, int targetHeight) = ComputePreviewDimensions(gifImage.Width, gifImage.Height);
+
+            for (int i = 0; i < selectedFrameIndices.Count; i++)
             {
-                gifImage.SelectActiveFrame(DrawingFrameDimension.Time, i);
-                using DrawingBitmap bitmap = new DrawingBitmap(gifImage.Width, gifImage.Height, DrawingPixelFormat.Format32bppArgb);
+                gifImage.SelectActiveFrame(DrawingFrameDimension.Time, selectedFrameIndices[i]);
+                using DrawingBitmap bitmap = new DrawingBitmap(targetWidth, targetHeight, DrawingPixelFormat.Format32bppArgb);
                 using (DrawingGraphics graphics = DrawingGraphics.FromImage(bitmap))
                 {
                     graphics.Clear(System.Drawing.Color.Transparent);
-                    graphics.DrawImage(gifImage, 0, 0, gifImage.Width, gifImage.Height);
+                    graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear;
+                    graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+                    graphics.DrawImage(gifImage, 0, 0, targetWidth, targetHeight);
                 }
 
                 IntPtr hBitmap = bitmap.GetHbitmap();
@@ -1265,6 +1304,82 @@ namespace OceanyaClient
                     DeleteObject(hBitmap);
                 }
             }
+        }
+
+        private static (int width, int height) ComputePreviewDimensions(int sourceWidth, int sourceHeight)
+        {
+            int safeWidth = Math.Max(1, sourceWidth);
+            int safeHeight = Math.Max(1, sourceHeight);
+            int largestSide = Math.Max(safeWidth, safeHeight);
+            if (largestSide <= MaxGifPreviewDimension)
+            {
+                return (safeWidth, safeHeight);
+            }
+
+            double scale = MaxGifPreviewDimension / (double)largestSide;
+            int width = Math.Max(1, (int)Math.Round(safeWidth * scale));
+            int height = Math.Max(1, (int)Math.Round(safeHeight * scale));
+            return (width, height);
+        }
+
+        private static List<int> BuildSelectedFrameIndices(int sourceFrameCount)
+        {
+            if (sourceFrameCount <= MaxGifPreviewFrames)
+            {
+                return Enumerable.Range(0, sourceFrameCount).ToList();
+            }
+
+            List<int> selected = new List<int>(MaxGifPreviewFrames);
+            double stride = sourceFrameCount / (double)MaxGifPreviewFrames;
+            for (int i = 0; i < MaxGifPreviewFrames; i++)
+            {
+                int sourceIndex = Math.Min(sourceFrameCount - 1, (int)Math.Round(i * stride));
+                if (selected.Count == 0 || selected[selected.Count - 1] != sourceIndex)
+                {
+                    selected.Add(sourceIndex);
+                }
+            }
+
+            if (selected.Count == 0 || selected[selected.Count - 1] != sourceFrameCount - 1)
+            {
+                selected.Add(sourceFrameCount - 1);
+            }
+
+            return selected;
+        }
+
+        private static List<TimeSpan> SampleFrameDurations(
+            IReadOnlyList<TimeSpan> sourceDelays,
+            IReadOnlyList<int> selectedFrameIndices)
+        {
+            List<TimeSpan> sampled = new List<TimeSpan>(selectedFrameIndices.Count);
+            if (selectedFrameIndices.Count == 0)
+            {
+                return sampled;
+            }
+
+            for (int i = 0; i < selectedFrameIndices.Count; i++)
+            {
+                int start = Math.Clamp(selectedFrameIndices[i], 0, sourceDelays.Count - 1);
+                int endExclusive = i + 1 < selectedFrameIndices.Count
+                    ? Math.Clamp(selectedFrameIndices[i + 1], start + 1, sourceDelays.Count)
+                    : sourceDelays.Count;
+
+                TimeSpan total = TimeSpan.Zero;
+                for (int sourceIndex = start; sourceIndex < endExclusive; sourceIndex++)
+                {
+                    total += sourceDelays[sourceIndex];
+                }
+
+                if (total <= TimeSpan.Zero)
+                {
+                    total = TimeSpan.FromMilliseconds(100);
+                }
+
+                sampled.Add(total);
+            }
+
+            return sampled;
         }
 
         private static void RegisterActivePlayer(GifAnimationPlayer player)
@@ -1300,7 +1415,8 @@ namespace OceanyaClient
                 return;
             }
 
-            sharedTimer = new DispatcherTimer(DispatcherPriority.Background)
+            Dispatcher dispatcher = Application.Current?.Dispatcher ?? Dispatcher.CurrentDispatcher;
+            sharedTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher)
             {
                 Interval = SharedTickInterval
             };

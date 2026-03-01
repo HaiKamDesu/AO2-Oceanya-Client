@@ -926,22 +926,162 @@ namespace OceanyaClient
                 return;
             }
 
-            string fileName = Path.GetFileName(token);
-            string baseDirectory = Path.GetDirectoryName(token.Replace('/', Path.DirectorySeparatorChar)) ?? string.Empty;
-            string aToken = string.IsNullOrWhiteSpace(baseDirectory)
-                ? "(a)/" + fileName
-                : baseDirectory.Replace('\\', '/') + "/(a)/" + fileName;
-            string bToken = string.IsNullOrWhiteSpace(baseDirectory)
-                ? "(b)/" + fileName
-                : baseDirectory.Replace('\\', '/') + "/(b)/" + fileName;
+            string sanitizedToken = token.Trim().TrimStart('/');
+            string baseDirectory = (Path.GetDirectoryName(sanitizedToken.Replace('/', Path.DirectorySeparatorChar)) ?? string.Empty)
+                .Replace('\\', '/')
+                .Trim('/');
+            string fileName = Path.GetFileName(sanitizedToken);
+            string fileStem = Path.GetFileNameWithoutExtension(fileName);
+            string canonicalName = StripSplitPrefix(fileStem);
+            if (string.IsNullOrWhiteSpace(canonicalName))
+            {
+                return;
+            }
 
-            viewModel.FinalAnimationIdleAssetSourcePath = ResolveImageTokenPathWithinCharacterDirectory(characterDirectoryPath, aToken);
-            viewModel.FinalAnimationTalkingAssetSourcePath = ResolveImageTokenPathWithinCharacterDirectory(characterDirectoryPath, bToken);
+            string[] idleCandidates = BuildSplitAnimationCandidates(baseDirectory, canonicalName, "a");
+            string[] talkingCandidates = BuildSplitAnimationCandidates(baseDirectory, canonicalName, "b");
+
+            viewModel.FinalAnimationIdleAssetSourcePath = ResolveFirstExistingImageToken(characterDirectoryPath, idleCandidates);
+            viewModel.FinalAnimationTalkingAssetSourcePath = ResolveFirstExistingImageToken(characterDirectoryPath, talkingCandidates);
+
+            if (!string.IsNullOrWhiteSpace(viewModel.AnimationAssetSourcePath))
+            {
+                if (string.IsNullOrWhiteSpace(viewModel.FinalAnimationIdleAssetSourcePath))
+                {
+                    viewModel.FinalAnimationIdleAssetSourcePath = ResolveCounterpartSplitPath(
+                        characterDirectoryPath,
+                        viewModel.AnimationAssetSourcePath,
+                        "a");
+                }
+
+                if (string.IsNullOrWhiteSpace(viewModel.FinalAnimationTalkingAssetSourcePath))
+                {
+                    viewModel.FinalAnimationTalkingAssetSourcePath = ResolveCounterpartSplitPath(
+                        characterDirectoryPath,
+                        viewModel.AnimationAssetSourcePath,
+                        "b");
+                }
+            }
+
             if (string.IsNullOrWhiteSpace(viewModel.AnimationAssetSourcePath))
             {
                 viewModel.AnimationAssetSourcePath = viewModel.FinalAnimationIdleAssetSourcePath
                     ?? viewModel.FinalAnimationTalkingAssetSourcePath;
             }
+        }
+
+        private static string[] BuildSplitAnimationCandidates(string baseDirectory, string canonicalName, string channel)
+        {
+            string safeChannel = string.Equals(channel, "b", StringComparison.OrdinalIgnoreCase) ? "b" : "a";
+            string sanitizedDirectory = (baseDirectory ?? string.Empty).Trim().Trim('/').Replace('\\', '/');
+            if (string.IsNullOrWhiteSpace(canonicalName))
+            {
+                return Array.Empty<string>();
+            }
+
+            if (string.IsNullOrWhiteSpace(sanitizedDirectory))
+            {
+                return new[]
+                {
+                    $"({safeChannel}){canonicalName}",
+                    $"({safeChannel})/{canonicalName}",
+                    $"{safeChannel}/{canonicalName}",
+                    canonicalName
+                };
+            }
+
+            return new[]
+            {
+                $"{sanitizedDirectory}/({safeChannel}){canonicalName}",
+                $"{sanitizedDirectory}/({safeChannel})/{canonicalName}",
+                $"{sanitizedDirectory}/{safeChannel}/{canonicalName}",
+                $"({safeChannel}){canonicalName}",
+                $"({safeChannel})/{canonicalName}"
+            };
+        }
+
+        private static string StripSplitPrefix(string animationName)
+        {
+            string value = (animationName ?? string.Empty).Trim();
+            foreach (string prefix in new[] { "(a)/", "(b)/", "(a)", "(b)", "a/", "b/" })
+            {
+                if (value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    return value.Substring(prefix.Length).TrimStart('/');
+                }
+            }
+
+            return value;
+        }
+
+        private static string? ResolveFirstExistingImageToken(string characterDirectoryPath, IEnumerable<string> candidates)
+        {
+            foreach (string candidate in candidates)
+            {
+                if (string.IsNullOrWhiteSpace(candidate))
+                {
+                    continue;
+                }
+
+                string? resolved = ResolveImageTokenPathWithinCharacterDirectory(characterDirectoryPath, candidate);
+                if (!string.IsNullOrWhiteSpace(resolved))
+                {
+                    return resolved;
+                }
+            }
+
+            return null;
+        }
+
+        private static string? ResolveCounterpartSplitPath(string characterDirectoryPath, string resolvedAnimationPath, string targetChannel)
+        {
+            if (string.IsNullOrWhiteSpace(resolvedAnimationPath))
+            {
+                return null;
+            }
+
+            string safeTarget = string.Equals(targetChannel, "b", StringComparison.OrdinalIgnoreCase) ? "b" : "a";
+            string fileName = Path.GetFileNameWithoutExtension(resolvedAnimationPath);
+            string canonical = StripSplitPrefix(fileName);
+            if (string.IsNullOrWhiteSpace(canonical))
+            {
+                return null;
+            }
+
+            string extension = Path.GetExtension(resolvedAnimationPath);
+            string directory = Path.GetDirectoryName(resolvedAnimationPath) ?? string.Empty;
+            string relativeDirectory;
+            try
+            {
+                relativeDirectory = Path.GetRelativePath(characterDirectoryPath, directory).Replace('\\', '/');
+            }
+            catch
+            {
+                relativeDirectory = string.Empty;
+            }
+
+            relativeDirectory = relativeDirectory.Trim().Trim('/');
+            relativeDirectory = relativeDirectory
+                .Replace("/(a)/", $"/({safeTarget})/", StringComparison.OrdinalIgnoreCase)
+                .Replace("/(b)/", $"/({safeTarget})/", StringComparison.OrdinalIgnoreCase)
+                .Replace("/a/", $"/{safeTarget}/", StringComparison.OrdinalIgnoreCase)
+                .Replace("/b/", $"/{safeTarget}/", StringComparison.OrdinalIgnoreCase);
+            if (string.Equals(relativeDirectory, "(a)", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(relativeDirectory, "(b)", StringComparison.OrdinalIgnoreCase))
+            {
+                relativeDirectory = $"({safeTarget})";
+            }
+            else if (string.Equals(relativeDirectory, "a", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(relativeDirectory, "b", StringComparison.OrdinalIgnoreCase))
+            {
+                relativeDirectory = safeTarget;
+            }
+
+            IEnumerable<string> baseCandidates = BuildSplitAnimationCandidates(relativeDirectory, canonical, safeTarget);
+            List<string> explicitExtensionCandidates = string.IsNullOrWhiteSpace(extension)
+                ? new List<string>()
+                : baseCandidates.Select(candidate => candidate + extension).ToList();
+            return ResolveFirstExistingImageToken(characterDirectoryPath, explicitExtensionCandidates.Concat(baseCandidates));
         }
 
         private void LoadAdvancedEntriesFromIni(IniDocument iniDocument)
@@ -2000,16 +2140,24 @@ namespace OceanyaClient
                 return;
             }
 
+            BitmapSource? carryForwardCutout = null;
+            Rect? carryForwardSelection = null;
             foreach (CharacterCreationEmoteViewModel emote in targets)
             {
                 bulkButtonCutoutByEmoteId.TryGetValue(emote.Id, out BitmapSource? existingCutout);
-                BitmapSource? cutout = ShowEmoteCuttingDialog(emote, existingCutout);
+                existingCutout ??= carryForwardCutout;
+                BitmapSource? cutout = ShowEmoteCuttingDialog(emote, existingCutout, carryForwardSelection);
                 if (cutout == null)
                 {
                     continue;
                 }
 
                 bulkButtonCutoutByEmoteId[emote.Id] = cutout;
+                carryForwardCutout = cutout;
+                if (TryGetSavedCutSelectionForEmote(emote, out CutSelectionState? state))
+                {
+                    carryForwardSelection = state.NormalizedSelection;
+                }
             }
 
             RenderBulkCutoutPreviewTiles(targets);
@@ -7559,6 +7707,14 @@ namespace OceanyaClient
             return $"{emote.Index}|{emoteName}|{preanimName}|{animationName}|{idleName}|{talkingName}";
         }
 
+        private bool TryGetSavedCutSelectionForEmote(
+            CharacterCreationEmoteViewModel emote,
+            [NotNullWhen(true)] out CutSelectionState? state)
+        {
+            string emoteCutSelectionKey = BuildCutSelectionStorageKey(emote);
+            return savedCutSelectionByEmoteKey.TryGetValue(emoteCutSelectionKey, out state);
+        }
+
         private void PersistCutSelectionState(string emoteKey, CutSelectionState state)
         {
             SaveFile.Data.CharacterCreatorCutSelections[emoteKey] = new CharacterCreatorCutSelectionState
@@ -7572,7 +7728,10 @@ namespace OceanyaClient
             SaveFile.Save();
         }
 
-        private BitmapSource? ShowEmoteCuttingDialog(CharacterCreationEmoteViewModel emote, BitmapSource? existingCutout)
+        private BitmapSource? ShowEmoteCuttingDialog(
+            CharacterCreationEmoteViewModel emote,
+            BitmapSource? existingCutout,
+            Rect? suggestedNormalizedSelection = null)
         {
             string emoteCutSelectionKey = BuildCutSelectionStorageKey(emote);
             List<CutSourceOption> sourceOptions = new List<CutSourceOption>();
@@ -7835,6 +7994,7 @@ namespace OceanyaClient
             BitmapSource? currentSelectionCutout = null;
             string currentSourceName = sourceOptions[0].Name;
             string currentSourcePath = sourceOptions[0].Path;
+            Rect? transientSuggestedSelection = suggestedNormalizedSelection;
 
             void UpdateLastCutoutPreviewForCurrentSource()
             {
@@ -7910,7 +8070,29 @@ namespace OceanyaClient
 
             void ApplySavedSelectionAsCurrent()
             {
-                if (currentFrame == null || !TryGetSavedSelectionForCurrentSource(out Rect normalized))
+                if (currentFrame == null)
+                {
+                    selectionBounds = Rect.Empty;
+                    normalizedSelectionBounds = Rect.Empty;
+                    UpdateSelectionVisual();
+                    UpdateCurrentCutoutPreview();
+                    UpdateLastSelectionVisual(null);
+                    UpdateLastCutoutPreviewForCurrentSource();
+                    return;
+                }
+
+                Rect normalized;
+                if (TryGetSavedSelectionForCurrentSource(out Rect persistedSelection))
+                {
+                    normalized = persistedSelection;
+                }
+                else if (transientSuggestedSelection.HasValue
+                    && transientSuggestedSelection.Value.Width > 0
+                    && transientSuggestedSelection.Value.Height > 0)
+                {
+                    normalized = transientSuggestedSelection.Value;
+                }
+                else
                 {
                     selectionBounds = Rect.Empty;
                     normalizedSelectionBounds = Rect.Empty;
@@ -8053,6 +8235,7 @@ namespace OceanyaClient
                     {
                         previewImage.Source = frame;
                         currentFrame = frame as BitmapSource;
+                        UpdateSelectionBoundsFromNormalized();
                         if (TryGetSavedSelectionForCurrentSource(out Rect normalized))
                         {
                             UpdateLastSelectionVisual(normalized);
@@ -8125,6 +8308,7 @@ namespace OceanyaClient
                 Point end = new Point(dragStart.X + width, dragStart.Y + height);
                 selectionBounds = new Rect(dragStart, end);
                 UpdateNormalizedSelectionFromBounds();
+                transientSuggestedSelection = null;
                 UpdateSelectionVisual();
                 UpdateCurrentCutoutPreview();
             };
@@ -8137,11 +8321,20 @@ namespace OceanyaClient
                 }
 
                 UpdateNormalizedSelectionFromBounds();
+                transientSuggestedSelection = null;
                 UpdateCurrentCutoutPreview();
             };
             selectionCanvas.SizeChanged += (_, _) =>
             {
                 UpdateSelectionBoundsFromNormalized();
+                if (TryGetSavedSelectionForCurrentSource(out Rect normalized))
+                {
+                    UpdateLastSelectionVisual(normalized);
+                }
+                else
+                {
+                    UpdateLastSelectionVisual(null);
+                }
             };
 
             playPauseButton.Click += (_, _) =>

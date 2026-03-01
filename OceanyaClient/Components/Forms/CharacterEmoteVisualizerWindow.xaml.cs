@@ -32,12 +32,19 @@ namespace OceanyaClient
         private const double MinimumWindowHeight = 560;
         private const int ViewportAnimationRetentionRows = 6;
         private const int ViewportResidencyRefreshDebounceMilliseconds = 45;
+        private static readonly bool ForcePlayAllAnimatedEntriesForTesting =
+            string.Equals(Environment.GetEnvironmentVariable("OCEANYA_EMOTE_FORCE_ALL_ANIM"), "1", StringComparison.Ordinal);
+        private static readonly bool EnableTempAnimationDebugLog =
+            !string.Equals(Environment.GetEnvironmentVariable("OCEANYA_EMOTE_DEBUG"), "0", StringComparison.Ordinal);
         private const string FallbackFolderPackUri =
             "pack://application:,,,/OceanyaClient;component/Resources/Buttons/smallFolder.png";
 
         private static readonly ImageSource FallbackImage =
             CharacterFolderVisualizerWindow.LoadEmbeddedImage(FallbackFolderPackUri);
         private static readonly ImageSource TransparentImage = CreateTransparentPlaceholderImage();
+        private static readonly string TempAnimationDebugLogPath =
+            Path.Combine(Path.GetTempPath(), "oceanya_emote_visualizer_debug.log");
+        private static readonly object TempAnimationDebugLogLock = new object();
 
         private CharacterFolder character;
         private readonly List<EmoteVisualizerItem> allItems = new List<EmoteVisualizerItem>();
@@ -48,9 +55,13 @@ namespace OceanyaClient
         private readonly Dictionary<GridViewColumn, EventHandler> columnWidthHandlers =
             new Dictionary<GridViewColumn, EventHandler>();
         private readonly DispatcherTimer viewportResidencyRefreshDebounceTimer;
+        private readonly HashSet<string> failedAnimationPlayerPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> pendingAnimationPlayerKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly SemaphoreSlim animationPlayerCreationSemaphore = new SemaphoreSlim(1, 1);
         private ScrollViewer? emoteListScrollViewer;
         private bool loopAnimations;
         private int viewportPreviewLoadGeneration;
+        private int animationPlayerCreationGeneration;
 
         private bool hasLoaded;
         private bool applyingSavedWindowState;
@@ -324,6 +335,8 @@ namespace OceanyaClient
 
         private async Task LoadEmoteItemsAsync()
         {
+            ClearTempAnimationDebugLog();
+            LogTempAnimationDebug($"Load start | Character={character.Name} | Dir={character.DirectoryPath}");
             await WaitForm.ShowFormAsync("Loading character visualizer...", this);
             try
             {
@@ -333,6 +346,7 @@ namespace OceanyaClient
                 StopAndClearAnimationPlayers();
                 allItems.Clear();
                 allItems.AddRange(BuildEmoteItems(character));
+                LogTempAnimationDebug($"BuildEmoteItems complete | Count={allItems.Count}");
                 integrityReport = await Task.Run(() => CharacterIntegrityVerifier.RunAndPersist(character));
                 ApplyIntegrityReportToEmoteItems();
                 WaitForm.SetSubtitle("Loading emote images...");
@@ -347,6 +361,7 @@ namespace OceanyaClient
                 await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
                 RefreshViewportAnimationResidency();
                 ApplyLoopAnimationsSetting(loopAnimations);
+                LogTempAnimationDebug("Load complete");
             }
             finally
             {
@@ -1155,6 +1170,16 @@ namespace OceanyaClient
         private ImageSource LoadImage(string path, int decodePixelWidth)
         {
             string normalizedPath = path?.Trim() ?? string.Empty;
+            string extension = Path.GetExtension(normalizedPath).ToLowerInvariant();
+            if (string.Equals(extension, ".gif", StringComparison.OrdinalIgnoreCase))
+            {
+                // Keep GIF preload static (first frame path) for thread-safety from background preload.
+                return Ao2AnimationPreview.LoadStaticPreviewImage(
+                    normalizedPath,
+                    decodePixelWidth,
+                    FallbackImage);
+            }
+
             return Ao2AnimationPreview.LoadStaticPreviewImage(
                 normalizedPath,
                 decodePixelWidth,
@@ -1292,17 +1317,37 @@ namespace OceanyaClient
 
         private void RefreshViewportAnimationResidency()
         {
+            if (ForcePlayAllAnimatedEntriesForTesting)
+            {
+                retainedViewportEmoteIds.Clear();
+                foreach (EmoteVisualizerItem item in allItems)
+                {
+                    retainedViewportEmoteIds.Add(item.Id);
+                    EnsureAnimationPlayersForItem(item, includePreAnimation: true);
+                }
+
+                LogTempAnimationDebug(
+                    $"Residency refresh [FORCE_ALL] | total={allItems.Count} | animated={allItems.Count(static item => IsPotentialAnimatedPath(item.PreAnimationPath) || IsPotentialAnimatedPath(item.AnimationPath))}");
+                return;
+            }
+
             IReadOnlyList<EmoteVisualizerItem> retainedItems = GetViewportRetainedItems();
             HashSet<int> retainedIds = retainedItems.Select(item => item.Id).ToHashSet();
+            IReadOnlyList<EmoteVisualizerItem> visibleItems = GetVisibleItemsOrderedTopToBottom();
+            int? selectedId = (EmoteListView.SelectedItem as EmoteVisualizerItem)?.Id;
+            HashSet<int> autoplayIds = BuildViewportAutoplayItemIds(visibleItems, selectedId, int.MaxValue);
             retainedViewportEmoteIds.Clear();
             foreach (int id in retainedIds)
             {
                 retainedViewportEmoteIds.Add(id);
             }
 
+            LogTempAnimationDebug(
+                $"Residency refresh | retained={retainedIds.Count} | visible={visibleItems.Count} | autoplay={autoplayIds.Count}");
+
             foreach (EmoteVisualizerItem item in allItems)
             {
-                if (retainedIds.Contains(item.Id))
+                if (retainedIds.Contains(item.Id) && autoplayIds.Contains(item.Id))
                 {
                     EnsureAnimationPlayersForItem(item, includePreAnimation: true);
                     continue;
@@ -1506,12 +1551,9 @@ namespace OceanyaClient
             {
                 string? resolvedPreAnimationPath = Ao2AnimationPreview.ResolveAo2ImagePath(item.PreAnimationPath);
                 if (!string.IsNullOrWhiteSpace(resolvedPreAnimationPath)
-                    && Ao2AnimationPreview.TryCreateAnimationPlayer(resolvedPreAnimationPath, loopAnimations, out IAnimationPlayer? prePlayer)
-                    && prePlayer != null)
+                    && !failedAnimationPlayerPaths.Contains(resolvedPreAnimationPath))
                 {
-                    item.PreAnimationPlayer = prePlayer;
-                    prePlayer.FrameChanged += frame => item.PreAnimationImage = frame;
-                    item.PreAnimationImage = prePlayer.CurrentFrame;
+                    QueueAnimationPlayerCreation(item, resolvedPreAnimationPath, isPreAnimation: true);
                 }
             }
 
@@ -1519,13 +1561,155 @@ namespace OceanyaClient
             {
                 string? resolvedAnimationPath = Ao2AnimationPreview.ResolveAo2ImagePath(item.AnimationPath);
                 if (!string.IsNullOrWhiteSpace(resolvedAnimationPath)
-                    && Ao2AnimationPreview.TryCreateAnimationPlayer(resolvedAnimationPath, loopAnimations, out IAnimationPlayer? animationPlayer)
-                    && animationPlayer != null)
+                    && !failedAnimationPlayerPaths.Contains(resolvedAnimationPath))
                 {
-                    item.AnimationPlayer = animationPlayer;
-                    animationPlayer.FrameChanged += frame => item.AnimationImage = frame;
-                    item.AnimationImage = animationPlayer.CurrentFrame;
+                    QueueAnimationPlayerCreation(item, resolvedAnimationPath, isPreAnimation: false);
                 }
+            }
+        }
+
+        private void QueueAnimationPlayerCreation(EmoteVisualizerItem item, string resolvedPath, bool isPreAnimation)
+        {
+            string key = item.Id + "|" + (isPreAnimation ? "pre" : "anim") + "|" + resolvedPath;
+            if (!pendingAnimationPlayerKeys.Add(key))
+            {
+                return;
+            }
+
+            int generation = animationPlayerCreationGeneration;
+            bool shouldLoop = loopAnimations;
+            LogTempAnimationDebug(
+                $"Queue create | id={item.Id} | kind={(isPreAnimation ? "pre" : "anim")} | path={resolvedPath}");
+            _ = Task.Run(async () =>
+            {
+                Stopwatch sw = Stopwatch.StartNew();
+                IAnimationPlayer? player = null;
+                bool created = false;
+                bool enteredSemaphore = false;
+                try
+                {
+                    await animationPlayerCreationSemaphore.WaitAsync().ConfigureAwait(false);
+                    enteredSemaphore = true;
+                    created = Ao2AnimationPreview.TryCreateAnimationPlayer(resolvedPath, shouldLoop, out player) && player != null;
+                }
+                catch (Exception ex)
+                {
+                    LogTempAnimationDebug(
+                        $"Create exception ({sw.ElapsedMilliseconds}ms) | id={item.Id} | kind={(isPreAnimation ? "pre" : "anim")} | path={resolvedPath} | ex={ex.Message}");
+                }
+                finally
+                {
+                    if (enteredSemaphore)
+                    {
+                        animationPlayerCreationSemaphore.Release();
+                    }
+                }
+
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    pendingAnimationPlayerKeys.Remove(key);
+
+                    if (generation != animationPlayerCreationGeneration)
+                    {
+                        player?.Stop();
+                        return;
+                    }
+
+                    if (!created || player == null)
+                    {
+                        failedAnimationPlayerPaths.Add(resolvedPath);
+                        LogTempAnimationDebug(
+                            $"Create failed/timeout ({sw.ElapsedMilliseconds}ms) | id={item.Id} | kind={(isPreAnimation ? "pre" : "anim")} | path={resolvedPath}");
+                        CustomConsole.Warning(
+                            $"Skipping animated preview for '{resolvedPath}' because player creation timed out or failed.");
+                        return;
+                    }
+
+                    string? currentResolvedPath = Ao2AnimationPreview.ResolveAo2ImagePath(
+                        isPreAnimation ? item.PreAnimationPath : item.AnimationPath);
+                    if (string.IsNullOrWhiteSpace(currentResolvedPath)
+                        || !string.Equals(currentResolvedPath, resolvedPath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        player.Stop();
+                        LogTempAnimationDebug(
+                            $"Create stale ({sw.ElapsedMilliseconds}ms) | id={item.Id} | kind={(isPreAnimation ? "pre" : "anim")} | path={resolvedPath}");
+                        return;
+                    }
+
+                    if (isPreAnimation)
+                    {
+                        if (item.PreAnimationPlayer != null)
+                        {
+                            player.Stop();
+                            LogTempAnimationDebug(
+                                $"Create dropped existing pre ({sw.ElapsedMilliseconds}ms) | id={item.Id} | path={resolvedPath}");
+                            return;
+                        }
+
+                        item.PreAnimationPlayer = player;
+                        player.FrameChanged += frame => item.PreAnimationImage = frame;
+                        item.PreAnimationImage = player.CurrentFrame;
+                        LogTempAnimationDebug(
+                            $"Create success ({sw.ElapsedMilliseconds}ms) | id={item.Id} | kind=pre | path={resolvedPath}");
+                    }
+                    else
+                    {
+                        if (item.AnimationPlayer != null)
+                        {
+                            player.Stop();
+                            LogTempAnimationDebug(
+                                $"Create dropped existing anim ({sw.ElapsedMilliseconds}ms) | id={item.Id} | path={resolvedPath}");
+                            return;
+                        }
+
+                        item.AnimationPlayer = player;
+                        player.FrameChanged += frame => item.AnimationImage = frame;
+                        item.AnimationImage = player.CurrentFrame;
+                        LogTempAnimationDebug(
+                            $"Create success ({sw.ElapsedMilliseconds}ms) | id={item.Id} | kind=anim | path={resolvedPath}");
+                    }
+                }, DispatcherPriority.Background);
+            });
+        }
+
+        private static void ClearTempAnimationDebugLog()
+        {
+            if (!EnableTempAnimationDebugLog)
+            {
+                return;
+            }
+
+            try
+            {
+                lock (TempAnimationDebugLogLock)
+                {
+                    File.WriteAllText(TempAnimationDebugLogPath, string.Empty);
+                }
+            }
+            catch
+            {
+                // ignored
+            }
+        }
+
+        private static void LogTempAnimationDebug(string message)
+        {
+            if (!EnableTempAnimationDebugLog)
+            {
+                return;
+            }
+
+            try
+            {
+                string line = $"{DateTime.UtcNow:O} [T{Environment.CurrentManagedThreadId}] {message}{Environment.NewLine}";
+                lock (TempAnimationDebugLogLock)
+                {
+                    File.AppendAllText(TempAnimationDebugLogPath, line);
+                }
+            }
+            catch
+            {
+                // ignored
             }
         }
 
@@ -2211,10 +2395,13 @@ namespace OceanyaClient
         {
             viewportResidencyRefreshDebounceTimer.Stop();
             viewportPreviewLoadGeneration++;
+            animationPlayerCreationGeneration++;
             viewportPreviewLoadCancellation?.Cancel();
             viewportPreviewLoadCancellation?.Dispose();
             viewportPreviewLoadCancellation = null;
             retainedViewportEmoteIds.Clear();
+            pendingAnimationPlayerKeys.Clear();
+            failedAnimationPlayerPaths.Clear();
             StopAndClearAnimationPlayers();
 
             if (clearItems)
