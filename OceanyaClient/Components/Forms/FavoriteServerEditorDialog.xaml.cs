@@ -1,17 +1,19 @@
 using System;
 using System.Windows;
+using System.Windows.Media.Imaging;
 
 namespace OceanyaClient
 {
     /// <summary>
-    /// Interaction logic for FavoriteServerEditorDialog.xaml
+    /// Content control used to create or edit a favorite server entry.
     /// </summary>
-    public partial class FavoriteServerEditorDialog : Window
+    public partial class FavoriteServerEditorDialog : OceanyaWindowContentControl
     {
-        public string ServerName { get; private set; } = string.Empty;
-        public string ServerEndpoint { get; private set; } = string.Empty;
-        public string ServerDescription { get; private set; } = string.Empty;
+        private readonly string headerText;
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="FavoriteServerEditorDialog"/> class.
+        /// </summary>
         public FavoriteServerEditorDialog(
             string windowTitle,
             string actionText,
@@ -20,9 +22,8 @@ namespace OceanyaClient
             string defaultDescription)
         {
             InitializeComponent();
-            WindowHelper.AddWindow(this);
 
-            Title = windowTitle;
+            headerText = windowTitle.ToUpperInvariant();
             ActionButton.Content = actionText;
             ServerNameTextBox.Text = defaultName;
             ServerEndpointTextBox.Text = defaultEndpoint;
@@ -34,6 +35,27 @@ namespace OceanyaClient
                 ServerNameTextBox.SelectAll();
             };
         }
+
+        /// <summary>
+        /// Gets the resulting server name.
+        /// </summary>
+        public string ServerName { get; private set; } = string.Empty;
+
+        /// <summary>
+        /// Gets the resulting server endpoint.
+        /// </summary>
+        public string ServerEndpoint { get; private set; } = string.Empty;
+
+        /// <summary>
+        /// Gets the resulting server description.
+        /// </summary>
+        public string ServerDescription { get; private set; } = string.Empty;
+
+        /// <inheritdoc/>
+        public override string HeaderText => headerText;
+
+        /// <inheritdoc/>
+        public override bool IsUserResizeEnabled => false;
 
         private void SaveButton_Click(object sender, RoutedEventArgs e)
         {
@@ -56,16 +78,17 @@ namespace OceanyaClient
             ServerName = serverName;
             ServerEndpoint = serverEndpoint;
             ServerDescription = serverDescription;
-            DialogResult = true;
-            Close();
+            RequestHostClose(true);
         }
 
         private void CancelButton_Click(object sender, RoutedEventArgs e)
         {
-            DialogResult = false;
-            Close();
+            RequestHostClose(false);
         }
 
+        /// <summary>
+        /// Shows the favorite server editor with the shared generic window host.
+        /// </summary>
         public static bool ShowDialog(
             Window owner,
             out string serverName,
@@ -77,22 +100,33 @@ namespace OceanyaClient
             string defaultEndpoint = "ws://127.0.0.1:27016",
             string defaultDescription = "")
         {
-            FavoriteServerEditorDialog dialog = new FavoriteServerEditorDialog(
+            FavoriteServerEditorDialog content = new FavoriteServerEditorDialog(
                 windowTitle,
                 actionText,
                 defaultName,
                 defaultEndpoint,
-                defaultDescription)
+                defaultDescription);
+
+            OceanyaWindowPresentationOptions options = new OceanyaWindowPresentationOptions
             {
-                Owner = owner
+                Owner = owner,
+                Title = windowTitle,
+                HeaderText = windowTitle.ToUpperInvariant(),
+                Width = 540,
+                Height = 360,
+                MinWidth = 500,
+                MinHeight = 330,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                IsUserResizeEnabled = false,
+                Icon = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/OceanyaO.ico"))
             };
 
-            bool? result = dialog.ShowDialog();
+            bool? result = OceanyaWindowManager.ShowDialog(content, options);
             if (result == true)
             {
-                serverName = dialog.ServerName;
-                endpoint = dialog.ServerEndpoint;
-                description = dialog.ServerDescription;
+                serverName = content.ServerName;
+                endpoint = content.ServerEndpoint;
+                description = content.ServerDescription;
                 return true;
             }
 

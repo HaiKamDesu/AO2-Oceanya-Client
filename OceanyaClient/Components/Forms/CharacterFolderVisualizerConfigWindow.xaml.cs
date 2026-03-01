@@ -12,7 +12,7 @@ namespace OceanyaClient
     /// <summary>
     /// Configures view presets for the character folder visualizer.
     /// </summary>
-    public partial class CharacterFolderVisualizerConfigWindow : Window
+    public partial class CharacterFolderVisualizerConfigWindow : OceanyaWindowContentControl
     {
         private readonly FolderVisualizerConfig workingConfig;
         private readonly List<ColumnEditorItem> columnEditorItems = new List<ColumnEditorItem>();
@@ -27,10 +27,17 @@ namespace OceanyaClient
         public CharacterFolderVisualizerConfigWindow(FolderVisualizerConfig sourceConfig)
         {
             InitializeComponent();
+            Title = "Configure Folder Views";
             workingConfig = CloneConfig(sourceConfig);
 
             BindPresetList();
         }
+
+        /// <inheritdoc/>
+        public override string HeaderText => "CONFIGURE VISUALIZER VIEWS";
+
+        /// <inheritdoc/>
+        public override bool IsUserResizeEnabled => true;
 
         private void BindPresetList()
         {
@@ -406,20 +413,6 @@ namespace OceanyaClient
         {
             DialogResult = false;
             Close();
-        }
-
-        private void CloseButton_Click(object sender, RoutedEventArgs e)
-        {
-            DialogResult = false;
-            Close();
-        }
-
-        private void DragWindow(object sender, MouseButtonEventArgs e)
-        {
-            if (e.ChangedButton == MouseButton.Left)
-            {
-                DragMove();
-            }
         }
 
         private static FolderVisualizerConfig CloneConfig(FolderVisualizerConfig source)

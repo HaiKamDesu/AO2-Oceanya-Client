@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using Common;
 
 namespace AOBot_Testing.Structures
 {
@@ -55,7 +54,8 @@ namespace AOBot_Testing.Structures
                 return File.Exists(candidateFromDirectory) ? candidateFromDirectory : string.Empty;
             }
 
-            foreach (string extension in Globals.AllowedImageExtensions)
+            string[] ao2PreferredExtensions = { "webp", "apng", "gif", "png", "jpg", "jpeg", "pdn" };
+            foreach (string extension in ao2PreferredExtensions)
             {
                 string pathWithExtension = candidateFromDirectory + "." + extension;
                 if (File.Exists(pathWithExtension))

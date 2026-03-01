@@ -83,7 +83,6 @@ namespace AOBot_Testing.Structures
                     {
                         CharacterFolder config = Structures.CharacterFolder.Create(iniFilePath);
                         seenNames.Add(folderName);
-                        CustomConsole.Debug($"Parsed Character: {config.Name} ({characterFolder})");
                         refreshedCharacters.Add(config);
                         onParsedCharacter?.Invoke(config);
                     }
@@ -99,6 +98,60 @@ namespace AOBot_Testing.Structures
             characterConfigs = refreshedCharacters;
             SaveToJson(cacheFile, characterConfigs);
             CustomConsole.Info("Character list saved to cache.");
+        }
+
+        public static bool TryUpsertCharacterFolderInCache(
+            string targetCharacterDirectoryPath,
+            string? previousCharacterDirectoryPath,
+            out CharacterFolder? upsertedCharacter,
+            out string errorMessage)
+        {
+            upsertedCharacter = null;
+            errorMessage = string.Empty;
+
+            try
+            {
+                string targetDirectory = NormalizePathForCompare(targetCharacterDirectoryPath);
+                if (string.IsNullOrWhiteSpace(targetDirectory) || !Directory.Exists(targetDirectory))
+                {
+                    errorMessage = "Target character directory was not found on disk.";
+                    return false;
+                }
+
+                string charIniPath = ResolveCharacterIniPath(targetDirectory);
+                if (string.IsNullOrWhiteSpace(charIniPath) || !File.Exists(charIniPath))
+                {
+                    errorMessage = "char.ini was not found in the target character directory.";
+                    return false;
+                }
+
+                EnsureCacheFilePath();
+                _ = FullList;
+
+                upsertedCharacter = Create(charIniPath);
+                string upsertedCharacterName = upsertedCharacter.Name;
+                string normalizedPreviousDirectory = NormalizePathForCompare(previousCharacterDirectoryPath ?? string.Empty);
+
+                characterConfigs.RemoveAll(existing =>
+                    string.Equals(NormalizePathForCompare(existing.DirectoryPath), targetDirectory, StringComparison.OrdinalIgnoreCase)
+                    || (!string.IsNullOrWhiteSpace(normalizedPreviousDirectory)
+                        && string.Equals(
+                            NormalizePathForCompare(existing.DirectoryPath),
+                            normalizedPreviousDirectory,
+                            StringComparison.OrdinalIgnoreCase))
+                    || string.Equals(existing.Name, upsertedCharacterName, StringComparison.OrdinalIgnoreCase));
+
+                characterConfigs.Add(upsertedCharacter);
+                SaveToJson(cacheFile, characterConfigs);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Error("Failed to upsert character folder in cache.", ex);
+                errorMessage = ex.Message;
+                upsertedCharacter = null;
+                return false;
+            }
         }
 
         static JsonSerializerOptions jsonOptions = new JsonSerializerOptions { WriteIndented = false };
@@ -125,6 +178,36 @@ namespace AOBot_Testing.Structures
             string payload = $"{Globals.PathToConfigINI}|{string.Join("|", Globals.BaseFolders)}";
             byte[] hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(payload));
             return Convert.ToHexString(hashBytes).ToLowerInvariant();
+        }
+
+        private static string ResolveCharacterIniPath(string characterDirectoryPath)
+        {
+            string rootIni = Path.Combine(characterDirectoryPath, "char.ini");
+            if (File.Exists(rootIni))
+            {
+                return rootIni;
+            }
+
+            string[] iniFiles = Directory.GetFiles(characterDirectoryPath, "char.ini", SearchOption.AllDirectories);
+            return iniFiles.FirstOrDefault() ?? string.Empty;
+        }
+
+        private static string NormalizePathForCompare(string path)
+        {
+            string value = (path ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            try
+            {
+                return Path.GetFullPath(value).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            }
+            catch
+            {
+                return value.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            }
         }
 
         static void SaveToJson(string filePath, List<CharacterFolder> characters)

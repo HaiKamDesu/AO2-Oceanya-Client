@@ -1,6 +1,8 @@
 using OceanyaClient.Utilities;
 using System.Configuration;
+using System.Collections.Generic;
 using System.Data;
+using System.ComponentModel;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media;
@@ -12,6 +14,7 @@ namespace OceanyaClient;
 /// </summary>
 public partial class App : Application
 {
+    private readonly HashSet<Window> persistedWindows = new HashSet<Window>();
     private List<string> loadingMessages = new List<string>
     {
         "Starting completely unnecessary loading...",
@@ -50,6 +53,7 @@ public partial class App : Application
         this.DispatcherUnhandledException += App_DispatcherUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
         TaskScheduler.UnobservedTaskException += TaskScheduler_UnobservedTaskException;
+        EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.LoadedEvent, new RoutedEventHandler(Window_LoadedForPersistence));
     }
 
 
@@ -164,5 +168,64 @@ public partial class App : Application
         WaitForm.ShutdownThread();
 
         base.OnExit(e);
+    }
+
+    private void Window_LoadedForPersistence(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Window window)
+        {
+            return;
+        }
+
+        if (window.ResizeMode == ResizeMode.NoResize)
+        {
+            return;
+        }
+
+        string key = BuildWindowPersistenceKey(window);
+        if (SaveFile.Data.PopupWindowStates.TryGetValue(key, out VisualizerWindowState? state))
+        {
+            window.Width = Math.Max(window.MinWidth, state.Width);
+            window.Height = Math.Max(window.MinHeight, state.Height);
+        }
+
+        if (persistedWindows.Add(window))
+        {
+            window.Closing += Window_ClosingForPersistence;
+        }
+    }
+
+    private static void Window_ClosingForPersistence(object? sender, CancelEventArgs e)
+    {
+        if (sender is not Window window || window.ResizeMode == ResizeMode.NoResize)
+        {
+            return;
+        }
+
+        Rect bounds = window.WindowState == WindowState.Normal
+            ? new Rect(window.Left, window.Top, window.Width, window.Height)
+            : window.RestoreBounds;
+        if (bounds.Width <= 0 || bounds.Height <= 0)
+        {
+            return;
+        }
+
+        string key = BuildWindowPersistenceKey(window);
+        SaveFile.Data.PopupWindowStates[key] = new VisualizerWindowState
+        {
+            Width = bounds.Width,
+            Height = bounds.Height,
+            Left = bounds.X,
+            Top = bounds.Y,
+            IsMaximized = false
+        };
+        SaveFile.Save();
+    }
+
+    private static string BuildWindowPersistenceKey(Window window)
+    {
+        string typeName = window.GetType().FullName ?? window.GetType().Name;
+        string title = (window.Title ?? string.Empty).Trim();
+        return string.IsNullOrWhiteSpace(title) ? typeName : $"{typeName}|{title}";
     }
 }

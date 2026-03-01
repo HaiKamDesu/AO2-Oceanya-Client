@@ -1,37 +1,48 @@
-﻿using System;
+using System;
 using System.Windows;
 using System.Windows.Input;
-using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
 
 namespace OceanyaClient
 {
     /// <summary>
-    /// Interaction logic for InputDialog.xaml
+    /// Content control for single-line input prompts.
     /// </summary>
-    public partial class InputDialog : Window
+    public partial class InputDialog : OceanyaWindowContentControl
     {
-        public string UserInput { get; private set; } = string.Empty;
+        private readonly string headerText;
+        private bool gotResult;
 
-        private bool gotResult = false;
+        /// <summary>
+        /// Initializes a new instance of the <see cref="InputDialog"/> class.
+        /// </summary>
         public InputDialog(string prompt, string title = "Input Required", string defaultText = "")
         {
             InitializeComponent();
-            WindowHelper.AddWindow(this);
-            // Set dialog properties
-            this.Title = title;
+            headerText = title.ToUpperInvariant();
             PromptTextBlock.Text = prompt;
             InputTextBox.Text = defaultText;
 
-            // Focus the textbox when loaded
-            InputTextBox.Dispatcher.BeginInvoke(new Action(() => {
+            Loaded += (_, _) =>
+            {
                 InputTextBox.Focus();
                 InputTextBox.SelectAll();
-            }));
+            };
         }
+
+        /// <summary>
+        /// Gets the resulting text entered by the user.
+        /// </summary>
+        public string UserInput { get; private set; } = string.Empty;
+
+        /// <inheritdoc/>
+        public override string HeaderText => headerText;
+
+        /// <inheritdoc/>
+        public override bool IsUserResizeEnabled => false;
 
         private void OkButton_Click(object sender, RoutedEventArgs e)
         {
-            
             AcceptInput();
         }
 
@@ -45,8 +56,10 @@ namespace OceanyaClient
             if (e.Key == Key.Enter)
             {
                 AcceptInput();
+                return;
             }
-            else if (e.Key == Key.Escape)
+
+            if (e.Key == Key.Escape)
             {
                 CancelDialog();
             }
@@ -54,102 +67,60 @@ namespace OceanyaClient
 
         private void AcceptInput()
         {
-            if (gotResult) return;
+            if (gotResult)
+            {
+                return;
+            }
+
             gotResult = true;
-            UserInput = InputTextBox.Text;
-            DialogResult = true;
-            CloseWithAnimation();
+            UserInput = InputTextBox.Text ?? string.Empty;
+            RequestHostClose(true);
         }
 
         private void CancelDialog()
         {
-            UserInput = string.Empty;
-            DialogResult = false;
-            CloseWithAnimation();
-        }
-
-        #region Window Controls and Animations
-
-        private void DragWindow(object sender, MouseButtonEventArgs e)
-        {
-            if (e.LeftButton == MouseButtonState.Pressed)
-            {
-                DragMove();
-            }
-        }
-
-        private void CloseButton_Click(object sender, RoutedEventArgs e)
-        {
-            UserInput = string.Empty;
-            DialogResult = false;
-            CloseWithAnimation();
-        }
-
-        private void Window_Loaded(object sender, RoutedEventArgs e)
-        {
-            // The FadeIn animation is triggered automatically by the EventTrigger in XAML
-        }
-
-        private bool _isClosing = false;
-        private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
-        {
-            // If we're already in the process of closing with animation, allow the close
-            if (_isClosing)
+            if (gotResult)
             {
                 return;
             }
 
-            // Otherwise, cancel the default closing and animate first
-            e.Cancel = true;
-            CloseWithAnimation();
+            gotResult = true;
+            UserInput = string.Empty;
+            RequestHostClose(false);
         }
 
-        private void CloseWithAnimation()
+        private void CopyPromptMenuItem_Click(object sender, RoutedEventArgs e)
         {
-            if (_isClosing)
-                return;
-
-            _isClosing = true;
-
-            // Store the current DialogResult value to preserve it
-            bool? currentResult = this.DialogResult;
-
-            // Play the fade out animation
-            Storyboard fadeOut = (Storyboard)FindResource("FadeOut");
-            fadeOut.Completed += (s, _) =>
+            string message = PromptTextBlock.Text ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(message) && !ClipboardUtilities.TrySetText(message))
             {
-                // When animation completes, actually close the window
-                this.Dispatcher.Invoke(() =>
-                {
-                    _isClosing = true;
-
-                    // Restore the DialogResult before closing
-                    this.DialogResult = currentResult;
-                    
-
-                    this.Close();
-                });
-            };
-            fadeOut.Begin(this);
+                _ = MessageBox.Show(
+                    "Could not access clipboard right now. Try again in a moment.",
+                    "Clipboard Busy",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
         }
-
-        #endregion
 
         /// <summary>
-        /// Static helper method to show the dialog and get input
+        /// Shows the input dialog and returns the entered text.
         /// </summary>
         public static string Show(string prompt, string title = "Input Required", string defaultText = "")
         {
-            InputDialog dialog = new InputDialog(prompt, title, defaultText);
-            var result = dialog.ShowDialog();
-            if (result == true)
+            InputDialog content = new InputDialog(prompt, title, defaultText);
+            OceanyaWindowPresentationOptions options = new OceanyaWindowPresentationOptions
             {
-                return dialog.UserInput;
-            }
-            else
-            {
-                return string.Empty;
-            }
+                Title = title,
+                HeaderText = title.ToUpperInvariant(),
+                Width = 400,
+                Height = 200,
+                WindowStartupLocation = WindowStartupLocation.CenterScreen,
+                IsUserResizeEnabled = false,
+                Icon = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/OceanyaO.ico"))
+            };
+
+            bool? result = OceanyaWindowManager.ShowDialog(content, options);
+            return result == true ? content.UserInput : string.Empty;
         }
     }
 }

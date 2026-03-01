@@ -2,18 +2,26 @@ using System;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Media.Imaging;
 using Microsoft.Web.WebView2.Core;
 
 namespace OceanyaClient
 {
-    public partial class DoomWindow : Window
+    public partial class DoomWindow : OceanyaWindowContentControl
     {
         private const string DoomUrl = "https://js-dos.com/games/doom.exe.html";
+
+        /// <inheritdoc/>
+        public override string HeaderText => "DOOM";
+
+        /// <inheritdoc/>
+        public override bool IsUserResizeEnabled => true;
 
         public DoomWindow()
         {
             InitializeComponent();
-            WindowHelper.AddWindow(this);
+            Title = "DOOM";
+            Icon = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/OceanyaO.ico"));
         }
 
         private async void Window_Loaded(object sender, RoutedEventArgs e)
@@ -197,6 +205,26 @@ namespace OceanyaClient
 
         private void DragWindow(object sender, MouseButtonEventArgs e)
         {
+            if (e.OriginalSource is DependencyObject source)
+            {
+                for (DependencyObject? current = source; current != null;)
+                {
+                    if (current.GetType().Name.Contains("Button", StringComparison.Ordinal))
+                    {
+                        return;
+                    }
+
+                    if (current is FrameworkElement element)
+                    {
+                        current = element.Parent ?? element.TemplatedParent as DependencyObject;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+            }
+
             if (e.LeftButton == MouseButtonState.Pressed)
             {
                 DragMove();

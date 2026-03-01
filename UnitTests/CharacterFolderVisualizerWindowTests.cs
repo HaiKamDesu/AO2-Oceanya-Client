@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Windows;
@@ -189,6 +190,76 @@ namespace UnitTests
             Assert.That(safeFolderListView.ItemTemplate, Is.Not.Null, "Icon mode should use tile DataTemplate.");
 
             window.Close();
+        }
+
+        [Test]
+        public void ViewModeCombo_NullSelection_DoesNotResetSavedPreset()
+        {
+            BuildCharacterFolder(
+                name: "Gumshoe",
+                createCharIcon: true,
+                createIdleSprite: true,
+                out _,
+                out _);
+            RefreshCharactersFromTempRoot();
+
+            CharacterFolderVisualizerWindow window = new CharacterFolderVisualizerWindow(null);
+            window.LoadCharacterItemsForTests();
+
+            ComboBox? viewModeCombo = window.FindName("ViewModeCombo") as ComboBox;
+            Assert.That(viewModeCombo, Is.Not.Null);
+            ComboBox safeViewModeCombo = viewModeCombo!;
+
+            FolderVisualizerViewPreset? gridPreset = safeViewModeCombo.Items
+                .OfType<FolderVisualizerViewPreset>()
+                .FirstOrDefault(preset => preset.Mode == FolderVisualizerLayoutMode.Normal);
+            Assert.That(gridPreset, Is.Not.Null);
+
+            safeViewModeCombo.SelectedItem = gridPreset;
+            Assert.That(SaveFile.Data.FolderVisualizer.SelectedPresetId, Is.EqualTo(gridPreset!.Id));
+
+            safeViewModeCombo.SelectedItem = null;
+            Assert.That(SaveFile.Data.FolderVisualizer.SelectedPresetId, Is.EqualTo(gridPreset.Id));
+            Assert.That(SaveFile.Data.FolderVisualizer.SelectedPresetName, Is.EqualTo(gridPreset.Name));
+
+            window.Close();
+        }
+
+        [Test]
+        public void ComputeRetainedRangeFromViewportMetrics_ComputesViewportPlusRetention()
+        {
+            (int startIndex, int endIndex) = CharacterFolderVisualizerWindow.ComputeRetainedRangeFromViewportMetrics(
+                itemCount: 50,
+                firstVisibleIndex: 10,
+                estimatedVisibleRows: 16,
+                retentionRows: 8);
+
+            Assert.That(startIndex, Is.EqualTo(2));
+            Assert.That(endIndex, Is.EqualTo(33));
+        }
+
+        [Test]
+        public void ComputeRetainedRangeFromViewportMetrics_ClampsAtBounds()
+        {
+            (int startIndex, int endIndex) = CharacterFolderVisualizerWindow.ComputeRetainedRangeFromViewportMetrics(
+                itemCount: 12,
+                firstVisibleIndex: -5,
+                estimatedVisibleRows: 20,
+                retentionRows: 8);
+
+            Assert.That(startIndex, Is.EqualTo(0));
+            Assert.That(endIndex, Is.EqualTo(11));
+        }
+
+        [Test]
+        public void MergeRetainedIndicesByCurrentOrder_PreservesOrderAndUnionsSets()
+        {
+            IReadOnlyList<int> merged = CharacterFolderVisualizerWindow.MergeRetainedIndicesByCurrentOrder(
+                currentOrder: new[] { 10, 11, 12, 13, 14 },
+                firstSet: new[] { 10, 12 },
+                secondSet: new[] { 11, 14 });
+
+            Assert.That(merged, Is.EqualTo(new[] { 10, 11, 12, 14 }));
         }
 
         private void RefreshCharactersFromTempRoot()

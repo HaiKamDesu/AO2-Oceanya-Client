@@ -3,11 +3,18 @@ using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media.Imaging;
 
 namespace OceanyaClient
 {
-    public partial class DreddOverlayChangesWindow : Window
+    public partial class DreddOverlayChangesWindow : OceanyaWindowContentControl
     {
+        /// <inheritdoc/>
+        public override string HeaderText => "DREDD OVERLAY CHANGES";
+
+        /// <inheritdoc/>
+        public override bool IsUserResizeEnabled => false;
+
         private sealed class ChangeDiffItem
         {
             public string DesignIniPath { get; set; } = string.Empty;
@@ -23,6 +30,8 @@ namespace OceanyaClient
         public DreddOverlayChangesWindow()
         {
             InitializeComponent();
+            Title = "Dredd Overlay Changes";
+            Icon = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/OceanyaO.ico"));
             DiffItemsControl.ItemsSource = changes;
             ReloadChanges();
         }
@@ -170,6 +179,26 @@ namespace OceanyaClient
 
         private void DragWindow(object sender, MouseButtonEventArgs e)
         {
+            if (e.OriginalSource is DependencyObject source)
+            {
+                for (DependencyObject? current = source; current != null;)
+                {
+                    if (current.GetType().Name.Contains("Button", StringComparison.Ordinal))
+                    {
+                        return;
+                    }
+
+                    if (current is FrameworkElement element)
+                    {
+                        current = element.Parent ?? element.TemplatedParent as DependencyObject;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+            }
+
             if (e.LeftButton == MouseButtonState.Pressed)
             {
                 DragMove();

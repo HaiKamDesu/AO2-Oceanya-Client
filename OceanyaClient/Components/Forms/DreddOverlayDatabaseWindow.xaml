@@ -1,16 +1,11 @@
-<Window x:Class="OceanyaClient.DreddOverlayDatabaseWindow"
+<local:OceanyaWindowContentControl x:Class="OceanyaClient.DreddOverlayDatabaseWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Dredd's Background Overlay Override"
+        xmlns:local="clr-namespace:OceanyaClient"
         Height="460"
         Width="860"
-        ResizeMode="NoResize"
-        WindowStartupLocation="CenterOwner"
-        Icon="/Resources/OceanyaO.ico"
-        WindowStyle="None"
-        AllowsTransparency="True"
-        Background="Transparent">
-    <Window.Resources>
+        >
+    <local:OceanyaWindowContentControl.Resources>
         <Style x:Key="CloseButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
@@ -71,39 +66,9 @@
             <Setter Property="BorderThickness" Value="0,0,0,1"/>
             <Setter Property="Padding" Value="8,4"/>
         </Style>
-    </Window.Resources>
+    </local:OceanyaWindowContentControl.Resources>
 
-    <Border BorderBrush="#222222" BorderThickness="1" CornerRadius="5">
-        <Grid Margin="0,0,-1,-1">
-            <Rectangle HorizontalAlignment="Center" Width="860" Height="460" VerticalAlignment="Top" Margin="0,30,0,0">
-                <Rectangle.Fill>
-                    <ImageBrush ImageSource="/Resources/scoienceblur.jpg" Opacity="0.5"/>
-                </Rectangle.Fill>
-            </Rectangle>
-
-            <Rectangle HorizontalAlignment="Center" Width="860" Height="460" VerticalAlignment="Top" Margin="0,30,0,0" Fill="#7F000000"/>
-
-            <Border Height="30" VerticalAlignment="Top" Background="#CC000000" MouseLeftButtonDown="DragWindow">
-                <Grid>
-                    <Rectangle HorizontalAlignment="Left" Width="129" Height="30" VerticalAlignment="Center">
-                        <Rectangle.Fill>
-                            <ImageBrush ImageSource="/Resources/Logo_Oceanya.png"/>
-                        </Rectangle.Fill>
-                    </Rectangle>
-                    <Button Content="✕"
-                            HorizontalAlignment="Right"
-                            Width="30"
-                            Style="{StaticResource CloseButtonStyle}"
-                            Click="TitleCloseButton_Click"/>
-                    <Rectangle HorizontalAlignment="Left" Width="157" Height="23" VerticalAlignment="Top" Margin="129,6,0,0">
-                        <Rectangle.Fill>
-                            <ImageBrush ImageSource="/Resources/Logo_Laboratories.png" Stretch="Uniform"/>
-                        </Rectangle.Fill>
-                    </Rectangle>
-                </Grid>
-            </Border>
-
-            <Grid Margin="12,40,12,12">
+    <Grid Margin="12,10,12,12">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
@@ -145,7 +110,5 @@
                     <Button Width="90" Height="30" Margin="0,0,8,0" Content="Save" Style="{StaticResource ModernButton}" Click="SaveButton_Click"/>
                     <Button Width="90" Height="30" Content="Close" Style="{StaticResource ModernButton}" Click="CloseButton_Click"/>
                 </StackPanel>
-            </Grid>
-        </Grid>
-    </Border>
-</Window>
+    </Grid>
+</local:OceanyaWindowContentControl>

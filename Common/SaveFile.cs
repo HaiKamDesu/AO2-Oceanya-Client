@@ -181,13 +181,25 @@ namespace OceanyaClient
     {
         public double Width { get; set; } = 980;
         public double Height { get; set; } = 690;
+        public double? Left { get; set; }
+        public double? Top { get; set; }
         public bool IsMaximized { get; set; }
+    }
+
+    public class CharacterCreatorCutSelectionState
+    {
+        public string SourcePath { get; set; } = string.Empty;
+        public double X { get; set; }
+        public double Y { get; set; }
+        public double Width { get; set; }
+        public double Height { get; set; }
     }
 
     public class SaveData
     {
         //Initial Configuration
         public string ConfigIniPath { get; set; } = "";
+        public string StartupFunctionalityId { get; set; } = "gm_multi_client";
         public bool UseSingleInternalClient { get; set; } = true;
         public string SelectedServerEndpoint { get; set; } = "";
         public string SelectedServerName { get; set; } = "";
@@ -209,6 +221,16 @@ namespace OceanyaClient
         public EmoteVisualizerConfig EmoteVisualizer { get; set; } = new EmoteVisualizerConfig();
         public VisualizerWindowState FolderVisualizerWindowState { get; set; } = new VisualizerWindowState();
         public VisualizerWindowState EmoteVisualizerWindowState { get; set; } = new VisualizerWindowState();
+        public VisualizerWindowState CharacterCreatorWindowState { get; set; } = new VisualizerWindowState
+        {
+            Width = 1220,
+            Height = 760,
+            IsMaximized = false
+        };
+        public double CharacterCreatorPreviewVolume { get; set; } = 1.0;
+        public double CharacterCreatorEmoteTileWidth { get; set; } = 420;
+        public double CharacterCreatorEmoteTileHeight { get; set; } = 430;
+        public double CharacterCreatorCuttingPreviewHeight { get; set; } = 170;
         public bool LoopEmoteVisualizerAnimations { get; set; } = true;
         public bool ViewFolderIntegrityVerifierResults { get; set; }
         public Dictionary<string, int> CharacterFolderPreviewEmoteOverrides { get; set; } =
@@ -218,6 +240,10 @@ namespace OceanyaClient
         public List<string> CharacterFolderActiveTagFilters { get; set; } = new List<string>();
         public double CharacterFolderTagPanelWidth { get; set; } = 260;
         public bool CharacterFolderTagPanelCollapsed { get; set; }
+        public Dictionary<string, VisualizerWindowState> PopupWindowStates { get; set; } =
+            new Dictionary<string, VisualizerWindowState>(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, CharacterCreatorCutSelectionState> CharacterCreatorCutSelections { get; set; } =
+            new Dictionary<string, CharacterCreatorCutSelectionState>(StringComparer.OrdinalIgnoreCase);
     }
 
     public static class SaveFile
@@ -286,6 +312,14 @@ namespace OceanyaClient
 
         private static void NormalizeLoadedData(SaveData data)
         {
+            data.StartupFunctionalityId = data.StartupFunctionalityId?.Trim() ?? string.Empty;
+            if (!string.Equals(data.StartupFunctionalityId, "gm_multi_client", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(data.StartupFunctionalityId, "character_database_viewer", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(data.StartupFunctionalityId, "character_file_creator", StringComparison.OrdinalIgnoreCase))
+            {
+                data.StartupFunctionalityId = "gm_multi_client";
+            }
+
             data.CustomServerEndpoints ??= new List<string>();
             data.CustomServerEntries ??= new List<CustomServerEntry>();
             data.AdvancedFeatures ??= new AdvancedFeatureFlagStore();
@@ -325,8 +359,15 @@ namespace OceanyaClient
 
             data.FolderVisualizerWindowState ??= new VisualizerWindowState();
             data.EmoteVisualizerWindowState ??= new VisualizerWindowState();
+            data.CharacterCreatorWindowState ??= new VisualizerWindowState
+            {
+                Width = 1220,
+                Height = 760,
+                IsMaximized = false
+            };
             ClampWindowState(data.FolderVisualizerWindowState);
             ClampWindowState(data.EmoteVisualizerWindowState);
+            ClampWindowState(data.CharacterCreatorWindowState);
             data.CharacterFolderPreviewEmoteOverrides ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             data.CharacterFolderPreviewEmoteOverrides = data.CharacterFolderPreviewEmoteOverrides
                 .Where(pair => !string.IsNullOrWhiteSpace(pair.Key) && pair.Value > 0)
@@ -349,6 +390,44 @@ namespace OceanyaClient
                     StringComparer.OrdinalIgnoreCase);
             data.CharacterFolderActiveTagFilters = NormalizeTagList(data.CharacterFolderActiveTagFilters);
             data.CharacterFolderTagPanelWidth = Math.Clamp(data.CharacterFolderTagPanelWidth, 180, 520);
+            data.CharacterCreatorPreviewVolume = Math.Clamp(data.CharacterCreatorPreviewVolume, 0.0, 1.0);
+            data.CharacterCreatorEmoteTileWidth = Math.Clamp(data.CharacterCreatorEmoteTileWidth, 320, 760);
+            data.CharacterCreatorEmoteTileHeight = Math.Clamp(data.CharacterCreatorEmoteTileHeight, 330, 820);
+            data.CharacterCreatorCuttingPreviewHeight = Math.Clamp(data.CharacterCreatorCuttingPreviewHeight, 120, 520);
+            data.PopupWindowStates ??= new Dictionary<string, VisualizerWindowState>(StringComparer.OrdinalIgnoreCase);
+            data.PopupWindowStates = data.PopupWindowStates
+                .Where(pair => !string.IsNullOrWhiteSpace(pair.Key) && pair.Value != null)
+                .ToDictionary(
+                    pair => pair.Key.Trim(),
+                    pair =>
+                    {
+                        ClampWindowState(pair.Value);
+                        return pair.Value;
+                    },
+                    StringComparer.OrdinalIgnoreCase);
+            data.CharacterCreatorCutSelections ??=
+                new Dictionary<string, CharacterCreatorCutSelectionState>(StringComparer.OrdinalIgnoreCase);
+            data.CharacterCreatorCutSelections = data.CharacterCreatorCutSelections
+                .Where(pair => !string.IsNullOrWhiteSpace(pair.Key) && pair.Value != null)
+                .ToDictionary(
+                    pair => pair.Key.Trim(),
+                    pair =>
+                    {
+                        CharacterCreatorCutSelectionState state = pair.Value;
+                        state.SourcePath = state.SourcePath?.Trim() ?? string.Empty;
+                        state.X = Math.Clamp(state.X, 0, 1);
+                        state.Y = Math.Clamp(state.Y, 0, 1);
+                        state.Width = Math.Clamp(state.Width, 0, 1);
+                        state.Height = Math.Clamp(state.Height, 0, 1);
+                        return state;
+                    },
+                    StringComparer.OrdinalIgnoreCase);
+            data.CharacterCreatorCutSelections = data.CharacterCreatorCutSelections
+                .Where(pair => pair.Value.Width > 0 && pair.Value.Height > 0)
+                .ToDictionary(
+                    pair => pair.Key,
+                    pair => pair.Value,
+                    StringComparer.OrdinalIgnoreCase);
 
             data.FolderVisualizer ??= new FolderVisualizerConfig();
             data.FolderVisualizer.Presets ??= new List<FolderVisualizerViewPreset>();
@@ -900,6 +979,15 @@ namespace OceanyaClient
         {
             state.Width = Math.Clamp(state.Width, 760, 6000);
             state.Height = Math.Clamp(state.Height, 520, 4000);
+            if (state.Left.HasValue && (double.IsInfinity(state.Left.Value) || double.IsNaN(state.Left.Value)))
+            {
+                state.Left = null;
+            }
+
+            if (state.Top.HasValue && (double.IsInfinity(state.Top.Value) || double.IsNaN(state.Top.Value)))
+            {
+                state.Top = null;
+            }
         }
 
         private static List<string> NormalizeTagList(IEnumerable<string>? values)

@@ -10,14 +10,21 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
+using System.Windows.Media.Imaging;
 
 namespace OceanyaClient
 {
     /// <summary>
     /// Interaction logic for ServerSelectionDialog.xaml
     /// </summary>
-    public partial class ServerSelectionDialog : Window
+    public partial class ServerSelectionDialog : OceanyaWindowContentControl
     {
+        /// <inheritdoc/>
+        public override string HeaderText => "SELECT SERVER";
+
+        /// <inheritdoc/>
+        public override bool IsUserResizeEnabled => true;
+
         private sealed class SortState
         {
             public required string Column { get; init; }
@@ -35,7 +42,8 @@ namespace OceanyaClient
         public ServerSelectionDialog(string configIniPath, string initiallySelectedEndpoint)
         {
             InitializeComponent();
-            WindowHelper.AddWindow(this);
+            Title = "Select Server";
+            Icon = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/OceanyaO.ico"));
             this.configIniPath = configIniPath;
             this.initiallySelectedEndpoint = initiallySelectedEndpoint ?? string.Empty;
         }
@@ -326,6 +334,26 @@ namespace OceanyaClient
 
         private void DragWindow(object sender, MouseButtonEventArgs e)
         {
+            if (e.OriginalSource is DependencyObject source)
+            {
+                for (DependencyObject? current = source; current != null;)
+                {
+                    if (current.GetType().Name.Contains("Button", StringComparison.Ordinal))
+                    {
+                        return;
+                    }
+
+                    if (current is FrameworkElement element)
+                    {
+                        current = element.Parent ?? element.TemplatedParent as DependencyObject;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+            }
+
             if (e.LeftButton == MouseButtonState.Pressed)
             {
                 DragMove();

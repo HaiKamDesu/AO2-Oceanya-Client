@@ -237,16 +237,9 @@ namespace AOBot_Testing.Agents
 
                 while (!AbleToSpeak)
                 {
-                    if (Globals.DebugMode)
+                    if (speakTimer == null)
                     {
-                        if (speakTimer == null)
-                        {
-                            break;
-                        }
-
-                        var remainingTime = speakTimer.GetRemainingTime();
-                        var formattedTime = $"{remainingTime.Hours}h {remainingTime.Minutes}m {remainingTime.Seconds}s {remainingTime.Milliseconds}ms";
-                        CustomConsole.Debug($"Cannot speak yet, waiting for {formattedTime}...");
+                        break;
                     }
 
                     await Task.Delay(100);
@@ -723,8 +716,6 @@ namespace AOBot_Testing.Agents
                 return;
             }
 
-            if (Globals.DebugMode) CustomConsole.Debug("Starting handshake...");
-
             // Step 1: Send Hard Drive ID (HDID) - Can be anything unique
             hdid = Guid.NewGuid().ToString(); // Generate a unique HDID
             await SendPacket($"HI#{hdid}#%");
@@ -980,7 +971,6 @@ namespace AOBot_Testing.Agents
             {
                 byte[] messageBytes = Encoding.UTF8.GetBytes(packet);
                 await ws.SendAsync(new ArraySegment<byte>(messageBytes), WebSocketMessageType.Text, true, CancellationToken.None);
-                if (Globals.DebugMode) CustomConsole.Debug($"Sent: {packet}");
             }
             else
             {
@@ -1002,7 +992,6 @@ namespace AOBot_Testing.Agents
                 if (result.Count > 0)
                 {
                     string message = Encoding.UTF8.GetString(buffer, 0, result.Count);
-                    if (Globals.DebugMode) CustomConsole.Debug($"Received: {message}");
 
                     await HandleMessage(message);
 
@@ -1014,7 +1003,6 @@ namespace AOBot_Testing.Agents
 
         private async Task ListenForMessages()
         {
-            CustomConsole.Debug("Listening for messages...");
             try
             {
                 while (ws != null && ws.State == WebSocketState.Open)

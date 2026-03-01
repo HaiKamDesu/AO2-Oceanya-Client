@@ -1,0 +1,160 @@
+<UserControl x:Class="OceanyaClient.AutoCompleteDropdownField"
+             x:Name="RootControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:OceanyaClient"
+             MinHeight="30">
+    <UserControl.Resources>
+        <Style x:Key="SuggestionListBoxStyle" TargetType="ListBox">
+            <Setter Property="Background" Value="#FF1F1F1F"/>
+            <Setter Property="Foreground" Value="#FFF0F0F0"/>
+            <Setter Property="BorderBrush" Value="#FF4A4A4A"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="0"/>
+        </Style>
+
+        <Style x:Key="SuggestionListBoxItemStyle" TargetType="ListBoxItem">
+            <Setter Property="Foreground" Value="#FFECECEC"/>
+            <Setter Property="Background" Value="#00000000"/>
+            <Setter Property="Padding" Value="8,5"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="ItemBorder" Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#FF36506A"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#FF3D5E7F"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="InlineArrowButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="Transparent">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <DataTemplate x:Key="DefaultSuggestionItemTemplate">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock x:Name="ItemSymbol"
+                           Margin="0,0,6,0"
+                           Foreground="#FF9FD0F5"
+                           Text="{Binding ItemSymbolGlyph, RelativeSource={RelativeSource AncestorType={x:Type local:AutoCompleteDropdownField}}}"
+                           Visibility="Collapsed"/>
+                <TextBlock Text="{Binding}" Foreground="#FFF2F2F2"/>
+            </StackPanel>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding ShowItemSymbol, RelativeSource={RelativeSource AncestorType={x:Type local:AutoCompleteDropdownField}}}" Value="True">
+                    <Setter TargetName="ItemSymbol" Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <Grid Height="30" MouseEnter="RootGrid_MouseEnter" MouseLeave="RootGrid_MouseLeave">
+        <Border x:Name="InputBorder"
+                Background="#FF262626"
+                BorderBrush="#FF444444"
+                BorderThickness="1"
+                CornerRadius="3">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="32"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock x:Name="SymbolTextBlock"
+                           Grid.Column="0"
+                           Margin="8,0,6,0"
+                           VerticalAlignment="Center"
+                           Foreground="#FFBDBDBD"
+                           Text="{Binding SymbolGlyph, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                           Visibility="Collapsed"/>
+
+                <TextBox x:Name="InputTextBox"
+                         Grid.Column="1"
+                         BorderThickness="0"
+                         Margin="8,0,0,0"
+                         Background="Transparent"
+                         IsReadOnly="{Binding IsTextReadOnly, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                         Foreground="#FFF0F0F0"
+                         VerticalContentAlignment="Center"
+                         GotKeyboardFocus="InputTextBox_GotKeyboardFocus"
+                         LostKeyboardFocus="InputTextBox_LostKeyboardFocus"
+                         TextChanged="InputTextBox_TextChanged"
+                         PreviewKeyDown="InputTextBox_PreviewKeyDown"/>
+                <Button x:Name="ReadOnlyTextAreaToggleButton"
+                        Grid.Column="1"
+                        Style="{StaticResource InlineArrowButtonStyle}"
+                        ClickMode="Press"
+                        HorizontalAlignment="Stretch"
+                        VerticalAlignment="Stretch"
+                        Visibility="Collapsed"
+                        Click="ToggleSurface_Click"
+                        ToolTip="Show all options"/>
+
+                <Button x:Name="ToggleButton"
+                        Grid.Column="2"
+                        Style="{StaticResource InlineArrowButtonStyle}"
+                        ClickMode="Press"
+                        Click="ToggleSurface_Click"
+                        ToolTip="Show all options">
+                    <Path x:Name="ArrowPath"
+                          Fill="#FFD0D0D0"
+                          Width="8"
+                          Height="5"
+                          Stretch="Fill"
+                          Data="M 0 0 L 8 0 L 4 5 Z"/>
+                </Button>
+            </Grid>
+        </Border>
+
+        <Popup x:Name="SuggestionsPopup"
+               Placement="Bottom"
+               PlacementTarget="{Binding ElementName=InputBorder}"
+               StaysOpen="False"
+               AllowsTransparency="True"
+               PopupAnimation="Fade">
+            <Border Margin="0,2,0,0"
+                    MinWidth="{Binding ActualWidth, ElementName=InputBorder}"
+                    MaxHeight="320"
+                    Background="#FF1F1F1F"
+                    BorderBrush="#FF4A4A4A"
+                    BorderThickness="1"
+                    CornerRadius="3">
+                <ListBox x:Name="SuggestionsListBox"
+                         Style="{StaticResource SuggestionListBoxStyle}"
+                         ItemsSource="{Binding Suggestions, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                         PreviewMouseLeftButtonDown="SuggestionsListBox_PreviewMouseLeftButtonDown"
+                         SelectionChanged="SuggestionsListBox_SelectionChanged"
+                         ItemTemplate="{StaticResource DefaultSuggestionItemTemplate}">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem" BasedOn="{StaticResource SuggestionListBoxItemStyle}">
+                            <EventSetter Event="PreviewMouseLeftButtonDown" Handler="SuggestionItem_PreviewMouseLeftButtonDown"/>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                </ListBox>
+            </Border>
+        </Popup>
+    </Grid>
+</UserControl>

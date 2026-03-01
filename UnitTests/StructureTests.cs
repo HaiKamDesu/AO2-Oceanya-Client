@@ -271,4 +271,50 @@ namespace UnitTests
             Assert.That(positions.ContainsKey("pro"), Is.True);
         }
     }
+
+    [TestFixture]
+    public class CharacterAssetPathResolverTests
+    {
+        private string tempRoot = string.Empty;
+
+        [SetUp]
+        public void SetUp()
+        {
+            tempRoot = Path.Combine(Path.GetTempPath(), "asset_resolver_tests_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempRoot);
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            try
+            {
+                if (Directory.Exists(tempRoot))
+                {
+                    Directory.Delete(tempRoot, true);
+                }
+            }
+            catch
+            {
+                // best-effort cleanup
+            }
+        }
+
+        [Test]
+        public void ResolveCharacterAnimationPath_LeadingSlashToken_ResolvesToIdlePrefixAsset()
+        {
+            string characterDirectory = Path.Combine(tempRoot, "Akechi");
+            Directory.CreateDirectory(characterDirectory);
+
+            string expectedPath = Path.Combine(characterDirectory, "(a)Normal.webp");
+            File.WriteAllBytes(expectedPath, new byte[] { 1, 2, 3, 4 });
+
+            string resolvedPath = CharacterAssetPathResolver.ResolveCharacterAnimationPath(
+                characterDirectory,
+                "/Normal",
+                includePlaceholder: false);
+
+            Assert.That(resolvedPath, Is.EqualTo(expectedPath));
+        }
+    }
 }

@@ -14,7 +14,7 @@ namespace OceanyaClient
     /// <summary>
     /// Displays persisted and live character integrity verifier results.
     /// </summary>
-    public partial class CharacterIntegrityVerifierResultsWindow : Window
+    public partial class CharacterIntegrityVerifierResultsWindow : OceanyaWindowContentControl
     {
         private readonly string characterDirectoryPath;
         private readonly string characterName;
@@ -28,12 +28,19 @@ namespace OceanyaClient
             Action<CharacterIntegrityReport>? onReportUpdated = null)
         {
             InitializeComponent();
+            Title = "Integrity Verifier Results";
             this.report = report ?? throw new ArgumentNullException(nameof(report));
             this.characterDirectoryPath = characterDirectoryPath?.Trim() ?? string.Empty;
             this.characterName = characterName?.Trim() ?? string.Empty;
             this.onReportUpdated = onReportUpdated;
             RefreshUiFromReport();
         }
+
+        /// <inheritdoc/>
+        public override string HeaderText => "INTEGRITY VERIFIER RESULTS";
+
+        /// <inheritdoc/>
+        public override bool IsUserResizeEnabled => true;
 
         private void RefreshUiFromReport()
         {
@@ -329,32 +336,6 @@ namespace OceanyaClient
             }
 
             return null;
-        }
-
-        private void DragWindow(object sender, MouseButtonEventArgs e)
-        {
-            if (e.ChangedButton != MouseButton.Left)
-            {
-                return;
-            }
-
-            if (e.ClickCount == 2)
-            {
-                WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
-                return;
-            }
-
-            if (WindowState == WindowState.Maximized)
-            {
-                Point mousePoint = e.GetPosition(this);
-                Point screenPoint = PointToScreen(mousePoint);
-                double horizontalPercent = ActualWidth > 0 ? mousePoint.X / ActualWidth : 0.5d;
-                WindowState = WindowState.Normal;
-                Left = screenPoint.X - (Width * horizontalPercent);
-                Top = Math.Max(0, screenPoint.Y - 12);
-            }
-
-            DragMove();
         }
 
         private void Window_KeyDown(object sender, KeyEventArgs e)

@@ -16,13 +16,16 @@ using Common;
 using NAudio.Wave;
 using OceanyaClient.AdvancedFeatures;
 using OceanyaClient.Components;
+using OceanyaClient.Features.Startup;
 using OceanyaClient.Utilities;
 using ToggleButton = System.Windows.Controls.Primitives.ToggleButton;
 
 namespace OceanyaClient
 {
-    public partial class MainWindow : Window
+    public partial class MainWindow : OceanyaWindowContentControl, IStartupFunctionalityWindow
     {
+        public event Action? FinishedLoading;
+
         private readonly Dictionary<ToggleButton, AOClient> clients = new Dictionary<ToggleButton, AOClient>();
         private AOClient? currentClient;
         private AOClient? singleInternalClient;
@@ -56,6 +59,7 @@ namespace OceanyaClient
         private int konamiProgress;
         private string lastDreddOverlayContextKey = string.Empty;
         private string lastUnknownOverlayPromptKey = string.Empty;
+        private bool hasRaisedFinishedLoading;
 
         private sealed class DreddOverlaySelectionItem
         {
@@ -69,10 +73,10 @@ namespace OceanyaClient
         List<ToggleButton> objectionModifiers;
         public MainWindow()
         {
-            AudioPlayer.PlayEmbeddedSound("Resources/ApertureScienceJingleHD.mp3", 0.5f);
-
             InitializeComponent();
-            WindowHelper.AddWindow(this);
+            Title = "Oceanya Online";
+            Icon = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/OceanyaO.ico"));
+            Loaded += MainWindow_Loaded;
 
             objectionModifiers = new List<ToggleButton> { HoldIt, Objection, TakeThat, Custom };
             // Set grid mode and size
@@ -228,6 +232,23 @@ namespace OceanyaClient
 
             btnDebug.Visibility = debug ? Visibility.Visible : Visibility.Collapsed;
             RefreshAreaNavigatorForCurrentClient();
+        }
+
+        /// <inheritdoc/>
+        public override string HeaderText => "OCEANYA ONLINE";
+
+        /// <inheritdoc/>
+        public override bool IsUserResizeEnabled => false;
+
+        private void MainWindow_Loaded(object sender, RoutedEventArgs e)
+        {
+            if (hasRaisedFinishedLoading)
+            {
+                return;
+            }
+
+            hasRaisedFinishedLoading = true;
+            FinishedLoading?.Invoke();
         }
         private void RenameClient(AOClient bot)
         {
@@ -433,9 +454,9 @@ namespace OceanyaClient
         {
             isDreddFeatureEnabled = SaveFile.Data.AdvancedFeatures.IsEnabled(AdvancedFeatureIds.DreddBackgroundOverlayOverride);
             DreddStickyOverlayCheckBox.IsChecked = SaveFile.Data.DreddBackgroundOverlayOverride.StickyOverlay;
-            Height = isDreddFeatureEnabled ? 690 : 658;
-            imgScienceBlur.Height = isDreddFeatureEnabled ? 670 : 638;
-            imgScienceBlur_darken.Height = isDreddFeatureEnabled ? 670 : 638;
+            Height = isDreddFeatureEnabled ? 658 : 628;
+            imgScienceBlur.Height = isDreddFeatureEnabled ? 658 : 628;
+            imgScienceBlur_darken.Height = isDreddFeatureEnabled ? 658 : 628;
 
             RefreshDreddOverlayForCurrentContext(promptForUnknownOverlay: false);
             UpdateDreddFeatureVisibility();
@@ -779,7 +800,7 @@ namespace OceanyaClient
         {
             DreddOverlayDatabaseWindow window = new DreddOverlayDatabaseWindow
             {
-                Owner = this
+                Owner = HostWindow
             };
             bool? result = window.ShowDialog();
             if (result == true)
@@ -1040,7 +1061,13 @@ namespace OceanyaClient
         private async Task AddClientAsync(string clientName)
         {
             IsEnabled = false;  
-            await WaitForm.ShowFormAsync("Connecting client...", this);
+            Window? waitOwner = HostWindow ?? Application.Current?.MainWindow;
+            if (waitOwner == null)
+            {
+                return;
+            }
+
+            await WaitForm.ShowFormAsync("Connecting client...", waitOwner);
 
             try
             {
@@ -1765,7 +1792,7 @@ namespace OceanyaClient
                 CanSetVisualizerCharacter,
                 SetVisualizerCharacterInClient)
             {
-                Owner = this
+                Owner = HostWindow
             };
             visualizerWindow.ShowDialog();
         }
@@ -1850,9 +1877,29 @@ namespace OceanyaClient
 
         private void DragWindow(object sender, MouseButtonEventArgs e)
         {
+            if (e.OriginalSource is DependencyObject source)
+            {
+                for (DependencyObject? current = source; current != null;)
+                {
+                    if (current.GetType().Name.Contains("Button", StringComparison.Ordinal))
+                    {
+                        return;
+                    }
+
+                    if (current is FrameworkElement element)
+                    {
+                        current = element.Parent ?? element.TemplatedParent as DependencyObject;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+            }
+
             if (e.ChangedButton == MouseButton.Left)
             {
-                this.DragMove();
+                DragMove();
             }
         }
 
@@ -1872,11 +1919,6 @@ namespace OceanyaClient
                     await item.Disconnect();
                 }
             }
-
-            var config = new InitialConfigurationWindow();
-            config.Activate();
-            config.Show();
-
             this.Close();
         }
 
@@ -1948,7 +1990,7 @@ namespace OceanyaClient
         {
             DreddOverlayChangesWindow window = new DreddOverlayChangesWindow
             {
-                Owner = this
+                Owner = HostWindow
             };
             window.ShowDialog();
         }
@@ -2117,7 +2159,7 @@ namespace OceanyaClient
         {
             DoomWindow doomWindow = new DoomWindow
             {
-                Owner = this
+                Owner = HostWindow
             };
             doomWindow.Show();
             doomWindow.Activate();

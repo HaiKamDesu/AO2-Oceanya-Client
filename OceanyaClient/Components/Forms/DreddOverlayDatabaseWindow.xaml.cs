@@ -4,16 +4,25 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Media.Imaging;
 
 namespace OceanyaClient
 {
-    public partial class DreddOverlayDatabaseWindow : Window
+    public partial class DreddOverlayDatabaseWindow : OceanyaWindowContentControl
     {
         private readonly ObservableCollection<DreddOverlayEntry> overlays = new ObservableCollection<DreddOverlayEntry>();
+
+        /// <inheritdoc/>
+        public override string HeaderText => "DREDD OVERLAY DATABASE";
+
+        /// <inheritdoc/>
+        public override bool IsUserResizeEnabled => false;
 
         public DreddOverlayDatabaseWindow()
         {
             InitializeComponent();
+            Title = "Dredd's Background Overlay Override";
+            Icon = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/OceanyaO.ico"));
             LoadOverlayDatabase();
         }
 
@@ -151,6 +160,26 @@ namespace OceanyaClient
 
         private void DragWindow(object sender, MouseButtonEventArgs e)
         {
+            if (e.OriginalSource is DependencyObject source)
+            {
+                for (DependencyObject? current = source; current != null;)
+                {
+                    if (current.GetType().Name.Contains("Button", StringComparison.Ordinal))
+                    {
+                        return;
+                    }
+
+                    if (current is FrameworkElement element)
+                    {
+                        current = element.Parent ?? element.TemplatedParent as DependencyObject;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+            }
+
             if (e.LeftButton == MouseButtonState.Pressed)
             {
                 DragMove();

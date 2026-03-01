@@ -1,4 +1,7 @@
 ﻿using Microsoft.Win32;
+using AOBot_Testing.Structures;
+using OceanyaClient.Features.Startup;
+using OceanyaClient.Utilities;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -12,16 +15,28 @@ namespace OceanyaClient
     /// <summary>
     /// Interaction logic for InitialConfigurationWindow.xaml
     /// </summary>
-    public partial class InitialConfigurationWindow : Window
+    public partial class InitialConfigurationWindow : OceanyaWindowContentControl
     {
+        private const double MultiClientWindowHeight = 358;
+        private const double CharacterViewerWindowHeight = 286;
+
         private ServerEndpointDefinition? selectedServer;
+        private bool ignoreStartupFunctionalitySelectionChanged;
 
         public InitialConfigurationWindow()
         {
             InitializeComponent();
-            WindowHelper.AddWindow(this);
+            Title = "Initial Configuration";
+            Icon = new System.Windows.Media.Imaging.BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/OceanyaO.ico"));
+            Closing += Window_Closing;
             LoadSavefile();
         }
+
+        /// <inheritdoc/>
+        public override string HeaderText => "INITIAL CONFIGURATION";
+
+        /// <inheritdoc/>
+        public override bool IsUserResizeEnabled => false;
 
         private void BrowseButton_Click(object sender, RoutedEventArgs e)
         {
@@ -40,7 +55,9 @@ namespace OceanyaClient
         private async void OkButton_Click(object sender, RoutedEventArgs e)
         {
             string configIniPath = ConfigINIPathTextBox.Text?.Trim() ?? string.Empty;
+            StartupFunctionalityOption selectedFunctionality = GetSelectedStartupFunctionality();
             string selectedServerEndpoint = selectedServer?.Endpoint?.Trim() ?? string.Empty;
+            string selectedServerName = selectedServer?.Name?.Trim() ?? string.Empty;
 
             if (string.IsNullOrWhiteSpace(configIniPath))
             {
@@ -52,7 +69,7 @@ namespace OceanyaClient
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(selectedServerEndpoint))
+            if (selectedFunctionality.RequiresServerEndpoint && string.IsNullOrWhiteSpace(selectedServerEndpoint))
             {
                 OceanyaMessageBox.Show(
                     "Please select a server endpoint.",
@@ -77,7 +94,10 @@ namespace OceanyaClient
             try
             {
                 Globals.UpdateConfigINI(configIniPath);
-                Globals.SetSelectedServerEndpoint(selectedServerEndpoint);
+                if (selectedFunctionality.RequiresServerEndpoint)
+                {
+                    Globals.SetSelectedServerEndpoint(selectedServerEndpoint);
+                }
             }
             catch (Exception ex)
             {
@@ -91,18 +111,41 @@ namespace OceanyaClient
 
             SaveConfiguration(
                 configIniPath,
+                selectedFunctionality.Id,
                 UseSingleClientCheckBox.IsChecked != false,
                 selectedServerEndpoint,
-                selectedServer?.Name ?? string.Empty);
+                selectedServerName);
 
-            if (RefreshInfoCheckBox.IsChecked == true)
+            bool refreshRequested = RefreshInfoCheckBox.IsChecked == true;
+            bool refreshRequiredByCacheState = ClientAssetRefreshService.RequiresRefreshForCurrentEnvironment();
+            bool shouldRefreshAssets = refreshRequested || refreshRequiredByCacheState;
+
+            if (!shouldRefreshAssets
+                && string.Equals(
+                    selectedFunctionality.Id,
+                    StartupFunctionalityIds.CharacterDatabaseViewer,
+                    StringComparison.OrdinalIgnoreCase))
             {
-                await ClientAssetRefreshService.RefreshCharactersAndBackgroundsAsync(this);
+                shouldRefreshAssets = CharacterFolder.FullList.Count == 0;
             }
 
-            MainWindow mainWindow = new MainWindow();
-            mainWindow.Show();
-            Close();
+            if (shouldRefreshAssets)
+            {
+                Window? refreshOwner = HostWindow ?? Application.Current?.MainWindow;
+                if (refreshOwner == null)
+                {
+                    return;
+                }
+
+                await ClientAssetRefreshService.RefreshCharactersAndBackgroundsAsync(refreshOwner);
+            }
+
+            Window startupWindow = StartupWindowLauncher.CreateStartupWindow(
+                selectedFunctionality.Id,
+                onFunctionalityReady: PlayStartupFunctionalityJingle,
+                onFunctionalityClosed: ReopenConfigurationWindow);
+            startupWindow.Show();
+            Hide();
         }
 
         private void SelectServerButton_Click(object sender, RoutedEventArgs e)
@@ -134,7 +177,7 @@ namespace OceanyaClient
 
             ServerSelectionDialog dialog = new ServerSelectionDialog(configIniPath, currentEndpoint)
             {
-                Owner = this
+                Owner = HostWindow
             };
 
             bool? result = dialog.ShowDialog();
@@ -154,6 +197,7 @@ namespace OceanyaClient
                 ConfigINIPathTextBox.Text = SaveFile.Data.ConfigIniPath;
                 UseSingleClientCheckBox.IsChecked = SaveFile.Data.UseSingleInternalClient;
                 CleanupLegacyCustomServerData();
+                BindStartupFunctionalitySelection();
 
                 selectedServer = ResolveInitialSelectedServer();
                 if (selectedServer != null)
@@ -162,6 +206,7 @@ namespace OceanyaClient
                 }
 
                 UpdateSelectedServerDisplay();
+                ApplySelectedFunctionalityUi(animate: false);
             }
             catch (Exception ex)
             {
@@ -244,6 +289,7 @@ namespace OceanyaClient
 
         private void SaveConfiguration(
             string configIniPath,
+            string startupFunctionalityId,
             bool useSingleInternalClient,
             string selectedServerEndpoint,
             string selectedServerName)
@@ -251,6 +297,7 @@ namespace OceanyaClient
             try
             {
                 SaveFile.Data.ConfigIniPath = configIniPath;
+                SaveFile.Data.StartupFunctionalityId = startupFunctionalityId;
                 SaveFile.Data.UseSingleInternalClient = useSingleInternalClient;
                 SaveFile.Data.SelectedServerEndpoint = selectedServerEndpoint;
                 SaveFile.Data.SelectedServerName = selectedServerName?.Trim() ?? string.Empty;
@@ -281,6 +328,26 @@ namespace OceanyaClient
 
         private void DragWindow(object sender, MouseButtonEventArgs e)
         {
+            if (e.OriginalSource is DependencyObject source)
+            {
+                for (DependencyObject? current = source; current != null;)
+                {
+                    if (current.GetType().Name.Contains("Button", StringComparison.Ordinal))
+                    {
+                        return;
+                    }
+
+                    if (current is FrameworkElement element)
+                    {
+                        current = element.Parent ?? element.TemplatedParent as DependencyObject;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+            }
+
             if (e.LeftButton == MouseButtonState.Pressed)
             {
                 DragMove();
@@ -296,18 +363,95 @@ namespace OceanyaClient
         {
             AdvancedFeatureFlagsWindow window = new AdvancedFeatureFlagsWindow
             {
-                Owner = this
+                Owner = HostWindow
             };
             window.ShowDialog();
         }
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
+            ApplySelectedFunctionalityUi(animate: false);
+        }
+
+        private void BindStartupFunctionalitySelection()
+        {
+            ignoreStartupFunctionalitySelectionChanged = true;
+            try
+            {
+                StartupFunctionalityComboBox.ItemsSource = StartupFunctionalityCatalog.Options;
+                StartupFunctionalityComboBox.SelectedValue =
+                    StartupFunctionalityCatalog.GetByIdOrDefault(SaveFile.Data.StartupFunctionalityId).Id;
+            }
+            finally
+            {
+                ignoreStartupFunctionalitySelectionChanged = false;
+            }
+        }
+
+        private StartupFunctionalityOption GetSelectedStartupFunctionality()
+        {
+            object selectedValue = StartupFunctionalityComboBox.SelectedValue;
+            string selectedId = selectedValue?.ToString() ?? string.Empty;
+            return StartupFunctionalityCatalog.GetByIdOrDefault(selectedId);
+        }
+
+        private void StartupFunctionalityComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            if (ignoreStartupFunctionalitySelectionChanged)
+            {
+                return;
+            }
+
+            ApplySelectedFunctionalityUi(animate: true);
+        }
+
+        private void ApplySelectedFunctionalityUi(bool animate)
+        {
+            StartupFunctionalityOption selectedFunctionality = GetSelectedStartupFunctionality();
+            bool showMultiClientSettings = selectedFunctionality.RequiresServerEndpoint;
+            MultiClientServerSettingsPanel.Visibility = showMultiClientSettings ? Visibility.Visible : Visibility.Collapsed;
+            MultiClientSingleClientPanel.Visibility = showMultiClientSettings ? Visibility.Visible : Visibility.Collapsed;
+
+            double targetHeight = showMultiClientSettings ? MultiClientWindowHeight : CharacterViewerWindowHeight;
+            ResizeWindow(targetHeight, animate);
+        }
+
+        private void ResizeWindow(double targetHeight, bool animate)
+        {
+            BeginAnimation(HeightProperty, null);
+            if (!animate)
+            {
+                Height = targetHeight;
+                return;
+            }
+
+            DoubleAnimation animation = new DoubleAnimation
+            {
+                To = targetHeight,
+                Duration = TimeSpan.FromMilliseconds(170),
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+            };
+            BeginAnimation(HeightProperty, animation);
+        }
+
+        private static void PlayStartupFunctionalityJingle()
+        {
+            AudioPlayer.PlayEmbeddedSound("Resources/ApertureScienceJingleHD.mp3", 0.5f);
+        }
+
+        private void ReopenConfigurationWindow()
+        {
+            Dispatcher.Invoke(() =>
+            {
+                Show();
+                Activate();
+                Focus();
+            });
         }
 
         private bool isClosing;
 
-        private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
+        private void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
         {
             if (isClosing)
             {
