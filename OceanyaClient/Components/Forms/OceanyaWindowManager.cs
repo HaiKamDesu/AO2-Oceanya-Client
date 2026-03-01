@@ -61,16 +61,21 @@ namespace OceanyaClient
         public static bool? ShowDialog(OceanyaWindowContentControl content, OceanyaWindowPresentationOptions options)
         {
             GenericOceanyaWindow window = CreateHostedWindow(content, options);
-            AttachHostedLifecycle(content, window);
+            content.AttachHost(window);
 
-            bool? requestedResult = null;
             void OnCloseRequested(object? sender, OceanyaWindowCloseRequestedEventArgs eventArgs)
             {
-                requestedResult = eventArgs.DialogResult;
                 if (eventArgs.DialogResult.HasValue)
                 {
-                    window.DialogResult = eventArgs.DialogResult;
-                    return;
+                    try
+                    {
+                        window.DialogResult = eventArgs.DialogResult;
+                        return;
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        // If modal state is unavailable, fall through to a normal close.
+                    }
                 }
 
                 window.Close();
@@ -80,8 +85,7 @@ namespace OceanyaClient
 
             try
             {
-                bool? shownResult = window.ShowDialog();
-                return shownResult ?? requestedResult;
+                return window.ShowDialog();
             }
             finally
             {

@@ -17,6 +17,7 @@ using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Microsoft.Win32;
@@ -182,12 +183,14 @@ namespace OceanyaClient
         private Point emoteTileDragStartPoint;
         private EmoteTileEntryViewModel? pendingTileDragEntry;
         private EmoteTileEntryViewModel? currentDragTargetEntry;
+        private EmoteTileEntryViewModel? activeTileDragEntry;
+        private FrameworkElement? activeTileDragContainer;
+        private Popup? emoteDragGhostPopup;
+        private bool isInternalEmoteReorderDragInProgress;
+        private Point emoteDragGhostPointerOffset;
+        private readonly Dictionary<UIElement, TranslateTransform> emoteTileAnimationTransforms =
+            new Dictionary<UIElement, TranslateTransform>();
         private bool suppressEmoteTileSelectionChanged;
-        private CharacterCreationEmoteViewModel? activeResizeEmote;
-        private FrameworkElement? activeResizeContainer;
-        private string activeResizeMode = string.Empty;
-        private double resizeStartWidth;
-        private double resizeStartHeight;
         private DateTime suppressFieldSingleClickUntilUtc = DateTime.MinValue;
         private CharacterCreationEmoteViewModel? contextMenuTargetEmote;
         private string contextMenuTargetZone = string.Empty;
@@ -209,6 +212,11 @@ namespace OceanyaClient
         private PlayStopProgressButton? activeFileOrganizationAudioButton;
         private readonly List<FileOrganizationClipboardEntry> fileOrganizationClipboardEntries = new List<FileOrganizationClipboardEntry>();
         private bool fileOrganizationClipboardIsCut;
+        private bool isEditMode;
+        private bool editApplyCompleted;
+        private bool hasLoadedExistingFileOrganizationState;
+        private string originalEditCharacterDirectoryPath = string.Empty;
+        private string originalEditCharacterFolderName = string.Empty;
         private readonly Dictionary<string, CutSelectionState> savedCutSelectionByEmoteKey =
             new Dictionary<string, CutSelectionState>(StringComparer.OrdinalIgnoreCase);
         private Thumb? activeFileOrganizationRowResizeThumb;
@@ -275,6 +283,8 @@ namespace OceanyaClient
             get => (bool)GetValue(HasAnyEmotesProperty);
             set => SetValue(HasAnyEmotesProperty, value);
         }
+
+        public bool EditApplyCompleted => editApplyCompleted;
 
         public AOCharacterFileCreatorWindow()
         {
@@ -344,6 +354,14 @@ namespace OceanyaClient
             RefreshEmoteTiles();
             UpdateFolderAvailabilityStatus();
             lastCommittedStateFingerprint = ComputeCurrentStateFingerprint();
+        }
+
+        public AOCharacterFileCreatorWindow(string characterDirectoryPathToEdit) : this()
+        {
+            if (!string.IsNullOrWhiteSpace(characterDirectoryPathToEdit))
+            {
+                _ = TryLoadCharacterFolderForEditing(characterDirectoryPathToEdit, out _);
+            }
         }
 
         /// <inheritdoc/>
@@ -599,6 +617,791 @@ namespace OceanyaClient
             return string.Empty;
         }
 
+        public bool TryLoadCharacterFolderForEditing(string characterDirectoryPath, out string errorMessage)
+        {
+            errorMessage = string.Empty;
+            try
+            {
+                string normalizedDirectoryPath = Path.GetFullPath((characterDirectoryPath ?? string.Empty).Trim());
+                if (string.IsNullOrWhiteSpace(normalizedDirectoryPath) || !Directory.Exists(normalizedDirectoryPath))
+                {
+                    errorMessage = "Character folder was not found on disk.";
+                    return false;
+                }
+
+                string charIniPath = ResolveCharacterIniPath(normalizedDirectoryPath);
+                if (string.IsNullOrWhiteSpace(charIniPath) || !File.Exists(charIniPath))
+                {
+                    errorMessage = "char.ini was not found in this character folder.";
+                    return false;
+                }
+
+                CharacterFolder sourceFolder = CharacterFolder.Create(charIniPath);
+                IniDocument iniDocument = IniDocument.Load(charIniPath);
+                string inferredMountPath = Path.GetDirectoryName(Path.GetDirectoryName(normalizedDirectoryPath) ?? string.Empty) ?? string.Empty;
+
+                isEditMode = true;
+                editApplyCompleted = false;
+                originalEditCharacterDirectoryPath = normalizedDirectoryPath;
+                originalEditCharacterFolderName = Path.GetFileName(normalizedDirectoryPath);
+                if (!string.IsNullOrWhiteSpace(inferredMountPath) &&
+                    !mountPathOptions.Contains(inferredMountPath, StringComparer.OrdinalIgnoreCase))
+                {
+                    mountPathOptions.Add(inferredMountPath);
+                }
+
+                if (!string.IsNullOrWhiteSpace(inferredMountPath))
+                {
+                    MountPathComboBox.Text = inferredMountPath;
+                }
+
+                CharacterFolderNameTextBox.Text = originalEditCharacterFolderName;
+                ShowNameTextBox.Text = GetIniValueOrDefault(iniDocument, "Options", "showname", sourceFolder.configINI.ShowName);
+                SideComboBox.Text = GetIniValueOrDefault(iniDocument, "Options", "side", sourceFolder.configINI.Side);
+
+                string blipsValue = GetIniValueOrDefault(
+                    iniDocument,
+                    "Options",
+                    "blips",
+                    GetIniValueOrDefault(iniDocument, "Options", "gender", sourceFolder.configINI.Gender));
+                SetLoadedBlipsValue(blipsValue, normalizedDirectoryPath);
+
+                ChatDropdown.Text = GetIniValueOrDefault(iniDocument, "Options", "chat", "default");
+                EffectsDropdown.Text = GetIniValueOrDefault(iniDocument, "Options", "effects", string.Empty);
+                ScalingDropdown.Text = GetIniValueOrDefault(iniDocument, "Options", "scaling", string.Empty);
+                StretchDropdown.Text = GetIniValueOrDefault(iniDocument, "Options", "stretch", string.Empty);
+                NeedsShownameDropdown.Text = GetIniValueOrDefault(iniDocument, "Options", "needs_showname", string.Empty);
+                CustomShoutNameTextBox.Text = GetIniValueOrDefault(iniDocument, "Shouts", "custom_name", string.Empty);
+
+                string realizationValue = GetIniValueOrDefault(iniDocument, "Options", "realization", string.Empty);
+                string? resolvedRealizationPath = ResolveAudioTokenPathWithinCharacterDirectory(normalizedDirectoryPath, realizationValue);
+                if (!string.IsNullOrWhiteSpace(resolvedRealizationPath))
+                {
+                    selectedRealizationSourcePath = resolvedRealizationPath;
+                    RealizationTextBox.Text = Path.GetFileName(resolvedRealizationPath);
+                }
+                else
+                {
+                    selectedRealizationSourcePath = string.Empty;
+                    RealizationTextBox.Text = realizationValue;
+                }
+
+                selectedCharacterIconSourcePath = sourceFolder.CharIconPath?.Trim() ?? string.Empty;
+                generatedCharacterIconImage = null;
+                if (!string.IsNullOrWhiteSpace(selectedCharacterIconSourcePath) && File.Exists(selectedCharacterIconSourcePath))
+                {
+                    CharacterIconPreviewImage.Source = TryLoadPreviewImage(selectedCharacterIconSourcePath);
+                    CharacterIconEmptyText.Visibility = CharacterIconPreviewImage.Source == null ? Visibility.Visible : Visibility.Collapsed;
+                }
+                else
+                {
+                    CharacterIconPreviewImage.Source = null;
+                    CharacterIconEmptyText.Visibility = Visibility.Visible;
+                }
+
+                LoadShoutAssetsFromFolder(normalizedDirectoryPath);
+                LoadEmotesFromCharacter(sourceFolder, iniDocument, normalizedDirectoryPath);
+                LoadAdvancedEntriesFromIni(iniDocument);
+                InitializeFileOrganizationFromExistingFolder(normalizedDirectoryPath);
+
+                ApplyEditModeUiState();
+                RefreshChatPreview();
+                RefreshEmoteTiles();
+                SetActiveSection("setup");
+                lastCommittedStateFingerprint = ComputeCurrentStateFingerprint();
+                StatusTextBlock.Text = $"Loaded character folder for editing: {originalEditCharacterFolderName}";
+                return true;
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Error("Failed to load character folder for editing.", ex);
+                errorMessage = ex.Message;
+                return false;
+            }
+        }
+
+        private static string ResolveCharacterIniPath(string characterDirectoryPath)
+        {
+            string rootIni = Path.Combine(characterDirectoryPath, "char.ini");
+            if (File.Exists(rootIni))
+            {
+                return rootIni;
+            }
+
+            string[] iniFiles = Directory.GetFiles(characterDirectoryPath, "char.ini", SearchOption.AllDirectories);
+            return iniFiles.FirstOrDefault() ?? string.Empty;
+        }
+
+        private static string GetIniValueOrDefault(IniDocument document, string section, string key, string fallback)
+        {
+            if (document.TryGetLatestValue(section, key, out string? value))
+            {
+                return value ?? string.Empty;
+            }
+
+            return fallback ?? string.Empty;
+        }
+
+        private void SetLoadedBlipsValue(string rawBlipsValue, string characterDirectoryPath)
+        {
+            selectedCustomBlipSourcePath = string.Empty;
+            customBlipOptionText = string.Empty;
+            string value = (rawBlipsValue ?? string.Empty).Trim();
+            string? resolvedPath = ResolveAudioTokenPathWithinCharacterDirectory(characterDirectoryPath, value);
+            if (!string.IsNullOrWhiteSpace(resolvedPath))
+            {
+                selectedCustomBlipSourcePath = resolvedPath;
+                customBlipOptionText = BuildCustomBlipOptionText(Path.GetFileNameWithoutExtension(resolvedPath));
+                if (!blipOptions.Contains(customBlipOptionText, StringComparer.OrdinalIgnoreCase))
+                {
+                    blipOptions.Add(customBlipOptionText);
+                }
+
+                SetBlipText(customBlipOptionText);
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(value) && !blipOptions.Contains(value, StringComparer.OrdinalIgnoreCase))
+            {
+                blipOptions.Add(value);
+            }
+
+            SetBlipText(value);
+        }
+
+        private static string BuildCustomBlipOptionText(string fileStem)
+        {
+            string token = string.IsNullOrWhiteSpace(fileStem) ? "custom" : fileStem.Trim();
+            return $"custom ({token})";
+        }
+
+        private void LoadShoutAssetsFromFolder(string characterDirectoryPath)
+        {
+            foreach (string key in new[] { "holdit", "objection", "takethat", "custom" })
+            {
+                selectedShoutVisualSourcePaths.Remove(key);
+                selectedShoutSfxSourcePaths.Remove(key);
+
+                string? visualPath = ResolveAssetByBaseName(characterDirectoryPath, key == "holdit"
+                    ? "holdit_bubble"
+                    : key == "objection"
+                        ? "objection_bubble"
+                        : key == "takethat"
+                            ? "takethat_bubble"
+                            : "custom", isAudio: false);
+                if (!string.IsNullOrWhiteSpace(visualPath))
+                {
+                    selectedShoutVisualSourcePaths[key] = visualPath;
+                    SetShoutVisualFileNameText(key, Path.GetFileName(visualPath));
+                }
+                else
+                {
+                    ResetSingleShoutToDefault(key);
+                }
+
+                string? sfxPath = ResolveAssetByBaseName(characterDirectoryPath, key, isAudio: true);
+                if (!string.IsNullOrWhiteSpace(sfxPath))
+                {
+                    selectedShoutSfxSourcePaths[key] = sfxPath;
+                    SetShoutSfxFileNameText(key, Path.GetFileName(sfxPath));
+                }
+                else
+                {
+                    SetShoutSfxFileNameText(key, "Default sfx");
+                }
+            }
+
+            foreach (string key in new[] { "holdit", "objection", "takethat", "custom" })
+            {
+                UpdateShoutTilePreview(key);
+            }
+        }
+
+        private void LoadEmotesFromCharacter(CharacterFolder sourceFolder, IniDocument iniDocument, string characterDirectoryPath)
+        {
+            StopAllEmotePreviewPlayers();
+            emotes.Clear();
+            emoteTiles.Clear();
+            bulkButtonCutoutByEmoteId.Clear();
+
+            Dictionary<int, bool> sfxLoopingById = new Dictionary<int, bool>();
+            foreach (IniEntry entry in iniDocument.GetEntries("SoundL"))
+            {
+                if (!int.TryParse(entry.Key, out int id))
+                {
+                    continue;
+                }
+
+                sfxLoopingById[id] = string.Equals((entry.Value ?? string.Empty).Trim(), "1", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals((entry.Value ?? string.Empty).Trim(), "true", StringComparison.OrdinalIgnoreCase);
+            }
+
+            Dictionary<int, string> blipsOverrideByEmoteId = ResolveBlipsOverrides(iniDocument);
+
+            IEnumerable<KeyValuePair<int, Emote>> ordered = sourceFolder.configINI.Emotions
+                .OrderBy(static pair => pair.Key);
+            foreach (KeyValuePair<int, Emote> pair in ordered)
+            {
+                int emoteId = pair.Key;
+                Emote source = pair.Value ?? new Emote(emoteId);
+                CharacterCreationEmoteViewModel viewModel = new CharacterCreationEmoteViewModel
+                {
+                    Index = emoteId,
+                    Name = source.Name?.Trim() ?? $"Emote {emoteId}",
+                    PreAnimation = string.IsNullOrWhiteSpace(source.PreAnimation) ? "-" : source.PreAnimation.Trim(),
+                    Animation = source.Animation?.Trim() ?? string.Empty,
+                    EmoteModifier = (int)source.Modifier,
+                    DeskModifier = (int)source.DeskMod,
+                    SfxName = source.sfxName?.Trim() ?? "1",
+                    SfxDelayMs = Math.Max(0, source.sfxDelay),
+                    SfxLooping = sfxLoopingById.TryGetValue(emoteId, out bool loops) && loops,
+                    PreAnimationDurationMs = ResolveDurationFromIni(iniDocument, "Time", source.PreAnimation),
+                    StayTimeMs = ResolveDurationFromIni(iniDocument, "stay_time", source.PreAnimation),
+                    BlipsOverride = blipsOverrideByEmoteId.TryGetValue(emoteId, out string? overrideBlips)
+                        ? overrideBlips
+                        : string.Empty
+                };
+
+                if (!string.IsNullOrWhiteSpace(source.PreAnimation) && !string.Equals(source.PreAnimation, "-", StringComparison.Ordinal))
+                {
+                    viewModel.PreAnimationAssetSourcePath =
+                        ResolveImageTokenPathWithinCharacterDirectory(characterDirectoryPath, source.PreAnimation);
+                    viewModel.PreAnimationPreview = TryLoadPreviewImage(viewModel.PreAnimationAssetSourcePath ?? string.Empty);
+                }
+
+                viewModel.AnimationAssetSourcePath =
+                    ResolveImageTokenPathWithinCharacterDirectory(characterDirectoryPath, source.Animation);
+                ResolveSplitAnimationAssets(characterDirectoryPath, source.Animation, viewModel);
+                viewModel.AnimationPreview = TryLoadPreviewImage(
+                    viewModel.AnimationAssetSourcePath
+                    ?? viewModel.FinalAnimationIdleAssetSourcePath
+                    ?? viewModel.FinalAnimationTalkingAssetSourcePath
+                    ?? string.Empty);
+
+                if (!string.IsNullOrWhiteSpace(source.PathToImage_on) && File.Exists(source.PathToImage_on))
+                {
+                    viewModel.ButtonTwoImagesOnAssetSourcePath = source.PathToImage_on;
+                }
+
+                if (!string.IsNullOrWhiteSpace(source.PathToImage_off) && File.Exists(source.PathToImage_off))
+                {
+                    viewModel.ButtonTwoImagesOffAssetSourcePath = source.PathToImage_off;
+                }
+
+                if (!string.IsNullOrWhiteSpace(viewModel.ButtonTwoImagesOnAssetSourcePath)
+                    && !string.IsNullOrWhiteSpace(viewModel.ButtonTwoImagesOffAssetSourcePath))
+                {
+                    viewModel.ButtonIconMode = ButtonIconMode.TwoImages;
+                    viewModel.ButtonIconAssetSourcePath = viewModel.ButtonTwoImagesOnAssetSourcePath;
+                    viewModel.ButtonIconPreview = TryLoadPreviewImage(viewModel.ButtonTwoImagesOnAssetSourcePath);
+                    viewModel.ButtonIconToken = Path.GetFileNameWithoutExtension(viewModel.ButtonTwoImagesOnAssetSourcePath);
+                }
+
+                viewModel.SfxAssetSourcePath = ResolveAudioTokenPathWithinCharacterDirectory(characterDirectoryPath, source.sfxName);
+                viewModel.FrameEvents.Clear();
+                foreach (FrameEventViewModel frameEvent in ResolveFrameEventsForEmote(iniDocument, viewModel))
+                {
+                    viewModel.FrameEvents.Add(frameEvent);
+                }
+
+                emotes.Add(viewModel);
+                UpdateAnimatedPreviewPlayer(viewModel, "preanim", viewModel.PreAnimationAssetSourcePath);
+                UpdateAnimatedPreviewPlayer(viewModel, "anim", viewModel.AnimationAssetSourcePath);
+            }
+
+            RefreshEmoteLabels();
+            if (emotes.Count > 0)
+            {
+                SelectEmoteTile(emotes[0]);
+            }
+        }
+
+        private void ResolveSplitAnimationAssets(
+            string characterDirectoryPath,
+            string animationToken,
+            CharacterCreationEmoteViewModel viewModel)
+        {
+            string token = (animationToken ?? string.Empty).Trim().Replace('\\', '/');
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                return;
+            }
+
+            string fileName = Path.GetFileName(token);
+            string baseDirectory = Path.GetDirectoryName(token.Replace('/', Path.DirectorySeparatorChar)) ?? string.Empty;
+            string aToken = string.IsNullOrWhiteSpace(baseDirectory)
+                ? "(a)/" + fileName
+                : baseDirectory.Replace('\\', '/') + "/(a)/" + fileName;
+            string bToken = string.IsNullOrWhiteSpace(baseDirectory)
+                ? "(b)/" + fileName
+                : baseDirectory.Replace('\\', '/') + "/(b)/" + fileName;
+
+            viewModel.FinalAnimationIdleAssetSourcePath = ResolveImageTokenPathWithinCharacterDirectory(characterDirectoryPath, aToken);
+            viewModel.FinalAnimationTalkingAssetSourcePath = ResolveImageTokenPathWithinCharacterDirectory(characterDirectoryPath, bToken);
+            if (string.IsNullOrWhiteSpace(viewModel.AnimationAssetSourcePath))
+            {
+                viewModel.AnimationAssetSourcePath = viewModel.FinalAnimationIdleAssetSourcePath
+                    ?? viewModel.FinalAnimationTalkingAssetSourcePath;
+            }
+        }
+
+        private void LoadAdvancedEntriesFromIni(IniDocument iniDocument)
+        {
+            advancedEntries.Clear();
+
+            HashSet<string> reservedSections = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "version",
+                "options",
+                "shouts",
+                "time",
+                "stay_time",
+                "emotions",
+                "soundn",
+                "soundt",
+                "soundl",
+                "optionsn"
+            };
+
+            foreach (string sectionName in iniDocument.Sections.Keys)
+            {
+                if (reservedSections.Contains(sectionName))
+                {
+                    continue;
+                }
+
+                if (sectionName.StartsWith("options", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (sectionName.EndsWith("_framesfx", StringComparison.OrdinalIgnoreCase)
+                    || sectionName.EndsWith("_framescreenshake", StringComparison.OrdinalIgnoreCase)
+                    || sectionName.EndsWith("_framerealization", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                foreach (IniEntry entry in iniDocument.GetEntries(sectionName))
+                {
+                    advancedEntries.Add(new AdvancedEntryViewModel
+                    {
+                        Section = sectionName,
+                        Key = entry.Key,
+                        Value = entry.Value
+                    });
+                }
+            }
+        }
+
+        private void InitializeFileOrganizationFromExistingFolder(string characterDirectoryPath)
+        {
+            generatedOrganizationOverrides.Clear();
+            externalOrganizationEntries.Clear();
+            hasLoadedExistingFileOrganizationState = false;
+
+            string normalizedRoot = NormalizePathForCompare(characterDirectoryPath);
+            if (string.IsNullOrWhiteSpace(normalizedRoot) || !Directory.Exists(normalizedRoot))
+            {
+                RefreshFileOrganizationEntries();
+                return;
+            }
+
+            List<FileOrganizationEntryViewModel> generatedEntries = BuildGeneratedFileOrganizationEntries();
+            Dictionary<string, string> usedFilePathByAssetKey = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> usedFolderPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> generatedFolderPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> generatedFilePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (FileOrganizationEntryViewModel generated in generatedEntries)
+            {
+                string generatedRelative = NormalizeRelativePath(generated.RelativePath, generated.IsFolder);
+                if (generated.IsFolder)
+                {
+                    generatedFolderPaths.Add(generatedRelative);
+                    string absoluteFolder = Path.Combine(normalizedRoot, generatedRelative.Replace('/', Path.DirectorySeparatorChar));
+                    if (Directory.Exists(absoluteFolder))
+                    {
+                        usedFolderPaths.Add(generatedRelative);
+                    }
+
+                    continue;
+                }
+
+                generatedFilePaths.Add(generatedRelative);
+                string? resolvedRelative = ResolveExistingFileRelativePathForGeneratedEntry(
+                    normalizedRoot,
+                    generated,
+                    generatedEntries,
+                    generatedFilePaths);
+                if (string.IsNullOrWhiteSpace(resolvedRelative))
+                {
+                    continue;
+                }
+
+                usedFilePathByAssetKey[generated.AssetKey] = resolvedRelative;
+                string defaultRelative = NormalizeRelativePath(generated.DefaultRelativePath, isFolder: false);
+                if (!string.IsNullOrWhiteSpace(generated.AssetKey)
+                    && !string.Equals(defaultRelative, resolvedRelative, StringComparison.OrdinalIgnoreCase))
+                {
+                    generatedOrganizationOverrides[generated.AssetKey] = resolvedRelative;
+                }
+            }
+
+            foreach (string usedRelativePath in usedFilePathByAssetKey.Values)
+            {
+                string parent = GetParentDirectoryPath(usedRelativePath, isFolder: false);
+                while (!string.IsNullOrWhiteSpace(parent))
+                {
+                    usedFolderPaths.Add(parent);
+                    parent = GetParentDirectoryPath(parent, isFolder: true);
+                }
+            }
+
+            HashSet<string> usedFiles = usedFilePathByAssetKey.Values
+                .Select(path => NormalizeRelativePath(path, isFolder: false))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            List<string> existingFiles = Directory
+                .EnumerateFiles(normalizedRoot, "*", SearchOption.AllDirectories)
+                .Select(path => NormalizeRelativePath(Path.GetRelativePath(normalizedRoot, path), isFolder: false))
+                .ToList();
+            foreach (string existingRelative in existingFiles)
+            {
+                if (usedFiles.Contains(existingRelative))
+                {
+                    continue;
+                }
+
+                string sourcePath = Path.Combine(normalizedRoot, existingRelative.Replace('/', Path.DirectorySeparatorChar));
+                externalOrganizationEntries.Add(new ExternalOrganizationEntry
+                {
+                    SourcePath = sourcePath,
+                    RelativePath = existingRelative,
+                    IsFolder = false
+                });
+            }
+
+            List<string> existingFolders = Directory
+                .EnumerateDirectories(normalizedRoot, "*", SearchOption.AllDirectories)
+                .Select(path => NormalizeRelativePath(Path.GetRelativePath(normalizedRoot, path), isFolder: true))
+                .Where(static path => !string.IsNullOrWhiteSpace(path))
+                .OrderBy(path => path.Count(ch => ch == '/'))
+                .ToList();
+
+            HashSet<string> trackedFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string folderPath in generatedFolderPaths)
+            {
+                trackedFolders.Add(folderPath);
+            }
+
+            foreach (string folderPath in usedFolderPaths)
+            {
+                trackedFolders.Add(folderPath);
+            }
+
+            foreach (string existingFolder in existingFolders)
+            {
+                if (trackedFolders.Contains(existingFolder))
+                {
+                    continue;
+                }
+
+                externalOrganizationEntries.Add(new ExternalOrganizationEntry
+                {
+                    RelativePath = existingFolder,
+                    IsFolder = true
+                });
+                trackedFolders.Add(existingFolder);
+            }
+
+            hasLoadedExistingFileOrganizationState = true;
+            RefreshFileOrganizationEntries();
+        }
+
+        private string? ResolveExistingFileRelativePathForGeneratedEntry(
+            string characterRoot,
+            FileOrganizationEntryViewModel generated,
+            IReadOnlyList<FileOrganizationEntryViewModel> generatedEntries,
+            ISet<string> generatedFilePaths)
+        {
+            if (generated == null || generated.IsFolder)
+            {
+                return null;
+            }
+
+            string defaultRelative = NormalizeRelativePath(generated.DefaultRelativePath, isFolder: false);
+            if (!string.IsNullOrWhiteSpace(defaultRelative))
+            {
+                string defaultAbsolute = Path.Combine(characterRoot, defaultRelative.Replace('/', Path.DirectorySeparatorChar));
+                if (File.Exists(defaultAbsolute))
+                {
+                    return defaultRelative;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(generated.SourcePath))
+            {
+                string normalizedSourcePath = NormalizePathForCompare(generated.SourcePath);
+                if (normalizedSourcePath.StartsWith(characterRoot, StringComparison.OrdinalIgnoreCase)
+                    && File.Exists(normalizedSourcePath))
+                {
+                    string rel = NormalizeRelativePath(Path.GetRelativePath(characterRoot, normalizedSourcePath), isFolder: false);
+                    return rel;
+                }
+            }
+
+            string fileName = Path.GetFileName(defaultRelative);
+            if (string.IsNullOrWhiteSpace(fileName))
+            {
+                fileName = generated.Name;
+            }
+
+            IEnumerable<string> candidates = Directory
+                .EnumerateFiles(characterRoot, fileName, SearchOption.AllDirectories)
+                .Select(path => NormalizeRelativePath(Path.GetRelativePath(characterRoot, path), isFolder: false));
+            List<string> nonConflicting = candidates
+                .Where(path => !generatedFilePaths.Contains(path)
+                    || string.Equals(path, defaultRelative, StringComparison.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (nonConflicting.Count == 1)
+            {
+                return nonConflicting[0];
+            }
+
+            return candidates.FirstOrDefault();
+        }
+
+        private static int? ResolveDurationFromIni(IniDocument iniDocument, string section, string key)
+        {
+            string trimmedKey = (key ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(trimmedKey) || string.Equals(trimmedKey, "-", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            if (!iniDocument.TryGetLatestValue(section, trimmedKey, out string? value))
+            {
+                return null;
+            }
+
+            if (!int.TryParse(value, out int parsed))
+            {
+                return null;
+            }
+
+            return Math.Max(0, parsed);
+        }
+
+        private static Dictionary<int, string> ResolveBlipsOverrides(IniDocument iniDocument)
+        {
+            Dictionary<int, string> result = new Dictionary<int, string>();
+            Dictionary<int, string> optionProfiles = new Dictionary<int, string>();
+            foreach (string section in iniDocument.Sections.Keys)
+            {
+                if (!section.StartsWith("options", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(section, "options", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(section, "optionsn", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                string suffix = section.Substring("options".Length).Trim();
+                if (!int.TryParse(suffix, out int profileIndex))
+                {
+                    continue;
+                }
+
+                if (iniDocument.TryGetLatestValue(section, "blips", out string? blipsValue))
+                {
+                    optionProfiles[profileIndex] = blipsValue?.Trim() ?? string.Empty;
+                }
+            }
+
+            foreach (IniEntry entry in iniDocument.GetEntries("OptionsN"))
+            {
+                if (!int.TryParse(entry.Key, out int emoteId))
+                {
+                    continue;
+                }
+
+                if (!int.TryParse(entry.Value, out int profileId))
+                {
+                    continue;
+                }
+
+                if (optionProfiles.TryGetValue(profileId, out string? blips))
+                {
+                    result[emoteId] = blips;
+                }
+            }
+
+            return result;
+        }
+
+        private IEnumerable<FrameEventViewModel> ResolveFrameEventsForEmote(
+            IniDocument iniDocument,
+            CharacterCreationEmoteViewModel emote)
+        {
+            List<FrameEventViewModel> result = new List<FrameEventViewModel>();
+            string preAnimation = (emote.PreAnimation ?? string.Empty).Trim();
+            string animation = (emote.Animation ?? string.Empty).Trim();
+            string[] sectionPrefixes =
+            {
+                preAnimation,
+                "(a)/" + animation,
+                "(b)/" + animation
+            };
+
+            foreach ((CharacterFrameEventType eventType, string suffix) in new[]
+            {
+                (CharacterFrameEventType.Sfx, "_FrameSFX"),
+                (CharacterFrameEventType.Screenshake, "_FrameScreenshake"),
+                (CharacterFrameEventType.Realization, "_FrameRealization")
+            })
+            {
+                foreach (string prefix in sectionPrefixes.Where(static value => !string.IsNullOrWhiteSpace(value)))
+                {
+                    string section = prefix + suffix;
+                    foreach (IniEntry entry in iniDocument.GetEntries(section))
+                    {
+                        if (!int.TryParse(entry.Key, out int frame))
+                        {
+                            continue;
+                        }
+
+                        CharacterFrameTarget target = string.Equals(prefix, preAnimation, StringComparison.OrdinalIgnoreCase)
+                            ? CharacterFrameTarget.PreAnimation
+                            : (prefix.StartsWith("(a)/", StringComparison.OrdinalIgnoreCase)
+                                ? CharacterFrameTarget.AnimationA
+                                : CharacterFrameTarget.AnimationB);
+
+                        result.Add(new FrameEventViewModel
+                        {
+                            Target = target,
+                            EventType = eventType,
+                            Frame = Math.Max(1, frame),
+                            Value = entry.Value,
+                            CustomTargetPath = string.Empty
+                        });
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        private static string? ResolveAssetByBaseName(string characterDirectoryPath, string baseName, bool isAudio)
+        {
+            string[] allowedExtensions = isAudio
+                ? new[] { ".opus", ".ogg", ".mp3", ".wav" }
+                : new[] { ".webp", ".apng", ".gif", ".png", ".jpg", ".jpeg", ".bmp" };
+
+            IEnumerable<string> files = Directory.EnumerateFiles(characterDirectoryPath, baseName + ".*", SearchOption.AllDirectories)
+                .Where(path => allowedExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase));
+            return files
+                .OrderBy(static path => path.Count(static c => c == Path.DirectorySeparatorChar || c == Path.AltDirectorySeparatorChar))
+                .FirstOrDefault();
+        }
+
+        private static string? ResolveImageTokenPathWithinCharacterDirectory(string characterDirectoryPath, string token)
+            => ResolveTokenPathWithinCharacterDirectory(characterDirectoryPath, token, isAudio: false);
+
+        private static string? ResolveAudioTokenPathWithinCharacterDirectory(string characterDirectoryPath, string token)
+            => ResolveTokenPathWithinCharacterDirectory(characterDirectoryPath, token, isAudio: true);
+
+        private static string? ResolveTokenPathWithinCharacterDirectory(string characterDirectoryPath, string token, bool isAudio)
+        {
+            string trimmedToken = (token ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(trimmedToken) || string.Equals(trimmedToken, "1", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            if (Path.IsPathRooted(trimmedToken))
+            {
+                return File.Exists(trimmedToken) ? trimmedToken : null;
+            }
+
+            string normalizedToken = trimmedToken.Replace('\\', '/');
+            string relativeToken = normalizedToken;
+            const string charactersPrefix = "../../characters/";
+            if (relativeToken.StartsWith(charactersPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                int nextSlash = relativeToken.IndexOf('/', charactersPrefix.Length);
+                if (nextSlash >= 0 && nextSlash + 1 < relativeToken.Length)
+                {
+                    relativeToken = relativeToken[(nextSlash + 1)..];
+                }
+            }
+
+            string[] extensions = isAudio
+                ? new[] { ".opus", ".ogg", ".mp3", ".wav" }
+                : new[] { ".png", ".gif", ".webp", ".apng", ".jpg", ".jpeg", ".bmp" };
+
+            IEnumerable<string> roots = new[]
+            {
+                characterDirectoryPath,
+                Path.Combine(characterDirectoryPath, "Images"),
+                Path.Combine(characterDirectoryPath, "Sounds"),
+                Path.Combine(characterDirectoryPath, "emotions")
+            };
+
+            foreach (string root in roots)
+            {
+                string candidateBase = Path.Combine(root, relativeToken.Replace('/', Path.DirectorySeparatorChar));
+                string? resolved = ResolvePathWithExtensions(candidateBase, extensions);
+                if (!string.IsNullOrWhiteSpace(resolved))
+                {
+                    return resolved;
+                }
+            }
+
+            string absoluteCandidate = Path.GetFullPath(
+                Path.Combine(characterDirectoryPath, normalizedToken.Replace('/', Path.DirectorySeparatorChar)));
+            return ResolvePathWithExtensions(absoluteCandidate, extensions);
+        }
+
+        private static string? ResolvePathWithExtensions(string pathWithoutAssumedExtension, IReadOnlyList<string> extensions)
+        {
+            if (File.Exists(pathWithoutAssumedExtension))
+            {
+                return pathWithoutAssumedExtension;
+            }
+
+            if (!string.IsNullOrWhiteSpace(Path.GetExtension(pathWithoutAssumedExtension)))
+            {
+                return null;
+            }
+
+            foreach (string extension in extensions)
+            {
+                string candidate = pathWithoutAssumedExtension + extension;
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            return null;
+        }
+
+        private void ApplyEditModeUiState()
+        {
+            Title = "AO Character File Creator (Edit Mode)";
+            if (GenerateButton != null)
+            {
+                GenerateButton.Content = "Edit Character Folder";
+            }
+
+            if (MountPathResolvedTextBlock != null)
+            {
+                MountPathResolvedTextBlock.Text = "Loaded existing character folder for editing.";
+            }
+
+            UpdateFolderAvailabilityStatus();
+        }
+
         private void UpdateFolderAvailabilityStatus()
         {
             if (CharacterFolderAvailabilityTextBlock == null)
@@ -611,7 +1414,9 @@ namespace OceanyaClient
             if (string.IsNullOrWhiteSpace(folderName) || string.IsNullOrWhiteSpace(mountPath))
             {
                 CharacterFolderAvailabilityTextBlock.Foreground = new SolidColorBrush(Color.FromRgb(181, 208, 232));
-                CharacterFolderAvailabilityTextBlock.Text = "Enter a folder name to validate availability.";
+                CharacterFolderAvailabilityTextBlock.Text = isEditMode
+                    ? "Choose target folder name and mount path for the edited character."
+                    : "Enter a folder name to validate availability.";
                 return;
             }
 
@@ -624,6 +1429,36 @@ namespace OceanyaClient
             }
 
             string fullPath = Path.Combine(mountPath, "characters", folderName);
+            if (isEditMode)
+            {
+                string originalPath = originalEditCharacterDirectoryPath?.Trim() ?? string.Empty;
+                bool pointsToOriginal = !string.IsNullOrWhiteSpace(originalPath)
+                    && string.Equals(
+                        NormalizePathForCompare(fullPath),
+                        NormalizePathForCompare(originalPath),
+                        StringComparison.OrdinalIgnoreCase);
+                if (pointsToOriginal)
+                {
+                    CharacterFolderAvailabilityTextBlock.Foreground = new SolidColorBrush(Color.FromRgb(154, 224, 170));
+                    CharacterFolderAvailabilityTextBlock.Text =
+                        $"Folder \"{originalEditCharacterFolderName}\" will be rebuilt in-place when you click Edit Character Folder.";
+                    return;
+                }
+
+                if (Directory.Exists(fullPath))
+                {
+                    CharacterFolderAvailabilityTextBlock.Foreground = new SolidColorBrush(Color.FromRgb(244, 148, 148));
+                    CharacterFolderAvailabilityTextBlock.Text =
+                        $"Target folder \"{folderName}\" already exists. Choose a different destination to avoid overwrite.";
+                    return;
+                }
+
+                CharacterFolderAvailabilityTextBlock.Foreground = new SolidColorBrush(Color.FromRgb(154, 224, 170));
+                CharacterFolderAvailabilityTextBlock.Text =
+                    $"The folder \"{originalEditCharacterFolderName}\" will be renamed/moved to \"{folderName}\" when you click Edit Character Folder.";
+                return;
+            }
+
             if (Directory.Exists(fullPath))
             {
                 CharacterFolderAvailabilityTextBlock.Foreground = new SolidColorBrush(Color.FromRgb(244, 148, 148));
@@ -634,6 +1469,23 @@ namespace OceanyaClient
             {
                 CharacterFolderAvailabilityTextBlock.Foreground = new SolidColorBrush(Color.FromRgb(154, 224, 170));
                 CharacterFolderAvailabilityTextBlock.Text = $"Folder \"{folderName}\" is an available folder name.";
+            }
+        }
+
+        private static string NormalizePathForCompare(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return string.Empty;
+            }
+
+            try
+            {
+                return Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            }
+            catch
+            {
+                return path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             }
         }
 
@@ -695,7 +1547,9 @@ namespace OceanyaClient
             }
             else
             {
-                StatusTextBlock.Text = "Configure the character and generate a new AO folder.";
+                StatusTextBlock.Text = isEditMode
+                    ? "Configure the character and apply edits to the loaded AO folder."
+                    : "Configure the character and generate a new AO folder.";
             }
         }
 
@@ -1799,9 +2653,12 @@ namespace OceanyaClient
                 return;
             }
 
+            string message = hasLoadedExistingFileOrganizationState && isEditMode
+                ? "This will discard the folder layout loaded from the current character folder and reset organization to Oceanya Client defaults. Continue?"
+                : "Reset file organization to defaults? This clears your folder structure edits and unused entries.";
             MessageBoxResult decision = OceanyaMessageBox.Show(
                 this,
-                "Reset file organization to defaults? This clears your folder structure edits and unused entries.",
+                message,
                 "Reset File Organization",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Warning);
@@ -1812,6 +2669,7 @@ namespace OceanyaClient
 
             externalOrganizationEntries.Clear();
             generatedOrganizationOverrides.Clear();
+            hasLoadedExistingFileOrganizationState = false;
             currentFileOrganizationPath = string.Empty;
             fileOrganizationClipboardEntries.Clear();
             fileOrganizationClipboardIsCut = false;
@@ -3540,7 +4398,7 @@ namespace OceanyaClient
             DependencyObject source = e.OriginalSource as DependencyObject ?? EmoteTilesListBox;
             if (FindAncestor<TextBox>(source) != null
                 || FindAncestor<Button>(source) != null
-                || FindAncestor<Thumb>(source) != null)
+                || FindAncestor<ScrollBar>(source) != null)
             {
                 pendingTileDragEntry = null;
                 return;
@@ -3550,16 +4408,24 @@ namespace OceanyaClient
             if (item?.DataContext is EmoteTileEntryViewModel entry && !entry.IsAddTile)
             {
                 pendingTileDragEntry = entry;
+                activeTileDragContainer = item;
             }
             else
             {
                 pendingTileDragEntry = null;
+                activeTileDragContainer = null;
             }
         }
 
         private void EmoteTilesListBox_PreviewMouseMove(object sender, MouseEventArgs e)
         {
-            if (e.LeftButton != MouseButtonState.Pressed || pendingTileDragEntry == null)
+            if (isInternalEmoteReorderDragInProgress)
+            {
+                UpdateInternalEmoteReorderDrag(e.GetPosition(EmoteTilesListBox));
+                return;
+            }
+
+            if (e.LeftButton != MouseButtonState.Pressed || pendingTileDragEntry?.Emote == null)
             {
                 return;
             }
@@ -3573,8 +4439,19 @@ namespace OceanyaClient
 
             EmoteTileEntryViewModel dragEntry = pendingTileDragEntry;
             pendingTileDragEntry = null;
-            DragDrop.DoDragDrop(EmoteTilesListBox, dragEntry, DragDropEffects.Move);
-            ClearCurrentDragTarget();
+            BeginInternalEmoteReorderDrag(dragEntry, currentPosition);
+        }
+
+        private void EmoteTilesListBox_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            pendingTileDragEntry = null;
+            activeTileDragContainer = null;
+            if (!isInternalEmoteReorderDragInProgress)
+            {
+                return;
+            }
+
+            EndInternalEmoteReorderDrag(commit: true);
         }
 
         private void EmoteTilesListBox_DragOver(object sender, DragEventArgs e)
@@ -3588,51 +4465,21 @@ namespace OceanyaClient
                 return;
             }
 
-            if (!e.Data.GetDataPresent(typeof(EmoteTileEntryViewModel)))
-            {
-                SetCurrentDragTarget(null);
-                e.Effects = DragDropEffects.None;
-                return;
-            }
-
-            EmoteTileEntryViewModel? target = ResolveTileEntryFromEvent(e);
-            SetCurrentDragTarget(target);
-            e.Effects = DragDropEffects.Move;
+            SetCurrentDragTarget(null);
+            e.Effects = DragDropEffects.None;
             e.Handled = true;
         }
 
         private void EmoteTilesListBox_Drop(object sender, DragEventArgs e)
         {
-            try
+            if (TryGetDroppedFilePaths(e, out IReadOnlyList<string>? droppedPaths))
             {
-                if (TryGetDroppedFilePaths(e, out IReadOnlyList<string>? droppedPaths))
+                List<string> imagePaths = droppedPaths.Where(IsImageAsset).ToList();
+                if (imagePaths.Count > 0)
                 {
-                    List<string> imagePaths = droppedPaths.Where(IsImageAsset).ToList();
-                    if (imagePaths.Count > 0)
-                    {
-                        AddEmotesFromDroppedImages(imagePaths);
-                        e.Handled = true;
-                        return;
-                    }
+                    AddEmotesFromDroppedImages(imagePaths);
+                    e.Handled = true;
                 }
-
-                if (!e.Data.GetDataPresent(typeof(EmoteTileEntryViewModel)))
-                {
-                    return;
-                }
-
-                EmoteTileEntryViewModel? sourceEntry = e.Data.GetData(typeof(EmoteTileEntryViewModel)) as EmoteTileEntryViewModel;
-                if (sourceEntry?.Emote == null)
-                {
-                    return;
-                }
-
-                EmoteTileEntryViewModel? targetEntry = ResolveTileEntryFromEvent(e);
-                MoveEmoteByDragAndDrop(sourceEntry.Emote, targetEntry);
-            }
-            finally
-            {
-                ClearCurrentDragTarget();
             }
         }
 
@@ -3742,13 +4589,6 @@ namespace OceanyaClient
             StatusTextBlock.Text = "Emote reordered.";
         }
 
-        private EmoteTileEntryViewModel? ResolveTileEntryFromEvent(DragEventArgs e)
-        {
-            DependencyObject source = e.OriginalSource as DependencyObject ?? EmoteTilesListBox;
-            ListBoxItem? item = FindAncestor<ListBoxItem>(source);
-            return item?.DataContext as EmoteTileEntryViewModel;
-        }
-
         private void SetCurrentDragTarget(EmoteTileEntryViewModel? target)
         {
             if (ReferenceEquals(currentDragTargetEntry, target))
@@ -3776,6 +4616,353 @@ namespace OceanyaClient
             }
 
             currentDragTargetEntry = null;
+        }
+
+        private void BeginInternalEmoteReorderDrag(EmoteTileEntryViewModel dragEntry, Point pointerPosition)
+        {
+            if (dragEntry.Emote == null)
+            {
+                return;
+            }
+
+            activeTileDragEntry = dragEntry;
+            isInternalEmoteReorderDragInProgress = true;
+            EmoteTilesListBox.CaptureMouse();
+
+            if (activeTileDragContainer == null)
+            {
+                EmoteTileEntryViewModel? refreshedEntry = emoteTiles.FirstOrDefault(tile => tile.Emote == dragEntry.Emote);
+                if (refreshedEntry != null)
+                {
+                    activeTileDragContainer = EmoteTilesListBox.ItemContainerGenerator.ContainerFromItem(refreshedEntry) as FrameworkElement;
+                }
+            }
+
+            if (activeTileDragContainer != null)
+            {
+                activeTileDragContainer.Opacity = 0.2;
+                Point tileTopLeft = activeTileDragContainer.TranslatePoint(new Point(0, 0), EmoteTilesListBox);
+                emoteDragGhostPointerOffset = new Point(
+                    pointerPosition.X - tileTopLeft.X,
+                    pointerPosition.Y - tileTopLeft.Y);
+                CreateOrShowDragGhost(activeTileDragContainer, pointerPosition);
+            }
+            else
+            {
+                emoteDragGhostPointerOffset = new Point(16, 16);
+            }
+
+            SelectEmoteTile(dragEntry.Emote);
+            StatusTextBlock.Text = "Dragging emote to reorder...";
+        }
+
+        private void UpdateInternalEmoteReorderDrag(Point pointerPosition)
+        {
+            if (!isInternalEmoteReorderDragInProgress || activeTileDragEntry?.Emote == null)
+            {
+                return;
+            }
+
+            if (Mouse.LeftButton != MouseButtonState.Pressed)
+            {
+                EndInternalEmoteReorderDrag(commit: true);
+                return;
+            }
+
+            UpdateDragGhostPosition(pointerPosition);
+            int targetInsertIndex = ResolveTargetInsertIndex(pointerPosition);
+            MoveEmoteToIndexWithAnimation(activeTileDragEntry.Emote, targetInsertIndex);
+        }
+
+        private void EndInternalEmoteReorderDrag(bool commit)
+        {
+            if (!isInternalEmoteReorderDragInProgress)
+            {
+                return;
+            }
+
+            isInternalEmoteReorderDragInProgress = false;
+            EmoteTilesListBox.ReleaseMouseCapture();
+
+            if (activeTileDragContainer != null)
+            {
+                activeTileDragContainer.Opacity = 1.0;
+            }
+
+            if (emoteDragGhostPopup != null)
+            {
+                emoteDragGhostPopup.IsOpen = false;
+                emoteDragGhostPopup.Child = null;
+                emoteDragGhostPopup = null;
+            }
+
+            CharacterCreationEmoteViewModel? draggedEmote = activeTileDragEntry?.Emote;
+            activeTileDragEntry = null;
+            activeTileDragContainer = null;
+
+            if (!commit || draggedEmote == null)
+            {
+                return;
+            }
+
+            UpdateEmoteIndexesOnly();
+            SelectEmoteTile(draggedEmote);
+            StatusTextBlock.Text = "Emote reordered.";
+        }
+
+        private void CreateOrShowDragGhost(FrameworkElement tileContainer, Point pointerPosition)
+        {
+            int pixelWidth = Math.Max(1, (int)Math.Ceiling(tileContainer.ActualWidth));
+            int pixelHeight = Math.Max(1, (int)Math.Ceiling(tileContainer.ActualHeight));
+            RenderTargetBitmap bitmap = new RenderTargetBitmap(
+                pixelWidth,
+                pixelHeight,
+                96,
+                96,
+                PixelFormats.Pbgra32);
+            bitmap.Render(tileContainer);
+            if (bitmap.CanFreeze)
+            {
+                bitmap.Freeze();
+            }
+
+            Border ghostBorder = new Border
+            {
+                Width = tileContainer.ActualWidth,
+                Height = tileContainer.ActualHeight,
+                Background = new ImageBrush(bitmap) { Stretch = Stretch.Fill },
+                BorderBrush = new SolidColorBrush(Color.FromArgb(220, 150, 197, 238)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Opacity = 0.9,
+                IsHitTestVisible = false
+            };
+
+            emoteDragGhostPopup = new Popup
+            {
+                PlacementTarget = EmoteTilesListBox,
+                Placement = PlacementMode.Relative,
+                AllowsTransparency = true,
+                IsHitTestVisible = false,
+                StaysOpen = true,
+                Child = ghostBorder
+            };
+
+            UpdateDragGhostPosition(pointerPosition);
+            emoteDragGhostPopup.IsOpen = true;
+        }
+
+        private void UpdateDragGhostPosition(Point pointerPosition)
+        {
+            if (emoteDragGhostPopup == null)
+            {
+                return;
+            }
+
+            emoteDragGhostPopup.HorizontalOffset = pointerPosition.X - emoteDragGhostPointerOffset.X;
+            emoteDragGhostPopup.VerticalOffset = pointerPosition.Y - emoteDragGhostPointerOffset.Y;
+        }
+
+        private int ResolveTargetInsertIndex(Point pointerPosition)
+        {
+            DependencyObject? hit = EmoteTilesListBox.InputHitTest(pointerPosition) as DependencyObject;
+            ListBoxItem? targetContainer = FindAncestor<ListBoxItem>(hit);
+            if (targetContainer?.DataContext is EmoteTileEntryViewModel entry && entry.Emote != null)
+            {
+                int hitIndex = emotes.IndexOf(entry.Emote);
+                if (hitIndex < 0)
+                {
+                    return emotes.Count;
+                }
+
+                Point pointWithinTile = pointerPosition;
+                if (targetContainer != null)
+                {
+                    pointWithinTile = EmoteTilesListBox.TranslatePoint(pointerPosition, targetContainer);
+                }
+
+                bool insertAfter = pointWithinTile.X >= targetContainer.ActualWidth / 2.0
+                    || pointWithinTile.Y >= targetContainer.ActualHeight / 2.0;
+                return hitIndex + (insertAfter ? 1 : 0);
+            }
+
+            List<(double top, double left, CharacterCreationEmoteViewModel emote)> positioned = GetEmoteTilePositions();
+            if (positioned.Count == 0)
+            {
+                return 0;
+            }
+
+            List<(double top, double left, CharacterCreationEmoteViewModel emote)> sorted = positioned
+                .OrderBy(static item => item.top)
+                .ThenBy(static item => item.left)
+                .ToList();
+            if (pointerPosition.Y <= sorted[0].top)
+            {
+                return 0;
+            }
+
+            CharacterCreationEmoteViewModel last = sorted[^1].emote;
+            int lastIndex = emotes.IndexOf(last);
+            return Math.Clamp(lastIndex + 1, 0, emotes.Count);
+        }
+
+        private void MoveEmoteToIndexWithAnimation(CharacterCreationEmoteViewModel emote, int targetInsertIndex)
+        {
+            int sourceIndex = emotes.IndexOf(emote);
+            if (sourceIndex < 0)
+            {
+                return;
+            }
+
+            int adjustedInsertIndex = Math.Clamp(targetInsertIndex, 0, emotes.Count);
+            if (adjustedInsertIndex > sourceIndex)
+            {
+                adjustedInsertIndex--;
+            }
+
+            if (adjustedInsertIndex == sourceIndex)
+            {
+                return;
+            }
+
+            Dictionary<CharacterCreationEmoteViewModel, Point> beforeLayout = CaptureCurrentTileTopLeftPositions();
+            EmoteTileEntryViewModel? dragEntry = emoteTiles.FirstOrDefault(tile => tile.Emote == emote);
+
+            emotes.RemoveAt(sourceIndex);
+            emotes.Insert(adjustedInsertIndex, emote);
+
+            if (dragEntry != null)
+            {
+                emoteTiles.Remove(dragEntry);
+                emoteTiles.Insert(adjustedInsertIndex, dragEntry);
+            }
+
+            UpdateEmoteIndexesOnly();
+            EmoteTilesListBox.UpdateLayout();
+            AnimateTileLayoutChanges(beforeLayout);
+        }
+
+        private Dictionary<CharacterCreationEmoteViewModel, Point> CaptureCurrentTileTopLeftPositions()
+        {
+            Dictionary<CharacterCreationEmoteViewModel, Point> positions =
+                new Dictionary<CharacterCreationEmoteViewModel, Point>();
+
+            foreach (EmoteTileEntryViewModel entry in emoteTiles)
+            {
+                if (entry.Emote == null)
+                {
+                    continue;
+                }
+
+                ListBoxItem? container = EmoteTilesListBox.ItemContainerGenerator.ContainerFromItem(entry) as ListBoxItem;
+                if (container == null)
+                {
+                    continue;
+                }
+
+                Point topLeft = container.TranslatePoint(new Point(0, 0), EmoteTilesListBox);
+                positions[entry.Emote] = topLeft;
+            }
+
+            return positions;
+        }
+
+        private void AnimateTileLayoutChanges(Dictionary<CharacterCreationEmoteViewModel, Point> beforeLayout)
+        {
+            Duration animationDuration = new Duration(TimeSpan.FromMilliseconds(130));
+            CubicEase easing = new CubicEase { EasingMode = EasingMode.EaseOut };
+
+            foreach (KeyValuePair<CharacterCreationEmoteViewModel, Point> pair in beforeLayout)
+            {
+                EmoteTileEntryViewModel? entry = emoteTiles.FirstOrDefault(tile => tile.Emote == pair.Key);
+                if (entry == null)
+                {
+                    continue;
+                }
+
+                ListBoxItem? container = EmoteTilesListBox.ItemContainerGenerator.ContainerFromItem(entry) as ListBoxItem;
+                if (container == null)
+                {
+                    continue;
+                }
+
+                Point newTopLeft = container.TranslatePoint(new Point(0, 0), EmoteTilesListBox);
+                Vector delta = pair.Value - newTopLeft;
+                if (Math.Abs(delta.X) < 0.5 && Math.Abs(delta.Y) < 0.5)
+                {
+                    continue;
+                }
+
+                TranslateTransform transform = EnsureTileAnimationTransform(container);
+                transform.X = delta.X;
+                transform.Y = delta.Y;
+
+                DoubleAnimation xAnimation = new DoubleAnimation(0, animationDuration) { EasingFunction = easing };
+                DoubleAnimation yAnimation = new DoubleAnimation(0, animationDuration) { EasingFunction = easing };
+                transform.BeginAnimation(TranslateTransform.XProperty, xAnimation, HandoffBehavior.SnapshotAndReplace);
+                transform.BeginAnimation(TranslateTransform.YProperty, yAnimation, HandoffBehavior.SnapshotAndReplace);
+            }
+        }
+
+        private TranslateTransform EnsureTileAnimationTransform(UIElement element)
+        {
+            if (emoteTileAnimationTransforms.TryGetValue(element, out TranslateTransform? existing))
+            {
+                return existing;
+            }
+
+            TranslateTransform animationTransform = new TranslateTransform();
+            if (element.RenderTransform == null || element.RenderTransform == Transform.Identity)
+            {
+                element.RenderTransform = animationTransform;
+            }
+            else if (element.RenderTransform is TransformGroup existingGroup)
+            {
+                existingGroup.Children.Add(animationTransform);
+            }
+            else
+            {
+                TransformGroup group = new TransformGroup();
+                group.Children.Add(element.RenderTransform);
+                group.Children.Add(animationTransform);
+                element.RenderTransform = group;
+            }
+
+            emoteTileAnimationTransforms[element] = animationTransform;
+            return animationTransform;
+        }
+
+        private List<(double top, double left, CharacterCreationEmoteViewModel emote)> GetEmoteTilePositions()
+        {
+            List<(double top, double left, CharacterCreationEmoteViewModel emote)> positions =
+                new List<(double top, double left, CharacterCreationEmoteViewModel emote)>();
+            foreach (EmoteTileEntryViewModel entry in emoteTiles)
+            {
+                if (entry.Emote == null)
+                {
+                    continue;
+                }
+
+                ListBoxItem? container = EmoteTilesListBox.ItemContainerGenerator.ContainerFromItem(entry) as ListBoxItem;
+                if (container == null)
+                {
+                    continue;
+                }
+
+                Point point = container.TranslatePoint(new Point(0, 0), EmoteTilesListBox);
+                positions.Add((point.Y, point.X, entry.Emote));
+            }
+
+            return positions;
+        }
+
+        private void UpdateEmoteIndexesOnly()
+        {
+            for (int i = 0; i < emotes.Count; i++)
+            {
+                emotes[i].Index = i + 1;
+                emotes[i].RefreshDisplayName();
+            }
         }
 
         private void EmoteTile_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
@@ -4583,87 +5770,6 @@ namespace OceanyaClient
             }
 
             ApplyImageAssetToEmote(emote, zoneTag, dialog.FileName);
-        }
-
-        private void EmoteResizeThumb_DragStarted(object sender, DragStartedEventArgs e)
-        {
-            if (sender is not Thumb thumb
-                || thumb.DataContext is not EmoteTileEntryViewModel entry
-                || entry.Emote == null)
-            {
-                return;
-            }
-
-            foreach (CharacterCreationEmoteViewModel emote in emotes)
-            {
-                emote.IsResizeGuideVisible = false;
-            }
-
-            activeResizeEmote = entry.Emote;
-            activeResizeContainer = FindAncestor<Border>(thumb) as FrameworkElement
-                ?? FindAncestor<ListBoxItem>(thumb);
-            activeResizeMode = thumb.Tag?.ToString() ?? string.Empty;
-            resizeStartWidth = EmoteTileWidth;
-            resizeStartHeight = EmoteTileHeight;
-            ResizePreviewWidth = EmoteTileWidth;
-            ResizePreviewHeight = EmoteTileHeight;
-            if (activeResizeContainer != null)
-            {
-                GeneralTransform transform = activeResizeContainer.TransformToAncestor(EmoteTilesOverlayRoot);
-                Point topLeft = transform.Transform(new Point(0, 0));
-                ResizeGuideLeft = topLeft.X;
-                ResizeGuideTop = topLeft.Y;
-            }
-
-            IsGlobalResizeGuideVisible = true;
-        }
-
-        private void EmoteResizeThumb_DragDelta(object sender, DragDeltaEventArgs e)
-        {
-            if (activeResizeEmote == null)
-            {
-                return;
-            }
-
-            Point pointer = activeResizeContainer != null
-                ? Mouse.GetPosition(activeResizeContainer)
-                : new Point(resizeStartWidth + e.HorizontalChange, resizeStartHeight + e.VerticalChange);
-
-            double nextWidth = ResizePreviewWidth;
-            double nextHeight = ResizePreviewHeight;
-
-            if (string.Equals(activeResizeMode, "right", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(activeResizeMode, "corner", StringComparison.OrdinalIgnoreCase))
-            {
-                nextWidth = Math.Clamp(pointer.X, MinTileWidth, MaxTileWidth);
-            }
-
-            if (string.Equals(activeResizeMode, "bottom", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(activeResizeMode, "corner", StringComparison.OrdinalIgnoreCase))
-            {
-                nextHeight = Math.Clamp(pointer.Y, MinTileHeight, MaxTileHeight);
-            }
-
-            ResizePreviewWidth = nextWidth;
-            ResizePreviewHeight = nextHeight;
-        }
-
-        private void EmoteResizeThumb_DragCompleted(object sender, DragCompletedEventArgs e)
-        {
-            if (activeResizeEmote == null)
-            {
-                return;
-            }
-
-            EmoteTileWidth = ResizePreviewWidth;
-            EmoteTileHeight = ResizePreviewHeight;
-            SaveFile.Data.CharacterCreatorEmoteTileWidth = EmoteTileWidth;
-            SaveFile.Data.CharacterCreatorEmoteTileHeight = EmoteTileHeight;
-            IsGlobalResizeGuideVisible = false;
-            activeResizeEmote = null;
-            activeResizeContainer = null;
-            activeResizeMode = string.Empty;
-            SaveFile.Save();
         }
 
         private void RenameEmoteMenuItem_Click(object sender, RoutedEventArgs e)
@@ -10933,6 +12039,83 @@ namespace OceanyaClient
             File.WriteAllLines(charIniPath, lines, Encoding.UTF8);
         }
 
+        private static string CreateStagingMountPath(string targetMountPath)
+        {
+            string stagingRoot = Path.Combine(targetMountPath, ".oceanya_character_edit_staging_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(stagingRoot);
+            return stagingRoot;
+        }
+
+        private static void ReplaceCharacterFolderFromStaging(
+            string stagedCharacterDirectory,
+            string originalCharacterDirectory,
+            string targetCharacterDirectory)
+        {
+            string normalizedStaged = NormalizePathForCompare(stagedCharacterDirectory);
+            string normalizedOriginal = NormalizePathForCompare(originalCharacterDirectory);
+            string normalizedTarget = NormalizePathForCompare(targetCharacterDirectory);
+
+            if (!Directory.Exists(normalizedStaged))
+            {
+                throw new DirectoryNotFoundException("Staged character directory does not exist: " + normalizedStaged);
+            }
+
+            if (!Directory.Exists(normalizedOriginal))
+            {
+                throw new DirectoryNotFoundException("Original character directory does not exist: " + normalizedOriginal);
+            }
+
+            string targetParent = Path.GetDirectoryName(normalizedTarget) ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(targetParent))
+            {
+                throw new InvalidOperationException("Target character parent directory is invalid.");
+            }
+
+            Directory.CreateDirectory(targetParent);
+            if (!string.Equals(normalizedTarget, normalizedOriginal, StringComparison.OrdinalIgnoreCase)
+                && Directory.Exists(normalizedTarget))
+            {
+                throw new IOException("Target character directory already exists: " + normalizedTarget);
+            }
+
+            string backupPath = normalizedOriginal + ".oceanya_edit_backup_" + DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+            bool backupMoved = false;
+            try
+            {
+                Directory.Move(normalizedOriginal, backupPath);
+                backupMoved = true;
+
+                Directory.Move(normalizedStaged, normalizedTarget);
+                Directory.Delete(backupPath, recursive: true);
+            }
+            catch
+            {
+                if (backupMoved && !Directory.Exists(normalizedOriginal) && Directory.Exists(backupPath))
+                {
+                    Directory.Move(backupPath, normalizedOriginal);
+                }
+
+                throw;
+            }
+            finally
+            {
+                string? stagingMountRoot = Path.GetDirectoryName(Path.GetDirectoryName(normalizedStaged) ?? string.Empty);
+                if (!string.IsNullOrWhiteSpace(stagingMountRoot)
+                    && Directory.Exists(stagingMountRoot)
+                    && Path.GetFileName(stagingMountRoot).StartsWith(".oceanya_character_edit_staging_", StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        Directory.Delete(stagingMountRoot, recursive: true);
+                    }
+                    catch
+                    {
+                        // ignored
+                    }
+                }
+            }
+        }
+
         private static async Task SetGenerateSubtitleAsync(string subtitle)
         {
             WaitForm.SetSubtitle(subtitle);
@@ -11006,6 +12189,7 @@ namespace OceanyaClient
             }
 
             StopBlipPreview();
+            EndInternalEmoteReorderDrag(commit: false);
             StopFileOrganizationAudioPreview();
             ClearFileOrganizationPreviewPlayers();
             StopAllEmotePreviewPlayers();
@@ -11075,7 +12259,7 @@ namespace OceanyaClient
 
         private async void GenerateButton_Click(object sender, RoutedEventArgs e)
         {
-            await WaitForm.ShowFormAsync("Generating character folder...", this);
+            await WaitForm.ShowFormAsync(isEditMode ? "Applying character folder edits..." : "Generating character folder...", this);
             string? successCharacterDirectory = null;
             Exception? generationException = null;
             void ShowBlockingGenerateMessage(string text, string title, MessageBoxImage image)
@@ -11110,6 +12294,40 @@ namespace OceanyaClient
                 if (string.IsNullOrWhiteSpace(mountPath))
                 {
                     ShowBlockingGenerateMessage("No valid mount path is available.", "Invalid Input", MessageBoxImage.Warning);
+                    return;
+                }
+
+                string targetCharacterDirectory = Path.Combine(mountPath, "characters", folderName);
+                if (isEditMode)
+                {
+                    if (string.IsNullOrWhiteSpace(originalEditCharacterDirectoryPath) || !Directory.Exists(originalEditCharacterDirectoryPath))
+                    {
+                        ShowBlockingGenerateMessage(
+                            "The original character folder no longer exists on disk. Reload it from the visualizer first.",
+                            "Invalid Edit Source",
+                            MessageBoxImage.Warning);
+                        return;
+                    }
+
+                    bool targetIsOriginal = string.Equals(
+                        NormalizePathForCompare(targetCharacterDirectory),
+                        NormalizePathForCompare(originalEditCharacterDirectoryPath),
+                        StringComparison.OrdinalIgnoreCase);
+                    if (!targetIsOriginal && Directory.Exists(targetCharacterDirectory))
+                    {
+                        ShowBlockingGenerateMessage(
+                            $"Target folder already exists:\n{targetCharacterDirectory}\n\nChoose another folder name/mount path.",
+                            "Invalid Target",
+                            MessageBoxImage.Warning);
+                        return;
+                    }
+                }
+                else if (Directory.Exists(targetCharacterDirectory))
+                {
+                    ShowBlockingGenerateMessage(
+                        $"Folder already exists:\n{targetCharacterDirectory}\n\nChoose a different folder name.",
+                        "Invalid Target",
+                        MessageBoxImage.Warning);
                     return;
                 }
 
@@ -11231,24 +12449,35 @@ namespace OceanyaClient
                     project.Gender = project.Blips;
                 }
 
-                await SetGenerateSubtitleAsync("Creating character folder and writing char.ini...");
+                string actualMountPath = project.MountPath;
+                string workingDirectory;
+                if (isEditMode)
+                {
+                    actualMountPath = CreateStagingMountPath(mountPath);
+                    project.MountPath = actualMountPath;
+                }
+
+                await SetGenerateSubtitleAsync(isEditMode
+                    ? "Building staged edited folder..."
+                    : "Creating character folder and writing char.ini...");
                 string characterDirectory = AOCharacterFileCreatorBuilder.CreateCharacterFolder(project);
+                workingDirectory = characterDirectory;
 
                 await SetGenerateSubtitleAsync("Copying emote assets (Images/Sounds/emotions)...");
-                CopyEmoteAssets(characterDirectory);
+                CopyEmoteAssets(workingDirectory);
                 await SetGenerateSubtitleAsync("Copying character icon...");
-                CopyCharacterIconAsset(characterDirectory);
+                CopyCharacterIconAsset(workingDirectory);
                 await SetGenerateSubtitleAsync("Copying shout assets (root special case)...");
-                CopyShoutAssets(characterDirectory);
+                CopyShoutAssets(workingDirectory);
                 await SetGenerateSubtitleAsync("Applying file organization extras...");
-                CopyExternalOrganizationEntries(characterDirectory);
-                CleanupEmptyStandardAssetFolders(characterDirectory);
+                CopyExternalOrganizationEntries(workingDirectory);
+                CleanupEmptyStandardAssetFolders(workingDirectory);
 
                 if (usingCustomBlipFile)
                 {
                     await SetGenerateSubtitleAsync("Copying custom blip file...");
                     string blipDefault = $"blips/{Path.GetFileName(selectedCustomBlipSourcePath)}";
-                    CopyAssetToOrganizedPath(selectedCustomBlipSourcePath, characterDirectory, "blip:custom", blipDefault);
+                    CopyAssetToOrganizedPath(selectedCustomBlipSourcePath, workingDirectory, "blip:custom", blipDefault);
                 }
 
                 bool hasCustomShoutFiles = selectedShoutVisualSourcePaths.ContainsKey("custom")
@@ -11257,7 +12486,7 @@ namespace OceanyaClient
                 if (hasCustomShoutFiles || !string.IsNullOrWhiteSpace(customShoutName))
                 {
                     await SetGenerateSubtitleAsync("Updating custom shout settings...");
-                    AddOrUpdateShoutsCustomName(Path.Combine(characterDirectory, "char.ini"), customShoutName);
+                    AddOrUpdateShoutsCustomName(Path.Combine(workingDirectory, "char.ini"), customShoutName);
                 }
 
                 if (!string.IsNullOrWhiteSpace(selectedRealizationSourcePath)
@@ -11269,12 +12498,27 @@ namespace OceanyaClient
                     await SetGenerateSubtitleAsync("Copying realization sound (root special case)...");
                     string extension = Path.GetExtension(selectedRealizationSourcePath);
                     string realizationDefault = "realization" + extension;
-                    CopyAssetToOrganizedPath(selectedRealizationSourcePath, characterDirectory, "realization:custom", realizationDefault);
+                    CopyAssetToOrganizedPath(selectedRealizationSourcePath, workingDirectory, "realization:custom", realizationDefault);
 
                     string sanitizedFolder = SanitizeFolderNameForRelativePath(folderName);
                     string realizationRelative = ResolveOutputPathForAsset("realization:custom", realizationDefault, isFolder: false);
                     string realizationToken = $"../../characters/{sanitizedFolder}/{RemoveExtensionFromRelativePath(realizationRelative)}";
-                    AddOrUpdateOptionsValue(Path.Combine(characterDirectory, "char.ini"), "realization", realizationToken);
+                    AddOrUpdateOptionsValue(Path.Combine(workingDirectory, "char.ini"), "realization", realizationToken);
+                }
+
+                if (isEditMode)
+                {
+                    await SetGenerateSubtitleAsync("Replacing original character folder...");
+                    ReplaceCharacterFolderFromStaging(
+                        stagedCharacterDirectory: workingDirectory,
+                        originalCharacterDirectory: originalEditCharacterDirectoryPath,
+                        targetCharacterDirectory: targetCharacterDirectory);
+                    editApplyCompleted = true;
+                    successCharacterDirectory = targetCharacterDirectory;
+                }
+                else
+                {
+                    successCharacterDirectory = workingDirectory;
                 }
 
                 await SetGenerateSubtitleAsync("Refreshing character index...");
@@ -11287,12 +12531,15 @@ namespace OceanyaClient
                     CustomConsole.Warning("Character folder creation succeeded, but character refresh failed.", ex);
                 }
 
-                StatusTextBlock.Text = "Created character folder: " + characterDirectory;
-                successCharacterDirectory = characterDirectory;
+                StatusTextBlock.Text = isEditMode
+                    ? "Edited character folder: " + successCharacterDirectory
+                    : "Created character folder: " + successCharacterDirectory;
             }
             catch (Exception ex)
             {
-                CustomConsole.Error("Failed to create AO character folder.", ex);
+                CustomConsole.Error(isEditMode
+                    ? "Failed to edit AO character folder."
+                    : "Failed to create AO character folder.", ex);
                 generationException = ex;
             }
             finally
@@ -11302,7 +12549,12 @@ namespace OceanyaClient
 
             if (generationException != null)
             {
-                OceanyaMessageBox.Show(this, "Failed to create character folder:\n" + generationException.Message, "Creation Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                OceanyaMessageBox.Show(
+                    this,
+                    (isEditMode ? "Failed to edit character folder:\n" : "Failed to create character folder:\n") + generationException.Message,
+                    isEditMode ? "Edit Error" : "Creation Error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
                 return;
             }
 
@@ -11311,7 +12563,8 @@ namespace OceanyaClient
                 lastCommittedStateFingerprint = ComputeCurrentStateFingerprint();
                 OceanyaMessageBox.Show(
                     this,
-                    "Character folder created successfully:\n" + successCharacterDirectory,
+                    (isEditMode ? "Character folder edited successfully:\n" : "Character folder created successfully:\n")
+                    + successCharacterDirectory,
                     "AO Character File Creator",
                     MessageBoxButton.OK,
                     MessageBoxImage.Information);
@@ -11415,6 +12668,13 @@ namespace OceanyaClient
 
             if (e.Key == Key.Escape)
             {
+                if (isInternalEmoteReorderDragInProgress)
+                {
+                    EndInternalEmoteReorderDrag(commit: true);
+                    e.Handled = true;
+                    return;
+                }
+
                 if (!ConfirmCloseIfUncommitted())
                 {
                     e.Handled = true;
@@ -11506,6 +12766,85 @@ namespace OceanyaClient
         public CreatorRect rcMonitor;
         public CreatorRect rcWork;
         public int dwFlags;
+    }
+
+    internal sealed class IniDocument
+    {
+        public Dictionary<string, List<IniEntry>> Sections { get; } =
+            new Dictionary<string, List<IniEntry>>(StringComparer.OrdinalIgnoreCase);
+
+        public static IniDocument Load(string path)
+        {
+            IniDocument document = new IniDocument();
+            string currentSection = string.Empty;
+            foreach (string rawLine in File.ReadLines(path))
+            {
+                string line = rawLine.Trim();
+                if (string.IsNullOrWhiteSpace(line) || line.StartsWith(";", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (line.StartsWith("[", StringComparison.Ordinal) && line.EndsWith("]", StringComparison.Ordinal))
+                {
+                    currentSection = line[1..^1].Trim();
+                    _ = document.GetEntries(currentSection);
+                    continue;
+                }
+
+                int separator = line.IndexOf('=');
+                if (separator <= 0)
+                {
+                    continue;
+                }
+
+                string key = line[..separator].Trim();
+                string value = line[(separator + 1)..].Trim();
+                document.GetEntries(currentSection).Add(new IniEntry(key, value));
+            }
+
+            return document;
+        }
+
+        public List<IniEntry> GetEntries(string sectionName)
+        {
+            string key = (sectionName ?? string.Empty).Trim();
+            if (!Sections.TryGetValue(key, out List<IniEntry>? entries))
+            {
+                entries = new List<IniEntry>();
+                Sections[key] = entries;
+            }
+
+            return entries;
+        }
+
+        public bool TryGetLatestValue(string sectionName, string key, out string? value)
+        {
+            value = null;
+            List<IniEntry> entries = GetEntries(sectionName);
+            for (int i = entries.Count - 1; i >= 0; i--)
+            {
+                if (string.Equals(entries[i].Key, key, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = entries[i].Value;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    internal readonly struct IniEntry
+    {
+        public IniEntry(string key, string value)
+        {
+            Key = key ?? string.Empty;
+            Value = value ?? string.Empty;
+        }
+
+        public string Key { get; }
+        public string Value { get; }
     }
 
     public sealed class CharacterCreationEmoteViewModel : INotifyPropertyChanged

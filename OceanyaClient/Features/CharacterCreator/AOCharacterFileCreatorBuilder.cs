@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 
 namespace OceanyaClient.Features.CharacterCreator
@@ -80,6 +81,7 @@ namespace OceanyaClient.Features.CharacterCreator
         private const string GeneratorReadme =
             "This character folder was originally created with Oceanya Client's \"AO Character File Creator\", " +
             "DM Scorpio2#3602 on discord if you are interested";
+        private static readonly string OceanyaVersionToken = ResolveOceanyaVersionToken();
 
         public static string BuildCharIni(CharacterCreationProject project)
         {
@@ -113,7 +115,7 @@ namespace OceanyaClient.Features.CharacterCreator
                 entries.Add(new KeyValuePair<string, string>(key.Trim(), value?.Trim() ?? string.Empty));
             }
 
-            AddEntry("version", "major", "1");
+            AddEntry("version", "major", OceanyaVersionToken);
 
             AddEntry("Options", "name", FirstNonEmpty(project.Name, project.CharacterFolderName));
             AddEntry("Options", "showname", FirstNonEmpty(project.ShowName, project.CharacterFolderName));
@@ -408,6 +410,33 @@ namespace OceanyaClient.Features.CharacterCreator
             }
 
             return safeSegments.Count == 0 ? string.Empty : Path.Combine(safeSegments.ToArray());
+        }
+
+        private static string ResolveOceanyaVersionToken()
+        {
+            try
+            {
+                Assembly assembly = typeof(AOCharacterFileCreatorBuilder).Assembly;
+                AssemblyInformationalVersionAttribute? informationalVersionAttribute =
+                    assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>();
+                string informational = informationalVersionAttribute?.InformationalVersion?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(informational))
+                {
+                    return informational;
+                }
+
+                Version? version = assembly.GetName().Version;
+                if (version != null)
+                {
+                    return $"{version.Major}.{Math.Max(0, version.Minor)}";
+                }
+            }
+            catch
+            {
+                // ignored
+            }
+
+            return "3.0";
         }
     }
 }

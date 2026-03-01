@@ -27,6 +27,8 @@ namespace OceanyaClient
     /// </summary>
     public partial class CharacterEmoteVisualizerWindow : OceanyaWindowContentControl
     {
+        private const double MinimumWindowWidth = 900;
+        private const double MinimumWindowHeight = 560;
         private const string FallbackFolderPackUri =
             "pack://application:,,,/OceanyaClient;component/Resources/Buttons/smallFolder.png";
 
@@ -140,6 +142,8 @@ namespace OceanyaClient
         {
             InitializeComponent();
             Title = "Character Emote Visualizer";
+            MinWidth = Math.Max(MinWidth, MinimumWindowWidth);
+            MinHeight = Math.Max(MinHeight, MinimumWindowHeight);
             SourceInitialized += Window_SourceInitialized;
             StateChanged += Window_StateChanged;
             Closed += Window_Closed;

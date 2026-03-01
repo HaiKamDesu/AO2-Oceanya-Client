@@ -2222,6 +2222,7 @@ namespace OceanyaClient
                 ICollectionView view = GetOrCreateItemsView();
                 view.Refresh();
                 UpdateSummaryText();
+                RequestProgressiveImageLoadReprioritization();
             }));
         }
 
@@ -2645,6 +2646,7 @@ namespace OceanyaClient
             ICollectionView view = GetOrCreateItemsView();
             view.Refresh();
             UpdateSummaryText();
+            RequestProgressiveImageLoadReprioritization();
         }
 
         private async Task RefreshItemsAfterTagFilterChangeAsync()
@@ -2660,6 +2662,7 @@ namespace OceanyaClient
                 view.Refresh();
                 UpdateSummaryText();
                 await Dispatcher.Yield(DispatcherPriority.Background);
+                RequestProgressiveImageLoadReprioritization();
             }
             finally
             {
@@ -2797,6 +2800,7 @@ namespace OceanyaClient
             view.Refresh();
             FolderListView.Items.Refresh();
             UpdateSummaryText();
+            RequestProgressiveImageLoadReprioritization();
         }
 
         private void FolderListView_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
@@ -3007,6 +3011,16 @@ namespace OceanyaClient
             setCharacterMenuItem.Click += (_, _) => setCharacterInClient?.Invoke(item);
             menu.Items.Add(setCharacterMenuItem);
 
+            MenuItem editCharacterFolderMenuItem = new MenuItem
+            {
+                Header = "Edit character folder",
+                IsEnabled = !string.IsNullOrWhiteSpace(item.DirectoryPath)
+                    && Directory.Exists(item.DirectoryPath)
+                    && File.Exists(item.CharIniPath)
+            };
+            editCharacterFolderMenuItem.Click += async (_, _) => await OpenCharacterFolderInCreatorAsync(item);
+            menu.Items.Add(editCharacterFolderMenuItem);
+
             AddContextCategoryHeader(menu, "Character View", addLeadingSeparator: true);
 
             MenuItem openCharIniMenuItem = new MenuItem
@@ -3062,6 +3076,49 @@ namespace OceanyaClient
             menu.Items.Add(deleteCharacterFolderMenuItem);
 
             return menu;
+        }
+
+        private async Task OpenCharacterFolderInCreatorAsync(FolderVisualizerItem item)
+        {
+            if (item == null)
+            {
+                return;
+            }
+
+            string directoryPath = item.DirectoryPath?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(directoryPath) || !Directory.Exists(directoryPath))
+            {
+                OceanyaMessageBox.Show(
+                    this,
+                    "Character folder was not found on disk.",
+                    "Edit Character Folder",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            AOCharacterFileCreatorWindow creator = new AOCharacterFileCreatorWindow();
+            if (!creator.TryLoadCharacterFolderForEditing(directoryPath, out string errorMessage))
+            {
+                OceanyaMessageBox.Show(
+                    this,
+                    "Could not open the selected character in the AO Character File Creator.\n"
+                    + (string.IsNullOrWhiteSpace(errorMessage) ? "Unknown error." : errorMessage),
+                    "Edit Character Folder",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            Window editorWindow = OceanyaWindowManager.CreateWindow(creator);
+            editorWindow.Owner = this;
+            _ = editorWindow.ShowDialog();
+
+            if (creator.EditApplyCompleted)
+            {
+                await LoadCharacterItemsAsync(forceRebuild: true);
+                onAssetsRefreshed?.Invoke();
+            }
         }
 
         private void AddContextCategoryHeader(ContextMenu menu, string text, bool addLeadingSeparator)
@@ -3822,12 +3879,33 @@ namespace OceanyaClient
                 TryAddItemForProgressiveLoad(visibleItem, orderedItems, seenKeys);
             }
 
+            IReadOnlyList<FolderVisualizerItem> currentViewItems = GetCurrentViewItemsInOrder();
+            foreach (FolderVisualizerItem item in currentViewItems)
+            {
+                TryAddItemForProgressiveLoad(item, orderedItems, seenKeys);
+            }
+
             foreach (FolderVisualizerItem item in allItems)
             {
                 TryAddItemForProgressiveLoad(item, orderedItems, seenKeys);
             }
 
             return orderedItems;
+        }
+
+        private IReadOnlyList<FolderVisualizerItem> GetCurrentViewItemsInOrder()
+        {
+            ICollectionView view = GetOrCreateItemsView();
+            List<FolderVisualizerItem> ordered = new List<FolderVisualizerItem>();
+            foreach (object item in view)
+            {
+                if (item is FolderVisualizerItem typedItem)
+                {
+                    ordered.Add(typedItem);
+                }
+            }
+
+            return ordered;
         }
 
         private void TryAddItemForProgressiveLoad(

@@ -4,8 +4,8 @@
         xmlns:local="clr-namespace:OceanyaClient"
         Height="690"
         Width="980"
-        MinHeight="520"
-        MinWidth="760"
+        MinHeight="560"
+        MinWidth="900"
         Background="Transparent"
         Loaded="Window_Loaded"
         KeyDown="Window_KeyDown">
@@ -417,14 +417,14 @@
 
         <DataTemplate x:Key="IconTileTemplate">
             <Border x:Name="TileRootBorder"
-                    Width="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=TileWidth}"
-                    Height="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=TileHeight}"
-                    Margin="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=TileMargin}"
+                    Width="{Binding RelativeSource={RelativeSource AncestorType=local:CharacterEmoteVisualizerWindow}, Path=TileWidth}"
+                    Height="{Binding RelativeSource={RelativeSource AncestorType=local:CharacterEmoteVisualizerWindow}, Path=TileHeight}"
+                    Margin="{Binding RelativeSource={RelativeSource AncestorType=local:CharacterEmoteVisualizerWindow}, Path=TileMargin}"
                     Background="#1E262D38"
                     BorderBrush="#503B4659"
                     BorderThickness="1"
                     CornerRadius="4"
-                    Padding="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=TilePadding}">
+                    Padding="{Binding RelativeSource={RelativeSource AncestorType=local:CharacterEmoteVisualizerWindow}, Path=TilePadding}">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="16"/>
@@ -443,7 +443,7 @@
 
                     <Grid Grid.Row="1"
                           x:Name="WithPreanimGrid"
-                          Margin="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=InternalTileRowPadding}">
+                          Margin="{Binding RelativeSource={RelativeSource AncestorType=local:CharacterEmoteVisualizerWindow}, Path=InternalTileRowPadding}">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
@@ -463,7 +463,7 @@
 
                     <Grid Grid.Row="1"
                           x:Name="NoPreanimGrid"
-                          Margin="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=InternalTileRowPadding}"
+                          Margin="{Binding RelativeSource={RelativeSource AncestorType=local:CharacterEmoteVisualizerWindow}, Path=InternalTileRowPadding}"
                           Visibility="Collapsed">
                         <Viewbox Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center">
                             <Image Source="{Binding AnimationImage}" Stretch="Uniform"/>
@@ -473,9 +473,9 @@
                     <StackPanel Grid.Row="2"
                                 Orientation="Horizontal"
                                 VerticalAlignment="Bottom"
-                                Margin="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=InternalTileRowPadding}">
-                        <Image Width="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=IconSize}"
-                               Height="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=IconSize}"
+                                Margin="{Binding RelativeSource={RelativeSource AncestorType=local:CharacterEmoteVisualizerWindow}, Path=InternalTileRowPadding}">
+                        <Image Width="{Binding RelativeSource={RelativeSource AncestorType=local:CharacterEmoteVisualizerWindow}, Path=IconSize}"
+                               Height="{Binding RelativeSource={RelativeSource AncestorType=local:CharacterEmoteVisualizerWindow}, Path=IconSize}"
                                Source="{Binding IconImage}"
                                Stretch="Uniform"
                                Margin="0,0,6,0"/>
@@ -483,7 +483,7 @@
                                    Foreground="#FFF0F0F0"
                                    TextTrimming="CharacterEllipsis"
                                    VerticalAlignment="Center"
-                                   FontSize="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=TileNameFontSize}"/>
+                                   FontSize="{Binding RelativeSource={RelativeSource AncestorType=local:CharacterEmoteVisualizerWindow}, Path=TileNameFontSize}"/>
                     </StackPanel>
                 </Grid>
             </Border>
