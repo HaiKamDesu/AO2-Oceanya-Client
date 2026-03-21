@@ -17,6 +17,7 @@ namespace OceanyaClient.Components
         {
             public string Name { get; set; } = string.Empty;
             public string ImagePath { get; set; } = string.Empty;
+            public string Value { get; set; } = string.Empty;
         }
         #endregion
 
@@ -42,14 +43,14 @@ namespace OceanyaClient.Components
                 if (editableTextBox == null)
                 {
                     cboINISelect.Text = value;
-                    ConfirmSelection(value);
+                    ConfirmSelection(FindItemByExactText(value), value);
                     return;
                 }
 
                 var prevFocusable = editableTextBox.Focusable;
                 editableTextBox.Focusable = false;
                 cboINISelect.Text = value;
-                ConfirmSelection(value);
+                ConfirmSelection(FindItemByExactText(value), value);
                 editableTextBox.Focusable = prevFocusable;
             }
         }
@@ -117,7 +118,7 @@ namespace OceanyaClient.Components
             {
                 if (e.AddedItems[0] is DropdownItem item)
                 {
-                    ConfirmSelection(item.Name);
+                    ConfirmSelection(item, item.Name);
                 }
             }
         }
@@ -127,7 +128,8 @@ namespace OceanyaClient.Components
             cboINISelect.IsDropDownOpen = false;
             if (!isReadOnly && cboINISelect.Text != lastConfirmedText)
             {
-                ConfirmSelection(cboINISelect.Text);
+                DropdownItem? exactMatch = FindItemByExactText(cboINISelect.Text);
+                ConfirmSelection(exactMatch, cboINISelect.Text);
             }
         }
 
@@ -148,14 +150,13 @@ namespace OceanyaClient.Components
                 {
                     if (cboINISelect.SelectedItem is DropdownItem selectedItem)
                     {
-                        ConfirmSelection(selectedItem.Name);
+                        ConfirmSelection(selectedItem, selectedItem.Name);
                     }
                 }
                 else
                 {
-                    var match = allItems.FirstOrDefault(item =>
-                        item.Name.StartsWith(cboINISelect.Text, StringComparison.OrdinalIgnoreCase));
-                    ConfirmSelection(match != null ? match.Name : cboINISelect.Text);
+                    DropdownItem? match = FindItemByPrefixText(cboINISelect.Text);
+                    ConfirmSelection(match, match != null ? match.Name : cboINISelect.Text);
                 }
             }
         }
@@ -175,14 +176,13 @@ namespace OceanyaClient.Components
                 {
                     if (cboINISelect.SelectedItem is DropdownItem selectedItem)
                     {
-                        ConfirmSelection(selectedItem.Name);
+                        ConfirmSelection(selectedItem, selectedItem.Name);
                     }
                 }
                 else
                 {
-                    var match = allItems.FirstOrDefault(item =>
-                        item.Name.StartsWith(cboINISelect.Text, StringComparison.OrdinalIgnoreCase));
-                    ConfirmSelection(match != null ? match.Name : cboINISelect.Text);
+                    DropdownItem? match = FindItemByPrefixText(cboINISelect.Text);
+                    ConfirmSelection(match, match != null ? match.Name : cboINISelect.Text);
                 }
                 cboINISelect.IsDropDownOpen = false;
             }
@@ -250,11 +250,16 @@ namespace OceanyaClient.Components
         #endregion
 
         #region Methods
-        public void Add(string name, string imagePath)
+        public void Add(string name, string imagePath, string? value = null)
         {
             Application.Current.Dispatcher.Invoke(() =>
             {
-                allItems.Add(new DropdownItem { Name = name, ImagePath = imagePath });
+                allItems.Add(new DropdownItem
+                {
+                    Name = name,
+                    ImagePath = imagePath,
+                    Value = value ?? name
+                });
                 cboINISelect.ItemsSource = allItems;
             });
         }
@@ -330,38 +335,52 @@ namespace OceanyaClient.Components
             {
                 if (cboINISelect.SelectedItem is DropdownItem selectedItem)
                 {
-                    ConfirmSelection(selectedItem.Name);
+                    ConfirmSelection(selectedItem, selectedItem.Name);
                 }
             }
             else
             {
-                var match = allItems.FirstOrDefault(item =>
-                    item.Name.StartsWith(cboINISelect.Text, StringComparison.OrdinalIgnoreCase));
-                ConfirmSelection(match != null ? match.Name : cboINISelect.Text);
+                DropdownItem? match = FindItemByPrefixText(cboINISelect.Text);
+                ConfirmSelection(match, match != null ? match.Name : cboINISelect.Text);
             }
             cboINISelect.IsDropDownOpen = false;
         }
 
-        private void ConfirmSelection(string text)
+        private DropdownItem? FindItemByExactText(string text)
+        {
+            return allItems.FirstOrDefault(item =>
+                string.Equals(item.Name, text, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private DropdownItem? FindItemByPrefixText(string text)
+        {
+            return allItems.FirstOrDefault(item =>
+                item.Name.StartsWith(text ?? string.Empty, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private void ConfirmSelection(DropdownItem? selectedItem, string text)
         {
             isInternalUpdate = true;
             cboINISelect.IsDropDownOpen = false;
 
-            var selectedItem = allItems.FirstOrDefault(item =>
-                string.Equals(item.Name, text, StringComparison.OrdinalIgnoreCase));
-
+            string confirmedText;
+            string confirmedValue;
             if (selectedItem == null)
             {
                 SetSelectedItemImage("");
                 cboINISelect.Text = text;
+                confirmedText = cboINISelect.Text;
+                confirmedValue = cboINISelect.Text;
             }
             else
             {
                 SetSelectedItemImage(selectedItem.ImagePath);
                 cboINISelect.Text = selectedItem.Name;
+                confirmedText = selectedItem.Name;
+                confirmedValue = selectedItem.Value;
             }
 
-            lastConfirmedText = cboINISelect.Text;
+            lastConfirmedText = confirmedText;
 
             if (!isReadOnly && editableTextBox != null)
             {
@@ -371,10 +390,10 @@ namespace OceanyaClient.Components
 
             cboINISelect.Dispatcher.BeginInvoke(new Action(() =>
             {
+                cboINISelect.ItemsSource = allItems;
                 cboINISelect.SelectedItem = selectedItem;
                 isInternalUpdate = false;
-                cboINISelect.ItemsSource = allItems;
-                OnConfirm?.Invoke(this, cboINISelect.Text);
+                OnConfirm?.Invoke(this, confirmedValue);
             }), System.Windows.Threading.DispatcherPriority.Background);
         }
 

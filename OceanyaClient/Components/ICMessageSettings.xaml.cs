@@ -368,14 +368,13 @@ namespace OceanyaClient.Components
                 sfxDropdown.Clear();
                 sfxDropdown.Add("Default", "");
                 sfxDropdown.Add("Nothing", "");
-                if (File.Exists(ini.SoundListPath))
-                {
-                    var sfxLines = File.ReadAllLines(ini.SoundListPath);
 
-                    foreach (var sfx in sfxLines)
-                    {
-                        sfxDropdown.Add(sfx, "");
-                    }
+                IReadOnlyList<AO2SoundListEntry> soundListEntries = AO2SoundList.LoadEntries(
+                    ini?.DirectoryPath ?? string.Empty,
+                    Globals.BaseFolders);
+                foreach (AO2SoundListEntry soundListEntry in soundListEntries)
+                {
+                    sfxDropdown.Add(soundListEntry.DisplayText, "", soundListEntry.Value);
                 }
                 sfxDropdown.SelectedText = "Default";
             }

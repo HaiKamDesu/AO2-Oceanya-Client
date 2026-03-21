@@ -2637,14 +2637,16 @@ namespace OceanyaClient
 
             foreach (ExternalOrganizationEntry external in externalOrganizationEntries)
             {
+                bool isKnownSupportFile = !external.IsFolder
+                    && CharacterSupportFileCatalog.IsKnownSupportFilePath(external.RelativePath);
                 FileOrganizationEntryViewModel externalEntry = new FileOrganizationEntryViewModel
                 {
                     Name = Path.GetFileName(external.RelativePath.TrimEnd('/', '\\')),
                     RelativePath = external.RelativePath,
                     TypeText = external.IsFolder ? "Folder" : "File",
-                    StatusText = "UNUSED USER FILE",
+                    StatusText = isKnownSupportFile ? "Character support file" : "UNUSED USER FILE",
                     IsLocked = false,
-                    IsExternal = true,
+                    IsExternal = !isKnownSupportFile,
                     SourcePath = external.SourcePath,
                     IsFolder = external.IsFolder,
                     DefaultRelativePath = external.RelativePath

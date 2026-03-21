@@ -71,7 +71,7 @@ namespace OceanyaClient
             new[] { ".opus", ".ogg", ".mp3", ".wav" },
             StringComparer.OrdinalIgnoreCase);
         private static readonly HashSet<string> AllowedCharacterTopLevelFiles = new HashSet<string>(
-            new[] { "char.ini", "soundlist.ini", "sounds.ini", "iniswaps.ini", "char.txt", "design.txt", "soundlist.txt" },
+            CharacterSupportFileCatalog.KnownSupportFileNames,
             StringComparer.OrdinalIgnoreCase);
         private static readonly HashSet<string> IgnoredMetadataFiles = new HashSet<string>(
             new[] { "desktop.ini", "thumbs.db", ".ds_store" },
