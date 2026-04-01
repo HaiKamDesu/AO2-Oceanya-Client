@@ -1,5 +1,6 @@
 ﻿using System.Collections.Generic;
 using System.Windows;
+using System.Windows.Media;
 
 public static class WindowHelper
 {
@@ -28,6 +29,12 @@ public static class WindowHelper
             return;
         }
 
+        if (window.Owner != null && window.Owner.IsVisible)
+        {
+            CenterOnOwner(window, window.Owner);
+            return;
+        }
+
         int index = -1;
 
         window.Dispatcher.Invoke(() =>
@@ -41,10 +48,7 @@ public static class WindowHelper
             return;
         }
 
-        Window? ownerWindow = null;
-
-        // Retrieve ownerWindow safely
-        ownerWindow = windows[index - 1];
+        Window? ownerWindow = windows[index - 1];
 
         if (ownerWindow == null)
         {
@@ -52,45 +56,7 @@ public static class WindowHelper
             return;
         }
 
-        // Safely retrieve ownerWindow visibility and position
-        double ownerLeft = 0;
-        double ownerTop = 0;
-        double ownerWidth = 0;
-        double ownerHeight = 0;
-
-        ownerWindow.Dispatcher.Invoke(() =>
-        {
-            if (ownerWindow.IsVisible)
-            {
-                ownerWindow.UpdateLayout();
-                ownerWindow.Dispatcher.Invoke(() =>
-                {
-                    ownerHeight = ownerWindow.ActualHeight;
-                    ownerWidth = ownerWindow.ActualWidth;
-                    ownerLeft = ownerWindow.Left;
-                    ownerTop = ownerWindow.Top;
-                });
-            }
-        });
-
-        if (!ownerWindow.IsVisible || ownerWidth == 0 || ownerHeight == 0)
-        {
-            CenterOnScreen(window);
-            return;
-        }
-
-        // Finally, position your window safely on its thread:
-        window.Dispatcher.Invoke(() =>
-        {
-            window.WindowStartupLocation = WindowStartupLocation.Manual;
-            window.UpdateLayout();  // Force measurement
-
-            double ownerCenterX = ownerLeft + (ownerWidth / 2);
-            double ownerCenterY = ownerTop + (ownerHeight / 2);
-
-            window.Left = ownerCenterX - (window.ActualWidth / 2);
-            window.Top = ownerCenterY - (window.ActualHeight / 2);
-        });
+        CenterOnOwner(window, ownerWindow);
     }
 
     private static void CenterOnScreen(Window window)
@@ -105,6 +71,73 @@ public static class WindowHelper
 
             window.Left = (screenWidth - window.ActualWidth) / 2;
             window.Top = (screenHeight - window.ActualHeight) / 2;
+        });
+    }
+
+    private static void CenterOnOwner(Window window, Window ownerWindow)
+    {
+        double ownerLeft = 0;
+        double ownerTop = 0;
+        double ownerWidth = 0;
+        double ownerHeight = 0;
+
+        ownerWindow.Dispatcher.Invoke(() =>
+        {
+            if (!ownerWindow.IsVisible)
+            {
+                return;
+            }
+
+            ownerWindow.UpdateLayout();
+            double width = ownerWindow.ActualWidth > 0 ? ownerWindow.ActualWidth : ownerWindow.Width;
+            double height = ownerWindow.ActualHeight > 0 ? ownerWindow.ActualHeight : ownerWindow.Height;
+            Point topLeft = new Point(ownerWindow.Left, ownerWindow.Top);
+
+            try
+            {
+                Point screenPoint = ownerWindow.PointToScreen(new Point(0, 0));
+                PresentationSource? source = PresentationSource.FromVisual(ownerWindow);
+                if (source?.CompositionTarget != null)
+                {
+                    Matrix transform = source.CompositionTarget.TransformFromDevice;
+                    topLeft = transform.Transform(screenPoint);
+                }
+                else
+                {
+                    topLeft = screenPoint;
+                }
+            }
+            catch
+            {
+                Rect fallbackBounds = ownerWindow.WindowState == WindowState.Normal
+                    ? new Rect(ownerWindow.Left, ownerWindow.Top, width, height)
+                    : ownerWindow.RestoreBounds;
+                topLeft = new Point(fallbackBounds.Left, fallbackBounds.Top);
+                width = fallbackBounds.Width > 0 ? fallbackBounds.Width : width;
+                height = fallbackBounds.Height > 0 ? fallbackBounds.Height : height;
+            }
+
+            ownerLeft = topLeft.X;
+            ownerTop = topLeft.Y;
+            ownerWidth = width;
+            ownerHeight = height;
+        });
+
+        if (!ownerWindow.IsVisible || ownerWidth <= 0 || ownerHeight <= 0)
+        {
+            CenterOnScreen(window);
+            return;
+        }
+
+        window.Dispatcher.Invoke(() =>
+        {
+            window.WindowStartupLocation = WindowStartupLocation.Manual;
+            window.UpdateLayout();
+
+            double ownerCenterX = ownerLeft + (ownerWidth / 2);
+            double ownerCenterY = ownerTop + (ownerHeight / 2);
+            window.Left = ownerCenterX - (window.ActualWidth / 2);
+            window.Top = ownerCenterY - (window.ActualHeight / 2);
         });
     }
 

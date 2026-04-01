@@ -60,6 +60,10 @@
     <None Update="server.json">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Update="Features\GoogleDriveSync\google-drive-oauth.local.json"
+          Condition="Exists('Features\GoogleDriveSync\google-drive-oauth.local.json')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Update="Resources\ShoutDefaults\holdit_bubble.gif">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

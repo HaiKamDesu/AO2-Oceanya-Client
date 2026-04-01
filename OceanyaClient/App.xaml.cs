@@ -187,6 +187,28 @@ public partial class App : Application
         {
             window.Width = Math.Max(window.MinWidth, state.Width);
             window.Height = Math.Max(window.MinHeight, state.Height);
+
+            if (state.Left.HasValue
+                && state.Top.HasValue
+                && IsFinite(state.Left.Value)
+                && IsFinite(state.Top.Value))
+            {
+                window.WindowStartupLocation = WindowStartupLocation.Manual;
+                Rect virtualBounds = new Rect(
+                    SystemParameters.VirtualScreenLeft,
+                    SystemParameters.VirtualScreenTop,
+                    SystemParameters.VirtualScreenWidth,
+                    SystemParameters.VirtualScreenHeight);
+                double maxLeft = virtualBounds.Right - Math.Max(window.MinWidth, state.Width);
+                double maxTop = virtualBounds.Bottom - Math.Max(window.MinHeight, state.Height);
+                window.Left = Clamp(state.Left.Value, virtualBounds.Left, maxLeft);
+                window.Top = Clamp(state.Top.Value, virtualBounds.Top, maxTop);
+            }
+
+            if (state.IsMaximized)
+            {
+                window.WindowState = WindowState.Maximized;
+            }
         }
 
         if (persistedWindows.Add(window))
@@ -217,7 +239,7 @@ public partial class App : Application
             Height = bounds.Height,
             Left = bounds.X,
             Top = bounds.Y,
-            IsMaximized = false
+            IsMaximized = window.WindowState == WindowState.Maximized
         };
         SaveFile.Save();
     }
@@ -227,5 +249,20 @@ public partial class App : Application
         string typeName = window.GetType().FullName ?? window.GetType().Name;
         string title = (window.Title ?? string.Empty).Trim();
         return string.IsNullOrWhiteSpace(title) ? typeName : $"{typeName}|{title}";
+    }
+
+    private static bool IsFinite(double value)
+    {
+        return !double.IsNaN(value) && !double.IsInfinity(value);
+    }
+
+    private static double Clamp(double value, double minimum, double maximum)
+    {
+        if (maximum < minimum)
+        {
+            return minimum;
+        }
+
+        return Math.Max(minimum, Math.Min(maximum, value));
     }
 }

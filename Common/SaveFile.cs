@@ -210,6 +210,8 @@ namespace OceanyaClient
         // Advanced feature flags and configs.
         public AdvancedFeatureFlagStore AdvancedFeatures { get; set; } = new AdvancedFeatureFlagStore();
         public DreddBackgroundOverlayOverrideConfig DreddBackgroundOverlayOverride { get; set; } = new DreddBackgroundOverlayOverrideConfig();
+        public FileHivemindSettings FileHivemind { get; set; } = new FileHivemindSettings();
+        public GoogleDriveSyncSettings GoogleDriveSync { get; set; } = new GoogleDriveSyncSettings();
 
 
         public string OOCName { get; set; } = "";
@@ -313,9 +315,15 @@ namespace OceanyaClient
         private static void NormalizeLoadedData(SaveData data)
         {
             data.StartupFunctionalityId = data.StartupFunctionalityId?.Trim() ?? string.Empty;
+            if (string.Equals(data.StartupFunctionalityId, "google_drive_sync", StringComparison.OrdinalIgnoreCase))
+            {
+                data.StartupFunctionalityId = "oceanyan_file_hivemind";
+            }
+
             if (!string.Equals(data.StartupFunctionalityId, "gm_multi_client", StringComparison.OrdinalIgnoreCase)
                 && !string.Equals(data.StartupFunctionalityId, "character_database_viewer", StringComparison.OrdinalIgnoreCase)
-                && !string.Equals(data.StartupFunctionalityId, "character_file_creator", StringComparison.OrdinalIgnoreCase))
+                && !string.Equals(data.StartupFunctionalityId, "character_file_creator", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(data.StartupFunctionalityId, "oceanyan_file_hivemind", StringComparison.OrdinalIgnoreCase))
             {
                 data.StartupFunctionalityId = "gm_multi_client";
             }
@@ -327,9 +335,13 @@ namespace OceanyaClient
                 ? new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
                 : new Dictionary<string, bool>(data.AdvancedFeatures.EnabledFeatures, StringComparer.OrdinalIgnoreCase);
             data.DreddBackgroundOverlayOverride ??= new DreddBackgroundOverlayOverrideConfig();
+            data.FileHivemind ??= new FileHivemindSettings();
+            data.GoogleDriveSync ??= new GoogleDriveSyncSettings();
             data.DreddBackgroundOverlayOverride.OverlayDatabase ??= new List<DreddOverlayEntry>();
             data.DreddBackgroundOverlayOverride.MutationCache ??= new List<DreddOverlayMutationRecord>();
             data.DreddBackgroundOverlayOverride.SelectedOverlayName ??= string.Empty;
+            NormalizeGoogleDriveSettings(data.GoogleDriveSync);
+            NormalizeFileHivemindSettings(data);
 
             // Cleanup malformed overlay entries.
             data.DreddBackgroundOverlayOverride.OverlayDatabase = data.DreddBackgroundOverlayOverride.OverlayDatabase
@@ -972,6 +984,123 @@ namespace OceanyaClient
                         }
                     }
                 }
+            };
+        }
+
+        private static void NormalizeGoogleDriveSettings(GoogleDriveSyncSettings settings)
+        {
+            settings.OAuthClientId = string.Empty;
+            settings.OAuthClientSecret = string.Empty;
+            settings.TokenStoreKey = string.IsNullOrWhiteSpace(settings.TokenStoreKey)
+                ? Guid.NewGuid().ToString("N")
+                : settings.TokenStoreKey.Trim();
+            settings.LastSignedInEmail = settings.LastSignedInEmail?.Trim() ?? string.Empty;
+            settings.LastSignedInDisplayName = settings.LastSignedInDisplayName?.Trim() ?? string.Empty;
+            settings.RemoteFolderId = settings.RemoteFolderId?.Trim() ?? string.Empty;
+            settings.RemoteFolderName = settings.RemoteFolderName?.Trim() ?? string.Empty;
+            settings.LocalFolderPath = settings.LocalFolderPath?.Trim() ?? string.Empty;
+        }
+
+        private static void NormalizeFileHivemindSettings(SaveData data)
+        {
+            data.FileHivemind.Connections ??= new List<FileHivemindConnectionProfile>();
+            data.FileHivemind.SelectedConnectionId = data.FileHivemind.SelectedConnectionId?.Trim() ?? string.Empty;
+            bool migratedLegacyProfile = false;
+
+            if (data.FileHivemind.Connections.Count == 0 && HasMeaningfulGoogleDriveSyncSettings(data.GoogleDriveSync))
+            {
+                FileHivemindConnectionProfile migratedProfile = FileHivemindConnectionProfile.CreateGoogleDriveProfile();
+                migratedProfile.DisplayName = BuildDefaultConnectionDisplayName(data.GoogleDriveSync);
+                migratedProfile.GoogleDrive = CloneGoogleDriveSettings(data.GoogleDriveSync);
+                data.FileHivemind.Connections.Add(migratedProfile);
+                migratedLegacyProfile = true;
+            }
+
+            data.FileHivemind.Connections = data.FileHivemind.Connections
+                .Where(connection => connection != null)
+                .Select(connection =>
+                {
+                    connection.Id = string.IsNullOrWhiteSpace(connection.Id)
+                        ? Guid.NewGuid().ToString("N")
+                        : connection.Id.Trim();
+                    connection.ProviderId = string.IsNullOrWhiteSpace(connection.ProviderId)
+                        ? FileHivemindProviderIds.GoogleDrive
+                        : connection.ProviderId.Trim();
+                    connection.DisplayName = connection.DisplayName?.Trim() ?? string.Empty;
+                    connection.GoogleDrive ??= new GoogleDriveSyncSettings();
+                    NormalizeGoogleDriveSettings(connection.GoogleDrive);
+                    if (string.IsNullOrWhiteSpace(connection.DisplayName))
+                    {
+                        connection.DisplayName = BuildDefaultConnectionDisplayName(connection.GoogleDrive);
+                    }
+
+                    return connection;
+                })
+                .ToList();
+
+            HashSet<string> seenConnectionIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            data.FileHivemind.Connections = data.FileHivemind.Connections
+                .Where(connection => seenConnectionIds.Add(connection.Id))
+                .ToList();
+
+            if (!data.FileHivemind.Connections.Any(connection =>
+                    string.Equals(connection.Id, data.FileHivemind.SelectedConnectionId, StringComparison.OrdinalIgnoreCase)))
+            {
+                data.FileHivemind.SelectedConnectionId = data.FileHivemind.Connections.FirstOrDefault()?.Id ?? string.Empty;
+            }
+
+            if (migratedLegacyProfile || data.FileHivemind.Connections.Count > 0)
+            {
+                data.GoogleDriveSync = new GoogleDriveSyncSettings();
+                NormalizeGoogleDriveSettings(data.GoogleDriveSync);
+            }
+        }
+
+        private static bool HasMeaningfulGoogleDriveSyncSettings(GoogleDriveSyncSettings settings)
+        {
+            return !string.IsNullOrWhiteSpace(settings.LastSignedInEmail)
+                || !string.IsNullOrWhiteSpace(settings.LastSignedInDisplayName)
+                || !string.IsNullOrWhiteSpace(settings.RemoteFolderId)
+                || !string.IsNullOrWhiteSpace(settings.RemoteFolderName)
+                || !string.IsNullOrWhiteSpace(settings.LocalFolderPath);
+        }
+
+        private static string BuildDefaultConnectionDisplayName(GoogleDriveSyncSettings settings)
+        {
+            if (!string.IsNullOrWhiteSpace(settings.RemoteFolderName))
+            {
+                return settings.RemoteFolderName.Trim();
+            }
+
+            if (!string.IsNullOrWhiteSpace(settings.LastSignedInEmail))
+            {
+                return "Drive Connection (" + settings.LastSignedInEmail.Trim() + ")";
+            }
+
+            if (!string.IsNullOrWhiteSpace(settings.RemoteFolderId))
+            {
+                return "Drive " + settings.RemoteFolderId.Trim();
+            }
+
+            return "Google Drive Connection";
+        }
+
+        private static GoogleDriveSyncSettings CloneGoogleDriveSettings(GoogleDriveSyncSettings settings)
+        {
+            return new GoogleDriveSyncSettings
+            {
+                OAuthClientId = settings.OAuthClientId,
+                OAuthClientSecret = settings.OAuthClientSecret,
+                TokenStoreKey = settings.TokenStoreKey,
+                LastSignedInEmail = settings.LastSignedInEmail,
+                LastSignedInDisplayName = settings.LastSignedInDisplayName,
+                RemoteFolderId = settings.RemoteFolderId,
+                RemoteFolderName = settings.RemoteFolderName,
+                LocalFolderPath = settings.LocalFolderPath,
+                AutoAddMountPath = settings.AutoAddMountPath,
+                MirrorDeletes = settings.MirrorDeletes,
+                UseExistingMountPath = settings.UseExistingMountPath,
+                LastSyncUtc = settings.LastSyncUtc
             };
         }
 

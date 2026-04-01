@@ -154,6 +154,49 @@ namespace AOBot_Testing.Structures
             }
         }
 
+        public static bool TryRemoveCharacterFolderFromCache(
+            string? targetCharacterDirectoryPath,
+            string? characterName,
+            out bool removedAny,
+            out string errorMessage)
+        {
+            removedAny = false;
+            errorMessage = string.Empty;
+
+            try
+            {
+                EnsureCacheFilePath();
+                _ = FullList;
+
+                string normalizedTargetDirectory = NormalizePathForCompare(targetCharacterDirectoryPath ?? string.Empty);
+                string normalizedCharacterName = (characterName ?? string.Empty).Trim();
+
+                int removedCount = characterConfigs.RemoveAll(existing =>
+                    (!string.IsNullOrWhiteSpace(normalizedTargetDirectory)
+                        && string.Equals(
+                            NormalizePathForCompare(existing.DirectoryPath),
+                            normalizedTargetDirectory,
+                            StringComparison.OrdinalIgnoreCase))
+                    || (!string.IsNullOrWhiteSpace(normalizedCharacterName)
+                        && string.Equals(existing.Name, normalizedCharacterName, StringComparison.OrdinalIgnoreCase)));
+
+                removedAny = removedCount > 0;
+                if (removedAny)
+                {
+                    SaveToJson(cacheFile, characterConfigs);
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Error("Failed to remove character folder from cache.", ex);
+                errorMessage = ex.Message;
+                removedAny = false;
+                return false;
+            }
+        }
+
         static JsonSerializerOptions jsonOptions = new JsonSerializerOptions { WriteIndented = false };
 
         private static void EnsureCacheFilePath()

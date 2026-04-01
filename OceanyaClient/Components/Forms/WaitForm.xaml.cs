@@ -39,6 +39,8 @@ namespace OceanyaClient
             // Fixed size window
             Width = 300;
             Height = 120;
+            MinWidth = 300;
+            MinHeight = 120;
 
             // Set up window close event
             Closed += (s, e) =>
@@ -102,6 +104,7 @@ namespace OceanyaClient
         public static async Task ShowFormAsync(string message, Window owner)
         {
             _currentTitle = message;
+            _currentSubtitle = string.Empty;
             _ownerWindow = owner;
 
             // Start the UI thread if needed
@@ -121,6 +124,8 @@ namespace OceanyaClient
                 }
 
                 _instance.lblMessage.Text = message;
+                _instance.lblSubtitle.Text = string.Empty;
+                _instance.lblSubtitle.Visibility = Visibility.Collapsed;
 
                 // Adjust the window size based on the new message length
                 _instance.ResizeWindow();
@@ -132,34 +137,10 @@ namespace OceanyaClient
 
                     try
                     {
-                        _instance.WindowStartupLocation = WindowStartupLocation.Manual;
-
-                        // Safely retrieve ownerWindow visibility and position
-                        double ownerLeft = 0;
-                        double ownerTop = 0;
-                        double ownerWidth = 0;
-                        double ownerHeight = 0;
-
-                        owner.Dispatcher.Invoke(() =>
+                        if (!TryCenterRelativeToOwner(_instance, owner))
                         {
-                            if (owner.IsVisible)
-                            {
-                                owner.UpdateLayout();
-                                owner.Dispatcher.Invoke(() =>
-                                {
-                                    ownerHeight = owner.ActualHeight;
-                                    ownerWidth = owner.ActualWidth;
-                                    ownerLeft = owner.Left;
-                                    ownerTop = owner.Top;
-                                });
-                            }
-                        });
-                        Point ownerCenter = new Point(
-                            ownerLeft + (ownerWidth / 2),
-                            ownerTop + (ownerHeight / 2));
-
-                        _instance.Left = ownerCenter.X - (_instance.Width / 2);
-                        _instance.Top = ownerCenter.Y - (_instance.Height / 2);
+                            _instance.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+                        }
                     }
                     catch
                     {
@@ -200,6 +181,28 @@ namespace OceanyaClient
 
             // Allow some time for animation to complete
             await Task.Delay(600);
+
+            if (_formDispatcher == null)
+            {
+                return;
+            }
+
+            await _formDispatcher.InvokeAsync(() =>
+            {
+                if (_instance != null)
+                {
+                    try
+                    {
+                        _instance.Close();
+                    }
+                    catch
+                    {
+                        // Best-effort cleanup if the fade animation path did not close the wait form.
+                    }
+                }
+
+                Showing = false;
+            });
         }
 
         public static void CloseForm()
@@ -218,22 +221,27 @@ namespace OceanyaClient
             {
                 if (_instance != null && _instance.IsVisible)
                 {
-                    bool wasHidden = _instance.lblSubtitle.Visibility == Visibility.Collapsed;
-
                     if (!string.IsNullOrWhiteSpace(subtitle))
                     {
                         _instance.lblSubtitle.Text = subtitle;
                         _instance.lblSubtitle.Visibility = Visibility.Visible;
 
-                        // Resize only if subtitle was previously hidden
-                        if (wasHidden)
+                        // Re-measure every subtitle change because long sync messages can outgrow
+                        // the existing width/height even when the subtitle is already visible.
+                        _instance.ResizeWindow();
+                        if (_ownerWindow != null && _ownerWindow.IsVisible)
                         {
-                            _instance.ResizeWindow();
+                            TryCenterRelativeToOwner(_instance, _ownerWindow);
                         }
                     }
                     else
                     {
                         _instance.lblSubtitle.Visibility = Visibility.Collapsed;
+                        _instance.ResizeWindow();
+                        if (_ownerWindow != null && _ownerWindow.IsVisible)
+                        {
+                            TryCenterRelativeToOwner(_instance, _ownerWindow);
+                        }
                     }
                 }
             });
@@ -291,16 +299,14 @@ namespace OceanyaClient
 
         private void ResizeWindow()
         {
-            double padding = 60; // Additional space for margins
-            double minWidth = 240; // Minimum width for the window
-            double maxWidth = 600; // Maximum width for the window
+            double horizontalPadding = 72;
+            double baseVerticalSpace = 95;
+            double minWidth = 300;
+            double maxWidth = 760;
 
             double pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
 
-            // Define a default width, which is the maximum allowed
-            double availableWidth = maxWidth - padding;
-
-            // Ensure the width doesn't exceed maxWidth
+            double availableWidth = maxWidth - horizontalPadding;
             double newWidth = 0;
             double newHeight = 0;
 
@@ -343,11 +349,91 @@ namespace OceanyaClient
             }
 
             // Apply final sizes
-            this.Width = Math.Min(Math.Max(newWidth + padding, minWidth), maxWidth);
-            this.Height = newHeight + padding;
+            this.Width = Math.Min(Math.Max(newWidth + horizontalPadding, minWidth), maxWidth);
+            this.Height = Math.Max(MinHeight, newHeight + baseVerticalSpace);
         }
 
+        private static bool TryCenterRelativeToOwner(Window waitWindow, Window owner)
+        {
+            if (!TryGetOwnerBounds(owner, out Rect ownerBounds))
+            {
+                return false;
+            }
 
+            waitWindow.WindowStartupLocation = WindowStartupLocation.Manual;
+            Rect virtualBounds = new Rect(
+                SystemParameters.VirtualScreenLeft,
+                SystemParameters.VirtualScreenTop,
+                SystemParameters.VirtualScreenWidth,
+                SystemParameters.VirtualScreenHeight);
+            double desiredLeft = ownerBounds.Left + ((ownerBounds.Width - waitWindow.Width) / 2);
+            double desiredTop = ownerBounds.Top + ((ownerBounds.Height - waitWindow.Height) / 2);
+            waitWindow.Left = Clamp(desiredLeft, virtualBounds.Left, virtualBounds.Right - waitWindow.Width);
+            waitWindow.Top = Clamp(desiredTop, virtualBounds.Top, virtualBounds.Bottom - waitWindow.Height);
+            return true;
+        }
 
+        private static bool TryGetOwnerBounds(Window owner, out Rect bounds)
+        {
+            bounds = Rect.Empty;
+            Rect resolvedBounds = Rect.Empty;
+
+            try
+            {
+                owner.Dispatcher.Invoke(() =>
+                {
+                    owner.UpdateLayout();
+                    double width = owner.ActualWidth > 0 ? owner.ActualWidth : owner.Width;
+                    double height = owner.ActualHeight > 0 ? owner.ActualHeight : owner.Height;
+                    Point topLeft = new Point(owner.Left, owner.Top);
+
+                    try
+                    {
+                        Point screenPoint = owner.PointToScreen(new Point(0, 0));
+                        PresentationSource? source = PresentationSource.FromVisual(owner);
+                        if (source?.CompositionTarget != null)
+                        {
+                            Matrix transform = source.CompositionTarget.TransformFromDevice;
+                            topLeft = transform.Transform(screenPoint);
+                        }
+                        else
+                        {
+                            topLeft = screenPoint;
+                        }
+                    }
+                    catch
+                    {
+                        Rect fallbackBounds = owner.WindowState == WindowState.Normal
+                            ? new Rect(owner.Left, owner.Top, width, height)
+                            : owner.RestoreBounds;
+                        topLeft = new Point(fallbackBounds.Left, fallbackBounds.Top);
+                        width = fallbackBounds.Width > 0 ? fallbackBounds.Width : width;
+                        height = fallbackBounds.Height > 0 ? fallbackBounds.Height : height;
+                    }
+
+                    if (width > 0 && height > 0)
+                    {
+                        resolvedBounds = new Rect(topLeft.X, topLeft.Y, width, height);
+                    }
+                });
+            }
+            catch
+            {
+                return false;
+            }
+
+            bounds = resolvedBounds;
+            return bounds.Width > 0 && bounds.Height > 0;
+        }
+
+        private static double Clamp(double value, double minimum, double maximum)
+        {
+            if (maximum < minimum)
+            {
+                return minimum;
+            }
+
+            return Math.Max(minimum, Math.Min(maximum, value));
+        }
     }
 }

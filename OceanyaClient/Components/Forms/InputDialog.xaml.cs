@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media.Imaging;
@@ -107,20 +108,53 @@ namespace OceanyaClient
         /// </summary>
         public static string Show(string prompt, string title = "Input Required", string defaultText = "")
         {
+            return Show(ResolveDefaultOwner(), prompt, title, defaultText);
+        }
+
+        /// <summary>
+        /// Shows the input dialog with an owner and returns the entered text.
+        /// </summary>
+        public static string Show(Window? owner, string prompt, string title = "Input Required", string defaultText = "")
+        {
             InputDialog content = new InputDialog(prompt, title, defaultText);
             OceanyaWindowPresentationOptions options = new OceanyaWindowPresentationOptions
             {
+                Owner = owner,
                 Title = title,
                 HeaderText = title.ToUpperInvariant(),
                 Width = 400,
                 Height = 200,
-                WindowStartupLocation = WindowStartupLocation.CenterScreen,
+                WindowStartupLocation = owner != null ? WindowStartupLocation.CenterOwner : WindowStartupLocation.CenterScreen,
                 IsUserResizeEnabled = false,
                 Icon = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/OceanyaO.ico"))
             };
 
             bool? result = OceanyaWindowManager.ShowDialog(content, options);
             return result == true ? content.UserInput : string.Empty;
+        }
+
+        private static Window? ResolveDefaultOwner()
+        {
+            if (Application.Current == null)
+            {
+                return null;
+            }
+
+            Window? activeWindow = Application.Current.Windows
+                .OfType<Window>()
+                .FirstOrDefault(window => window.IsActive && window.IsVisible);
+            if (activeWindow != null)
+            {
+                return activeWindow;
+            }
+
+            Window? mainWindow = Application.Current.MainWindow;
+            if (mainWindow != null && mainWindow.IsVisible)
+            {
+                return mainWindow;
+            }
+
+            return Application.Current.Windows.OfType<Window>().FirstOrDefault(window => window.IsVisible);
         }
     }
 }

@@ -117,16 +117,34 @@ namespace OceanyaClient
                 selectedServerName);
 
             bool refreshRequested = RefreshInfoCheckBox.IsChecked == true;
-            bool refreshRequiredByCacheState = ClientAssetRefreshService.RequiresRefreshForCurrentEnvironment();
-            bool shouldRefreshAssets = refreshRequested || refreshRequiredByCacheState;
+            string forcedRefreshReason = string.Empty;
+            if (!refreshRequested)
+            {
+                forcedRefreshReason = ClientAssetRefreshService.GetRefreshRequirementReasonForCurrentEnvironment();
+            }
 
-            if (!shouldRefreshAssets
+            if (string.IsNullOrWhiteSpace(forcedRefreshReason)
+                && !refreshRequested
                 && string.Equals(
                     selectedFunctionality.Id,
                     StartupFunctionalityIds.CharacterDatabaseViewer,
-                    StringComparison.OrdinalIgnoreCase))
+                    StringComparison.OrdinalIgnoreCase)
+                && CharacterFolder.FullList.Count == 0)
             {
-                shouldRefreshAssets = CharacterFolder.FullList.Count == 0;
+                forcedRefreshReason =
+                    "The character database viewer does not currently have a loaded character/background index.";
+            }
+
+            bool shouldRefreshAssets = refreshRequested || !string.IsNullOrWhiteSpace(forcedRefreshReason);
+
+            if (!refreshRequested && !string.IsNullOrWhiteSpace(forcedRefreshReason))
+            {
+                MessageBoxResult refreshDecision = OceanyaMessageBox.Show(
+                    BuildForcedRefreshPrompt(forcedRefreshReason),
+                    "Refresh Required",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+                shouldRefreshAssets = refreshDecision == MessageBoxResult.Yes;
             }
 
             if (shouldRefreshAssets)
@@ -437,6 +455,21 @@ namespace OceanyaClient
         private static void PlayStartupFunctionalityJingle()
         {
             AudioPlayer.PlayEmbeddedSound("Resources/ApertureScienceJingleHD.mp3", 0.5f);
+        }
+
+        private static string BuildForcedRefreshPrompt(string forcedRefreshReason)
+        {
+            string trimmedReason = forcedRefreshReason?.Trim().TrimEnd('.') ?? string.Empty;
+            if (trimmedReason.Contains("Oceanya version changed", StringComparison.OrdinalIgnoreCase))
+            {
+                return "The Oceanya version changed, and it's necessary to refresh the assets. This may take a long time. Do you want to continue?";
+            }
+
+            string normalizedReason = string.IsNullOrWhiteSpace(trimmedReason)
+                ? "something in the asset environment changed"
+                : char.ToLowerInvariant(trimmedReason[0]) + trimmedReason[1..];
+            return "A full asset refresh is required because " + normalizedReason
+                + ". This may take a long time. Do you want to continue?";
         }
 
         private void ReopenConfigurationWindow()

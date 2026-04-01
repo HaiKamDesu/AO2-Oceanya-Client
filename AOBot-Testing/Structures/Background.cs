@@ -95,6 +95,90 @@ namespace AOBot_Testing.Structures
             CustomConsole.Info($"Background list saved to cache. Count: {backgroundsByName.Count}");
         }
 
+        public static bool TryUpsertBackgroundInCache(
+            string targetBackgroundDirectoryPath,
+            out Background? upsertedBackground,
+            out string errorMessage)
+        {
+            upsertedBackground = null;
+            errorMessage = string.Empty;
+
+            try
+            {
+                string targetDirectory = NormalizePathForCompare(targetBackgroundDirectoryPath);
+                if (string.IsNullOrWhiteSpace(targetDirectory) || !Directory.Exists(targetDirectory))
+                {
+                    errorMessage = "Target background directory was not found on disk.";
+                    return false;
+                }
+
+                EnsureCacheFilePath();
+                EnsureCacheLoaded();
+
+                upsertedBackground = CreateBackgroundFromDirectory(targetDirectory);
+                backgroundsByName[upsertedBackground.Name] = upsertedBackground;
+                SaveToJson(cacheFile, backgroundsByName.Values.ToList());
+                return true;
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Error("Failed to upsert background in cache.", ex);
+                errorMessage = ex.Message;
+                upsertedBackground = null;
+                return false;
+            }
+        }
+
+        public static bool TryRemoveBackgroundFromCache(
+            string? targetBackgroundDirectoryPath,
+            string? backgroundName,
+            out bool removedAny,
+            out string errorMessage)
+        {
+            removedAny = false;
+            errorMessage = string.Empty;
+
+            try
+            {
+                EnsureCacheFilePath();
+                EnsureCacheLoaded();
+
+                string normalizedTargetDirectory = NormalizePathForCompare(targetBackgroundDirectoryPath ?? string.Empty);
+                string normalizedBackgroundName = (backgroundName ?? string.Empty).Trim();
+
+                List<string> namesToRemove = backgroundsByName
+                    .Where(pair =>
+                        (!string.IsNullOrWhiteSpace(normalizedTargetDirectory)
+                            && string.Equals(
+                                NormalizePathForCompare(pair.Value.PathToFile),
+                                normalizedTargetDirectory,
+                                StringComparison.OrdinalIgnoreCase))
+                        || (!string.IsNullOrWhiteSpace(normalizedBackgroundName)
+                            && string.Equals(pair.Key, normalizedBackgroundName, StringComparison.OrdinalIgnoreCase)))
+                    .Select(pair => pair.Key)
+                    .ToList();
+
+                foreach (string name in namesToRemove)
+                {
+                    removedAny |= backgroundsByName.Remove(name);
+                }
+
+                if (removedAny)
+                {
+                    SaveToJson(cacheFile, backgroundsByName.Values.ToList());
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Error("Failed to remove background from cache.", ex);
+                errorMessage = ex.Message;
+                removedAny = false;
+                return false;
+            }
+        }
+
         public string? GetBGImage(string pos)
         {
             var imageName = pos;
@@ -317,6 +401,24 @@ namespace AOBot_Testing.Structures
 
             newBackground.bgImages = bgFilesFiltered;
             return newBackground;
+        }
+
+        private static string NormalizePathForCompare(string path)
+        {
+            string value = (path ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            try
+            {
+                return Path.GetFullPath(value).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            }
+            catch
+            {
+                return value.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            }
         }
 
         private static bool TryResolveBackgroundDirectory(string currentBackgroundValue, out string backgroundDirectory)

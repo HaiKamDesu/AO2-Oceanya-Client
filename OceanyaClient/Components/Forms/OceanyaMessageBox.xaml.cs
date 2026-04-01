@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Windows;
 using System.Windows.Media.Imaging;
 
@@ -136,7 +137,7 @@ namespace OceanyaClient
         /// </summary>
         public static MessageBoxResult Show(string messageBoxText, string caption, MessageBoxButton buttons, MessageBoxImage icon)
         {
-            return Show(null, messageBoxText, caption, buttons, icon);
+            return Show(ResolveDefaultOwner(), messageBoxText, caption, buttons, icon);
         }
 
         /// <summary>
@@ -172,6 +173,30 @@ namespace OceanyaClient
 
             _ = OceanyaWindowManager.ShowDialog(content, options);
             return content.result;
+        }
+
+        private static Window? ResolveDefaultOwner()
+        {
+            if (Application.Current == null)
+            {
+                return null;
+            }
+
+            Window? activeWindow = Application.Current.Windows
+                .OfType<Window>()
+                .FirstOrDefault(window => window.IsActive && window.IsVisible);
+            if (activeWindow != null)
+            {
+                return activeWindow;
+            }
+
+            Window? mainWindow = Application.Current.MainWindow;
+            if (mainWindow != null && mainWindow.IsVisible)
+            {
+                return mainWindow;
+            }
+
+            return Application.Current.Windows.OfType<Window>().FirstOrDefault(window => window.IsVisible);
         }
 
         /// <summary>

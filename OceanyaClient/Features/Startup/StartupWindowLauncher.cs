@@ -25,6 +25,12 @@ namespace OceanyaClient.Features.Startup
                 startupFunctionalityWindow = content;
                 startupWindow = OceanyaWindowManager.CreateWindow(content);
             }
+            else if (selected.Id == StartupFunctionalityIds.OceanyanFileHivemind)
+            {
+                OceanyanFileHivemindWindow content = new OceanyanFileHivemindWindow();
+                startupFunctionalityWindow = content;
+                startupWindow = OceanyaWindowManager.CreateWindow(content);
+            }
             else
             {
                 MainWindow content = new MainWindow();

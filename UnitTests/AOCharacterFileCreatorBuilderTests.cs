@@ -171,5 +171,26 @@ namespace UnitTests
                     string.Equals(o.Id, StartupFunctionalityIds.CharacterFileCreator, StringComparison.OrdinalIgnoreCase)),
                 Is.True);
         }
+
+        [Test]
+        public void StartupCatalog_AndLauncher_ExposeOceanyanFileHivemind()
+        {
+            StartupFunctionalityOption option =
+                StartupFunctionalityCatalog.GetByIdOrDefault(StartupFunctionalityIds.OceanyanFileHivemind);
+
+            Assert.That(option.Id, Is.EqualTo(StartupFunctionalityIds.OceanyanFileHivemind));
+            Assert.That(option.RequiresServerEndpoint, Is.False);
+            Assert.That(option.DisplayName, Is.EqualTo("The Oceanyan File Hivemind"));
+
+            Window window = StartupWindowLauncher.CreateStartupWindow(StartupFunctionalityIds.OceanyanFileHivemind);
+            Assert.That(window, Is.TypeOf<GenericOceanyaWindow>());
+            Assert.That(((GenericOceanyaWindow)window).BodyContent, Is.TypeOf<OceanyanFileHivemindWindow>());
+            window.Close();
+
+            Assert.That(
+                StartupFunctionalityCatalog.Options.Any(o =>
+                    string.Equals(o.Id, StartupFunctionalityIds.OceanyanFileHivemind, StringComparison.OrdinalIgnoreCase)),
+                Is.True);
+        }
     }
 }
