@@ -153,7 +153,12 @@ namespace OceanyaClient
                     "Refresh Required",
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Question);
-                shouldRefreshAssets = refreshDecision == MessageBoxResult.Yes;
+                if (refreshDecision != MessageBoxResult.Yes)
+                {
+                    return;
+                }
+
+                shouldRefreshAssets = true;
             }
             else if (shouldRunTargetedRefresh)
             {

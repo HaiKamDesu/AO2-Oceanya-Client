@@ -338,26 +338,31 @@ namespace OceanyaClient.Features.FileHivemind
                 return;
             }
 
+            bool showProgressToast = false;
             try
             {
                 state.ClearPendingLocalPush();
                 state.IgnoreLocalChangesUntilUtc = DateTimeOffset.MaxValue;
                 EnsureMountedIfPossible(configIniPath, state.Connection);
+                showProgressToast = MaybeShowChangeDetectionNotification(state.Connection, reason, isPull: true);
                 UpdateNotifierStatus(state.Connection, "Pulling updates from Google Drive...");
                 LogAgentMessage("Action", state.Connection, $"Pull started ({reason}).");
                 GoogleDriveSyncSummary summary = await syncService.PullFromDriveAsync(
                     state.Connection.GoogleDrive,
-                    message => ReportOperationProgress(state, message),
+                    message => ReportOperationProgress(state, message, showProgressToast),
                     cancellationToken);
                 RefreshMountedAssetsIfPossible(configIniPath, state.Connection, summary.LocalChanges);
                 await CaptureRuntimeStateAsync(state, cancellationToken, summary.KnownRemoteItemIds);
                 state.RequiresInitialPull = false;
                 state.NextRemotePollUtc = DateTimeOffset.UtcNow + remotePollInterval;
                 state.IgnoreLocalChangesUntilUtc = DateTimeOffset.UtcNow + PullWatcherIgnoreDuration;
+                if (showProgressToast)
+                {
+                    backgroundNotifier.CloseProgressNotification(state.Connection.Id);
+                }
                 backgroundNotifier.ShowNotification(
-                    "Hivemind Sync Finished",
-                    state.Connection.EffectiveDisplayName + ": downloaded " + summary.FilesDownloaded
-                    + ", deleted " + (summary.LocalFilesDeleted + summary.LocalDirectoriesDeleted) + " local items.",
+                    state.Connection.EffectiveDisplayName,
+                    BuildCompletionNotificationMessage(summary, isPull: true),
                     FileHivemindAgentNotificationSeverity.Success);
                 backgroundNotifier.ClearStatusText();
                 LogAgentMessage(
@@ -371,6 +376,10 @@ namespace OceanyaClient.Features.FileHivemind
                 state.RequiresInitialPull = true;
                 state.NextRemotePollUtc = DateTimeOffset.UtcNow + ErrorBackoff;
                 state.IgnoreLocalChangesUntilUtc = DateTimeOffset.UtcNow + PullWatcherIgnoreDuration;
+                if (showProgressToast)
+                {
+                    backgroundNotifier.CloseProgressNotification(state.Connection.Id);
+                }
                 backgroundNotifier.ShowNotification(
                     "Hivemind Pull Failed",
                     state.Connection.EffectiveDisplayName + ": " + ex.Message,
@@ -400,24 +409,29 @@ namespace OceanyaClient.Features.FileHivemind
                 return;
             }
 
+            bool showProgressToast = false;
             try
             {
                 state.ClearPendingLocalPush();
                 EnsureMountedIfPossible(configIniPath, state.Connection);
+                showProgressToast = MaybeShowChangeDetectionNotification(state.Connection, reason, isPull: false);
                 UpdateNotifierStatus(state.Connection, "Pushing local changes to Google Drive...");
                 LogAgentMessage("Action", state.Connection, $"Push started ({reason}).");
                 GoogleDriveSyncSummary summary = await syncService.PushLocalFolderAsync(
                     state.Connection.GoogleDrive,
-                    message => ReportOperationProgress(state, message),
+                    message => ReportOperationProgress(state, message, showProgressToast),
                     cancellationToken);
                 RefreshMountedAssetsIfPossible(configIniPath, state.Connection, summary.LocalChanges);
                 await CaptureRuntimeStateAsync(state, cancellationToken, summary.KnownRemoteItemIds);
                 state.RequiresInitialPull = false;
                 state.NextRemotePollUtc = DateTimeOffset.UtcNow + remotePollInterval;
+                if (showProgressToast)
+                {
+                    backgroundNotifier.CloseProgressNotification(state.Connection.Id);
+                }
                 backgroundNotifier.ShowNotification(
-                    "Hivemind Publish Finished",
-                    state.Connection.EffectiveDisplayName + ": uploaded " + summary.FilesUploaded
-                    + ", deleted " + (summary.RemoteFilesDeleted + summary.RemoteDirectoriesDeleted) + " remote items.",
+                    state.Connection.EffectiveDisplayName,
+                    BuildCompletionNotificationMessage(summary, isPull: false),
                     FileHivemindAgentNotificationSeverity.Success);
                 backgroundNotifier.ClearStatusText();
                 LogAgentMessage(
@@ -430,6 +444,10 @@ namespace OceanyaClient.Features.FileHivemind
                 PersistRuntimeError(state.Connection.Id, runtimeStateStore.Load(state.Connection.Id), ex.Message);
                 state.ScheduleLocalPush(ErrorBackoff);
                 state.NextRemotePollUtc = DateTimeOffset.UtcNow + ErrorBackoff;
+                if (showProgressToast)
+                {
+                    backgroundNotifier.CloseProgressNotification(state.Connection.Id);
+                }
                 backgroundNotifier.ShowNotification(
                     "Hivemind Publish Failed",
                     state.Connection.EffectiveDisplayName + ": " + ex.Message,
@@ -757,7 +775,7 @@ namespace OceanyaClient.Features.FileHivemind
             });
         }
 
-        private void ReportOperationProgress(ConnectionMonitorState state, string? message)
+        private void ReportOperationProgress(ConnectionMonitorState state, string? message, bool showProgressToast)
         {
             string trimmedMessage = message?.Trim() ?? string.Empty;
             if (string.IsNullOrWhiteSpace(trimmedMessage))
@@ -766,6 +784,15 @@ namespace OceanyaClient.Features.FileHivemind
             }
 
             UpdateNotifierStatus(state.Connection, trimmedMessage);
+            if (showProgressToast)
+            {
+                ParsedOperationProgress parsedProgress = ParseOperationProgress(trimmedMessage);
+                backgroundNotifier.UpdateProgressNotification(
+                    state.Connection.Id,
+                    parsedProgress.Detail,
+                    parsedProgress.ProgressFraction);
+            }
+
             LogAgentMessage("Info", state.Connection, trimmedMessage);
         }
 
@@ -779,6 +806,121 @@ namespace OceanyaClient.Features.FileHivemind
             }
 
             backgroundNotifier.SetStatusText(connection.EffectiveDisplayName + ": " + trimmedMessage);
+        }
+
+        private bool MaybeShowChangeDetectionNotification(
+            FileHivemindConnectionProfile connection,
+            string reason,
+            bool isPull)
+        {
+            if (!ShouldNotifyActionStart(reason, isPull))
+            {
+                return false;
+            }
+
+            backgroundNotifier.ShowProgressNotification(
+                connection.Id,
+                connection.EffectiveDisplayName,
+                BuildActionStartNotificationMessage(isPull),
+                "Preparing sync...",
+                null);
+            return true;
+        }
+
+        internal static bool ShouldNotifyActionStart(string? reason, bool isPull)
+        {
+            string normalizedReason = reason?.Trim() ?? string.Empty;
+            if (isPull)
+            {
+                return string.Equals(normalizedReason, "remote Google Drive changes", StringComparison.OrdinalIgnoreCase);
+            }
+
+            return string.Equals(normalizedReason, "local mirror changes", StringComparison.OrdinalIgnoreCase);
+        }
+
+        internal static string BuildActionStartNotificationMessage(bool isPull)
+        {
+            return isPull
+                ? "Detected a remote change, pulling from Drive..."
+                : "Detected a local change, pushing to Drive...";
+        }
+
+        internal static ParsedOperationProgress ParseOperationProgress(string? message)
+        {
+            string trimmedMessage = message?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(trimmedMessage))
+            {
+                return new ParsedOperationProgress(string.Empty, null);
+            }
+
+            double? fraction = TryExtractProgressFraction(trimmedMessage);
+            return new ParsedOperationProgress(trimmedMessage, fraction);
+        }
+
+        internal static string BuildCompletionNotificationMessage(GoogleDriveSyncSummary summary, bool isPull)
+        {
+            GoogleDriveSyncSummary normalizedSummary = summary ?? new GoogleDriveSyncSummary();
+            int transferredItems = isPull ? normalizedSummary.FilesDownloaded : normalizedSummary.FilesUploaded;
+            int deletedItems = isPull
+                ? normalizedSummary.LocalFilesDeleted + normalizedSummary.LocalDirectoriesDeleted
+                : normalizedSummary.RemoteFilesDeleted + normalizedSummary.RemoteDirectoriesDeleted;
+
+            if (transferredItems > 0 && deletedItems > 0)
+            {
+                return "Synced with Drive ("
+                    + (isPull ? "Downloaded " : "Uploaded ")
+                    + transferredItems
+                    + " files, deleted "
+                    + deletedItems
+                    + " items)";
+            }
+
+            if (transferredItems > 0)
+            {
+                return "Synced with Drive ("
+                    + (isPull ? "Downloaded " : "Uploaded ")
+                    + transferredItems
+                    + " files)";
+            }
+
+            if (deletedItems > 0)
+            {
+                return "Synced with Drive (Deleted " + deletedItems + " items)";
+            }
+
+            return "Synced with Drive";
+        }
+
+        private static double? TryExtractProgressFraction(string message)
+        {
+            string value = message?.Trim() ?? string.Empty;
+            int slashIndex = value.IndexOf('/');
+            if (slashIndex <= 0)
+            {
+                return null;
+            }
+
+            int leftEnd = slashIndex - 1;
+            while (leftEnd >= 0 && char.IsDigit(value[leftEnd]))
+            {
+                leftEnd--;
+            }
+
+            int rightStart = slashIndex + 1;
+            int rightEnd = rightStart;
+            while (rightEnd < value.Length && char.IsDigit(value[rightEnd]))
+            {
+                rightEnd++;
+            }
+
+            if (!int.TryParse(value.Substring(leftEnd + 1, slashIndex - leftEnd - 1), out int current)
+                || !int.TryParse(value.Substring(rightStart, rightEnd - rightStart), out int total)
+                || total <= 0)
+            {
+                return null;
+            }
+
+            return Math.Clamp((double)current / total, 0d, 1d);
         }
 
         private static TimeSpan ResolveRemotePollInterval(FileHivemindSettings settings)
@@ -851,5 +993,7 @@ namespace OceanyaClient.Features.FileHivemind
             NormalChanges = 1,
             SuspiciousMassDeletion = 2
         }
+
+        internal readonly record struct ParsedOperationProgress(string Detail, double? ProgressFraction);
     }
 }

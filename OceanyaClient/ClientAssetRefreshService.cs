@@ -175,19 +175,15 @@ namespace OceanyaClient
                 return "The saved asset refresh marker uses an older schema.";
             }
 
-            if (!string.Equals(
-                    NormalizePathForComparison(marker.ConfigIniPath),
-                    NormalizePathForComparison(currentConfigIniPath),
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                return "The configured AO config.ini path changed since the last full asset refresh.";
-            }
-
             if (!string.Equals(marker.AppVersion, currentAppVersion, StringComparison.OrdinalIgnoreCase))
             {
                 return "The Oceanya version changed since the last full asset refresh.";
             }
 
+            bool configPathChanged = !string.Equals(
+                NormalizePathForComparison(marker.ConfigIniPath),
+                NormalizePathForComparison(currentConfigIniPath),
+                StringComparison.OrdinalIgnoreCase);
             List<string> currentConfiguredBaseFolders = BuildConfiguredBaseFolderSignature(currentConfigIniPath);
             if (IsEquivalentFolderSequence(marker.BaseFolders, currentConfiguredBaseFolders))
             {
@@ -219,6 +215,11 @@ namespace OceanyaClient
                 && IsEquivalentFolderSequence(existingMarkerBaseFolders, currentResolvedBaseFolders))
             {
                 return string.Empty;
+            }
+
+            if (configPathChanged)
+            {
+                return "The configured AO config.ini path changed since the last full asset refresh.";
             }
 
             return "The AO mount/base-folder configuration changed since the last full asset refresh.";
@@ -304,7 +305,7 @@ namespace OceanyaClient
                 bool hasCurrent = normalizedCurrent.Characters.TryGetValue(characterName, out AssetTrackedFolderState? currentCharacter);
                 if (!hadPrevious
                     || !hasCurrent
-                    || !string.Equals(previousCharacter.Signature, currentCharacter.Signature, StringComparison.Ordinal))
+                    || !string.Equals(previousCharacter?.Signature, currentCharacter?.Signature, StringComparison.Ordinal))
                 {
                     plan.CharacterNames.Add(characterName);
                 }
@@ -318,7 +319,7 @@ namespace OceanyaClient
                 bool hasCurrent = normalizedCurrent.Backgrounds.TryGetValue(backgroundName, out AssetTrackedFolderState? currentBackground);
                 if (!hadPrevious
                     || !hasCurrent
-                    || !string.Equals(previousBackground.Signature, currentBackground.Signature, StringComparison.Ordinal))
+                    || !string.Equals(previousBackground?.Signature, currentBackground?.Signature, StringComparison.Ordinal))
                 {
                     plan.BackgroundNames.Add(backgroundName);
                 }

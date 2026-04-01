@@ -92,6 +92,42 @@ namespace UnitTests
         }
 
         [Test]
+        public void EnsureRunningForCurrentSession_DoesNotLaunchWhenNoEligibleConnectionsExist()
+        {
+            FakeAutoStartRegistrar registrar = new FakeAutoStartRegistrar();
+            bool launched = false;
+            FileHivemindBackgroundAgentLauncher launcher = new FileHivemindBackgroundAgentLauncher(
+                registrar,
+                _ =>
+                {
+                    launched = true;
+                    return true;
+                });
+            FileHivemindSettings settings = new FileHivemindSettings
+            {
+                RunAgentAtStartup = true,
+                Connections = new List<FileHivemindConnectionProfile>
+                {
+                    new FileHivemindConnectionProfile
+                    {
+                        ProviderId = FileHivemindProviderIds.GoogleDrive,
+                        GoogleDrive = new GoogleDriveSyncSettings
+                        {
+                            RemoteFolderId = "folder-id",
+                            LocalFolderPath = @"C:\sync"
+                        }
+                    }
+                }
+            };
+
+            bool result = launcher.EnsureRunningForCurrentSession(settings);
+
+            Assert.That(result, Is.False);
+            Assert.That(launched, Is.False);
+            Assert.That(registrar.LastEnabledValue, Is.False);
+        }
+
+        [Test]
         public void EnsureRunningForCurrentSession_DoesNotLaunchWhenAgentAlreadyRunning()
         {
             FakeAutoStartRegistrar registrar = new FakeAutoStartRegistrar();
@@ -216,6 +252,78 @@ namespace UnitTests
             {
                 LastEnabledValue = enabled;
             }
+        }
+    }
+
+    [TestFixture]
+    public class FileHivemindBackgroundAgentNotificationTextTests
+    {
+        [Test]
+        public void ShouldNotifyActionStart_OnlyReturnsTrueForActualDetectedChangeReasons()
+        {
+            Assert.That(FileHivemindBackgroundSyncAgent.ShouldNotifyActionStart("local mirror changes", isPull: false), Is.True);
+            Assert.That(FileHivemindBackgroundSyncAgent.ShouldNotifyActionStart("remote Google Drive changes", isPull: true), Is.True);
+            Assert.That(FileHivemindBackgroundSyncAgent.ShouldNotifyActionStart("initial sync", isPull: true), Is.False);
+            Assert.That(FileHivemindBackgroundSyncAgent.ShouldNotifyActionStart("change-token reset", isPull: true), Is.False);
+        }
+
+        [Test]
+        public void BuildActionStartNotificationMessage_UsesExpectedUserFacingText()
+        {
+            Assert.That(
+                FileHivemindBackgroundSyncAgent.BuildActionStartNotificationMessage(isPull: false),
+                Is.EqualTo("Detected a local change, pushing to Drive..."));
+            Assert.That(
+                FileHivemindBackgroundSyncAgent.BuildActionStartNotificationMessage(isPull: true),
+                Is.EqualTo("Detected a remote change, pulling from Drive..."));
+        }
+
+        [Test]
+        public void BuildCompletionNotificationMessage_UsesShortUploadSummary()
+        {
+            GoogleDriveSyncSummary summary = new GoogleDriveSyncSummary
+            {
+                FilesUploaded = 3
+            };
+
+            string message = FileHivemindBackgroundSyncAgent.BuildCompletionNotificationMessage(summary, isPull: false);
+
+            Assert.That(message, Is.EqualTo("Synced with Drive (Uploaded 3 files)"));
+        }
+
+        [Test]
+        public void BuildCompletionNotificationMessage_UsesShortDownloadDeleteSummary()
+        {
+            GoogleDriveSyncSummary summary = new GoogleDriveSyncSummary
+            {
+                FilesDownloaded = 2,
+                LocalFilesDeleted = 1,
+                LocalDirectoriesDeleted = 1
+            };
+
+            string message = FileHivemindBackgroundSyncAgent.BuildCompletionNotificationMessage(summary, isPull: true);
+
+            Assert.That(message, Is.EqualTo("Synced with Drive (Downloaded 2 files, deleted 2 items)"));
+        }
+
+        [Test]
+        public void ParseOperationProgress_ExtractsFractionFromReadableProgressText()
+        {
+            FileHivemindBackgroundSyncAgent.ParsedOperationProgress parsed =
+                FileHivemindBackgroundSyncAgent.ParseOperationProgress("Uploaded 3/5: characters/test/char.ini");
+
+            Assert.That(parsed.Detail, Is.EqualTo("Uploaded 3/5: characters/test/char.ini"));
+            Assert.That(parsed.ProgressFraction, Is.EqualTo(0.6d).Within(0.0001d));
+        }
+
+        [Test]
+        public void ParseOperationProgress_ReturnsNullFractionForNonCountMessage()
+        {
+            FileHivemindBackgroundSyncAgent.ParsedOperationProgress parsed =
+                FileHivemindBackgroundSyncAgent.ParseOperationProgress("Reading Google Drive folder structure...");
+
+            Assert.That(parsed.Detail, Is.EqualTo("Reading Google Drive folder structure..."));
+            Assert.That(parsed.ProgressFraction, Is.Null);
         }
     }
 

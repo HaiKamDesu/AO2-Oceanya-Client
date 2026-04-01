@@ -126,7 +126,8 @@ namespace OceanyaClient.Features.GoogleDriveSync
                     try
                     {
                         string localPath = ResolveLocalPath(settings.LocalFolderPath, operation.RelativePath);
-                        progress?.Invoke("Downloading: " + operation.RelativePath);
+                        int startingIndex = Math.Min(totalDownloads, Volatile.Read(ref completedDownloads) + 1);
+                        progress?.Invoke($"Downloading {startingIndex}/{totalDownloads}: {operation.RelativePath}");
                         Directory.CreateDirectory(Path.GetDirectoryName(localPath) ?? settings.LocalFolderPath);
                         await client.DownloadFileAsync(operation.RemoteItemId, localPath, cancellationToken);
                         int finishedCount = Interlocked.Increment(ref completedDownloads);
@@ -207,6 +208,11 @@ namespace OceanyaClient.Features.GoogleDriveSync
 
             Dictionary<string, GoogleDriveSyncFolderEntry> remoteFolders = remoteSnapshot.Folders
                 .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+            List<GoogleDriveSyncOperation> uploadOperations = plan.Operations
+                .Where(operation => operation.Kind == GoogleDriveSyncOperationKind.UploadFile)
+                .ToList();
+            int totalUploads = uploadOperations.Count;
+            int completedUploads = 0;
 
             foreach (GoogleDriveSyncOperation operation in plan.Operations)
             {
@@ -241,13 +247,15 @@ namespace OceanyaClient.Features.GoogleDriveSync
                         string localPath = ResolveLocalPath(settings.LocalFolderPath, operation.RelativePath);
                         string fileName = Path.GetFileName(localPath);
                         string? parentFolderId = ResolveParentFolderId(settings.RemoteFolderId, remoteFolders, operation.ParentRelativePath);
-                        progress?.Invoke("Uploading: " + operation.RelativePath);
+                        progress?.Invoke($"Uploading {completedUploads + 1}/{Math.Max(1, totalUploads)}: {operation.RelativePath}");
                         string uploadedItemId = await client.UploadFileAsync(
                             parentFolderId ?? settings.RemoteFolderId,
                             fileName,
                             localPath,
                             string.IsNullOrWhiteSpace(operation.RemoteItemId) ? null : operation.RemoteItemId,
                             cancellationToken);
+                        completedUploads++;
+                        progress?.Invoke($"Uploaded {completedUploads}/{Math.Max(1, totalUploads)}: {operation.RelativePath}");
                         summary.FilesUploaded++;
                         summary.LocalChanges.RecordAddedOrUpdated(operation.RelativePath);
                         if (!string.IsNullOrWhiteSpace(uploadedItemId))

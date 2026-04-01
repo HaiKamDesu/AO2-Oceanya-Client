@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.Drawing;
+using Common;
 using Forms = System.Windows.Forms;
 
 namespace OceanyaClient.Features.FileHivemind
@@ -17,6 +18,20 @@ namespace OceanyaClient.Features.FileHivemind
     {
         void ShowNotification(string title, string message, FileHivemindAgentNotificationSeverity severity);
 
+        void ShowProgressNotification(
+            string operationKey,
+            string title,
+            string message,
+            string detail,
+            double? progressFraction);
+
+        void UpdateProgressNotification(
+            string operationKey,
+            string detail,
+            double? progressFraction);
+
+        void CloseProgressNotification(string operationKey);
+
         void SetStatusText(string statusText);
 
         void ClearStatusText();
@@ -25,6 +40,26 @@ namespace OceanyaClient.Features.FileHivemind
     public sealed class NullFileHivemindAgentNotifier : IFileHivemindAgentNotifier
     {
         public void ShowNotification(string title, string message, FileHivemindAgentNotificationSeverity severity)
+        {
+        }
+
+        public void ShowProgressNotification(
+            string operationKey,
+            string title,
+            string message,
+            string detail,
+            double? progressFraction)
+        {
+        }
+
+        public void UpdateProgressNotification(
+            string operationKey,
+            string detail,
+            double? progressFraction)
+        {
+        }
+
+        public void CloseProgressNotification(string operationKey)
         {
         }
 
@@ -45,15 +80,20 @@ namespace OceanyaClient.Features.FileHivemind
         private readonly Icon trayIconImage;
         private readonly Forms.NotifyIcon notifyIcon;
         private readonly Forms.Control uiThreadControl;
+        private readonly Func<bool> desktopToastEnabledResolver;
+        private readonly FileHivemindDesktopToastPresenter desktopToastPresenter;
         private bool disposed;
 
         public FileHivemindTrayIconController(
             Action exitRequested,
-            Func<bool>? openMainApplication = null)
+            Func<bool>? openMainApplication = null,
+            Func<bool>? desktopToastEnabledResolver = null)
         {
             this.exitRequested = exitRequested ?? throw new ArgumentNullException(nameof(exitRequested));
             this.openMainApplication = openMainApplication ?? OpenMainApplication;
+            this.desktopToastEnabledResolver = desktopToastEnabledResolver ?? IsDesktopToastEnabled;
             trayIconImage = LoadTrayIcon();
+            desktopToastPresenter = new FileHivemindDesktopToastPresenter(() => (Icon)trayIconImage.Clone());
             uiThreadControl = new Forms.Control();
             uiThreadControl.CreateControl();
 
@@ -81,16 +121,80 @@ namespace OceanyaClient.Features.FileHivemind
 
             InvokeOnUiThread(() =>
             {
-                notifyIcon.BalloonTipIcon = severity switch
+                if (!desktopToastEnabledResolver())
                 {
-                    FileHivemindAgentNotificationSeverity.Success => Forms.ToolTipIcon.Info,
-                    FileHivemindAgentNotificationSeverity.Warning => Forms.ToolTipIcon.Warning,
-                    FileHivemindAgentNotificationSeverity.Error => Forms.ToolTipIcon.Error,
-                    _ => Forms.ToolTipIcon.None
-                };
-                notifyIcon.BalloonTipTitle = TrimForBalloon(title, 63);
-                notifyIcon.BalloonTipText = TrimForBalloon(message, 255);
-                notifyIcon.ShowBalloonTip(5000);
+                    return;
+                }
+
+                desktopToastPresenter.Show(
+                    TrimForBalloon(title, 96),
+                    TrimForBalloon(message, 280),
+                    severity);
+            });
+        }
+
+        public void ShowProgressNotification(
+            string operationKey,
+            string title,
+            string message,
+            string detail,
+            double? progressFraction)
+        {
+            if (disposed)
+            {
+                return;
+            }
+
+            InvokeOnUiThread(() =>
+            {
+                if (!desktopToastEnabledResolver())
+                {
+                    return;
+                }
+
+                desktopToastPresenter.ShowProgress(
+                    operationKey,
+                    TrimForBalloon(title, 96),
+                    TrimForBalloon(message, 280),
+                    TrimForBalloon(detail, 320),
+                    progressFraction);
+            });
+        }
+
+        public void UpdateProgressNotification(
+            string operationKey,
+            string detail,
+            double? progressFraction)
+        {
+            if (disposed)
+            {
+                return;
+            }
+
+            InvokeOnUiThread(() =>
+            {
+                if (!desktopToastEnabledResolver())
+                {
+                    return;
+                }
+
+                desktopToastPresenter.UpdateProgress(
+                    operationKey,
+                    TrimForBalloon(detail, 320),
+                    progressFraction);
+            });
+        }
+
+        public void CloseProgressNotification(string operationKey)
+        {
+            if (disposed)
+            {
+                return;
+            }
+
+            InvokeOnUiThread(() =>
+            {
+                desktopToastPresenter.CloseProgress(operationKey);
             });
         }
 
@@ -128,6 +232,7 @@ namespace OceanyaClient.Features.FileHivemind
             }
 
             disposed = true;
+            desktopToastPresenter.Dispose();
             notifyIcon.Visible = false;
             notifyIcon.Dispose();
             uiThreadControl.Dispose();
@@ -159,6 +264,19 @@ namespace OceanyaClient.Features.FileHivemind
                 UseShellExecute = true
             });
             return true;
+        }
+
+        private static bool IsDesktopToastEnabled()
+        {
+            try
+            {
+                SaveData snapshot = SaveFile.LoadSnapshotFromDisk();
+                return snapshot.FileHivemind?.ShowDesktopToasts == true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private void InvokeOnUiThread(Action action)

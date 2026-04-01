@@ -15,8 +15,9 @@ namespace OceanyaClient.Features.GoogleDriveSync
         private const string EmbeddedClientId =
             "";
 
-        // Intentionally left blank. Desktop/native OAuth clients are public clients, so the app
-        // should not rely on a bundled client secret stored on the end-user machine.
+        // Google still includes a client secret for installed-app credentials. This is an
+        // app-level OAuth credential, not an end-user credential, and is only used to allow
+        // clean-machine sign-in without requiring a sidecar JSON file.
         private const string EmbeddedClientSecret = "";
         private const string LocalJsonPathEnvironmentVariable = "OCEANYA_GOOGLE_DRIVE_CLIENT_JSON_PATH";
         private const string LocalJsonFileName = "google-drive-oauth.local.json";

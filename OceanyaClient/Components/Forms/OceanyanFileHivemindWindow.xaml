@@ -203,6 +203,13 @@
                           Unchecked="RunAtStartupCheckBox_Changed"
                           Content="Run hidden Hivemind sync agent automatically when Windows starts"
                           ToolTip="When enabled, Oceanya registers a per-user startup entry so the hidden Hivemind sync agent launches after Windows sign-in and keeps your configured connections in sync even if the main Oceanya window is closed."/>
+                <CheckBox x:Name="DesktopToastsCheckBox"
+                          Margin="0,8,0,0"
+                          Foreground="#FFF0F0F0"
+                          Checked="DesktopToastsCheckBox_Changed"
+                          Unchecked="DesktopToastsCheckBox_Changed"
+                          Content="Show desktop toast popups for important background sync events"
+                          ToolTip="When enabled, the Hivemind tray agent shows a small Oceanya-styled desktop toast for important success, warning, and error events. Routine polling still stays silent."/>
                 <StackPanel Margin="0,12,0,0"
                             Orientation="Horizontal"
                             VerticalAlignment="Center">

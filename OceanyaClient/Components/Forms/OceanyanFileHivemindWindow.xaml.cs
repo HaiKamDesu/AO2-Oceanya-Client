@@ -39,6 +39,8 @@ namespace OceanyaClient
         private bool backgroundLogHistoryLoaded;
         private bool suppressBackgroundAgentCheckboxEvents;
         private bool hasRaisedFinishedLoading;
+        private bool hasStartedInitialization;
+        private bool hasFinishedInitialization;
         public event Action? FinishedLoading;
 
         public OceanyanFileHivemindWindow(GoogleDriveSyncService? syncService = null)
@@ -58,9 +60,6 @@ namespace OceanyaClient
             Icon = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/OceanyaO.ico"));
             Loaded += OceanyanFileHivemindWindow_Loaded;
             Unloaded += OceanyanFileHivemindWindow_Unloaded;
-            RefreshConnections();
-            RefreshBackgroundAgentControls();
-            AppendStatus("The Oceanyan File Hivemind loaded.", StatusLogLevel.Success);
         }
 
         /// <inheritdoc/>
@@ -189,6 +188,7 @@ namespace OceanyaClient
         {
             suppressBackgroundAgentCheckboxEvents = true;
             RunAtStartupCheckBox.IsChecked = SaveFile.Data.FileHivemind.RunAgentAtStartup;
+            DesktopToastsCheckBox.IsChecked = SaveFile.Data.FileHivemind.ShowDesktopToasts;
             RemotePollIntervalTextBox.Text = SaveFile.Data.FileHivemind.RemotePollIntervalSeconds.ToString();
             suppressBackgroundAgentCheckboxEvents = false;
 
@@ -196,15 +196,19 @@ namespace OceanyaClient
             bool agentRunning = backgroundAgentLauncher.IsAgentRunning();
             bool registered = backgroundAgentLauncher.IsRegistered();
             int pollIntervalSeconds = SaveFile.Data.FileHivemind.RemotePollIntervalSeconds;
-            BackgroundAgentStatusTextBlock.Text = runAtStartup
-                ? agentRunning
-                    ? $"Background sync agent is running for this Windows session and polling Google Drive every {pollIntervalSeconds} seconds."
-                    : registered
-                        ? $"Background sync is enabled and will launch automatically after Windows sign-in. Current poll interval: {pollIntervalSeconds} seconds."
-                        : $"Background sync is enabled, but the Windows startup entry is not registered yet. Current poll interval: {pollIntervalSeconds} seconds."
-                : agentRunning
-                    ? $"Background sync agent is still running in this session, but Windows auto-start is disabled. Current poll interval: {pollIntervalSeconds} seconds."
-                    : $"Background sync agent is disabled. Current poll interval: {pollIntervalSeconds} seconds.";
+            int eligibleConnections = SaveFile.Data.FileHivemind.Connections.Count(FileHivemindBackgroundAgentLauncher.IsEligibleConnection);
+            string toastStatus = SaveFile.Data.FileHivemind.ShowDesktopToasts ? "desktop toasts enabled" : "desktop toasts disabled";
+            BackgroundAgentStatusTextBlock.Text = eligibleConnections == 0
+                ? $"Background sync is idle because there are no signed-in, fully configured connections yet. Current poll interval: {pollIntervalSeconds} seconds, {toastStatus}."
+                : runAtStartup
+                    ? agentRunning
+                        ? $"Background sync agent is running for this Windows session and polling Google Drive every {pollIntervalSeconds} seconds across {eligibleConnections} connection(s), {toastStatus}."
+                        : registered
+                            ? $"Background sync is enabled and will launch automatically after Windows sign-in for {eligibleConnections} connection(s). Current poll interval: {pollIntervalSeconds} seconds, {toastStatus}."
+                            : $"Background sync is enabled, but the Windows startup entry is not registered yet. Current poll interval: {pollIntervalSeconds} seconds, {toastStatus}."
+                    : agentRunning
+                        ? $"Background sync agent is still running in this session, but Windows auto-start is disabled. Current poll interval: {pollIntervalSeconds} seconds, {toastStatus}."
+                        : $"Background sync agent is disabled. Current poll interval: {pollIntervalSeconds} seconds, {toastStatus}.";
         }
 
         private void ApplyBackgroundAgentPreferences(bool ensureCurrentSessionAgent)
@@ -427,6 +431,23 @@ namespace OceanyaClient
                 SaveFile.Data.FileHivemind.RunAgentAtStartup
                     ? "Enabled hidden Hivemind background sync at Windows startup."
                     : "Disabled hidden Hivemind background sync at Windows startup.",
+                StatusLogLevel.Info);
+        }
+
+        private void DesktopToastsCheckBox_Changed(object sender, RoutedEventArgs e)
+        {
+            if (suppressBackgroundAgentCheckboxEvents)
+            {
+                return;
+            }
+
+            SaveFile.Data.FileHivemind.ShowDesktopToasts = DesktopToastsCheckBox.IsChecked == true;
+            SaveFile.Save();
+            RefreshBackgroundAgentControls();
+            AppendStatus(
+                SaveFile.Data.FileHivemind.ShowDesktopToasts
+                    ? "Enabled desktop toast popups for important Hivemind background sync events."
+                    : "Disabled desktop toast popups for Hivemind background sync events.",
                 StatusLogLevel.Info);
         }
 
@@ -932,18 +953,64 @@ namespace OceanyaClient
         [DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(IntPtr hWnd);
 
-        private void OceanyanFileHivemindWindow_Loaded(object sender, RoutedEventArgs e)
+        private async void OceanyanFileHivemindWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            RefreshBackgroundAgentControls();
-            EnsureBackgroundLogFeedRunning();
-
-            if (hasRaisedFinishedLoading)
+            if (hasFinishedInitialization)
             {
                 return;
             }
 
-            hasRaisedFinishedLoading = true;
-            FinishedLoading?.Invoke();
+            if (hasStartedInitialization)
+            {
+                return;
+            }
+
+            hasStartedInitialization = true;
+
+            Window owner = ResolveOwnerWindow();
+            IsEnabled = false;
+
+            try
+            {
+                await WaitForm.ShowFormAsync("Opening The Oceanyan File Hivemind...", owner);
+                WaitForm.SetSubtitle("Loading saved connections...");
+
+                // Yield once so the host window and wait form are both visible before doing startup work.
+                await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Background);
+
+                RefreshConnections();
+
+                WaitForm.SetSubtitle("Preparing background sync status...");
+                RefreshBackgroundAgentControls();
+
+                WaitForm.SetSubtitle("Loading recent background agent activity...");
+                EnsureBackgroundLogFeedRunning();
+
+                AppendStatus("The Oceanyan File Hivemind loaded.", StatusLogLevel.Success);
+                hasFinishedInitialization = true;
+
+                if (!hasRaisedFinishedLoading)
+                {
+                    hasRaisedFinishedLoading = true;
+                    FinishedLoading?.Invoke();
+                }
+            }
+            catch (Exception ex)
+            {
+                AppendStatus("Hivemind startup failed: " + ex.Message, StatusLogLevel.Error);
+                OceanyaMessageBox.Show(
+                    owner,
+                    "The Oceanyan File Hivemind could not finish loading:\n" + ex.Message,
+                    "The Oceanyan File Hivemind",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                RequestHostClose(false);
+            }
+            finally
+            {
+                IsEnabled = true;
+                await WaitForm.CloseFormAsync();
+            }
         }
 
         private void OceanyanFileHivemindWindow_Unloaded(object sender, RoutedEventArgs e)

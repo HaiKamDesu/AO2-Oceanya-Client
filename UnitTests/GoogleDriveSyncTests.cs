@@ -372,6 +372,35 @@ namespace UnitTests
     public class GoogleDriveAppOAuthConfigurationTests
     {
         [Test]
+        public void Create_UsesEmbeddedDefaultsWhenNoOverridesArePresent()
+        {
+            const string clientIdVariable = "OCEANYA_GOOGLE_DRIVE_CLIENT_ID";
+            const string clientSecretVariable = "OCEANYA_GOOGLE_DRIVE_CLIENT_SECRET";
+            const string clientJsonPathVariable = "OCEANYA_GOOGLE_DRIVE_CLIENT_JSON_PATH";
+            string? previousClientId = Environment.GetEnvironmentVariable(clientIdVariable);
+            string? previousClientSecret = Environment.GetEnvironmentVariable(clientSecretVariable);
+            string? previousClientJsonPath = Environment.GetEnvironmentVariable(clientJsonPathVariable);
+
+            try
+            {
+                Environment.SetEnvironmentVariable(clientIdVariable, null);
+                Environment.SetEnvironmentVariable(clientSecretVariable, null);
+                Environment.SetEnvironmentVariable(clientJsonPathVariable, null);
+
+                GoogleDriveOAuthClientConfiguration configuration = GoogleDriveAppOAuthConfiguration.Create();
+
+                Assert.That(configuration.ClientId, Is.Not.Empty);
+                Assert.That(configuration.ClientSecret, Is.Not.Empty);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(clientIdVariable, previousClientId);
+                Environment.SetEnvironmentVariable(clientSecretVariable, previousClientSecret);
+                Environment.SetEnvironmentVariable(clientJsonPathVariable, previousClientJsonPath);
+            }
+        }
+
+        [Test]
         public void Create_UsesEnvironmentOverrideValues()
         {
             const string clientIdVariable = "OCEANYA_GOOGLE_DRIVE_CLIENT_ID";
@@ -1259,6 +1288,32 @@ namespace UnitTests
                     existingMount,
                     configDirectory
                 });
+
+            Assert.That(reason, Is.Empty);
+        }
+
+        [Test]
+        public void EvaluateRefreshRequirementReason_DoesNotRequireRefreshWhenConfigPathDiffersButBaseFoldersMatch()
+        {
+            string oldConfigDirectory = Path.Combine(tempRoot, "old_config");
+            string oldConfigPath = Path.Combine(oldConfigDirectory, "config.ini");
+            Directory.CreateDirectory(oldConfigDirectory);
+            File.WriteAllText(oldConfigPath, "mount_paths=" + syncRoot + Environment.NewLine + "log_maximum=20");
+
+            string currentConfigPath = Path.Combine(configDirectory, "config.ini");
+            AssetRefreshMarker marker = new AssetRefreshMarker
+            {
+                SchemaVersion = 1,
+                AppVersion = "3.1.0.0",
+                ConfigIniPath = oldConfigPath,
+                BaseFolders = ClientAssetRefreshService.BuildConfiguredBaseFolderSignature(currentConfigPath)
+            };
+
+            string reason = ClientAssetRefreshService.EvaluateRefreshRequirementReason(
+                marker,
+                "3.1.0.0",
+                currentConfigPath,
+                new List<string>(Globals.BaseFolders));
 
             Assert.That(reason, Is.Empty);
         }

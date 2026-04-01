@@ -1,4 +1,5 @@
 using Common;
+using OceanyaClient;
 using OceanyaClient.Features.FileHivemind;
 using System.Threading.Tasks;
 using Forms = System.Windows.Forms;
@@ -10,6 +11,12 @@ namespace OceanyaHivemindAgent
         [STAThread]
         private static void Main(string[] args)
         {
+            SaveData snapshot = SaveFile.LoadSnapshotFromDisk();
+            if (!FileHivemindBackgroundAgentLauncher.ShouldRunForSettings(snapshot.FileHivemind))
+            {
+                return;
+            }
+
             Forms.Application.EnableVisualStyles();
             Forms.Application.SetCompatibleTextRenderingDefault(false);
             using FileHivemindAgentApplicationContext context = new FileHivemindAgentApplicationContext(args);

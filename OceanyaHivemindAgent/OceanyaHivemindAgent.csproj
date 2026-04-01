@@ -15,4 +15,13 @@
     <ProjectReference Include="..\OceanyaClient\OceanyaClient.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="..\OceanyaClient\Resources\scoienceblur.jpg" Link="Resources\scoienceblur.jpg">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\OceanyaClient\Resources\Logo_O_Centered.png" Link="Resources\Logo_O_Centered.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

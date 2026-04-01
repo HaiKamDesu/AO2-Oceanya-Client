@@ -76,7 +76,8 @@ public partial class App : Application
 
             try
             {
-                FileHivemindBackgroundSyncAgent agent = new FileHivemindBackgroundSyncAgent();
+                FileHivemindBackgroundSyncAgent agent = new FileHivemindBackgroundSyncAgent(
+                    backgroundNotifier: hivemindTrayIconController);
                 await agent.RunAsync(hivemindAgentCancellationTokenSource.Token);
             }
             finally
