@@ -22,6 +22,7 @@ namespace OceanyaClient
         private static string _currentTitle = "";
         private static string _currentSubtitle = "";
         private static Window? _ownerWindow;
+        private static Rect _ownerBounds = Rect.Empty;
         private static bool _threadRunning = false;
 
         private WaitForm()
@@ -106,6 +107,7 @@ namespace OceanyaClient
             _currentTitle = message;
             _currentSubtitle = string.Empty;
             _ownerWindow = owner;
+            _ownerBounds = ResolveOwnerBounds(owner);
 
             // Start the UI thread if needed
             StartFormOnNewThread();
@@ -137,7 +139,8 @@ namespace OceanyaClient
 
                     try
                     {
-                        if (!TryCenterRelativeToOwner(_instance, owner))
+                        if (!TryCenterRelativeToBounds(_instance, _ownerBounds)
+                            && !TryCenterRelativeToOwner(_instance, owner))
                         {
                             _instance.WindowStartupLocation = WindowStartupLocation.CenterScreen;
                         }
@@ -229,18 +232,18 @@ namespace OceanyaClient
                         // Re-measure every subtitle change because long sync messages can outgrow
                         // the existing width/height even when the subtitle is already visible.
                         _instance.ResizeWindow();
-                        if (_ownerWindow != null && _ownerWindow.IsVisible)
+                        if (TryCenterRelativeToBounds(_instance, _ownerBounds))
                         {
-                            TryCenterRelativeToOwner(_instance, _ownerWindow);
+                            return;
                         }
                     }
                     else
                     {
                         _instance.lblSubtitle.Visibility = Visibility.Collapsed;
                         _instance.ResizeWindow();
-                        if (_ownerWindow != null && _ownerWindow.IsVisible)
+                        if (TryCenterRelativeToBounds(_instance, _ownerBounds))
                         {
-                            TryCenterRelativeToOwner(_instance, _ownerWindow);
+                            return;
                         }
                     }
                 }
@@ -355,7 +358,19 @@ namespace OceanyaClient
 
         private static bool TryCenterRelativeToOwner(Window waitWindow, Window owner)
         {
-            if (!TryGetOwnerBounds(owner, out Rect ownerBounds))
+            Rect ownerBounds = ResolveOwnerBounds(owner);
+            if (ownerBounds == Rect.Empty)
+            {
+                return false;
+            }
+
+            _ownerBounds = ownerBounds;
+            return TryCenterRelativeToBounds(waitWindow, ownerBounds);
+        }
+
+        private static bool TryCenterRelativeToBounds(Window waitWindow, Rect ownerBounds)
+        {
+            if (ownerBounds == Rect.Empty || ownerBounds.Width <= 0 || ownerBounds.Height <= 0)
             {
                 return false;
             }
@@ -373,9 +388,13 @@ namespace OceanyaClient
             return true;
         }
 
-        private static bool TryGetOwnerBounds(Window owner, out Rect bounds)
+        private static Rect ResolveOwnerBounds(Window? owner)
         {
-            bounds = Rect.Empty;
+            if (owner == null)
+            {
+                return Rect.Empty;
+            }
+
             Rect resolvedBounds = Rect.Empty;
 
             try
@@ -419,11 +438,12 @@ namespace OceanyaClient
             }
             catch
             {
-                return false;
+                return Rect.Empty;
             }
 
-            bounds = resolvedBounds;
-            return bounds.Width > 0 && bounds.Height > 0;
+            return resolvedBounds.Width > 0 && resolvedBounds.Height > 0
+                ? resolvedBounds
+                : Rect.Empty;
         }
 
         private static double Clamp(double value, double minimum, double maximum)

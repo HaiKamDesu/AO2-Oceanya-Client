@@ -227,6 +227,10 @@ namespace OceanyaClient.Features.GoogleDriveSync
                         created.RelativePath = operation.RelativePath;
                         remoteFolders[operation.RelativePath] = created;
                         summary.DirectoriesCreated++;
+                        if (!string.IsNullOrWhiteSpace(created.ItemId))
+                        {
+                            summary.KnownRemoteItemIds.Add(created.ItemId.Trim());
+                        }
                         break;
                     }
                     case GoogleDriveSyncOperationKind.UploadFile:
@@ -235,7 +239,7 @@ namespace OceanyaClient.Features.GoogleDriveSync
                         string fileName = Path.GetFileName(localPath);
                         string? parentFolderId = ResolveParentFolderId(settings.RemoteFolderId, remoteFolders, operation.ParentRelativePath);
                         progress?.Invoke("Uploading: " + operation.RelativePath);
-                        await client.UploadFileAsync(
+                        string uploadedItemId = await client.UploadFileAsync(
                             parentFolderId ?? settings.RemoteFolderId,
                             fileName,
                             localPath,
@@ -243,6 +247,10 @@ namespace OceanyaClient.Features.GoogleDriveSync
                             cancellationToken);
                         summary.FilesUploaded++;
                         summary.LocalChanges.RecordAddedOrUpdated(operation.RelativePath);
+                        if (!string.IsNullOrWhiteSpace(uploadedItemId))
+                        {
+                            summary.KnownRemoteItemIds.Add(uploadedItemId.Trim());
+                        }
                         break;
                     }
                     case GoogleDriveSyncOperationKind.DeleteRemoteFile:

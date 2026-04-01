@@ -13,6 +13,9 @@ namespace OceanyaClient
     {
         public List<FileHivemindConnectionProfile> Connections { get; set; } = new List<FileHivemindConnectionProfile>();
         public string SelectedConnectionId { get; set; } = string.Empty;
+        public bool RunAgentAtStartup { get; set; }
+        public bool BackgroundStartupPreferenceConfigured { get; set; }
+        public int RemotePollIntervalSeconds { get; set; } = 20;
     }
 
     public sealed class FileHivemindConnectionProfile

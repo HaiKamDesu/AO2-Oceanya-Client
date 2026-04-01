@@ -89,6 +89,8 @@ namespace OceanyaClient.Features.GoogleDriveSync
         public int RemoteDirectoriesDeleted { get; set; }
         public int FilesSkipped { get; set; }
         public GoogleDriveSyncLocalChangeSet LocalChanges { get; } = new GoogleDriveSyncLocalChangeSet();
+        public HashSet<string> KnownRemoteItemIds { get; } =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     }
 
     public sealed class GoogleDriveSyncLocalChangeSet
@@ -136,11 +138,29 @@ namespace OceanyaClient.Features.GoogleDriveSync
         }
     }
 
+    public sealed class GoogleDriveChangeEntry
+    {
+        public string ItemId { get; set; } = string.Empty;
+        public bool Removed { get; set; }
+        public List<string> ParentIds { get; set; } = new List<string>();
+    }
+
+    public sealed class GoogleDriveChangePage
+    {
+        public string NextPageToken { get; set; } = string.Empty;
+        public string NewStartPageToken { get; set; } = string.Empty;
+        public List<GoogleDriveChangeEntry> Changes { get; set; } = new List<GoogleDriveChangeEntry>();
+    }
+
     public interface IGoogleDriveRemoteClient
     {
         Task<GoogleDriveUserInfo> GetCurrentUserAsync(CancellationToken cancellationToken);
 
         Task<string> GetFolderNameAsync(string folderId, CancellationToken cancellationToken);
+
+        Task<string> GetStartPageTokenAsync(CancellationToken cancellationToken);
+
+        Task<GoogleDriveChangePage> GetChangesAsync(string pageToken, CancellationToken cancellationToken);
 
         Task<GoogleDriveSyncSnapshot> GetSnapshotAsync(string rootFolderId, CancellationToken cancellationToken);
 
@@ -149,7 +169,7 @@ namespace OceanyaClient.Features.GoogleDriveSync
             string folderName,
             CancellationToken cancellationToken);
 
-        Task UploadFileAsync(
+        Task<string> UploadFileAsync(
             string parentFolderId,
             string fileName,
             string localFilePath,

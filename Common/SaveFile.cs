@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 
 namespace OceanyaClient
 {
@@ -271,6 +272,35 @@ namespace OceanyaClient
                 _data = value;
                 Save();
             }
+        }
+
+        public static SaveData LoadSnapshotFromDisk()
+        {
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                try
+                {
+                    if (!File.Exists(saveFilePath))
+                    {
+                        SaveData empty = new SaveData();
+                        NormalizeLoadedData(empty);
+                        return empty;
+                    }
+
+                    string json = File.ReadAllText(saveFilePath);
+                    SaveData snapshot = JsonSerializer.Deserialize<SaveData>(json) ?? new SaveData();
+                    NormalizeLoadedData(snapshot);
+                    return snapshot;
+                }
+                catch when (attempt < 2)
+                {
+                    Thread.Sleep(50);
+                }
+            }
+
+            SaveData fallback = new SaveData();
+            NormalizeLoadedData(fallback);
+            return fallback;
         }
 
         private static void Load()
@@ -1005,6 +1035,9 @@ namespace OceanyaClient
         {
             data.FileHivemind.Connections ??= new List<FileHivemindConnectionProfile>();
             data.FileHivemind.SelectedConnectionId = data.FileHivemind.SelectedConnectionId?.Trim() ?? string.Empty;
+            data.FileHivemind.RemotePollIntervalSeconds = Math.Clamp(data.FileHivemind.RemotePollIntervalSeconds <= 0
+                ? 20
+                : data.FileHivemind.RemotePollIntervalSeconds, 5, 3600);
             bool migratedLegacyProfile = false;
 
             if (data.FileHivemind.Connections.Count == 0 && HasMeaningfulGoogleDriveSyncSettings(data.GoogleDriveSync))
@@ -1047,6 +1080,13 @@ namespace OceanyaClient
                     string.Equals(connection.Id, data.FileHivemind.SelectedConnectionId, StringComparison.OrdinalIgnoreCase)))
             {
                 data.FileHivemind.SelectedConnectionId = data.FileHivemind.Connections.FirstOrDefault()?.Id ?? string.Empty;
+            }
+
+            if (!data.FileHivemind.BackgroundStartupPreferenceConfigured
+                && data.FileHivemind.Connections.Count > 0)
+            {
+                data.FileHivemind.RunAgentAtStartup = true;
+                data.FileHivemind.BackgroundStartupPreferenceConfigured = true;
             }
 
             if (migratedLegacyProfile || data.FileHivemind.Connections.Count > 0)

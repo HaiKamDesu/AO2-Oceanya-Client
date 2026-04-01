@@ -651,6 +651,9 @@ namespace UnitTests
                 Assert.That(summary.RemoteFilesDeleted, Is.EqualTo(1));
                 Assert.That(summary.LocalChanges.AddedOrUpdatedPaths, Contains.Item("background/scene.png"));
                 Assert.That(summary.LocalChanges.DeletedPaths, Contains.Item("obsolete/old.txt"));
+                Assert.That(summary.KnownRemoteItemIds.Count, Is.GreaterThanOrEqualTo(2));
+                Assert.That(summary.KnownRemoteItemIds, Has.Some.StartsWith("folder-"));
+                Assert.That(summary.KnownRemoteItemIds, Has.Some.StartsWith("file-"));
             }
             finally
             {
@@ -710,6 +713,7 @@ namespace UnitTests
         {
             private readonly Dictionary<string, string> fileContents = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             private readonly Dictionary<string, string> folderIdsToRelativePaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            private readonly Queue<GoogleDriveChangePage> changePages = new Queue<GoogleDriveChangePage>();
             private int nextId = 1;
             private int currentConcurrentDownloads;
 
@@ -720,6 +724,7 @@ namespace UnitTests
             }
 
             public string RootFolderId { get; }
+            public string StartPageToken { get; set; } = "token-0";
             public TimeSpan DownloadDelay { get; set; } = TimeSpan.Zero;
             public int MaxConcurrentDownloads { get; private set; }
 
@@ -767,6 +772,11 @@ namespace UnitTests
                 return fileContents[relativePath];
             }
 
+            public void QueueChangePage(GoogleDriveChangePage page)
+            {
+                changePages.Enqueue(page);
+            }
+
             public Task<GoogleDriveUserInfo> GetCurrentUserAsync(CancellationToken cancellationToken)
             {
                 return Task.FromResult(new GoogleDriveUserInfo
@@ -790,6 +800,24 @@ namespace UnitTests
                     ? "Root Folder"
                     : Path.GetFileName(relativePath.Replace('/', Path.DirectorySeparatorChar));
                 return Task.FromResult(folderName);
+            }
+
+            public Task<string> GetStartPageTokenAsync(CancellationToken cancellationToken)
+            {
+                return Task.FromResult(StartPageToken);
+            }
+
+            public Task<GoogleDriveChangePage> GetChangesAsync(string pageToken, CancellationToken cancellationToken)
+            {
+                if (changePages.Count == 0)
+                {
+                    return Task.FromResult(new GoogleDriveChangePage
+                    {
+                        NewStartPageToken = pageToken
+                    });
+                }
+
+                return Task.FromResult(changePages.Dequeue());
             }
 
             public Task<GoogleDriveSyncSnapshot> GetSnapshotAsync(string rootFolderId, CancellationToken cancellationToken)
@@ -837,7 +865,7 @@ namespace UnitTests
                 });
             }
 
-            public Task UploadFileAsync(string parentFolderId, string fileName, string localFilePath, string? existingFileId, CancellationToken cancellationToken)
+            public Task<string> UploadFileAsync(string parentFolderId, string fileName, string localFilePath, string? existingFileId, CancellationToken cancellationToken)
             {
                 string parentRelativePath = folderIdsToRelativePaths[parentFolderId];
                 string relativePath = string.IsNullOrWhiteSpace(parentRelativePath)
@@ -854,7 +882,7 @@ namespace UnitTests
                     Size = new FileInfo(localFilePath).Length,
                     Hash = GoogleDriveLocalSnapshotBuilder.ComputeMd5(localFilePath)
                 };
-                return Task.CompletedTask;
+                return Task.FromResult(itemId);
             }
 
             public Task DownloadFileAsync(string fileId, string destinationPath, CancellationToken cancellationToken)

@@ -1,4 +1,5 @@
 using Microsoft.Win32;
+using OceanyaClient.Features.FileHivemind;
 using OceanyaClient.Features.GoogleDriveSync;
 using System;
 using System.Diagnostics;
@@ -27,6 +28,8 @@ namespace OceanyaClient
         }
 
         private readonly GoogleDriveSyncService syncService;
+        private readonly GoogleDriveRemoteChangeTracker remoteChangeTracker;
+        private readonly GoogleDriveConnectionRuntimeStateStore runtimeStateStore;
         private readonly FileHivemindConnectionProfile connection;
         private readonly Action<FileHivemindConnectionProfile> persistConnection;
         private readonly bool isDraftConnection;
@@ -42,6 +45,8 @@ namespace OceanyaClient
         {
             InitializeComponent();
             this.syncService = syncService ?? new GoogleDriveSyncService();
+            remoteChangeTracker = new GoogleDriveRemoteChangeTracker();
+            runtimeStateStore = new GoogleDriveConnectionRuntimeStateStore();
             this.connection = connection ?? FileHivemindConnectionProfile.CreateGoogleDriveProfile();
             this.persistConnection = persistConnection ?? (_ => SaveFile.Save());
             this.isDraftConnection = isDraftConnection;
@@ -88,6 +93,7 @@ namespace OceanyaClient
                 : Settings.TokenStoreKey.Trim();
 
             string previousFolderId = Settings.RemoteFolderId?.Trim() ?? string.Empty;
+            string previousLocalFolderPath = Settings.LocalFolderPath?.Trim() ?? string.Empty;
             string parsedFolderId = GoogleDriveInviteSerializer.ExtractFolderId(RemoteFolderTextBox.Text);
             Settings.RemoteFolderId = !string.IsNullOrWhiteSpace(parsedFolderId)
                 ? parsedFolderId
@@ -95,9 +101,15 @@ namespace OceanyaClient
             if (!string.Equals(previousFolderId, Settings.RemoteFolderId, StringComparison.OrdinalIgnoreCase))
             {
                 Settings.RemoteFolderName = string.Empty;
+                runtimeStateStore.Delete(connection.Id);
             }
 
             Settings.LocalFolderPath = LocalFolderTextBox.Text?.Trim() ?? string.Empty;
+            if (!string.Equals(previousLocalFolderPath, Settings.LocalFolderPath, StringComparison.OrdinalIgnoreCase))
+            {
+                runtimeStateStore.Delete(connection.Id);
+            }
+
             Settings.AutoAddMountPath = AutoAddMountPathCheckBox.IsChecked != false;
             Settings.MirrorDeletes = MirrorDeletesCheckBox.IsChecked != false;
             Settings.UseExistingMountPath = UseExistingMountPathCheckBox.IsChecked == true;
@@ -260,6 +272,7 @@ namespace OceanyaClient
         {
             PersistSettings(forcePersist: true);
             syncService.SignOut(Settings);
+            runtimeStateStore.Delete(connection.Id);
             PersistSettings(forcePersist: true);
             UpdateAccountStatus();
             AppendStatus("Signed out from Google Drive token storage.", StatusLogLevel.Warning);
@@ -475,6 +488,7 @@ namespace OceanyaClient
                         CancellationToken.None);
                     RefreshMountedAssets(summary.LocalChanges);
                     AppendStatus(BuildSummaryMessage("Drive -> Local sync completed", summary), StatusLogLevel.Success);
+                    return summary;
                 });
         }
 
@@ -490,6 +504,7 @@ namespace OceanyaClient
                         CancellationToken.None);
                     RefreshMountedAssets(summary.LocalChanges);
                     AppendStatus(BuildSummaryMessage("Local -> Drive publish completed", summary), StatusLogLevel.Success);
+                    return summary;
                 });
         }
 
@@ -527,8 +542,18 @@ namespace OceanyaClient
             AppendStatus("Connection settings saved.", StatusLogLevel.Success);
         }
 
-        private async Task ExecuteSyncOperationAsync(string title, Func<Task> action)
+        private async Task ExecuteSyncOperationAsync(string title, Func<Task<GoogleDriveSyncSummary>> action)
         {
+            using FileHivemindConnectionExecutionLock? executionLock =
+                FileHivemindConnectionExecutionLock.TryAcquire(connection.Id, TimeSpan.Zero);
+            if (executionLock == null)
+            {
+                AppendStatus(
+                    "Skipped because this connection is already being synced by another Oceanya process.",
+                    StatusLogLevel.Warning);
+                return;
+            }
+
             try
             {
                 PersistSettings(forcePersist: true);
@@ -540,7 +565,8 @@ namespace OceanyaClient
                 await WaitForm.ShowFormAsync(title, waitOwner);
                 try
                 {
-                    await action();
+                    GoogleDriveSyncSummary summary = await action();
+                    await TryRefreshRuntimeStateAsync(summary.KnownRemoteItemIds);
                     PersistSettings(forcePersist: true);
                     UpdateAccountStatus();
                 }
@@ -558,6 +584,27 @@ namespace OceanyaClient
                     "Google Drive Sync",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
+            }
+        }
+
+        private async Task TryRefreshRuntimeStateAsync(IEnumerable<string>? additionalKnownItemIds = null)
+        {
+            try
+            {
+                GoogleDriveConnectionRuntimeState runtimeState = await remoteChangeTracker.CaptureRuntimeStateAsync(
+                    connection.Id,
+                    Settings,
+                    CancellationToken.None);
+                runtimeState = GoogleDriveRemoteChangeTracker.MergeKnownRemoteItemIds(runtimeState, additionalKnownItemIds);
+                runtimeState.LastSuccessfulSyncUtc = DateTimeOffset.UtcNow;
+                runtimeState.LastErrorMessage = string.Empty;
+                runtimeStateStore.Save(runtimeState);
+            }
+            catch (Exception ex)
+            {
+                AppendStatus(
+                    "Background change tracking state could not be refreshed after this sync: " + ex.Message,
+                    StatusLogLevel.Warning);
             }
         }
 

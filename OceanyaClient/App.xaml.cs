@@ -1,3 +1,5 @@
+using Common;
+using OceanyaClient.Features.FileHivemind;
 using OceanyaClient.Utilities;
 using System.Configuration;
 using System.Collections.Generic;
@@ -15,6 +17,9 @@ namespace OceanyaClient;
 public partial class App : Application
 {
     private readonly HashSet<Window> persistedWindows = new HashSet<Window>();
+    private CancellationTokenSource? hivemindAgentCancellationTokenSource;
+    private FileHivemindTrayIconController? hivemindTrayIconController;
+    private bool isHivemindAgentMode;
     private List<string> loadingMessages = new List<string>
     {
         "Starting completely unnecessary loading...",
@@ -60,6 +65,31 @@ public partial class App : Application
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        isHivemindAgentMode = FileHivemindBackgroundAgentCommandLine.IsAgentMode(e.Args);
+        if (isHivemindAgentMode)
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            hivemindAgentCancellationTokenSource = new CancellationTokenSource();
+            hivemindTrayIconController = new FileHivemindTrayIconController(
+                () => hivemindAgentCancellationTokenSource?.Cancel());
+
+            try
+            {
+                FileHivemindBackgroundSyncAgent agent = new FileHivemindBackgroundSyncAgent();
+                await agent.RunAsync(hivemindAgentCancellationTokenSource.Token);
+            }
+            finally
+            {
+                hivemindTrayIconController?.Dispose();
+                hivemindTrayIconController = null;
+                Shutdown();
+            }
+
+            return;
+        }
+
+        TryStartBackgroundHivemindAgent();
 
         // Simulate loading operation
         await FakeLoadingAsync();
@@ -118,6 +148,12 @@ public partial class App : Application
             isTerminating: true
         );
 
+        if (isHivemindAgentMode)
+        {
+            e.Handled = true;
+            return;
+        }
+
         string message = "An unhandled error occurred.";
         if (!string.IsNullOrWhiteSpace(crashPath))
         {
@@ -163,6 +199,9 @@ public partial class App : Application
         TaskScheduler.UnobservedTaskException -= TaskScheduler_UnobservedTaskException;
         AppDomain.CurrentDomain.UnhandledException -= CurrentDomain_UnhandledException;
         this.DispatcherUnhandledException -= App_DispatcherUnhandledException;
+        hivemindAgentCancellationTokenSource?.Cancel();
+        hivemindTrayIconController?.Dispose();
+        hivemindTrayIconController = null;
 
         // Ensure the WaitForm UI thread is properly shut down
         WaitForm.ShutdownThread();
@@ -264,5 +303,18 @@ public partial class App : Application
         }
 
         return Math.Max(minimum, Math.Min(maximum, value));
+    }
+
+    private static void TryStartBackgroundHivemindAgent()
+    {
+        try
+        {
+            FileHivemindBackgroundAgentLauncher launcher = new FileHivemindBackgroundAgentLauncher();
+            launcher.EnsureRunningForCurrentSession(SaveFile.Data.FileHivemind);
+        }
+        catch (Exception ex)
+        {
+            CustomConsole.Warning("Failed to start the Hivemind background agent.", ex);
+        }
     }
 }

@@ -43,6 +43,17 @@
             </Setter>
         </Style>
 
+        <Style x:Key="ModernTextBox" TargetType="TextBox">
+            <Setter Property="Background" Value="#FF262626"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#444444"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="CaretBrush" Value="White"/>
+        </Style>
+
         <Style x:Key="LabelText" TargetType="TextBlock">
             <Setter Property="Foreground" Value="#FFD4D4D4"/>
             <Setter Property="FontSize" Value="13"/>
@@ -165,6 +176,36 @@
                 <TextBlock Margin="0,8,0,0"
                            Style="{StaticResource BodyHintText}"
                            Text="Use this as the connection database: add as many remote folders/accounts as you need, export a connection file for friends, import shared connection files, then sync one or all connections from here."/>
+                <CheckBox x:Name="RunAtStartupCheckBox"
+                          Margin="0,12,0,0"
+                          Foreground="#FFF0F0F0"
+                          Checked="RunAtStartupCheckBox_Changed"
+                          Unchecked="RunAtStartupCheckBox_Changed"
+                          Content="Run hidden Hivemind sync agent automatically when Windows starts"
+                          ToolTip="When enabled, Oceanya registers a per-user startup entry so the hidden Hivemind sync agent launches after Windows sign-in and keeps your configured connections in sync even if the main Oceanya window is closed."/>
+                <StackPanel Margin="0,12,0,0"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Center">
+                    <TextBlock Text="Remote poll interval (seconds)"
+                               Foreground="#FFD4D4D4"
+                               FontSize="13"
+                               VerticalAlignment="Center"/>
+                    <Button Content="(?)"
+                            Style="{StaticResource HelpBadgeStyle}"
+                            ToolTip="How often the background agent checks Google Drive for remote changes. Lower values react faster but do more network work. Minimum 5 seconds."/>
+                    <TextBox x:Name="RemotePollIntervalTextBox"
+                             Width="72"
+                             Margin="12,0,0,0"
+                             Style="{StaticResource ModernTextBox}"
+                             HorizontalContentAlignment="Center"
+                             LostFocus="RemotePollIntervalTextBox_LostFocus"
+                             KeyDown="RemotePollIntervalTextBox_KeyDown"
+                             ToolTip="Enter how many seconds Oceanya should wait between Google Drive change-token polls while the background agent is running."/>
+                </StackPanel>
+                <TextBlock x:Name="BackgroundAgentStatusTextBlock"
+                           Margin="0,8,0,0"
+                           Style="{StaticResource BodyHintText}"
+                           Text="Background sync agent status unavailable."/>
             </StackPanel>
         </Border>
 

@@ -1,4 +1,5 @@
 using Microsoft.Win32;
+using OceanyaClient.Features.FileHivemind;
 using OceanyaClient.Features.GoogleDriveSync;
 using System;
 using System.Diagnostics;
@@ -13,6 +14,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 
 namespace OceanyaClient
 {
@@ -28,6 +30,14 @@ namespace OceanyaClient
         }
 
         private readonly GoogleDriveSyncService syncService;
+        private readonly GoogleDriveRemoteChangeTracker remoteChangeTracker;
+        private readonly GoogleDriveConnectionRuntimeStateStore runtimeStateStore;
+        private readonly FileHivemindBackgroundAgentLauncher backgroundAgentLauncher;
+        private readonly FileHivemindBackgroundLogStore backgroundLogStore;
+        private readonly DispatcherTimer backgroundLogTimer;
+        private long backgroundLogReadPosition;
+        private bool backgroundLogHistoryLoaded;
+        private bool suppressBackgroundAgentCheckboxEvents;
         private bool hasRaisedFinishedLoading;
         public event Action? FinishedLoading;
 
@@ -35,10 +45,21 @@ namespace OceanyaClient
         {
             InitializeComponent();
             this.syncService = syncService ?? new GoogleDriveSyncService();
+            remoteChangeTracker = new GoogleDriveRemoteChangeTracker();
+            runtimeStateStore = new GoogleDriveConnectionRuntimeStateStore();
+            backgroundAgentLauncher = new FileHivemindBackgroundAgentLauncher();
+            backgroundLogStore = new FileHivemindBackgroundLogStore();
+            backgroundLogTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(1)
+            };
+            backgroundLogTimer.Tick += BackgroundLogTimer_Tick;
             Title = "The Oceanyan File Hivemind";
             Icon = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/OceanyaO.ico"));
             Loaded += OceanyanFileHivemindWindow_Loaded;
+            Unloaded += OceanyanFileHivemindWindow_Unloaded;
             RefreshConnections();
+            RefreshBackgroundAgentControls();
             AppendStatus("The Oceanyan File Hivemind loaded.", StatusLogLevel.Success);
         }
 
@@ -69,6 +90,7 @@ namespace OceanyaClient
             ConnectionsListBox.SelectedItem = selectedConnection;
             SaveFile.Data.FileHivemind.SelectedConnectionId = selectedConnection?.Id ?? string.Empty;
             UpdateSelectedConnectionDetails(selectedConnection);
+            RefreshBackgroundAgentControls();
         }
 
         private void UpdateSelectedConnectionDetails(FileHivemindConnectionProfile? connection = null)
@@ -96,8 +118,10 @@ namespace OceanyaClient
             SelectedConnectionLocalTextBlock.Text = string.IsNullOrWhiteSpace(connection.GoogleDrive.LocalFolderPath)
                 ? "No local mirror folder selected."
                 : connection.GoogleDrive.LocalFolderPath;
-            SelectedConnectionLastSyncTextBlock.Text = connection.GoogleDrive.LastSyncUtc.HasValue
-                ? connection.GoogleDrive.LastSyncUtc.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
+            GoogleDriveConnectionRuntimeState? runtimeState = runtimeStateStore.Load(connection.Id);
+            DateTimeOffset? lastSyncUtc = runtimeState?.LastSuccessfulSyncUtc ?? connection.GoogleDrive.LastSyncUtc;
+            SelectedConnectionLastSyncTextBlock.Text = lastSyncUtc.HasValue
+                ? lastSyncUtc.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
                 : "Never";
         }
 
@@ -161,8 +185,57 @@ namespace OceanyaClient
             };
         }
 
+        private void RefreshBackgroundAgentControls()
+        {
+            suppressBackgroundAgentCheckboxEvents = true;
+            RunAtStartupCheckBox.IsChecked = SaveFile.Data.FileHivemind.RunAgentAtStartup;
+            RemotePollIntervalTextBox.Text = SaveFile.Data.FileHivemind.RemotePollIntervalSeconds.ToString();
+            suppressBackgroundAgentCheckboxEvents = false;
+
+            bool runAtStartup = SaveFile.Data.FileHivemind.RunAgentAtStartup;
+            bool agentRunning = backgroundAgentLauncher.IsAgentRunning();
+            bool registered = backgroundAgentLauncher.IsRegistered();
+            int pollIntervalSeconds = SaveFile.Data.FileHivemind.RemotePollIntervalSeconds;
+            BackgroundAgentStatusTextBlock.Text = runAtStartup
+                ? agentRunning
+                    ? $"Background sync agent is running for this Windows session and polling Google Drive every {pollIntervalSeconds} seconds."
+                    : registered
+                        ? $"Background sync is enabled and will launch automatically after Windows sign-in. Current poll interval: {pollIntervalSeconds} seconds."
+                        : $"Background sync is enabled, but the Windows startup entry is not registered yet. Current poll interval: {pollIntervalSeconds} seconds."
+                : agentRunning
+                    ? $"Background sync agent is still running in this session, but Windows auto-start is disabled. Current poll interval: {pollIntervalSeconds} seconds."
+                    : $"Background sync agent is disabled. Current poll interval: {pollIntervalSeconds} seconds.";
+        }
+
+        private void ApplyBackgroundAgentPreferences(bool ensureCurrentSessionAgent)
+        {
+            if (ensureCurrentSessionAgent)
+            {
+                backgroundAgentLauncher.EnsureRunningForCurrentSession(SaveFile.Data.FileHivemind);
+            }
+            else
+            {
+                backgroundAgentLauncher.ApplyRegistration(SaveFile.Data.FileHivemind);
+            }
+
+            RefreshBackgroundAgentControls();
+        }
+
+        private void TryApplyBackgroundAgentPreferences(bool ensureCurrentSessionAgent)
+        {
+            try
+            {
+                ApplyBackgroundAgentPreferences(ensureCurrentSessionAgent);
+            }
+            catch (Exception ex)
+            {
+                AppendStatus("Background agent setup failed: " + ex.Message, StatusLogLevel.Error);
+            }
+        }
+
         private void PersistConnection(FileHivemindConnectionProfile connection)
         {
+            bool hadAnyConnections = SaveFile.Data.FileHivemind.Connections.Count > 0;
             FileHivemindConnectionProfile? existingConnection = SaveFile.Data.FileHivemind.Connections.FirstOrDefault(existing =>
                 string.Equals(existing.Id, connection.Id, StringComparison.OrdinalIgnoreCase));
             if (existingConnection == null)
@@ -175,9 +248,16 @@ namespace OceanyaClient
                 SaveFile.Data.FileHivemind.Connections[existingIndex] = connection;
             }
 
+            if (!hadAnyConnections && !SaveFile.Data.FileHivemind.BackgroundStartupPreferenceConfigured)
+            {
+                SaveFile.Data.FileHivemind.RunAgentAtStartup = true;
+                SaveFile.Data.FileHivemind.BackgroundStartupPreferenceConfigured = true;
+            }
+
             SaveFile.Data.FileHivemind.SelectedConnectionId = connection.Id;
             SaveFile.Save();
             RefreshConnections(connection.Id);
+            TryApplyBackgroundAgentPreferences(ensureCurrentSessionAgent: true);
         }
 
         private void ShowConnectionEditor(FileHivemindConnectionProfile connection, bool isDraftConnection)
@@ -204,6 +284,17 @@ namespace OceanyaClient
             FileHivemindConnectionProfile connection,
             Func<GoogleDriveSyncSettings, Task<GoogleDriveSyncSummary>> operation)
         {
+            using FileHivemindConnectionExecutionLock? executionLock =
+                FileHivemindConnectionExecutionLock.TryAcquire(connection.Id, TimeSpan.Zero);
+            if (executionLock == null)
+            {
+                AppendStatus(
+                    "Skipped because this connection is already being synced by another Oceanya process.",
+                    StatusLogLevel.Warning,
+                    connection.EffectiveDisplayName);
+                return false;
+            }
+
             try
             {
                 AppendStatus("Starting sync operation.", StatusLogLevel.Action, connection.EffectiveDisplayName);
@@ -215,6 +306,7 @@ namespace OceanyaClient
                     GoogleDriveSyncSummary summary = await operation(connection.GoogleDrive);
                     AppendStatus("Refreshing only the AO assets touched by this sync.", StatusLogLevel.Action, connection.EffectiveDisplayName);
                     RefreshMountedAssets(connection, summary.LocalChanges);
+                    await TryRefreshRuntimeStateAsync(connection, summary.KnownRemoteItemIds);
                     SaveFile.Save();
                     UpdateSelectedConnectionDetails(connection);
                     AppendStatus(BuildSummaryMessage(summary), StatusLogLevel.Success, connection.EffectiveDisplayName);
@@ -267,7 +359,31 @@ namespace OceanyaClient
                 configIniPath,
                 connection.GoogleDrive,
                 localChanges,
-                subtitle => WaitForm.SetSubtitle(connection.EffectiveDisplayName + ": " + subtitle));
+                    subtitle => WaitForm.SetSubtitle(connection.EffectiveDisplayName + ": " + subtitle));
+        }
+
+        private async Task TryRefreshRuntimeStateAsync(
+            FileHivemindConnectionProfile connection,
+            IEnumerable<string>? additionalKnownItemIds = null)
+        {
+            try
+            {
+                GoogleDriveConnectionRuntimeState runtimeState = await remoteChangeTracker.CaptureRuntimeStateAsync(
+                    connection.Id,
+                    connection.GoogleDrive,
+                    CancellationToken.None);
+                runtimeState = GoogleDriveRemoteChangeTracker.MergeKnownRemoteItemIds(runtimeState, additionalKnownItemIds);
+                runtimeState.LastSuccessfulSyncUtc = DateTimeOffset.UtcNow;
+                runtimeState.LastErrorMessage = string.Empty;
+                runtimeStateStore.Save(runtimeState);
+            }
+            catch (Exception ex)
+            {
+                AppendStatus(
+                    "Updated the connection data, but background change tracking state could not be refreshed: " + ex.Message,
+                    StatusLogLevel.Warning,
+                    connection.EffectiveDisplayName);
+            }
         }
 
         private static string BuildSummaryMessage(GoogleDriveSyncSummary summary)
@@ -294,6 +410,79 @@ namespace OceanyaClient
             SaveFile.Data.FileHivemind.SelectedConnectionId = selectedConnection?.Id ?? string.Empty;
             SaveFile.Save();
             UpdateSelectedConnectionDetails(selectedConnection);
+        }
+
+        private void RunAtStartupCheckBox_Changed(object sender, RoutedEventArgs e)
+        {
+            if (suppressBackgroundAgentCheckboxEvents)
+            {
+                return;
+            }
+
+            SaveFile.Data.FileHivemind.RunAgentAtStartup = RunAtStartupCheckBox.IsChecked == true;
+            SaveFile.Data.FileHivemind.BackgroundStartupPreferenceConfigured = true;
+            SaveFile.Save();
+            TryApplyBackgroundAgentPreferences(ensureCurrentSessionAgent: true);
+            AppendStatus(
+                SaveFile.Data.FileHivemind.RunAgentAtStartup
+                    ? "Enabled hidden Hivemind background sync at Windows startup."
+                    : "Disabled hidden Hivemind background sync at Windows startup.",
+                StatusLogLevel.Info);
+        }
+
+        private void RemotePollIntervalTextBox_LostFocus(object sender, RoutedEventArgs e)
+        {
+            ApplyRemotePollIntervalFromUi(showFeedback: true);
+        }
+
+        private void RemotePollIntervalTextBox_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.Enter)
+            {
+                return;
+            }
+
+            e.Handled = true;
+            ApplyRemotePollIntervalFromUi(showFeedback: true);
+            Keyboard.ClearFocus();
+        }
+
+        private void ApplyRemotePollIntervalFromUi(bool showFeedback)
+        {
+            if (suppressBackgroundAgentCheckboxEvents)
+            {
+                return;
+            }
+
+            string rawValue = RemotePollIntervalTextBox.Text?.Trim() ?? string.Empty;
+            if (!int.TryParse(rawValue, out int parsedSeconds))
+            {
+                RemotePollIntervalTextBox.Text = SaveFile.Data.FileHivemind.RemotePollIntervalSeconds.ToString();
+                if (showFeedback)
+                {
+                    AppendStatus("Remote poll interval must be a whole number of seconds.", StatusLogLevel.Warning);
+                }
+
+                return;
+            }
+
+            int normalizedSeconds = Math.Clamp(parsedSeconds, 5, 3600);
+            RemotePollIntervalTextBox.Text = normalizedSeconds.ToString();
+            if (SaveFile.Data.FileHivemind.RemotePollIntervalSeconds == normalizedSeconds)
+            {
+                RefreshBackgroundAgentControls();
+                return;
+            }
+
+            SaveFile.Data.FileHivemind.RemotePollIntervalSeconds = normalizedSeconds;
+            SaveFile.Save();
+            TryApplyBackgroundAgentPreferences(ensureCurrentSessionAgent: true);
+            if (showFeedback)
+            {
+                AppendStatus(
+                    $"Background Google Drive polling interval set to {normalizedSeconds} seconds.",
+                    StatusLogLevel.Info);
+            }
         }
 
         private void AddDriveConnectionButton_Click(object sender, RoutedEventArgs e)
@@ -457,7 +646,9 @@ namespace OceanyaClient
             SaveFile.Data.FileHivemind.Connections.Remove(connection);
             SaveFile.Data.FileHivemind.SelectedConnectionId = SaveFile.Data.FileHivemind.Connections.FirstOrDefault()?.Id ?? string.Empty;
             SaveFile.Save();
+            runtimeStateStore.Delete(connection.Id);
             RefreshConnections();
+            TryApplyBackgroundAgentPreferences(ensureCurrentSessionAgent: true);
             AppendStatus("Deleted the saved connection and cleared its local token.", StatusLogLevel.Warning, connection.EffectiveDisplayName);
         }
 
@@ -673,12 +864,24 @@ namespace OceanyaClient
                 {
                     foreach (FileHivemindConnectionProfile connection in connections)
                     {
+                        using FileHivemindConnectionExecutionLock? executionLock =
+                            FileHivemindConnectionExecutionLock.TryAcquire(connection.Id, TimeSpan.Zero);
+                        if (executionLock == null)
+                        {
+                            AppendStatus(
+                                "Skipped because this connection is already being synced by another Oceanya process.",
+                                StatusLogLevel.Warning,
+                                connection.EffectiveDisplayName);
+                            continue;
+                        }
+
                         AppendStatus("Preparing sync.", StatusLogLevel.Action, connection.EffectiveDisplayName);
                         WaitForm.SetSubtitle(connection.EffectiveDisplayName + ": preparing sync...");
                         EnsureMountedIfEnabled(connection);
                         GoogleDriveSyncSummary summary = await operation(connection);
                         AppendStatus("Refreshing only the AO assets touched by this sync.", StatusLogLevel.Action, connection.EffectiveDisplayName);
                         RefreshMountedAssets(connection, summary.LocalChanges);
+                        await TryRefreshRuntimeStateAsync(connection, summary.KnownRemoteItemIds);
                         AppendStatus(BuildSummaryMessage(summary), StatusLogLevel.Success, connection.EffectiveDisplayName);
                     }
 
@@ -733,6 +936,9 @@ namespace OceanyaClient
 
         private void OceanyanFileHivemindWindow_Loaded(object sender, RoutedEventArgs e)
         {
+            RefreshBackgroundAgentControls();
+            EnsureBackgroundLogFeedRunning();
+
             if (hasRaisedFinishedLoading)
             {
                 return;
@@ -740,6 +946,66 @@ namespace OceanyaClient
 
             hasRaisedFinishedLoading = true;
             FinishedLoading?.Invoke();
+        }
+
+        private void OceanyanFileHivemindWindow_Unloaded(object sender, RoutedEventArgs e)
+        {
+            backgroundLogTimer.Stop();
+        }
+
+        private void EnsureBackgroundLogFeedRunning()
+        {
+            if (!backgroundLogHistoryLoaded)
+            {
+                foreach (FileHivemindBackgroundLogEntry entry in backgroundLogStore.ReadRecent(80))
+                {
+                    AppendBackgroundLogEntry(entry);
+                }
+
+                backgroundLogHistoryLoaded = true;
+                backgroundLogReadPosition = backgroundLogStore.ReadFrom(long.MaxValue).NextPosition;
+            }
+
+            if (!backgroundLogTimer.IsEnabled)
+            {
+                backgroundLogTimer.Start();
+            }
+        }
+
+        private void BackgroundLogTimer_Tick(object? sender, EventArgs e)
+        {
+            try
+            {
+                FileHivemindBackgroundLogReadResult result = backgroundLogStore.ReadFrom(backgroundLogReadPosition);
+                backgroundLogReadPosition = result.NextPosition;
+                foreach (FileHivemindBackgroundLogEntry entry in result.Entries)
+                {
+                    AppendBackgroundLogEntry(entry);
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        private void AppendBackgroundLogEntry(FileHivemindBackgroundLogEntry entry)
+        {
+            AppendStatus(
+                "[Agent] " + entry.Message,
+                MapBackgroundLogLevel(entry.Level),
+                string.IsNullOrWhiteSpace(entry.ConnectionName) ? null : entry.ConnectionName);
+        }
+
+        private static StatusLogLevel MapBackgroundLogLevel(string? level)
+        {
+            return (level?.Trim() ?? string.Empty).ToUpperInvariant() switch
+            {
+                "ACTION" => StatusLogLevel.Action,
+                "SUCCESS" => StatusLogLevel.Success,
+                "WARNING" => StatusLogLevel.Warning,
+                "ERROR" => StatusLogLevel.Error,
+                _ => StatusLogLevel.Info
+            };
         }
     }
 }

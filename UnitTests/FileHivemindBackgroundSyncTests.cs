@@ -1,0 +1,552 @@
+using NUnit.Framework;
+using OceanyaClient;
+using OceanyaClient.Features.FileHivemind;
+using OceanyaClient.Features.GoogleDriveSync;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace UnitTests
+{
+    [TestFixture]
+    public class FileHivemindBackgroundAgentLauncherTests
+    {
+        [Test]
+        public void EnsureRunningForCurrentSession_RegistersAndLaunchesWhenEnabled()
+        {
+            FakeAutoStartRegistrar registrar = new FakeAutoStartRegistrar();
+            string launchedArgument = string.Empty;
+            FileHivemindBackgroundAgentLauncher launcher = new FileHivemindBackgroundAgentLauncher(
+                registrar,
+                argument =>
+                {
+                    launchedArgument = argument;
+                    return true;
+                });
+            FileHivemindSettings settings = new FileHivemindSettings
+            {
+                RunAgentAtStartup = true,
+                Connections = new List<FileHivemindConnectionProfile>
+                {
+                    new FileHivemindConnectionProfile
+                    {
+                        ProviderId = FileHivemindProviderIds.GoogleDrive,
+                        GoogleDrive = new GoogleDriveSyncSettings
+                        {
+                            RemoteFolderId = "folder-id",
+                            LocalFolderPath = @"C:\sync",
+                            TokenStoreKey = "token-key",
+                            LastSignedInEmail = "tester@example.com"
+                        }
+                    }
+                }
+            };
+
+            bool launched = launcher.EnsureRunningForCurrentSession(settings);
+
+            Assert.That(launched, Is.True);
+            Assert.That(registrar.LastEnabledValue, Is.True);
+            Assert.That(launchedArgument, Is.EqualTo(FileHivemindBackgroundAgentCommandLine.AgentArgument));
+        }
+
+        [Test]
+        public void EnsureRunningForCurrentSession_DoesNotLaunchWhenDisabled()
+        {
+            FakeAutoStartRegistrar registrar = new FakeAutoStartRegistrar();
+            bool launched = false;
+            FileHivemindBackgroundAgentLauncher launcher = new FileHivemindBackgroundAgentLauncher(
+                registrar,
+                _ =>
+                {
+                    launched = true;
+                    return true;
+                });
+            FileHivemindSettings settings = new FileHivemindSettings
+            {
+                RunAgentAtStartup = false,
+                Connections = new List<FileHivemindConnectionProfile>
+                {
+                    new FileHivemindConnectionProfile
+                    {
+                        ProviderId = FileHivemindProviderIds.GoogleDrive,
+                        GoogleDrive = new GoogleDriveSyncSettings
+                        {
+                            RemoteFolderId = "folder-id",
+                            LocalFolderPath = @"C:\sync",
+                            TokenStoreKey = "token-key",
+                            LastSignedInEmail = "tester@example.com"
+                        }
+                    }
+                }
+            };
+
+            bool result = launcher.EnsureRunningForCurrentSession(settings);
+
+            Assert.That(result, Is.False);
+            Assert.That(launched, Is.False);
+            Assert.That(registrar.LastEnabledValue, Is.False);
+        }
+
+        [Test]
+        public void EnsureRunningForCurrentSession_DoesNotLaunchWhenAgentAlreadyRunning()
+        {
+            FakeAutoStartRegistrar registrar = new FakeAutoStartRegistrar();
+            bool launched = false;
+            FileHivemindBackgroundAgentLauncher launcher = new FileHivemindBackgroundAgentLauncher(
+                registrar,
+                _ =>
+                {
+                    launched = true;
+                    return true;
+                },
+                () => true);
+            FileHivemindSettings settings = new FileHivemindSettings
+            {
+                RunAgentAtStartup = true,
+                Connections = new List<FileHivemindConnectionProfile>
+                {
+                    new FileHivemindConnectionProfile
+                    {
+                        ProviderId = FileHivemindProviderIds.GoogleDrive,
+                        GoogleDrive = new GoogleDriveSyncSettings
+                        {
+                            RemoteFolderId = "folder-id",
+                            LocalFolderPath = @"C:\sync",
+                            TokenStoreKey = "token-key",
+                            LastSignedInEmail = "tester@example.com"
+                        }
+                    }
+                }
+            };
+
+            bool result = launcher.EnsureRunningForCurrentSession(settings);
+
+            Assert.That(result, Is.True);
+            Assert.That(launched, Is.False);
+            Assert.That(registrar.LastEnabledValue, Is.True);
+        }
+
+        [Test]
+        public void ConnectionExecutionLock_BlocksSecondAcquisitionUntilReleased()
+        {
+            string connectionId = Guid.NewGuid().ToString("N");
+
+            using FileHivemindConnectionExecutionLock? firstLock =
+                FileHivemindConnectionExecutionLock.TryAcquire(connectionId, TimeSpan.Zero);
+            FileHivemindConnectionExecutionLock? secondLock = null;
+            Thread workerThread = new Thread(() =>
+            {
+                secondLock = FileHivemindConnectionExecutionLock.TryAcquire(connectionId, TimeSpan.Zero);
+            });
+            workerThread.SetApartmentState(ApartmentState.STA);
+            workerThread.Start();
+            workerThread.Join();
+
+            Assert.That(firstLock, Is.Not.Null);
+            Assert.That(secondLock, Is.Null);
+            secondLock?.Dispose();
+        }
+
+        private sealed class FakeAutoStartRegistrar : IFileHivemindAutoStartRegistrar
+        {
+            public bool LastEnabledValue { get; private set; }
+
+            public bool IsRegistered()
+            {
+                return LastEnabledValue;
+            }
+
+            public void SetRegistered(bool enabled)
+            {
+                LastEnabledValue = enabled;
+            }
+        }
+    }
+
+    [TestFixture]
+    public class GoogleDriveRemoteChangeTrackerTests
+    {
+        [Test]
+        public async Task CaptureRuntimeStateAsync_StoresKnownItemIdsAndCurrentPageToken()
+        {
+            FakeGoogleDriveRemoteClient client = new FakeGoogleDriveRemoteClient();
+            client.AddFolder("characters", "folder-characters");
+            client.AddFolder("characters/phoenix", "folder-phoenix");
+            client.AddFile("characters/phoenix/char.ini", "file-char", "name=Phoenix");
+            client.StartPageToken = "token-123";
+            GoogleDriveRemoteChangeTracker tracker = new GoogleDriveRemoteChangeTracker();
+
+            GoogleDriveConnectionRuntimeState state = await tracker.CaptureRuntimeStateAsync(
+                client,
+                "connection-1",
+                client.RootFolderId,
+                CancellationToken.None);
+
+            Assert.That(state.ConnectionId, Is.EqualTo("connection-1"));
+            Assert.That(state.RootFolderId, Is.EqualTo(client.RootFolderId));
+            Assert.That(state.ChangePageToken, Is.EqualTo("token-123"));
+            Assert.That(state.KnownRemoteItemIds, Contains.Item(client.RootFolderId));
+            Assert.That(state.KnownRemoteItemIds, Contains.Item("folder-characters"));
+            Assert.That(state.KnownRemoteItemIds, Contains.Item("file-char"));
+        }
+
+        [Test]
+        public async Task CheckForRelevantChangesAsync_ReturnsRelevantWhenChangedItemHasKnownParent()
+        {
+            FakeGoogleDriveRemoteClient client = new FakeGoogleDriveRemoteClient();
+            client.QueueChangePage(new GoogleDriveChangePage
+            {
+                NewStartPageToken = "token-2",
+                Changes = new List<GoogleDriveChangeEntry>
+                {
+                    new GoogleDriveChangeEntry
+                    {
+                        ItemId = "new-file",
+                        ParentIds = new List<string> { "known-folder" }
+                    }
+                }
+            });
+            GoogleDriveRemoteChangeTracker tracker = new GoogleDriveRemoteChangeTracker();
+            GoogleDriveConnectionRuntimeState existingState = new GoogleDriveConnectionRuntimeState
+            {
+                ConnectionId = "connection-1",
+                RootFolderId = client.RootFolderId,
+                ChangePageToken = "token-1",
+                KnownRemoteItemIds = new List<string> { client.RootFolderId, "known-folder" }
+            };
+
+            GoogleDriveRemoteChangeCheckResult result = await tracker.CheckForRelevantChangesAsync(
+                client,
+                "connection-1",
+                client.RootFolderId,
+                existingState,
+                CancellationToken.None);
+
+            Assert.That(result.HasRelevantChanges, Is.True);
+            Assert.That(result.RequiresFullResync, Is.False);
+            Assert.That(result.UpdatedState.ChangePageToken, Is.EqualTo("token-2"));
+        }
+
+        [Test]
+        public async Task CheckForRelevantChangesAsync_RequestsFullResyncWhenTokenIsMissing()
+        {
+            FakeGoogleDriveRemoteClient client = new FakeGoogleDriveRemoteClient();
+            GoogleDriveRemoteChangeTracker tracker = new GoogleDriveRemoteChangeTracker();
+
+            GoogleDriveRemoteChangeCheckResult result = await tracker.CheckForRelevantChangesAsync(
+                client,
+                "connection-1",
+                client.RootFolderId,
+                new GoogleDriveConnectionRuntimeState
+                {
+                    ConnectionId = "connection-1",
+                    RootFolderId = client.RootFolderId
+                },
+                CancellationToken.None);
+
+            Assert.That(result.RequiresFullResync, Is.True);
+            Assert.That(result.HasRelevantChanges, Is.False);
+        }
+
+        private sealed class FakeGoogleDriveRemoteClient : IGoogleDriveRemoteClient
+        {
+            private readonly Dictionary<string, string> fileContents = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            private readonly Dictionary<string, string> folderIdsToRelativePaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            private readonly Queue<GoogleDriveChangePage> queuedChangePages = new Queue<GoogleDriveChangePage>();
+
+            public FakeGoogleDriveRemoteClient()
+            {
+                RootFolderId = "root";
+                folderIdsToRelativePaths[RootFolderId] = string.Empty;
+            }
+
+            public string RootFolderId { get; }
+            public string StartPageToken { get; set; } = "token-0";
+            public GoogleDriveSyncSnapshot Snapshot { get; } = new GoogleDriveSyncSnapshot();
+
+            public void AddFolder(string relativePath, string folderId)
+            {
+                Snapshot.Folders[relativePath] = new GoogleDriveSyncFolderEntry
+                {
+                    RelativePath = relativePath,
+                    ItemId = folderId
+                };
+                folderIdsToRelativePaths[folderId] = relativePath;
+            }
+
+            public void AddFile(string relativePath, string fileId, string content)
+            {
+                string parentRelativePath = relativePath.Contains('/')
+                    ? relativePath[..relativePath.LastIndexOf('/')]
+                    : string.Empty;
+                string parentId = string.IsNullOrWhiteSpace(parentRelativePath)
+                    ? RootFolderId
+                    : Snapshot.Folders[parentRelativePath].ItemId;
+                string tempPath = Path.GetTempFileName();
+
+                try
+                {
+                    File.WriteAllText(tempPath, content);
+                    Snapshot.Files[relativePath] = new GoogleDriveSyncFileEntry
+                    {
+                        RelativePath = relativePath,
+                        ItemId = fileId,
+                        ParentId = parentId,
+                        Size = new FileInfo(tempPath).Length,
+                        Hash = GoogleDriveLocalSnapshotBuilder.ComputeMd5(tempPath)
+                    };
+                }
+                finally
+                {
+                    File.Delete(tempPath);
+                }
+
+                fileContents[relativePath] = content;
+            }
+
+            public void QueueChangePage(GoogleDriveChangePage page)
+            {
+                queuedChangePages.Enqueue(page);
+            }
+
+            public Task<GoogleDriveUserInfo> GetCurrentUserAsync(CancellationToken cancellationToken)
+            {
+                return Task.FromResult(new GoogleDriveUserInfo());
+            }
+
+            public Task<string> GetFolderNameAsync(string folderId, CancellationToken cancellationToken)
+            {
+                return Task.FromResult("Folder");
+            }
+
+            public Task<string> GetStartPageTokenAsync(CancellationToken cancellationToken)
+            {
+                return Task.FromResult(StartPageToken);
+            }
+
+            public Task<GoogleDriveChangePage> GetChangesAsync(string pageToken, CancellationToken cancellationToken)
+            {
+                if (queuedChangePages.Count == 0)
+                {
+                    return Task.FromResult(new GoogleDriveChangePage
+                    {
+                        NewStartPageToken = pageToken
+                    });
+                }
+
+                return Task.FromResult(queuedChangePages.Dequeue());
+            }
+
+            public Task<GoogleDriveSyncSnapshot> GetSnapshotAsync(string rootFolderId, CancellationToken cancellationToken)
+            {
+                GoogleDriveSyncSnapshot clone = new GoogleDriveSyncSnapshot();
+                foreach (KeyValuePair<string, GoogleDriveSyncFolderEntry> pair in Snapshot.Folders)
+                {
+                    clone.Folders[pair.Key] = new GoogleDriveSyncFolderEntry
+                    {
+                        RelativePath = pair.Value.RelativePath,
+                        ItemId = pair.Value.ItemId
+                    };
+                }
+
+                foreach (KeyValuePair<string, GoogleDriveSyncFileEntry> pair in Snapshot.Files)
+                {
+                    clone.Files[pair.Key] = new GoogleDriveSyncFileEntry
+                    {
+                        RelativePath = pair.Value.RelativePath,
+                        ItemId = pair.Value.ItemId,
+                        ParentId = pair.Value.ParentId,
+                        Size = pair.Value.Size,
+                        Hash = pair.Value.Hash
+                    };
+                }
+
+                return Task.FromResult(clone);
+            }
+
+            public Task<GoogleDriveSyncFolderEntry> CreateFolderAsync(string? parentFolderId, string folderName, CancellationToken cancellationToken)
+            {
+                throw new NotSupportedException();
+            }
+
+            public Task<string> UploadFileAsync(string parentFolderId, string fileName, string localFilePath, string? existingFileId, CancellationToken cancellationToken)
+            {
+                throw new NotSupportedException();
+            }
+
+            public Task DownloadFileAsync(string fileId, string destinationPath, CancellationToken cancellationToken)
+            {
+                throw new NotSupportedException();
+            }
+
+            public Task DeleteItemAsync(string itemId, CancellationToken cancellationToken)
+            {
+                throw new NotSupportedException();
+            }
+        }
+    }
+
+    [TestFixture]
+    public class GoogleDriveConnectionRuntimeStateStoreTests
+    {
+        [Test]
+        public void MergeKnownRemoteItemIds_AddsAdditionalIdsToRuntimeState()
+        {
+            GoogleDriveConnectionRuntimeState state = new GoogleDriveConnectionRuntimeState
+            {
+                ConnectionId = "connection-1",
+                RootFolderId = "root-folder",
+                KnownRemoteItemIds = new List<string> { "root-folder" }
+            };
+
+            GoogleDriveConnectionRuntimeState merged = GoogleDriveRemoteChangeTracker.MergeKnownRemoteItemIds(
+                state,
+                new[] { "file-1", "folder-2", "file-1" });
+
+            Assert.That(merged.KnownRemoteItemIds, Contains.Item("root-folder"));
+            Assert.That(merged.KnownRemoteItemIds, Contains.Item("file-1"));
+            Assert.That(merged.KnownRemoteItemIds, Contains.Item("folder-2"));
+            Assert.That(merged.KnownRemoteItemIds.Count(item => item == "file-1"), Is.EqualTo(1));
+        }
+
+        [Test]
+        public void BackgroundLogStore_AppendAndRead_RoundTripsEntries()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "file_hivemind_log_" + Guid.NewGuid().ToString("N"));
+            string filePath = Path.Combine(root, "background-agent.log");
+
+            try
+            {
+                FileHivemindBackgroundLogStore store = new FileHivemindBackgroundLogStore(filePath);
+                store.Append(new FileHivemindBackgroundLogEntry
+                {
+                    Level = "Action",
+                    ConnectionId = "connection-1",
+                    ConnectionName = "Campaign",
+                    Message = "Polling Google Drive for remote changes."
+                });
+
+                FileHivemindBackgroundLogReadResult result = store.ReadFrom(0);
+
+                Assert.That(result.Entries.Count, Is.EqualTo(1));
+                Assert.That(result.Entries[0].Level, Is.EqualTo("Action"));
+                Assert.That(result.Entries[0].ConnectionName, Is.EqualTo("Campaign"));
+                Assert.That(result.Entries[0].Message, Is.EqualTo("Polling Google Drive for remote changes."));
+                Assert.That(result.NextPosition, Is.GreaterThan(0));
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        [Test]
+        public void LocalMirrorStateSupport_HasDifferences_DetectsLocalDeletion()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "google_drive_local_state_" + Guid.NewGuid().ToString("N"));
+
+            try
+            {
+                string charactersPath = Path.Combine(root, "characters");
+                Directory.CreateDirectory(charactersPath);
+                File.WriteAllText(Path.Combine(charactersPath, "char.ini"), "name=Phoenix");
+
+                GoogleDriveLocalMirrorState baseline = GoogleDriveLocalMirrorStateSupport.Capture(root);
+                File.Delete(Path.Combine(charactersPath, "char.ini"));
+
+                bool hasDifferences = GoogleDriveLocalMirrorStateSupport.HasDifferences(baseline, root);
+
+                Assert.That(hasDifferences, Is.True);
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        [Test]
+        public void LocalMirrorStateSupport_HasDifferences_ReturnsFalseForUnchangedMirror()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "google_drive_local_state_" + Guid.NewGuid().ToString("N"));
+
+            try
+            {
+                string charactersPath = Path.Combine(root, "characters");
+                Directory.CreateDirectory(charactersPath);
+                File.WriteAllText(Path.Combine(charactersPath, "char.ini"), "name=Phoenix");
+
+                GoogleDriveLocalMirrorState baseline = GoogleDriveLocalMirrorStateSupport.Capture(root);
+                bool hasDifferences = GoogleDriveLocalMirrorStateSupport.HasDifferences(baseline, root);
+
+                Assert.That(hasDifferences, Is.False);
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        [Test]
+        public void SaveAndLoad_RoundTripsRuntimeState()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "google_drive_runtime_state_" + Guid.NewGuid().ToString("N"));
+
+            try
+            {
+                GoogleDriveConnectionRuntimeStateStore store = new GoogleDriveConnectionRuntimeStateStore(root);
+                GoogleDriveConnectionRuntimeState state = new GoogleDriveConnectionRuntimeState
+                {
+                    ConnectionId = "connection-1",
+                    RootFolderId = "root-folder",
+                    ChangePageToken = "token-5",
+                    KnownRemoteItemIds = new List<string> { "root-folder", "file-1", "folder-2" },
+                    LocalMirrorState = new GoogleDriveLocalMirrorState
+                    {
+                        DirectoryPaths = new List<string> { "characters" },
+                        Files = new List<GoogleDriveLocalMirrorFileState>
+                        {
+                            new GoogleDriveLocalMirrorFileState
+                            {
+                                RelativePath = "characters/char.ini",
+                                Size = 18,
+                                LastWriteUtcTicks = 12345
+                            }
+                        }
+                    },
+                    LastSuccessfulSyncUtc = DateTimeOffset.UtcNow
+                };
+
+                store.Save(state);
+                GoogleDriveConnectionRuntimeState? loaded = store.Load("connection-1");
+
+                Assert.That(loaded, Is.Not.Null);
+                Assert.That(loaded!.ConnectionId, Is.EqualTo("connection-1"));
+                Assert.That(loaded.ChangePageToken, Is.EqualTo("token-5"));
+                Assert.That(loaded.KnownRemoteItemIds, Contains.Item("file-1"));
+                Assert.That(loaded.LocalMirrorState.DirectoryPaths, Contains.Item("characters"));
+                Assert.That(loaded.LocalMirrorState.Files.Count, Is.EqualTo(1));
+                Assert.That(loaded.LocalMirrorState.Files[0].RelativePath, Is.EqualTo("characters/char.ini"));
+                Assert.That(loaded.LastSuccessfulSyncUtc, Is.EqualTo(state.LastSuccessfulSyncUtc));
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+    }
+}
