@@ -15,6 +15,8 @@ namespace OceanyaClient.Features.FileHivemind
         private static readonly TimeSpan ErrorBackoff = TimeSpan.FromSeconds(45);
         private static readonly TimeSpan PullWatcherIgnoreDuration = TimeSpan.FromSeconds(3);
         private const int DefaultRemotePollIntervalSeconds = 20;
+        private const int DestructiveDeletionProtectionMinimumBaselineFiles = 5;
+        private const int DestructiveDeletionProtectionMinimumBaselineItems = 12;
 
         private readonly GoogleDriveSyncService syncService;
         private readonly GoogleDriveRemoteChangeTracker remoteChangeTracker;
@@ -176,10 +178,42 @@ namespace OceanyaClient.Features.FileHivemind
                 return;
             }
 
+            LocalMirrorAssessment localMirrorAssessment = AssessLocalMirror(state);
+            if (localMirrorAssessment.Kind == LocalMirrorAssessmentKind.SuspiciousMassDeletion)
+            {
+                state.ClearPendingLocalPush();
+
+                if (!state.DestructiveDeletionProtectionActive
+                    || !string.Equals(
+                        state.LastDestructiveDeletionProtectionMessage,
+                        localMirrorAssessment.Message,
+                        StringComparison.Ordinal))
+                {
+                    LogAgentMessage(
+                        "Error",
+                        state.Connection,
+                        localMirrorAssessment.Message);
+                }
+
+                state.DestructiveDeletionProtectionActive = true;
+                state.LastDestructiveDeletionProtectionMessage = localMirrorAssessment.Message;
+                return;
+            }
+
+            if (state.DestructiveDeletionProtectionActive)
+            {
+                state.DestructiveDeletionProtectionActive = false;
+                state.LastDestructiveDeletionProtectionMessage = string.Empty;
+                LogAgentMessage(
+                    "Info",
+                    state.Connection,
+                    "Local mirror safety lock cleared. Automatic syncing resumed.");
+            }
+
             DateTimeOffset? pendingPushUtc = state.GetPendingLocalPushUtc();
             if (pendingPushUtc.HasValue)
             {
-                if (!HasUnsyncedLocalChanges(state))
+                if (localMirrorAssessment.Kind == LocalMirrorAssessmentKind.NoChanges)
                 {
                     state.ClearPendingLocalPush();
                     LogAgentMessage(
@@ -406,6 +440,90 @@ namespace OceanyaClient.Features.FileHivemind
                 state.Connection.GoogleDrive.LocalFolderPath);
         }
 
+        private LocalMirrorAssessment AssessLocalMirror(ConnectionMonitorState state)
+        {
+            GoogleDriveConnectionRuntimeState? runtimeState = runtimeStateStore.Load(state.Connection.Id);
+            GoogleDriveLocalMirrorState baseline = GoogleDriveLocalMirrorStateSupport.Normalize(runtimeState?.LocalMirrorState);
+            GoogleDriveLocalMirrorState current;
+
+            try
+            {
+                current = GoogleDriveLocalMirrorStateSupport.Capture(state.Connection.GoogleDrive.LocalFolderPath);
+            }
+            catch
+            {
+                return new LocalMirrorAssessment(LocalMirrorAssessmentKind.NormalChanges, string.Empty);
+            }
+
+            if (!GoogleDriveLocalMirrorStateSupport.HasDifferences(baseline, current))
+            {
+                return new LocalMirrorAssessment(LocalMirrorAssessmentKind.NoChanges, string.Empty);
+            }
+
+            if (TryGetSuspiciousMassDeletionMessage(state.Connection, baseline, current, out string message))
+            {
+                return new LocalMirrorAssessment(LocalMirrorAssessmentKind.SuspiciousMassDeletion, message);
+            }
+
+            return new LocalMirrorAssessment(LocalMirrorAssessmentKind.NormalChanges, string.Empty);
+        }
+
+        private static bool TryGetSuspiciousMassDeletionMessage(
+            FileHivemindConnectionProfile connection,
+            GoogleDriveLocalMirrorState baseline,
+            GoogleDriveLocalMirrorState current,
+            out string message)
+        {
+            message = string.Empty;
+            GoogleDriveLocalMirrorState normalizedBaseline = GoogleDriveLocalMirrorStateSupport.Normalize(baseline);
+            GoogleDriveLocalMirrorState normalizedCurrent = GoogleDriveLocalMirrorStateSupport.Normalize(current);
+
+            int baselineFileCount = normalizedBaseline.Files.Count;
+            int baselineItemCount = baselineFileCount + normalizedBaseline.DirectoryPaths.Count;
+            if (baselineFileCount < DestructiveDeletionProtectionMinimumBaselineFiles
+                && baselineItemCount < DestructiveDeletionProtectionMinimumBaselineItems)
+            {
+                return false;
+            }
+
+            string localFolderPath = connection.GoogleDrive.LocalFolderPath?.Trim() ?? string.Empty;
+            bool localFolderMissing = string.IsNullOrWhiteSpace(localFolderPath) || !Directory.Exists(localFolderPath);
+            int currentFileCount = normalizedCurrent.Files.Count;
+            int currentItemCount = currentFileCount + normalizedCurrent.DirectoryPaths.Count;
+
+            if (localFolderMissing)
+            {
+                message =
+                    "Automatic push was blocked because the local mirror folder is missing. "
+                    + "This looks like a destructive local delete, so Oceanya will not propagate it to Drive automatically.";
+                return true;
+            }
+
+            if (currentItemCount == 0)
+            {
+                message =
+                    "Automatic push was blocked because the local mirror became empty even though it previously contained synced files. "
+                    + "This looks like a destructive local delete, so Oceanya will not propagate it to Drive automatically.";
+                return true;
+            }
+
+            int removedFiles = Math.Max(0, baselineFileCount - currentFileCount);
+            int removedItems = Math.Max(0, baselineItemCount - currentItemCount);
+            bool removedAlmostEverything = removedFiles >= baselineFileCount * 9 / 10
+                && removedItems >= baselineItemCount * 9 / 10;
+            bool leftVeryLittle = currentFileCount <= Math.Max(1, baselineFileCount / 10)
+                && currentItemCount <= Math.Max(2, baselineItemCount / 10);
+            if (removedAlmostEverything && leftVeryLittle)
+            {
+                message =
+                    "Automatic push was blocked because almost the entire local mirror disappeared at once. "
+                    + "This looks like a destructive local delete, so Oceanya will not propagate it to Drive automatically.";
+                return true;
+            }
+
+            return false;
+        }
+
         private void PersistRuntimeError(
             string connectionId,
             GoogleDriveConnectionRuntimeState? existingState,
@@ -619,6 +737,8 @@ namespace OceanyaClient.Features.FileHivemind
             public FileSystemWatcher? Watcher { get; set; }
             public string WatchedPath { get; set; } = string.Empty;
             public bool RequiresInitialPull { get; set; } = true;
+            public bool DestructiveDeletionProtectionActive { get; set; }
+            public string LastDestructiveDeletionProtectionMessage { get; set; } = string.Empty;
             public DateTimeOffset NextRemotePollUtc { get; set; } = DateTimeOffset.UtcNow;
             public DateTimeOffset IgnoreLocalChangesUntilUtc { get; set; }
 
@@ -645,6 +765,25 @@ namespace OceanyaClient.Features.FileHivemind
                     pendingLocalPushUtc = null;
                 }
             }
+        }
+
+        private readonly struct LocalMirrorAssessment
+        {
+            public LocalMirrorAssessment(LocalMirrorAssessmentKind kind, string message)
+            {
+                Kind = kind;
+                Message = message ?? string.Empty;
+            }
+
+            public LocalMirrorAssessmentKind Kind { get; }
+            public string Message { get; }
+        }
+
+        private enum LocalMirrorAssessmentKind
+        {
+            NoChanges = 0,
+            NormalChanges = 1,
+            SuspiciousMassDeletion = 2
         }
     }
 }

@@ -112,6 +112,7 @@ namespace OceanyaClient
         public string RemoteFolderId { get; set; } = string.Empty;
         public string RemoteFolderName { get; set; } = string.Empty;
         public string LocalFolderPath { get; set; } = string.Empty;
+        public bool IsOceanyaManagedLocalFolder { get; set; }
         public bool AutoAddMountPath { get; set; } = true;
         public bool MirrorDeletes { get; set; } = true;
         public bool UseExistingMountPath { get; set; }

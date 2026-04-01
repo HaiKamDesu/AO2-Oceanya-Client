@@ -1029,6 +1029,8 @@ namespace OceanyaClient
             settings.RemoteFolderId = settings.RemoteFolderId?.Trim() ?? string.Empty;
             settings.RemoteFolderName = settings.RemoteFolderName?.Trim() ?? string.Empty;
             settings.LocalFolderPath = settings.LocalFolderPath?.Trim() ?? string.Empty;
+            settings.IsOceanyaManagedLocalFolder = settings.IsOceanyaManagedLocalFolder
+                || IsManagedGoogleDriveLocalFolderPath(settings.LocalFolderPath);
         }
 
         private static void NormalizeFileHivemindSettings(SaveData data)
@@ -1137,11 +1139,41 @@ namespace OceanyaClient
                 RemoteFolderId = settings.RemoteFolderId,
                 RemoteFolderName = settings.RemoteFolderName,
                 LocalFolderPath = settings.LocalFolderPath,
+                IsOceanyaManagedLocalFolder = settings.IsOceanyaManagedLocalFolder,
                 AutoAddMountPath = settings.AutoAddMountPath,
                 MirrorDeletes = settings.MirrorDeletes,
                 UseExistingMountPath = settings.UseExistingMountPath,
                 LastSyncUtc = settings.LastSyncUtc
             };
+        }
+
+        private static bool IsManagedGoogleDriveLocalFolderPath(string path)
+        {
+            string trimmedPath = path?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(trimmedPath))
+            {
+                return false;
+            }
+
+            try
+            {
+                string managedRoot = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    "OceanyaClient",
+                    "GoogleDriveSync");
+                string normalizedPath = Path.GetFullPath(trimmedPath)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                string normalizedManagedRoot = Path.GetFullPath(managedRoot)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                return string.Equals(normalizedPath, normalizedManagedRoot, StringComparison.OrdinalIgnoreCase)
+                    || normalizedPath.StartsWith(
+                        normalizedManagedRoot + Path.DirectorySeparatorChar,
+                        StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static void ClampWindowState(VisualizerWindowState state)

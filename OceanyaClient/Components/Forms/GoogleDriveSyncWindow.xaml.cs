@@ -109,6 +109,10 @@ namespace OceanyaClient
             {
                 runtimeStateStore.Delete(connection.Id);
             }
+            if (Settings.IsOceanyaManagedLocalFolder)
+            {
+                GoogleDriveManagedLocalFolderMarkerService.EnsureMarkerIfNeeded(Settings);
+            }
 
             Settings.AutoAddMountPath = AutoAddMountPathCheckBox.IsChecked != false;
             Settings.MirrorDeletes = MirrorDeletesCheckBox.IsChecked != false;
@@ -290,6 +294,8 @@ namespace OceanyaClient
                     Settings.RemoteFolderName,
                     Settings.RemoteFolderId);
                 Directory.CreateDirectory(managedPath);
+                Settings.IsOceanyaManagedLocalFolder = true;
+                GoogleDriveManagedLocalFolderMarkerService.EnsureMarker(managedPath);
                 LocalFolderTextBox.Text = managedPath;
                 PersistSettings(forcePersist: true);
                 AppendStatus("Selected generated local sync folder: " + managedPath, StatusLogLevel.Action);
@@ -344,6 +350,7 @@ namespace OceanyaClient
             };
             if (dialog.ShowDialog() == true)
             {
+                Settings.IsOceanyaManagedLocalFolder = false;
                 LocalFolderTextBox.Text = dialog.FolderName;
                 PersistSettings(forcePersist: true);
                 AppendStatus("Selected local sync folder: " + dialog.FolderName, StatusLogLevel.Action);
@@ -439,6 +446,10 @@ namespace OceanyaClient
 
                 AppendStatus("Moving local sync folder...", StatusLogLevel.Action);
                 MoveDirectoryWithFallback(normalizedSourcePath, destinationPath);
+                if (Settings.IsOceanyaManagedLocalFolder)
+                {
+                    GoogleDriveManagedLocalFolderMarkerService.EnsureMarker(destinationPath);
+                }
                 LocalFolderTextBox.Text = destinationPath;
                 PersistSettings(forcePersist: true);
                 UpdateMountPathAfterLocalFolderMove(normalizedSourcePath, destinationPath);

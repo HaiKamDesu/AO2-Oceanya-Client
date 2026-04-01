@@ -66,11 +66,7 @@ namespace OceanyaClient.Features.FileHivemind
 
         private static bool OpenMainApplication()
         {
-            string? executablePath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName;
-            if (string.IsNullOrWhiteSpace(executablePath))
-            {
-                return false;
-            }
+            string executablePath = FileHivemindBackgroundAgentCommandLine.ResolveMainApplicationExecutablePath();
 
             Process.Start(new ProcessStartInfo
             {

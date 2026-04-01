@@ -76,8 +76,10 @@ namespace OceanyaClient.Features.GoogleDriveSync
             ValidateSyncSettings(settings);
 
             Directory.CreateDirectory(settings.LocalFolderPath);
+            GoogleDriveManagedLocalFolderMarkerService.EnsureMarkerIfNeeded(settings);
             progress?.Invoke("Reading Google Drive folder structure...");
-            GoogleDriveSyncSnapshot remoteSnapshot = await client.GetSnapshotAsync(settings.RemoteFolderId, cancellationToken);
+            GoogleDriveSyncSnapshot remoteSnapshot = GoogleDriveLocalSnapshotBuilder.FilterReservedSupportFiles(
+                await client.GetSnapshotAsync(settings.RemoteFolderId, cancellationToken));
 
             progress?.Invoke("Scanning local sync folder...");
             GoogleDriveSyncSnapshot localSnapshot = GoogleDriveLocalSnapshotBuilder.Build(settings.LocalFolderPath);
@@ -188,6 +190,7 @@ namespace OceanyaClient.Features.GoogleDriveSync
         {
             ValidateSyncSettings(settings);
             Directory.CreateDirectory(settings.LocalFolderPath);
+            GoogleDriveManagedLocalFolderMarkerService.EnsureMarkerIfNeeded(settings);
 
             progress?.Invoke("Scanning local sync folder...");
             GoogleDriveSyncSnapshot localSnapshot = GoogleDriveLocalSnapshotBuilder.Build(settings.LocalFolderPath);

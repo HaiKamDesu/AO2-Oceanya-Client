@@ -6,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -130,6 +131,58 @@ namespace UnitTests
         }
 
         [Test]
+        public void ResolveAgentExecutablePath_PrefersCompanionAgentExecutable()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "hivemind_agent_path_" + Guid.NewGuid().ToString("N"));
+
+            try
+            {
+                Directory.CreateDirectory(root);
+                string mainExecutablePath = Path.Combine(root, FileHivemindBackgroundAgentCommandLine.MainApplicationExecutableFileName);
+                string agentExecutablePath = Path.Combine(root, FileHivemindBackgroundAgentCommandLine.AgentExecutableFileName);
+                File.WriteAllText(mainExecutablePath, string.Empty);
+                File.WriteAllText(agentExecutablePath, string.Empty);
+
+                string resolved = FileHivemindBackgroundAgentCommandLine.ResolveAgentExecutablePath(mainExecutablePath);
+
+                Assert.That(resolved, Is.EqualTo(agentExecutablePath));
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        [Test]
+        public void ResolveMainApplicationExecutablePath_PrefersCompanionMainExecutable()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "hivemind_main_path_" + Guid.NewGuid().ToString("N"));
+
+            try
+            {
+                Directory.CreateDirectory(root);
+                string mainExecutablePath = Path.Combine(root, FileHivemindBackgroundAgentCommandLine.MainApplicationExecutableFileName);
+                string agentExecutablePath = Path.Combine(root, FileHivemindBackgroundAgentCommandLine.AgentExecutableFileName);
+                File.WriteAllText(mainExecutablePath, string.Empty);
+                File.WriteAllText(agentExecutablePath, string.Empty);
+
+                string resolved = FileHivemindBackgroundAgentCommandLine.ResolveMainApplicationExecutablePath(agentExecutablePath);
+
+                Assert.That(resolved, Is.EqualTo(mainExecutablePath));
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        [Test]
         public void ConnectionExecutionLock_BlocksSecondAcquisitionUntilReleased()
         {
             string connectionId = Guid.NewGuid().ToString("N");
@@ -190,6 +243,29 @@ namespace UnitTests
             Assert.That(state.ChangePageToken, Is.EqualTo("token-123"));
             Assert.That(state.KnownRemoteItemIds, Contains.Item(client.RootFolderId));
             Assert.That(state.KnownRemoteItemIds, Contains.Item("folder-characters"));
+            Assert.That(state.KnownRemoteItemIds, Contains.Item("file-char"));
+        }
+
+        [Test]
+        public async Task CaptureRuntimeStateAsync_IgnoresManagedFolderMarkerFilesInKnownItemIds()
+        {
+            FakeGoogleDriveRemoteClient client = new FakeGoogleDriveRemoteClient();
+            client.AddFile("desktop.ini", "desktop-id", "marker");
+            client.AddFile(GoogleDriveManagedLocalFolderMarkerService.MarkerIconFileName, "icon-id", "icon");
+            client.AddFolder("characters", "folder-characters");
+            client.AddFolder("characters/phoenix", "folder-phoenix");
+            client.AddFile("characters/phoenix/char.ini", "file-char", "name=Phoenix");
+            client.StartPageToken = "token-123";
+            GoogleDriveRemoteChangeTracker tracker = new GoogleDriveRemoteChangeTracker();
+
+            GoogleDriveConnectionRuntimeState state = await tracker.CaptureRuntimeStateAsync(
+                client,
+                "connection-1",
+                client.RootFolderId,
+                CancellationToken.None);
+
+            Assert.That(state.KnownRemoteItemIds, Does.Not.Contain("desktop-id"));
+            Assert.That(state.KnownRemoteItemIds, Does.Not.Contain("icon-id"));
             Assert.That(state.KnownRemoteItemIds, Contains.Item("file-char"));
         }
 
@@ -499,6 +575,87 @@ namespace UnitTests
         }
 
         [Test]
+        public void DestructiveDeletionProtection_DetectsMissingOrEmptyMirrorAgainstLargeBaseline()
+        {
+            FileHivemindConnectionProfile connection = new FileHivemindConnectionProfile
+            {
+                DisplayName = "Campaign",
+                ProviderId = FileHivemindProviderIds.GoogleDrive,
+                GoogleDrive = new GoogleDriveSyncSettings
+                {
+                    LocalFolderPath = @"C:\missing-mirror"
+                }
+            };
+            GoogleDriveLocalMirrorState baseline = new GoogleDriveLocalMirrorState
+            {
+                DirectoryPaths = Enumerable.Range(0, 8).Select(index => "characters/char" + index).ToList(),
+                Files = Enumerable.Range(0, 8)
+                    .Select(index => new GoogleDriveLocalMirrorFileState
+                    {
+                        RelativePath = $"characters/char{index}/char.ini",
+                        Size = 10,
+                        LastWriteUtcTicks = 100 + index
+                    })
+                    .ToList()
+            };
+            GoogleDriveLocalMirrorState current = new GoogleDriveLocalMirrorState();
+
+            object?[] parameters = { connection, baseline, current, null! };
+            bool blocked = InvokeDestructiveDeletionProtection(parameters);
+
+            Assert.That(blocked, Is.True);
+            Assert.That(parameters[3], Is.TypeOf<string>());
+            Assert.That((string)parameters[3], Does.Contain("blocked"));
+            Assert.That((string)parameters[3], Does.Contain("destructive local delete"));
+        }
+
+        [Test]
+        public void DestructiveDeletionProtection_DoesNotBlockSmallBaseline()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "google_drive_local_state_" + Guid.NewGuid().ToString("N"));
+
+            try
+            {
+                Directory.CreateDirectory(root);
+                FileHivemindConnectionProfile connection = new FileHivemindConnectionProfile
+                {
+                    DisplayName = "Campaign",
+                    ProviderId = FileHivemindProviderIds.GoogleDrive,
+                    GoogleDrive = new GoogleDriveSyncSettings
+                    {
+                        LocalFolderPath = root
+                    }
+                };
+                GoogleDriveLocalMirrorState baseline = new GoogleDriveLocalMirrorState
+                {
+                    Files = new List<GoogleDriveLocalMirrorFileState>
+                    {
+                        new GoogleDriveLocalMirrorFileState
+                        {
+                            RelativePath = "characters/char.ini",
+                            Size = 10,
+                            LastWriteUtcTicks = 1
+                        }
+                    }
+                };
+                GoogleDriveLocalMirrorState current = new GoogleDriveLocalMirrorState();
+
+                object?[] parameters = { connection, baseline, current, null! };
+                bool blocked = InvokeDestructiveDeletionProtection(parameters);
+
+                Assert.That(blocked, Is.False);
+                Assert.That(parameters[3], Is.EqualTo(string.Empty).Or.Null);
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        [Test]
         public void SaveAndLoad_RoundTripsRuntimeState()
         {
             string root = Path.Combine(Path.GetTempPath(), "google_drive_runtime_state_" + Guid.NewGuid().ToString("N"));
@@ -547,6 +704,17 @@ namespace UnitTests
                     Directory.Delete(root, true);
                 }
             }
+        }
+
+        private static bool InvokeDestructiveDeletionProtection(object?[] parameters)
+        {
+            MethodInfo? method = typeof(FileHivemindBackgroundSyncAgent).GetMethod(
+                "TryGetSuspiciousMassDeletionMessage",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.That(method, Is.Not.Null);
+            object? result = method!.Invoke(null, parameters);
+            Assert.That(result, Is.TypeOf<bool>());
+            return (bool)result!;
         }
     }
 }

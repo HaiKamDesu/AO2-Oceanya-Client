@@ -2,6 +2,7 @@ using Microsoft.Win32;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Threading;
 
@@ -12,6 +13,8 @@ namespace OceanyaClient.Features.FileHivemind
         public const string AgentArgument = "--hivemind-agent";
         public const string AutoStartValueName = "OceanyaClient.FileHivemindAgent";
         public const string AgentMutexName = @"Local\OceanyaClient.FileHivemind.Agent";
+        public const string AgentExecutableFileName = "OceanyaHivemindAgent.exe";
+        public const string MainApplicationExecutableFileName = "OceanyaClient.exe";
 
         public static bool IsAgentMode(string[]? args)
         {
@@ -29,6 +32,53 @@ namespace OceanyaClient.Features.FileHivemind
 
             return "\"" + trimmedExecutablePath + "\" " + AgentArgument;
         }
+
+        public static string ResolveAgentExecutablePath(string? currentExecutablePath = null)
+        {
+            string resolvedCurrentPath = ResolveCurrentExecutablePath(currentExecutablePath);
+            string currentFileName = Path.GetFileName(resolvedCurrentPath);
+            if (string.Equals(currentFileName, AgentExecutableFileName, StringComparison.OrdinalIgnoreCase))
+            {
+                return resolvedCurrentPath;
+            }
+
+            string candidate = Path.Combine(
+                Path.GetDirectoryName(resolvedCurrentPath) ?? string.Empty,
+                AgentExecutableFileName);
+            return File.Exists(candidate) ? candidate : resolvedCurrentPath;
+        }
+
+        public static string ResolveMainApplicationExecutablePath(string? currentExecutablePath = null)
+        {
+            string resolvedCurrentPath = ResolveCurrentExecutablePath(currentExecutablePath);
+            string currentFileName = Path.GetFileName(resolvedCurrentPath);
+            if (string.Equals(currentFileName, MainApplicationExecutableFileName, StringComparison.OrdinalIgnoreCase))
+            {
+                return resolvedCurrentPath;
+            }
+
+            string candidate = Path.Combine(
+                Path.GetDirectoryName(resolvedCurrentPath) ?? string.Empty,
+                MainApplicationExecutableFileName);
+            return File.Exists(candidate) ? candidate : resolvedCurrentPath;
+        }
+
+        private static string ResolveCurrentExecutablePath(string? currentExecutablePath = null)
+        {
+            string trimmedCurrentPath = currentExecutablePath?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(trimmedCurrentPath))
+            {
+                return trimmedCurrentPath;
+            }
+
+            string? processPath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName;
+            if (!string.IsNullOrWhiteSpace(processPath))
+            {
+                return processPath.Trim();
+            }
+
+            throw new InvalidOperationException("The Oceanya executable path could not be resolved.");
+        }
     }
 
     public interface IFileHivemindAutoStartRegistrar
@@ -45,7 +95,8 @@ namespace OceanyaClient.Features.FileHivemind
 
         public WindowsFileHivemindAutoStartRegistrar(Func<string>? executablePathResolver = null)
         {
-            this.executablePathResolver = executablePathResolver ?? ResolveCurrentExecutablePath;
+            this.executablePathResolver = executablePathResolver ?? (() =>
+                FileHivemindBackgroundAgentCommandLine.ResolveAgentExecutablePath());
         }
 
         public bool IsRegistered()
@@ -68,23 +119,6 @@ namespace OceanyaClient.Features.FileHivemind
 
             string command = FileHivemindBackgroundAgentCommandLine.BuildAutoStartCommand(executablePathResolver());
             runKey.SetValue(FileHivemindBackgroundAgentCommandLine.AutoStartValueName, command, RegistryValueKind.String);
-        }
-
-        private static string ResolveCurrentExecutablePath()
-        {
-            string? processPath = Environment.ProcessPath;
-            if (!string.IsNullOrWhiteSpace(processPath))
-            {
-                return processPath.Trim();
-            }
-
-            string? fallback = Process.GetCurrentProcess().MainModule?.FileName;
-            if (!string.IsNullOrWhiteSpace(fallback))
-            {
-                return fallback.Trim();
-            }
-
-            throw new InvalidOperationException("The Oceanya executable path could not be resolved.");
         }
     }
 
@@ -170,11 +204,7 @@ namespace OceanyaClient.Features.FileHivemind
 
         private static bool LaunchHiddenAgentProcess(string argument)
         {
-            string? executablePath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName;
-            if (string.IsNullOrWhiteSpace(executablePath))
-            {
-                return false;
-            }
+            string executablePath = FileHivemindBackgroundAgentCommandLine.ResolveAgentExecutablePath();
 
             Process.Start(new ProcessStartInfo
             {

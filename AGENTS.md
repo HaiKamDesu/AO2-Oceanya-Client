@@ -23,8 +23,8 @@ Claude should NOT copy this code directly but use it to understand patterns and 
 Any time code is changed, run build and test to verify the work using these exact commands from the project root:
 
 ```bash
-/mnt/c/Program\ Files/dotnet/dotnet.exe build "AOBot-Testing.sln"
-/mnt/c/Program\ Files/dotnet/dotnet.exe test "AOBot-Testing.sln"
+/mnt/c/Program\ Files/dotnet/dotnet.exe build "Oceanya Client.sln"
+/mnt/c/Program\ Files/dotnet/dotnet.exe test "Oceanya Client.sln"
 ```
 
 ## Code Style Guidelines

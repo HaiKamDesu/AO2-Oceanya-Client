@@ -128,6 +128,7 @@ namespace UnitTests
                     "Campaign Assets",
                     "Campaign Assets",
                     "1AbCdEfGhIjKlMnOpQrStUvWxYz123456")));
+            Assert.That(imported.GoogleDrive.IsOceanyaManagedLocalFolder, Is.True);
             Assert.That(imported.GoogleDrive.UseExistingMountPath, Is.False);
             Assert.That(imported.GoogleDrive.LastSignedInEmail, Is.Empty);
             Assert.That(imported.GoogleDrive.LastSignedInDisplayName, Is.Empty);
@@ -142,6 +143,61 @@ namespace UnitTests
                 "folder123");
 
             Assert.That(Path.GetFileName(path), Is.EqualTo("Session Assets - Campaign Drive Folder (folder123)"));
+        }
+
+        [Test]
+        public void BuildLocalSnapshot_IgnoresManagedFolderMarkerFiles()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "drive_snapshot_" + Guid.NewGuid().ToString("N"));
+
+            try
+            {
+                Directory.CreateDirectory(root);
+                Directory.CreateDirectory(Path.Combine(root, "characters", "phoenix"));
+                File.WriteAllText(Path.Combine(root, "characters", "phoenix", "char.ini"), "name=Phoenix");
+                File.WriteAllText(Path.Combine(root, "desktop.ini"), "marker");
+                File.WriteAllText(Path.Combine(root, GoogleDriveManagedLocalFolderMarkerService.MarkerIconFileName), "icon");
+
+                GoogleDriveSyncSnapshot snapshot = GoogleDriveLocalSnapshotBuilder.Build(root);
+
+                Assert.That(snapshot.Files.ContainsKey("characters/phoenix/char.ini"), Is.True);
+                Assert.That(snapshot.Files.ContainsKey("desktop.ini"), Is.False);
+                Assert.That(snapshot.Files.ContainsKey(GoogleDriveManagedLocalFolderMarkerService.MarkerIconFileName), Is.False);
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        [Test]
+        public void FilterReservedSupportFiles_RemovesManagedFolderMarkerFilesFromSnapshot()
+        {
+            GoogleDriveSyncSnapshot snapshot = new GoogleDriveSyncSnapshot();
+            snapshot.Files["desktop.ini"] = new GoogleDriveSyncFileEntry
+            {
+                RelativePath = "desktop.ini",
+                ItemId = "desktop-id"
+            };
+            snapshot.Files[GoogleDriveManagedLocalFolderMarkerService.MarkerIconFileName] = new GoogleDriveSyncFileEntry
+            {
+                RelativePath = GoogleDriveManagedLocalFolderMarkerService.MarkerIconFileName,
+                ItemId = "icon-id"
+            };
+            snapshot.Files["characters/phoenix/char.ini"] = new GoogleDriveSyncFileEntry
+            {
+                RelativePath = "characters/phoenix/char.ini",
+                ItemId = "char-id"
+            };
+
+            GoogleDriveSyncSnapshot filtered = GoogleDriveLocalSnapshotBuilder.FilterReservedSupportFiles(snapshot);
+
+            Assert.That(filtered.Files.ContainsKey("desktop.ini"), Is.False);
+            Assert.That(filtered.Files.ContainsKey(GoogleDriveManagedLocalFolderMarkerService.MarkerIconFileName), Is.False);
+            Assert.That(filtered.Files.ContainsKey("characters/phoenix/char.ini"), Is.True);
         }
     }
 
@@ -605,6 +661,49 @@ namespace UnitTests
                 Assert.That(summary.FilesDownloaded, Is.EqualTo(1));
                 Assert.That(summary.LocalChanges.AddedOrUpdatedPaths, Contains.Item("characters/phoenix/char.ini"));
                 Assert.That(settings.LastSyncUtc.HasValue, Is.True);
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        [Test]
+        public async Task PullFromDriveAsync_IgnoresRemoteManagedFolderMarkerFiles()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "drive_pull_marker_test_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                Directory.CreateDirectory(root);
+
+                FakeGoogleDriveRemoteClient client = new FakeGoogleDriveRemoteClient();
+                client.AddFile("desktop.ini", "desktop-id", "marker");
+                client.AddFile(GoogleDriveManagedLocalFolderMarkerService.MarkerIconFileName, "icon-id", "icon");
+                client.AddFolder("characters", "folder-characters");
+                client.AddFolder("characters/phoenix", "folder-phoenix");
+                client.AddFile("characters/phoenix/char.ini", "file-char", "name=Phoenix");
+
+                GoogleDriveSyncSettings settings = new GoogleDriveSyncSettings
+                {
+                    LocalFolderPath = root,
+                    RemoteFolderId = client.RootFolderId,
+                    MirrorDeletes = true
+                };
+
+                GoogleDriveSyncService service = new GoogleDriveSyncService();
+                GoogleDriveSyncSummary summary = await service.PullFromDriveAsync(
+                    client,
+                    settings,
+                    _ => { },
+                    CancellationToken.None);
+
+                Assert.That(File.Exists(Path.Combine(root, "desktop.ini")), Is.False);
+                Assert.That(File.Exists(Path.Combine(root, GoogleDriveManagedLocalFolderMarkerService.MarkerIconFileName)), Is.False);
+                Assert.That(File.Exists(Path.Combine(root, "characters", "phoenix", "char.ini")), Is.True);
+                Assert.That(summary.FilesDownloaded, Is.EqualTo(1));
             }
             finally
             {

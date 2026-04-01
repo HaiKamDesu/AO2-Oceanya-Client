@@ -244,6 +244,7 @@ namespace OceanyaClient.Features.GoogleDriveSync
                     imported.EffectiveDisplayName,
                     imported.GoogleDrive.RemoteFolderName,
                     imported.GoogleDrive.RemoteFolderId);
+                imported.GoogleDrive.IsOceanyaManagedLocalFolder = true;
                 imported.GoogleDrive.UseExistingMountPath = false;
             }
 
@@ -284,6 +285,7 @@ namespace OceanyaClient.Features.GoogleDriveSync
                     RemoteFolderId = remoteFolderId,
                     RemoteFolderName = connection.GoogleDrive.RemoteFolderName?.Trim() ?? string.Empty,
                     LocalFolderPath = string.Empty,
+                    IsOceanyaManagedLocalFolder = false,
                     AutoAddMountPath = connection.GoogleDrive.AutoAddMountPath,
                     MirrorDeletes = connection.GoogleDrive.MirrorDeletes,
                     UseExistingMountPath = false,
@@ -513,6 +515,11 @@ namespace OceanyaClient.Features.GoogleDriveSync
 
     public static class GoogleDriveClientAssetIntegration
     {
+        public static readonly string ManagedLocalFolderRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "OceanyaClient",
+            "GoogleDriveSync");
+
         public static void EnsureMounted(
             string configIniPath,
             GoogleDriveSyncSettings settings,
@@ -526,6 +533,7 @@ namespace OceanyaClient.Features.GoogleDriveSync
             }
 
             Directory.CreateDirectory(settings.LocalFolderPath);
+            GoogleDriveManagedLocalFolderMarkerService.EnsureMarkerIfNeeded(settings);
             string configDirectory = Path.GetDirectoryName(Path.GetFullPath(trimmedConfigPath)) ?? string.Empty;
             string normalizedLocalPath = Path.GetFullPath(settings.LocalFolderPath)
                 .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
@@ -587,11 +595,32 @@ namespace OceanyaClient.Features.GoogleDriveSync
                 : folderId.Trim();
             string candidate = resolvedConnectionName + " - " + resolvedFolderName + " (" + resolvedFolderId + ")";
             string finalName = SanitizeManagedFolderName(candidate);
-            return Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "OceanyaClient",
-                "GoogleDriveSync",
-                finalName);
+            return Path.Combine(ManagedLocalFolderRoot, finalName);
+        }
+
+        public static bool IsManagedLocalFolderPath(string? path)
+        {
+            string trimmedPath = path?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(trimmedPath))
+            {
+                return false;
+            }
+
+            try
+            {
+                string normalizedPath = Path.GetFullPath(trimmedPath)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                string normalizedManagedRoot = Path.GetFullPath(ManagedLocalFolderRoot)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                return string.Equals(normalizedPath, normalizedManagedRoot, StringComparison.OrdinalIgnoreCase)
+                    || normalizedPath.StartsWith(
+                        normalizedManagedRoot + Path.DirectorySeparatorChar,
+                        StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static string SanitizeManagedFolderName(string candidate)
@@ -615,6 +644,43 @@ namespace OceanyaClient.Features.GoogleDriveSync
 
     public static class GoogleDriveLocalSnapshotBuilder
     {
+        public static GoogleDriveSyncSnapshot FilterReservedSupportFiles(GoogleDriveSyncSnapshot snapshot)
+        {
+            if (snapshot == null)
+            {
+                throw new ArgumentNullException(nameof(snapshot));
+            }
+
+            GoogleDriveSyncSnapshot filtered = new GoogleDriveSyncSnapshot();
+            foreach (KeyValuePair<string, GoogleDriveSyncFolderEntry> folder in snapshot.Folders)
+            {
+                filtered.Folders[folder.Key] = new GoogleDriveSyncFolderEntry
+                {
+                    RelativePath = folder.Value.RelativePath,
+                    ItemId = folder.Value.ItemId
+                };
+            }
+
+            foreach (KeyValuePair<string, GoogleDriveSyncFileEntry> file in snapshot.Files)
+            {
+                if (IsReservedSupportFile(file.Value.RelativePath))
+                {
+                    continue;
+                }
+
+                filtered.Files[file.Key] = new GoogleDriveSyncFileEntry
+                {
+                    RelativePath = file.Value.RelativePath,
+                    ItemId = file.Value.ItemId,
+                    ParentId = file.Value.ParentId,
+                    Size = file.Value.Size,
+                    Hash = file.Value.Hash
+                };
+            }
+
+            return filtered;
+        }
+
         public static GoogleDriveSyncSnapshot Build(string rootDirectory)
         {
             string normalizedRoot = Path.GetFullPath(rootDirectory ?? string.Empty)
@@ -637,6 +703,11 @@ namespace OceanyaClient.Features.GoogleDriveSync
             foreach (string filePath in Directory.EnumerateFiles(normalizedRoot, "*", SearchOption.AllDirectories))
             {
                 string relativePath = NormalizeRelativePath(Path.GetRelativePath(normalizedRoot, filePath));
+                if (IsReservedSupportFile(relativePath))
+                {
+                    continue;
+                }
+
                 FileInfo info = new FileInfo(filePath);
                 snapshot.Files[relativePath] = new GoogleDriveSyncFileEntry
                 {
@@ -652,6 +723,24 @@ namespace OceanyaClient.Features.GoogleDriveSync
         public static string NormalizeRelativePath(string value)
         {
             return (value ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
+        }
+
+        public static bool IsReservedSupportFile(string? relativePath)
+        {
+            string normalizedPath = NormalizeRelativePath(relativePath ?? string.Empty);
+            if (string.IsNullOrWhiteSpace(normalizedPath))
+            {
+                return false;
+            }
+
+            string fileName = Path.GetFileName(normalizedPath);
+            return string.Equals(fileName, "desktop.ini", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(fileName, "thumbs.db", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(fileName, ".ds_store", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(
+                    fileName,
+                    GoogleDriveManagedLocalFolderMarkerService.MarkerIconFileName,
+                    StringComparison.OrdinalIgnoreCase);
         }
 
         public static string ComputeMd5(string filePath)

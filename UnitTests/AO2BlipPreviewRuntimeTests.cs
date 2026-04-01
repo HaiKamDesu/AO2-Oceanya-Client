@@ -53,7 +53,7 @@ public sealed class AO2BlipPreviewRuntimeTests
             }
 
             directory = parent;
-            string solutionPath = Path.Combine(directory, "AOBot-Testing.sln");
+            string solutionPath = Path.Combine(directory, "Oceanya Client.sln");
             if (File.Exists(solutionPath))
             {
                 string rootPath = Path.Combine(directory, "OceanyaClient", "bin", "Debug", "net8.0-windows");

@@ -160,7 +160,8 @@ namespace OceanyaClient.Features.GoogleDriveSync
             string rootFolderId,
             CancellationToken cancellationToken)
         {
-            GoogleDriveSyncSnapshot snapshot = await client.GetSnapshotAsync(rootFolderId, cancellationToken);
+            GoogleDriveSyncSnapshot snapshot = GoogleDriveLocalSnapshotBuilder.FilterReservedSupportFiles(
+                await client.GetSnapshotAsync(rootFolderId, cancellationToken));
             string changePageToken = await client.GetStartPageTokenAsync(cancellationToken);
             return BuildRuntimeState(connectionId, rootFolderId, snapshot, changePageToken);
         }
@@ -264,16 +265,17 @@ namespace OceanyaClient.Features.GoogleDriveSync
             GoogleDriveSyncSnapshot snapshot,
             string changePageToken)
         {
+            GoogleDriveSyncSnapshot filteredSnapshot = GoogleDriveLocalSnapshotBuilder.FilterReservedSupportFiles(snapshot);
             List<string> knownItemIds = new List<string>();
             if (!string.IsNullOrWhiteSpace(rootFolderId))
             {
                 knownItemIds.Add(rootFolderId.Trim());
             }
 
-            knownItemIds.AddRange(snapshot.Folders.Values
+            knownItemIds.AddRange(filteredSnapshot.Folders.Values
                 .Select(folder => folder.ItemId?.Trim() ?? string.Empty)
                 .Where(itemId => !string.IsNullOrWhiteSpace(itemId)));
-            knownItemIds.AddRange(snapshot.Files.Values
+            knownItemIds.AddRange(filteredSnapshot.Files.Values
                 .Select(file => file.ItemId?.Trim() ?? string.Empty)
                 .Where(itemId => !string.IsNullOrWhiteSpace(itemId)));
 

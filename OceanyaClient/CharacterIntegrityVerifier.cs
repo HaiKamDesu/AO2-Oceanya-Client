@@ -74,7 +74,7 @@ namespace OceanyaClient
             CharacterSupportFileCatalog.KnownSupportFileNames,
             StringComparer.OrdinalIgnoreCase);
         private static readonly HashSet<string> IgnoredMetadataFiles = new HashSet<string>(
-            new[] { "desktop.ini", "thumbs.db", ".ds_store" },
+            new[] { "desktop.ini", "thumbs.db", ".ds_store", ".oceanya_folder_icon.ico" },
             StringComparer.OrdinalIgnoreCase);
 
         public static string GetReportFilePath(string directoryPath)

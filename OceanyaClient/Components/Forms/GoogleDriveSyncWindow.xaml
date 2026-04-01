@@ -110,7 +110,27 @@
             <Setter Property="VerticalScrollBarVisibility" Value="Auto"/>
             <Setter Property="IsReadOnly" Value="True"/>
             <Setter Property="IsDocumentEnabled" Value="False"/>
-            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Focusable" Value="True"/>
+            <Setter Property="Cursor" Value="IBeam"/>
+            <Setter Property="IsTabStop" Value="False"/>
+        </Style>
+
+        <Style x:Key="SelectableInfoTextBox" TargetType="TextBox">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#FFF0F0F0"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Margin" Value="0"/>
+            <Setter Property="IsReadOnly" Value="True"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="AcceptsReturn" Value="True"/>
+            <Setter Property="CaretBrush" Value="White"/>
+            <Setter Property="Cursor" Value="IBeam"/>
+            <Setter Property="MinHeight" Value="22"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="HorizontalScrollBarVisibility" Value="Disabled"/>
+            <Setter Property="VerticalScrollBarVisibility" Value="Disabled"/>
+            <Setter Property="IsTabStop" Value="False"/>
         </Style>
 
         <Style x:Key="HelpBadgeStyle" TargetType="Button">
@@ -220,9 +240,8 @@
                             BorderBrush="#FF3D4B57"
                             BorderThickness="1"
                             CornerRadius="4">
-                        <TextBlock x:Name="AuthConfigurationTextBlock"
-                                   Foreground="#FFF0F0F0"
-                                   TextWrapping="Wrap"/>
+                        <TextBox x:Name="AuthConfigurationTextBlock"
+                                 Style="{StaticResource SelectableInfoTextBox}"/>
                     </Border>
 
                     <WrapPanel Margin="0,12,0,0">
@@ -255,10 +274,9 @@
                             BorderBrush="#FF3D4B57"
                             BorderThickness="1"
                             CornerRadius="4">
-                        <TextBlock x:Name="AccountStatusTextBlock"
-                                   Text="Not signed in."
-                                   Foreground="#FFF0F0F0"
-                                   TextWrapping="Wrap"/>
+                        <TextBox x:Name="AccountStatusTextBlock"
+                                 Text="Not signed in."
+                                 Style="{StaticResource SelectableInfoTextBox}"/>
                     </Border>
                 </StackPanel>
             </Border>
@@ -307,10 +325,10 @@
                                 BorderBrush="#FF3D4B57"
                                 BorderThickness="1"
                                 CornerRadius="4">
-                            <TextBlock x:Name="RemoteFolderStatusTextBlock"
-                                       Foreground="#FFBEBEBE"
-                                       TextWrapping="Wrap"
-                                       Text="Paste a Google Drive folder share link or folder ID, then click Verify."/>
+                            <TextBox x:Name="RemoteFolderStatusTextBlock"
+                                     Foreground="#FFBEBEBE"
+                                     Style="{StaticResource SelectableInfoTextBox}"
+                                     Text="Paste a Google Drive folder share link or folder ID, then click Verify."/>
                         </Border>
                     </Grid>
 

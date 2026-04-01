@@ -95,7 +95,27 @@
             <Setter Property="VerticalScrollBarVisibility" Value="Auto"/>
             <Setter Property="IsReadOnly" Value="True"/>
             <Setter Property="IsDocumentEnabled" Value="False"/>
-            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Focusable" Value="True"/>
+            <Setter Property="Cursor" Value="IBeam"/>
+            <Setter Property="IsTabStop" Value="False"/>
+        </Style>
+
+        <Style x:Key="SelectableInfoTextBox" TargetType="TextBox">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#FFF0F0F0"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Margin" Value="0"/>
+            <Setter Property="IsReadOnly" Value="True"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="AcceptsReturn" Value="True"/>
+            <Setter Property="CaretBrush" Value="White"/>
+            <Setter Property="Cursor" Value="IBeam"/>
+            <Setter Property="MinHeight" Value="22"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="HorizontalScrollBarVisibility" Value="Disabled"/>
+            <Setter Property="VerticalScrollBarVisibility" Value="Disabled"/>
+            <Setter Property="IsTabStop" Value="False"/>
         </Style>
 
         <Style x:Key="HelpBadgeStyle" TargetType="Button">
@@ -333,42 +353,36 @@
 
                         <TextBlock Text="NAME"
                                    Style="{StaticResource LabelText}"/>
-                        <TextBlock x:Name="SelectedConnectionNameTextBlock"
-                                   Foreground="White"
-                                   TextWrapping="Wrap"/>
+                        <TextBox x:Name="SelectedConnectionNameTextBlock"
+                                 Style="{StaticResource SelectableInfoTextBox}"
+                                 Foreground="White"/>
 
                         <TextBlock Text="PROVIDER"
                                    Style="{StaticResource LabelText}"/>
-                        <TextBlock x:Name="SelectedConnectionProviderTextBlock"
-                                   Foreground="#FFF0F0F0"
-                                   TextWrapping="Wrap"/>
+                        <TextBox x:Name="SelectedConnectionProviderTextBlock"
+                                 Style="{StaticResource SelectableInfoTextBox}"/>
 
                         <TextBlock Text="ACCOUNT"
                                    Style="{StaticResource LabelText}"/>
-                        <TextBlock x:Name="SelectedConnectionAccountTextBlock"
-                                   Foreground="#FFF0F0F0"
-                                   TextWrapping="Wrap"/>
+                        <TextBox x:Name="SelectedConnectionAccountTextBlock"
+                                 Style="{StaticResource SelectableInfoTextBox}"/>
 
                         <TextBlock Text="REMOTE FOLDER"
                                    Style="{StaticResource LabelText}"/>
-                        <TextBlock x:Name="SelectedConnectionRemoteTextBlock"
-                                   Foreground="#FFF0F0F0"
-                                   TextWrapping="Wrap"/>
+                        <TextBox x:Name="SelectedConnectionRemoteTextBlock"
+                                 Style="{StaticResource SelectableInfoTextBox}"/>
 
                         <TextBlock Text="LOCAL MIRROR"
                                    Style="{StaticResource LabelText}"/>
-                        <TextBlock x:Name="SelectedConnectionLocalTextBlock"
-                                   Foreground="#FFF0F0F0"
-                                   TextWrapping="Wrap"
-                                   Cursor="Hand"
-                                   ToolTip="Double-click the local mirror path to open it in the system file explorer."
-                                   MouseLeftButtonDown="SelectedConnectionLocalTextBlock_MouseLeftButtonDown"/>
+                        <TextBox x:Name="SelectedConnectionLocalTextBlock"
+                                 Style="{StaticResource SelectableInfoTextBox}"
+                                 ToolTip="Double-click the local mirror path to open it in the system file explorer."
+                                 PreviewMouseDoubleClick="SelectedConnectionLocalTextBox_PreviewMouseDoubleClick"/>
 
                         <TextBlock Text="LAST SYNC"
                                    Style="{StaticResource LabelText}"/>
-                        <TextBlock x:Name="SelectedConnectionLastSyncTextBlock"
-                                   Foreground="#FFF0F0F0"
-                                   TextWrapping="Wrap"/>
+                        <TextBox x:Name="SelectedConnectionLastSyncTextBlock"
+                                 Style="{StaticResource SelectableInfoTextBox}"/>
 
                         <WrapPanel Margin="0,14,0,0"
                                    HorizontalAlignment="Center">

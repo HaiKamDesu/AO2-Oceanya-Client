@@ -47,16 +47,23 @@ namespace OceanyaClient.Features.GoogleDriveSync
                 Files = Directory.EnumerateFiles(normalizedRoot, "*", SearchOption.AllDirectories)
                     .Select(filePath =>
                     {
+                        string relativePath = GoogleDriveLocalSnapshotBuilder.NormalizeRelativePath(
+                            Path.GetRelativePath(normalizedRoot, filePath));
+                        if (GoogleDriveLocalSnapshotBuilder.IsReservedSupportFile(relativePath))
+                        {
+                            return null;
+                        }
+
                         FileInfo info = new FileInfo(filePath);
                         return new GoogleDriveLocalMirrorFileState
                         {
-                            RelativePath = GoogleDriveLocalSnapshotBuilder.NormalizeRelativePath(
-                                Path.GetRelativePath(normalizedRoot, filePath)),
+                            RelativePath = relativePath,
                             Size = info.Length,
                             LastWriteUtcTicks = File.GetLastWriteTimeUtc(filePath).Ticks
                         };
                     })
-                    .Where(file => !string.IsNullOrWhiteSpace(file.RelativePath))
+                    .Where(file => file != null && !string.IsNullOrWhiteSpace(file.RelativePath))
+                    .Cast<GoogleDriveLocalMirrorFileState>()
                     .OrderBy(file => file.RelativePath, StringComparer.OrdinalIgnoreCase)
                     .ToList()
             };

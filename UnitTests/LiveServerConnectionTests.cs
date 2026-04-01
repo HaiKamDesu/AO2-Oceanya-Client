@@ -203,7 +203,7 @@ public class LiveServerConnectionTests
         string current = TestContext.CurrentContext.TestDirectory;
         while (!string.IsNullOrWhiteSpace(current))
         {
-            string solutionPath = Path.Combine(current, "AOBot-Testing.sln");
+            string solutionPath = Path.Combine(current, "Oceanya Client.sln");
             if (File.Exists(solutionPath))
             {
                 return current;

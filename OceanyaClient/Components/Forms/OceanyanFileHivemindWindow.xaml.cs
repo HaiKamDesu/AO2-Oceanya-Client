@@ -792,12 +792,9 @@ namespace OceanyaClient
             RequestHostClose(false);
         }
 
-        private void SelectedConnectionLocalTextBlock_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        private void SelectedConnectionLocalTextBox_PreviewMouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
-            if (e.ClickCount >= 2)
-            {
-                TryOpenSelectedLocalFolder();
-            }
+            TryOpenSelectedLocalFolder();
         }
 
         private FileHivemindConnectionProfile BuildImportedConnection(FileHivemindConnectionProfile parsedConnection)
@@ -819,6 +816,7 @@ namespace OceanyaClient
             {
                 imported.GoogleDrive.LocalFolderPath = existingConnection.GoogleDrive.LocalFolderPath.Trim();
             }
+            imported.GoogleDrive.IsOceanyaManagedLocalFolder = existingConnection.GoogleDrive.IsOceanyaManagedLocalFolder;
 
             return imported;
         }
