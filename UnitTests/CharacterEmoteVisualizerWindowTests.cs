@@ -341,7 +341,11 @@ namespace UnitTests
 
         private sealed class TestAnimationPlayer : IAnimationPlayer
         {
-            public event Action<ImageSource>? FrameChanged;
+            public event Action<ImageSource>? FrameChanged
+            {
+                add { }
+                remove { }
+            }
 
             public int StopCallCount { get; private set; }
 
@@ -359,7 +363,6 @@ namespace UnitTests
             public void Stop()
             {
                 StopCallCount++;
-                FrameChanged = null;
             }
         }
     }

@@ -118,6 +118,7 @@ namespace OceanyaClient
 
             bool refreshRequested = RefreshInfoCheckBox.IsChecked == true;
             string forcedRefreshReason = string.Empty;
+            TargetedAssetRefreshPlan trackedChangePlan = new TargetedAssetRefreshPlan();
             if (!refreshRequested)
             {
                 forcedRefreshReason = ClientAssetRefreshService.GetRefreshRequirementReasonForCurrentEnvironment();
@@ -135,7 +136,15 @@ namespace OceanyaClient
                     "The character database viewer does not currently have a loaded character/background index.";
             }
 
+            if (!refreshRequested && string.IsNullOrWhiteSpace(forcedRefreshReason))
+            {
+                trackedChangePlan = ClientAssetRefreshService.GetTrackedChangePlanForCurrentEnvironment();
+            }
+
             bool shouldRefreshAssets = refreshRequested || !string.IsNullOrWhiteSpace(forcedRefreshReason);
+            bool shouldRunTargetedRefresh = !refreshRequested
+                && string.IsNullOrWhiteSpace(forcedRefreshReason)
+                && trackedChangePlan.HasAnyWork;
 
             if (!refreshRequested && !string.IsNullOrWhiteSpace(forcedRefreshReason))
             {
@@ -145,6 +154,15 @@ namespace OceanyaClient
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Question);
                 shouldRefreshAssets = refreshDecision == MessageBoxResult.Yes;
+            }
+            else if (shouldRunTargetedRefresh)
+            {
+                MessageBoxResult refreshDecision = OceanyaMessageBox.Show(
+                    BuildTrackedRefreshPrompt(),
+                    "Refresh Changed Assets",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+                shouldRunTargetedRefresh = refreshDecision == MessageBoxResult.Yes;
             }
 
             if (shouldRefreshAssets)
@@ -156,6 +174,16 @@ namespace OceanyaClient
                 }
 
                 await ClientAssetRefreshService.RefreshCharactersAndBackgroundsAsync(refreshOwner);
+            }
+            else if (shouldRunTargetedRefresh)
+            {
+                Window? refreshOwner = HostWindow ?? Application.Current?.MainWindow;
+                if (refreshOwner == null)
+                {
+                    return;
+                }
+
+                await ClientAssetRefreshService.RefreshTargetedAssetsAsync(refreshOwner, trackedChangePlan);
             }
 
             Window startupWindow = StartupWindowLauncher.CreateStartupWindow(
@@ -470,6 +498,11 @@ namespace OceanyaClient
                 : char.ToLowerInvariant(trimmedReason[0]) + trimmedReason[1..];
             return "A full asset refresh is required because " + normalizedReason
                 + ". This may take a long time. Do you want to continue?";
+        }
+
+        private static string BuildTrackedRefreshPrompt()
+        {
+            return "Asset files changed since the last refresh. Oceanya can refresh only the affected items. Do you want to continue?";
         }
 
         private void ReopenConfigurationWindow()

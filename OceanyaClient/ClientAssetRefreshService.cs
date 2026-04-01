@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
@@ -37,6 +39,28 @@ namespace OceanyaClient
         }
 
         /// <summary>
+        /// Refreshes only the supplied asset scope while showing progress in <see cref="WaitForm"/>.
+        /// </summary>
+        internal static async Task RefreshTargetedAssetsAsync(Window owner, TargetedAssetRefreshPlan plan)
+        {
+            if (plan == null || !plan.HasAnyWork)
+            {
+                return;
+            }
+
+            await WaitForm.ShowFormAsync("Refreshing changed asset info...", owner);
+
+            try
+            {
+                RefreshAssets(plan, subtitle => WaitForm.SetSubtitle(subtitle));
+            }
+            finally
+            {
+                await WaitForm.CloseFormAsync();
+            }
+        }
+
+        /// <summary>
         /// Refreshes only the assets affected by the supplied local sync changes.
         /// </summary>
         public static void RefreshChangedAssets(
@@ -63,61 +87,7 @@ namespace OceanyaClient
             Globals.UpdateConfigINI(configIniPath);
 
             TargetedAssetRefreshPlan plan = BuildTargetedPlan(localChanges);
-            bool performedWork = false;
-
-            if (plan.RequiresFullCharacterRefresh)
-            {
-                RefreshAllCharacters(progress);
-                performedWork = true;
-            }
-            else
-            {
-                foreach (string characterName in plan.CharacterNames.OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
-                {
-                    RefreshCharacter(characterName, progress);
-                    performedWork = true;
-                }
-            }
-
-            if (plan.RequiresFullBackgroundRefresh)
-            {
-                RefreshAllBackgrounds(progress);
-                performedWork = true;
-            }
-            else
-            {
-                foreach (string backgroundName in plan.BackgroundNames.OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
-                {
-                    RefreshBackground(backgroundName, progress);
-                    performedWork = true;
-                }
-            }
-
-            if (plan.RefreshBlips)
-            {
-                progress?.Invoke("Indexing blip files...");
-                _ = BlipCatalog.Refresh();
-                performedWork = true;
-            }
-
-            if (plan.RefreshChats)
-            {
-                progress?.Invoke("Indexing chat profiles...");
-                _ = ChatCatalog.Refresh();
-                performedWork = true;
-            }
-
-            if (plan.RefreshEffects)
-            {
-                progress?.Invoke("Indexing effects folders...");
-                _ = EffectsFolderCatalog.Refresh();
-                performedWork = true;
-            }
-
-            if (performedWork)
-            {
-                PersistRefreshMarker();
-            }
+            RefreshAssets(plan, progress);
         }
 
         /// <summary>
@@ -157,6 +127,35 @@ namespace OceanyaClient
             catch
             {
                 return "Oceanya could not verify the previous asset refresh marker.";
+            }
+        }
+
+        /// <summary>
+        /// Returns a targeted refresh plan for tracked asset-file changes when the environment itself still matches the saved refresh marker.
+        /// </summary>
+        internal static TargetedAssetRefreshPlan GetTrackedChangePlanForCurrentEnvironment()
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(GetRefreshRequirementReasonForCurrentEnvironment()))
+                {
+                    return new TargetedAssetRefreshPlan();
+                }
+
+                AssetRefreshMarker? marker = LoadRefreshMarker();
+                AssetRefreshStateSnapshot? previousState = NormalizeAssetState(marker?.AssetState);
+                if (previousState == null)
+                {
+                    return new TargetedAssetRefreshPlan();
+                }
+
+                Globals.UpdateConfigINI(Globals.PathToConfigINI);
+                AssetRefreshStateSnapshot currentState = CaptureCurrentAssetStateSnapshot();
+                return BuildTrackedChangePlan(previousState, currentState);
+            }
+            catch
+            {
+                return new TargetedAssetRefreshPlan();
             }
         }
 
@@ -289,6 +288,58 @@ namespace OceanyaClient
             return plan;
         }
 
+        internal static TargetedAssetRefreshPlan BuildTrackedChangePlan(
+            AssetRefreshStateSnapshot? previousState,
+            AssetRefreshStateSnapshot? currentState)
+        {
+            AssetRefreshStateSnapshot normalizedPrevious = NormalizeAssetState(previousState) ?? new AssetRefreshStateSnapshot();
+            AssetRefreshStateSnapshot normalizedCurrent = NormalizeAssetState(currentState) ?? new AssetRefreshStateSnapshot();
+            TargetedAssetRefreshPlan plan = new TargetedAssetRefreshPlan();
+
+            foreach (string characterName in normalizedPrevious.Characters.Keys
+                .Union(normalizedCurrent.Characters.Keys, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
+            {
+                bool hadPrevious = normalizedPrevious.Characters.TryGetValue(characterName, out AssetTrackedFolderState? previousCharacter);
+                bool hasCurrent = normalizedCurrent.Characters.TryGetValue(characterName, out AssetTrackedFolderState? currentCharacter);
+                if (!hadPrevious
+                    || !hasCurrent
+                    || !string.Equals(previousCharacter.Signature, currentCharacter.Signature, StringComparison.Ordinal))
+                {
+                    plan.CharacterNames.Add(characterName);
+                }
+            }
+
+            foreach (string backgroundName in normalizedPrevious.Backgrounds.Keys
+                .Union(normalizedCurrent.Backgrounds.Keys, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
+            {
+                bool hadPrevious = normalizedPrevious.Backgrounds.TryGetValue(backgroundName, out AssetTrackedFolderState? previousBackground);
+                bool hasCurrent = normalizedCurrent.Backgrounds.TryGetValue(backgroundName, out AssetTrackedFolderState? currentBackground);
+                if (!hadPrevious
+                    || !hasCurrent
+                    || !string.Equals(previousBackground.Signature, currentBackground.Signature, StringComparison.Ordinal))
+                {
+                    plan.BackgroundNames.Add(backgroundName);
+                }
+            }
+
+            plan.RefreshBlips = !string.Equals(
+                normalizedPrevious.BlipsSignature,
+                normalizedCurrent.BlipsSignature,
+                StringComparison.Ordinal);
+            plan.RefreshChats = !string.Equals(
+                normalizedPrevious.ChatsSignature,
+                normalizedCurrent.ChatsSignature,
+                StringComparison.Ordinal);
+            plan.RefreshEffects = !string.Equals(
+                normalizedPrevious.EffectsSignature,
+                normalizedCurrent.EffectsSignature,
+                StringComparison.Ordinal);
+
+            return plan;
+        }
+
         private static void RefreshAllAssets(Action<string>? progress)
         {
             Globals.UpdateConfigINI(Globals.PathToConfigINI);
@@ -302,7 +353,71 @@ namespace OceanyaClient
             progress?.Invoke("Indexing effects folders...");
             _ = EffectsFolderCatalog.Refresh();
 
-            PersistRefreshMarker();
+            PersistRefreshMarker(forceFullStateCapture: true);
+        }
+
+        private static void RefreshAssets(TargetedAssetRefreshPlan plan, Action<string>? progress)
+        {
+            if (plan == null || !plan.HasAnyWork)
+            {
+                return;
+            }
+
+            bool performedWork = false;
+
+            if (plan.RequiresFullCharacterRefresh)
+            {
+                RefreshAllCharacters(progress);
+                performedWork = true;
+            }
+            else
+            {
+                foreach (string characterName in plan.CharacterNames.OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
+                {
+                    RefreshCharacter(characterName, progress);
+                    performedWork = true;
+                }
+            }
+
+            if (plan.RequiresFullBackgroundRefresh)
+            {
+                RefreshAllBackgrounds(progress);
+                performedWork = true;
+            }
+            else
+            {
+                foreach (string backgroundName in plan.BackgroundNames.OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
+                {
+                    RefreshBackground(backgroundName, progress);
+                    performedWork = true;
+                }
+            }
+
+            if (plan.RefreshBlips)
+            {
+                progress?.Invoke("Indexing blip files...");
+                _ = BlipCatalog.Refresh();
+                performedWork = true;
+            }
+
+            if (plan.RefreshChats)
+            {
+                progress?.Invoke("Indexing chat profiles...");
+                _ = ChatCatalog.Refresh();
+                performedWork = true;
+            }
+
+            if (plan.RefreshEffects)
+            {
+                progress?.Invoke("Indexing effects folders...");
+                _ = EffectsFolderCatalog.Refresh();
+                performedWork = true;
+            }
+
+            if (performedWork)
+            {
+                PersistRefreshMarker(plan);
+            }
         }
 
         private static void RefreshAllCharacters(Action<string>? progress)
@@ -449,7 +564,9 @@ namespace OceanyaClient
             }
         }
 
-        private static void PersistRefreshMarker()
+        private static void PersistRefreshMarker(
+            TargetedAssetRefreshPlan? changedPlan = null,
+            bool forceFullStateCapture = false)
         {
             try
             {
@@ -457,18 +574,20 @@ namespace OceanyaClient
                 string markerDirectory = Path.GetDirectoryName(markerPath) ?? string.Empty;
                 Directory.CreateDirectory(markerDirectory);
 
-                AssetRefreshMarker marker = new AssetRefreshMarker
-                {
-                    SchemaVersion = RefreshMarkerSchemaVersion,
-                    AppVersion = GetAppVersion(),
-                    ConfigIniPath = NormalizePathForComparison(Globals.PathToConfigINI),
-                    BaseFolders = BuildConfiguredBaseFolderSignature(Globals.PathToConfigINI)
-                };
+                AssetRefreshMarker marker = LoadRefreshMarker() ?? new AssetRefreshMarker();
+                marker.SchemaVersion = RefreshMarkerSchemaVersion;
+                marker.AppVersion = GetAppVersion();
+                marker.ConfigIniPath = NormalizePathForComparison(Globals.PathToConfigINI);
+                marker.BaseFolders = BuildConfiguredBaseFolderSignature(Globals.PathToConfigINI);
 
                 if (marker.BaseFolders.Count == 0)
                 {
                     marker.BaseFolders = NormalizeFolderSequence(Globals.BaseFolders ?? new List<string>());
                 }
+
+                marker.AssetState = forceFullStateCapture || changedPlan == null
+                    ? CaptureCurrentAssetStateSnapshot()
+                    : UpdateTrackedAssetState(marker.AssetState, changedPlan);
 
                 string json = JsonSerializer.Serialize(marker, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(markerPath, json);
@@ -498,6 +617,435 @@ namespace OceanyaClient
         private static string NormalizeRelativePath(string path)
         {
             return (path ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
+        }
+
+        private static AssetRefreshMarker? LoadRefreshMarker()
+        {
+            string markerPath = GetRefreshMarkerPath();
+            if (!File.Exists(markerPath))
+            {
+                return null;
+            }
+
+            string json = File.ReadAllText(markerPath);
+            return JsonSerializer.Deserialize<AssetRefreshMarker>(json);
+        }
+
+        private static AssetRefreshStateSnapshot CaptureCurrentAssetStateSnapshot()
+        {
+            return NormalizeAssetState(new AssetRefreshStateSnapshot
+            {
+                Characters = CaptureTrackedFolderStates("characters", requirePrimaryCharacterIni: true),
+                Backgrounds = CaptureTrackedFolderStates("background", requirePrimaryCharacterIni: false),
+                BlipsSignature = ComputeSequenceSignature(CaptureBlipEntries()),
+                ChatsSignature = ComputeSequenceSignature(CaptureChatEntries()),
+                EffectsSignature = ComputeSequenceSignature(CaptureEffectsEntries())
+            }) ?? new AssetRefreshStateSnapshot();
+        }
+
+        private static AssetRefreshStateSnapshot UpdateTrackedAssetState(
+            AssetRefreshStateSnapshot? existingState,
+            TargetedAssetRefreshPlan changedPlan)
+        {
+            AssetRefreshStateSnapshot? normalizedExisting = NormalizeAssetState(existingState);
+            if (normalizedExisting == null
+                || normalizedExisting.FormatVersion != AssetRefreshStateSnapshot.CurrentFormatVersion)
+            {
+                return CaptureCurrentAssetStateSnapshot();
+            }
+
+            AssetRefreshStateSnapshot normalized = normalizedExisting;
+            if (changedPlan == null || !changedPlan.HasAnyWork)
+            {
+                return normalized;
+            }
+
+            if (changedPlan.RequiresFullCharacterRefresh)
+            {
+                normalized.Characters = CaptureTrackedFolderStates("characters", requirePrimaryCharacterIni: true);
+            }
+            else
+            {
+                foreach (string characterName in changedPlan.CharacterNames)
+                {
+                    UpdateTrackedFolderState(
+                        normalized.Characters,
+                        "characters",
+                        characterName,
+                        requirePrimaryCharacterIni: true);
+                }
+            }
+
+            if (changedPlan.RequiresFullBackgroundRefresh)
+            {
+                normalized.Backgrounds = CaptureTrackedFolderStates("background", requirePrimaryCharacterIni: false);
+            }
+            else
+            {
+                foreach (string backgroundName in changedPlan.BackgroundNames)
+                {
+                    UpdateTrackedFolderState(
+                        normalized.Backgrounds,
+                        "background",
+                        backgroundName,
+                        requirePrimaryCharacterIni: false);
+                }
+            }
+
+            if (changedPlan.RefreshBlips)
+            {
+                normalized.BlipsSignature = ComputeSequenceSignature(CaptureBlipEntries());
+            }
+
+            if (changedPlan.RefreshChats)
+            {
+                normalized.ChatsSignature = ComputeSequenceSignature(CaptureChatEntries());
+            }
+
+            if (changedPlan.RefreshEffects)
+            {
+                normalized.EffectsSignature = ComputeSequenceSignature(CaptureEffectsEntries());
+            }
+
+            return NormalizeAssetState(normalized) ?? new AssetRefreshStateSnapshot();
+        }
+
+        private static Dictionary<string, AssetTrackedFolderState> CaptureTrackedFolderStates(
+            string categoryFolderName,
+            bool requirePrimaryCharacterIni)
+        {
+            Dictionary<string, AssetTrackedFolderState> states =
+                new Dictionary<string, AssetTrackedFolderState>(StringComparer.OrdinalIgnoreCase);
+            foreach (string baseFolder in Globals.BaseFolders ?? new List<string>())
+            {
+                if (string.IsNullOrWhiteSpace(baseFolder))
+                {
+                    continue;
+                }
+
+                string categoryRoot = Path.Combine(baseFolder, categoryFolderName);
+                if (!Directory.Exists(categoryRoot))
+                {
+                    continue;
+                }
+
+                IEnumerable<string> directories;
+                try
+                {
+                    directories = Directory.EnumerateDirectories(categoryRoot);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                foreach (string directoryPath in directories)
+                {
+                    string entryName = Path.GetFileName(directoryPath);
+                    if (string.IsNullOrWhiteSpace(entryName) || states.ContainsKey(entryName))
+                    {
+                        continue;
+                    }
+
+                    if (requirePrimaryCharacterIni
+                        && !File.Exists(Path.Combine(directoryPath, "char.ini")))
+                    {
+                        continue;
+                    }
+
+                    states[entryName] = new AssetTrackedFolderState
+                    {
+                        Name = entryName,
+                        DirectoryPath = NormalizePathForComparison(directoryPath),
+                        Signature = ComputeDirectorySignature(directoryPath)
+                    };
+                }
+            }
+
+            return states;
+        }
+
+        private static void UpdateTrackedFolderState(
+            Dictionary<string, AssetTrackedFolderState> states,
+            string categoryFolderName,
+            string entryName,
+            bool requirePrimaryCharacterIni)
+        {
+            string normalizedEntryName = (entryName ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(normalizedEntryName))
+            {
+                return;
+            }
+
+            string resolvedDirectory = ResolveEffectiveMountedDirectory(categoryFolderName, normalizedEntryName);
+            if (string.IsNullOrWhiteSpace(resolvedDirectory))
+            {
+                states.Remove(normalizedEntryName);
+                return;
+            }
+
+            if (requirePrimaryCharacterIni
+                && !File.Exists(Path.Combine(resolvedDirectory, "char.ini")))
+            {
+                states.Remove(normalizedEntryName);
+                return;
+            }
+
+            states[normalizedEntryName] = new AssetTrackedFolderState
+            {
+                Name = normalizedEntryName,
+                DirectoryPath = NormalizePathForComparison(resolvedDirectory),
+                Signature = ComputeDirectorySignature(resolvedDirectory)
+            };
+        }
+
+        private static IEnumerable<string> CaptureBlipEntries()
+        {
+            string[] allowedExtensions = { ".opus", ".ogg", ".mp3", ".wav" };
+            HashSet<string> values = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string baseFolder in Globals.BaseFolders ?? new List<string>())
+            {
+                if (string.IsNullOrWhiteSpace(baseFolder))
+                {
+                    continue;
+                }
+
+                string blipsRoot = Path.Combine(baseFolder, "sounds", "blips");
+                if (!Directory.Exists(blipsRoot))
+                {
+                    continue;
+                }
+
+                IEnumerable<string> files;
+                try
+                {
+                    files = Directory.EnumerateFiles(blipsRoot, "*", SearchOption.AllDirectories);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                foreach (string filePath in files)
+                {
+                    if (!allowedExtensions.Contains(Path.GetExtension(filePath), StringComparer.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    string relative = Path.ChangeExtension(
+                        Path.GetRelativePath(blipsRoot, filePath).Replace('\\', '/').Trim('/'),
+                        null) ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(relative))
+                    {
+                        values.Add(relative);
+                    }
+                }
+            }
+
+            return values.OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
+        private static IEnumerable<string> CaptureChatEntries()
+        {
+            HashSet<string> values = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "default"
+            };
+            foreach (string baseFolder in Globals.BaseFolders ?? new List<string>())
+            {
+                if (string.IsNullOrWhiteSpace(baseFolder))
+                {
+                    continue;
+                }
+
+                string miscRoot = Path.Combine(baseFolder, "misc");
+                if (!Directory.Exists(miscRoot))
+                {
+                    continue;
+                }
+
+                IEnumerable<string> directories;
+                try
+                {
+                    directories = Directory.EnumerateDirectories(miscRoot, "*", SearchOption.AllDirectories);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                foreach (string directoryPath in directories)
+                {
+                    if (!File.Exists(Path.Combine(directoryPath, "config.ini")))
+                    {
+                        continue;
+                    }
+
+                    string relative = NormalizeRelativePath(Path.GetRelativePath(miscRoot, directoryPath));
+                    if (!string.IsNullOrWhiteSpace(relative))
+                    {
+                        values.Add(relative);
+                    }
+                }
+            }
+
+            return values.OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
+        private static IEnumerable<string> CaptureEffectsEntries()
+        {
+            HashSet<string> values = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string baseFolder in Globals.BaseFolders ?? new List<string>())
+            {
+                if (string.IsNullOrWhiteSpace(baseFolder))
+                {
+                    continue;
+                }
+
+                string miscRoot = Path.Combine(baseFolder, "misc");
+                if (!Directory.Exists(miscRoot))
+                {
+                    continue;
+                }
+
+                IEnumerable<string> effectFiles;
+                try
+                {
+                    effectFiles = Directory.EnumerateFiles(miscRoot, "effects.ini", SearchOption.AllDirectories);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                foreach (string effectsIniPath in effectFiles)
+                {
+                    string folderPath = Path.GetDirectoryName(effectsIniPath) ?? string.Empty;
+                    string relative = NormalizeRelativePath(Path.GetRelativePath(miscRoot, folderPath));
+                    if (!string.IsNullOrWhiteSpace(relative))
+                    {
+                        values.Add(relative);
+                    }
+                }
+            }
+
+            return values.OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
+        private static string ComputeDirectorySignature(string directoryPath)
+        {
+            using IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            string normalizedDirectory = NormalizePathForComparison(directoryPath);
+            if (string.IsNullOrWhiteSpace(normalizedDirectory) || !Directory.Exists(normalizedDirectory))
+            {
+                AppendHashLine(hash, "missing");
+                return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+            }
+
+            try
+            {
+                foreach (string childDirectory in Directory.EnumerateDirectories(normalizedDirectory, "*", SearchOption.AllDirectories)
+                    .Select(path => NormalizeRelativePath(Path.GetRelativePath(normalizedDirectory, path)))
+                    .Where(path => !string.IsNullOrWhiteSpace(path))
+                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+                {
+                    AppendHashLine(hash, "D|" + childDirectory);
+                }
+
+                foreach (string filePath in Directory.EnumerateFiles(normalizedDirectory, "*", SearchOption.AllDirectories)
+                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+                {
+                    string relativePath = NormalizeRelativePath(Path.GetRelativePath(normalizedDirectory, filePath));
+                    if (GoogleDriveLocalSnapshotBuilder.IsReservedSupportFile(relativePath))
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        FileInfo info = new FileInfo(filePath);
+                        AppendHashLine(
+                            hash,
+                            "F|" + relativePath + "|" + info.Length + "|" + File.GetLastWriteTimeUtc(filePath).Ticks);
+                    }
+                    catch (Exception ex)
+                    {
+                        AppendHashLine(hash, "E|" + relativePath + "|" + ex.GetType().Name);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                AppendHashLine(hash, "ERR|" + ex.GetType().Name);
+            }
+
+            return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+        }
+
+        private static string ComputeSequenceSignature(IEnumerable<string>? values)
+        {
+            using IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            foreach (string value in (values ?? Array.Empty<string>())
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value.Trim())
+                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
+            {
+                AppendHashLine(hash, value);
+            }
+
+            return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+        }
+
+        private static void AppendHashLine(IncrementalHash hash, string value)
+        {
+            byte[] bytes = Encoding.UTF8.GetBytes((value ?? string.Empty) + "\n");
+            hash.AppendData(bytes);
+        }
+
+        private static AssetRefreshStateSnapshot? NormalizeAssetState(AssetRefreshStateSnapshot? state)
+        {
+            if (state == null)
+            {
+                return null;
+            }
+
+            AssetRefreshStateSnapshot normalized = new AssetRefreshStateSnapshot
+            {
+                FormatVersion = state.FormatVersion <= 0 ? AssetRefreshStateSnapshot.CurrentFormatVersion : state.FormatVersion,
+                BlipsSignature = state.BlipsSignature?.Trim() ?? string.Empty,
+                ChatsSignature = state.ChatsSignature?.Trim() ?? string.Empty,
+                EffectsSignature = state.EffectsSignature?.Trim() ?? string.Empty,
+                Characters = NormalizeTrackedFolderStates(state.Characters),
+                Backgrounds = NormalizeTrackedFolderStates(state.Backgrounds)
+            };
+            return normalized;
+        }
+
+        private static Dictionary<string, AssetTrackedFolderState> NormalizeTrackedFolderStates(
+            Dictionary<string, AssetTrackedFolderState>? states)
+        {
+            Dictionary<string, AssetTrackedFolderState> normalized =
+                new Dictionary<string, AssetTrackedFolderState>(StringComparer.OrdinalIgnoreCase);
+            foreach (KeyValuePair<string, AssetTrackedFolderState> pair in states
+                ?? new Dictionary<string, AssetTrackedFolderState>(StringComparer.OrdinalIgnoreCase))
+            {
+                string key = (pair.Key ?? string.Empty).Trim();
+                AssetTrackedFolderState? value = pair.Value;
+                if (string.IsNullOrWhiteSpace(key) || value == null)
+                {
+                    continue;
+                }
+
+                normalized[key] = new AssetTrackedFolderState
+                {
+                    Name = string.IsNullOrWhiteSpace(value.Name) ? key : value.Name.Trim(),
+                    DirectoryPath = NormalizePathForComparison(value.DirectoryPath),
+                    Signature = value.Signature?.Trim() ?? string.Empty
+                };
+            }
+
+            return normalized;
         }
 
         internal static List<string> BuildConfiguredBaseFolderSignature(string configIniPath)
@@ -664,6 +1212,15 @@ namespace OceanyaClient
         public bool RefreshBlips { get; set; }
         public bool RefreshChats { get; set; }
         public bool RefreshEffects { get; set; }
+
+        public bool HasAnyWork =>
+            RequiresFullCharacterRefresh
+            || RequiresFullBackgroundRefresh
+            || RefreshBlips
+            || RefreshChats
+            || RefreshEffects
+            || CharacterNames.Count > 0
+            || BackgroundNames.Count > 0;
     }
 
     internal sealed class AssetRefreshMarker
@@ -672,5 +1229,27 @@ namespace OceanyaClient
         public string AppVersion { get; set; } = string.Empty;
         public string ConfigIniPath { get; set; } = string.Empty;
         public List<string> BaseFolders { get; set; } = new List<string>();
+        public AssetRefreshStateSnapshot? AssetState { get; set; }
+    }
+
+    internal sealed class AssetRefreshStateSnapshot
+    {
+        public const int CurrentFormatVersion = 1;
+
+        public int FormatVersion { get; set; } = CurrentFormatVersion;
+        public Dictionary<string, AssetTrackedFolderState> Characters { get; set; } =
+            new Dictionary<string, AssetTrackedFolderState>(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, AssetTrackedFolderState> Backgrounds { get; set; } =
+            new Dictionary<string, AssetTrackedFolderState>(StringComparer.OrdinalIgnoreCase);
+        public string BlipsSignature { get; set; } = string.Empty;
+        public string ChatsSignature { get; set; } = string.Empty;
+        public string EffectsSignature { get; set; } = string.Empty;
+    }
+
+    internal sealed class AssetTrackedFolderState
+    {
+        public string Name { get; set; } = string.Empty;
+        public string DirectoryPath { get; set; } = string.Empty;
+        public string Signature { get; set; } = string.Empty;
     }
 }

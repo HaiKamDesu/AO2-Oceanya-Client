@@ -22,6 +22,7 @@ namespace OceanyaClient.Features.FileHivemind
         private readonly GoogleDriveRemoteChangeTracker remoteChangeTracker;
         private readonly GoogleDriveConnectionRuntimeStateStore runtimeStateStore;
         private readonly FileHivemindBackgroundLogStore backgroundLogStore;
+        private readonly IFileHivemindAgentNotifier backgroundNotifier;
         private readonly Dictionary<string, ConnectionMonitorState> connectionStates =
             new Dictionary<string, ConnectionMonitorState>(StringComparer.OrdinalIgnoreCase);
 
@@ -29,12 +30,14 @@ namespace OceanyaClient.Features.FileHivemind
             GoogleDriveSyncService? syncService = null,
             GoogleDriveRemoteChangeTracker? remoteChangeTracker = null,
             GoogleDriveConnectionRuntimeStateStore? runtimeStateStore = null,
-            FileHivemindBackgroundLogStore? backgroundLogStore = null)
+            FileHivemindBackgroundLogStore? backgroundLogStore = null,
+            IFileHivemindAgentNotifier? backgroundNotifier = null)
         {
             this.syncService = syncService ?? new GoogleDriveSyncService();
             this.remoteChangeTracker = remoteChangeTracker ?? new GoogleDriveRemoteChangeTracker();
             this.runtimeStateStore = runtimeStateStore ?? new GoogleDriveConnectionRuntimeStateStore();
             this.backgroundLogStore = backgroundLogStore ?? new FileHivemindBackgroundLogStore();
+            this.backgroundNotifier = backgroundNotifier ?? new NullFileHivemindAgentNotifier();
         }
 
         public async Task RunAsync(CancellationToken cancellationToken)
@@ -85,6 +88,7 @@ namespace OceanyaClient.Features.FileHivemind
                 }
 
                 agentMutex.Dispose();
+                backgroundNotifier.ClearStatusText();
                 Dispose();
                 LogInfo("The Oceanyan File Hivemind background agent stopped.");
             }
@@ -193,6 +197,10 @@ namespace OceanyaClient.Features.FileHivemind
                         "Error",
                         state.Connection,
                         localMirrorAssessment.Message);
+                    backgroundNotifier.ShowNotification(
+                        "Hivemind Safety Lock",
+                        state.Connection.EffectiveDisplayName + ": " + localMirrorAssessment.Message,
+                        FileHivemindAgentNotificationSeverity.Warning);
                 }
 
                 state.DestructiveDeletionProtectionActive = true;
@@ -211,6 +219,16 @@ namespace OceanyaClient.Features.FileHivemind
             }
 
             DateTimeOffset? pendingPushUtc = state.GetPendingLocalPushUtc();
+            if (!pendingPushUtc.HasValue && localMirrorAssessment.Kind == LocalMirrorAssessmentKind.NormalChanges)
+            {
+                state.ScheduleLocalPush(LocalChangeDebounce);
+                LogAgentMessage(
+                    "Action",
+                    state.Connection,
+                    "Local mirror differs from the last synced state. Scheduling a push before any remote pull.");
+                return;
+            }
+
             if (pendingPushUtc.HasValue)
             {
                 if (localMirrorAssessment.Kind == LocalMirrorAssessmentKind.NoChanges)
@@ -325,16 +343,23 @@ namespace OceanyaClient.Features.FileHivemind
                 state.ClearPendingLocalPush();
                 state.IgnoreLocalChangesUntilUtc = DateTimeOffset.MaxValue;
                 EnsureMountedIfPossible(configIniPath, state.Connection);
+                UpdateNotifierStatus(state.Connection, "Pulling updates from Google Drive...");
                 LogAgentMessage("Action", state.Connection, $"Pull started ({reason}).");
                 GoogleDriveSyncSummary summary = await syncService.PullFromDriveAsync(
                     state.Connection.GoogleDrive,
-                    _ => { },
+                    message => ReportOperationProgress(state, message),
                     cancellationToken);
                 RefreshMountedAssetsIfPossible(configIniPath, state.Connection, summary.LocalChanges);
                 await CaptureRuntimeStateAsync(state, cancellationToken, summary.KnownRemoteItemIds);
                 state.RequiresInitialPull = false;
                 state.NextRemotePollUtc = DateTimeOffset.UtcNow + remotePollInterval;
                 state.IgnoreLocalChangesUntilUtc = DateTimeOffset.UtcNow + PullWatcherIgnoreDuration;
+                backgroundNotifier.ShowNotification(
+                    "Hivemind Sync Finished",
+                    state.Connection.EffectiveDisplayName + ": downloaded " + summary.FilesDownloaded
+                    + ", deleted " + (summary.LocalFilesDeleted + summary.LocalDirectoriesDeleted) + " local items.",
+                    FileHivemindAgentNotificationSeverity.Success);
+                backgroundNotifier.ClearStatusText();
                 LogAgentMessage(
                     "Success",
                     state.Connection,
@@ -346,6 +371,11 @@ namespace OceanyaClient.Features.FileHivemind
                 state.RequiresInitialPull = true;
                 state.NextRemotePollUtc = DateTimeOffset.UtcNow + ErrorBackoff;
                 state.IgnoreLocalChangesUntilUtc = DateTimeOffset.UtcNow + PullWatcherIgnoreDuration;
+                backgroundNotifier.ShowNotification(
+                    "Hivemind Pull Failed",
+                    state.Connection.EffectiveDisplayName + ": " + ex.Message,
+                    FileHivemindAgentNotificationSeverity.Error);
+                backgroundNotifier.ClearStatusText();
                 LogWarning($"Hivemind pull failed for '{state.Connection.EffectiveDisplayName}'.", ex);
                 LogAgentMessage("Error", state.Connection, "Pull failed: " + ex.Message);
             }
@@ -374,15 +404,22 @@ namespace OceanyaClient.Features.FileHivemind
             {
                 state.ClearPendingLocalPush();
                 EnsureMountedIfPossible(configIniPath, state.Connection);
+                UpdateNotifierStatus(state.Connection, "Pushing local changes to Google Drive...");
                 LogAgentMessage("Action", state.Connection, $"Push started ({reason}).");
                 GoogleDriveSyncSummary summary = await syncService.PushLocalFolderAsync(
                     state.Connection.GoogleDrive,
-                    _ => { },
+                    message => ReportOperationProgress(state, message),
                     cancellationToken);
                 RefreshMountedAssetsIfPossible(configIniPath, state.Connection, summary.LocalChanges);
                 await CaptureRuntimeStateAsync(state, cancellationToken, summary.KnownRemoteItemIds);
                 state.RequiresInitialPull = false;
                 state.NextRemotePollUtc = DateTimeOffset.UtcNow + remotePollInterval;
+                backgroundNotifier.ShowNotification(
+                    "Hivemind Publish Finished",
+                    state.Connection.EffectiveDisplayName + ": uploaded " + summary.FilesUploaded
+                    + ", deleted " + (summary.RemoteFilesDeleted + summary.RemoteDirectoriesDeleted) + " remote items.",
+                    FileHivemindAgentNotificationSeverity.Success);
+                backgroundNotifier.ClearStatusText();
                 LogAgentMessage(
                     "Success",
                     state.Connection,
@@ -393,6 +430,11 @@ namespace OceanyaClient.Features.FileHivemind
                 PersistRuntimeError(state.Connection.Id, runtimeStateStore.Load(state.Connection.Id), ex.Message);
                 state.ScheduleLocalPush(ErrorBackoff);
                 state.NextRemotePollUtc = DateTimeOffset.UtcNow + ErrorBackoff;
+                backgroundNotifier.ShowNotification(
+                    "Hivemind Publish Failed",
+                    state.Connection.EffectiveDisplayName + ": " + ex.Message,
+                    FileHivemindAgentNotificationSeverity.Error);
+                backgroundNotifier.ClearStatusText();
                 LogWarning($"Hivemind push failed for '{state.Connection.EffectiveDisplayName}'.", ex);
                 LogAgentMessage("Error", state.Connection, "Push failed: " + ex.Message);
             }
@@ -713,6 +755,30 @@ namespace OceanyaClient.Features.FileHivemind
                 ConnectionName = connection.EffectiveDisplayName,
                 Message = message
             });
+        }
+
+        private void ReportOperationProgress(ConnectionMonitorState state, string? message)
+        {
+            string trimmedMessage = message?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(trimmedMessage))
+            {
+                return;
+            }
+
+            UpdateNotifierStatus(state.Connection, trimmedMessage);
+            LogAgentMessage("Info", state.Connection, trimmedMessage);
+        }
+
+        private void UpdateNotifierStatus(FileHivemindConnectionProfile connection, string message)
+        {
+            string trimmedMessage = message?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(trimmedMessage))
+            {
+                backgroundNotifier.ClearStatusText();
+                return;
+            }
+
+            backgroundNotifier.SetStatusText(connection.EffectiveDisplayName + ": " + trimmedMessage);
         }
 
         private static TimeSpan ResolveRemotePollInterval(FileHivemindSettings settings)

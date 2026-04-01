@@ -29,8 +29,8 @@ namespace OceanyaHivemindAgent
         public FileHivemindAgentApplicationContext(string[] args)
         {
             cancellationTokenSource = new CancellationTokenSource();
-            agent = new FileHivemindBackgroundSyncAgent();
             trayIconController = new FileHivemindTrayIconController(RequestExit);
+            agent = new FileHivemindBackgroundSyncAgent(backgroundNotifier: trayIconController);
             completionTimer = new Forms.Timer
             {
                 Interval = 500,

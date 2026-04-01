@@ -605,8 +605,9 @@ namespace UnitTests
 
             Assert.That(blocked, Is.True);
             Assert.That(parameters[3], Is.TypeOf<string>());
-            Assert.That((string)parameters[3], Does.Contain("blocked"));
-            Assert.That((string)parameters[3], Does.Contain("destructive local delete"));
+            string blockingReason = (string)parameters[3]!;
+            Assert.That(blockingReason, Does.Contain("blocked"));
+            Assert.That(blockingReason, Does.Contain("destructive local delete"));
         }
 
         [Test]

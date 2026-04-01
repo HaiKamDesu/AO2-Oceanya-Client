@@ -1150,6 +1150,80 @@ namespace UnitTests
         }
 
         [Test]
+        public void BuildTrackedChangePlan_DetectsOnlyChangedAssetScopes()
+        {
+            AssetRefreshStateSnapshot previous = new AssetRefreshStateSnapshot
+            {
+                Characters = new Dictionary<string, AssetTrackedFolderState>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["Phoenix"] = new AssetTrackedFolderState
+                    {
+                        Name = "Phoenix",
+                        DirectoryPath = @"C:\sync\characters\Phoenix",
+                        Signature = "char-old"
+                    },
+                    ["Maya"] = new AssetTrackedFolderState
+                    {
+                        Name = "Maya",
+                        DirectoryPath = @"C:\sync\characters\Maya",
+                        Signature = "maya-same"
+                    }
+                },
+                Backgrounds = new Dictionary<string, AssetTrackedFolderState>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["Courtroom"] = new AssetTrackedFolderState
+                    {
+                        Name = "Courtroom",
+                        DirectoryPath = @"C:\sync\background\Courtroom",
+                        Signature = "bg-same"
+                    }
+                },
+                BlipsSignature = "blips-old",
+                ChatsSignature = "chats-same",
+                EffectsSignature = "effects-same"
+            };
+            AssetRefreshStateSnapshot current = new AssetRefreshStateSnapshot
+            {
+                Characters = new Dictionary<string, AssetTrackedFolderState>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["Phoenix"] = new AssetTrackedFolderState
+                    {
+                        Name = "Phoenix",
+                        DirectoryPath = @"C:\sync\characters\Phoenix",
+                        Signature = "char-new"
+                    },
+                    ["Maya"] = new AssetTrackedFolderState
+                    {
+                        Name = "Maya",
+                        DirectoryPath = @"C:\sync\characters\Maya",
+                        Signature = "maya-same"
+                    }
+                },
+                Backgrounds = new Dictionary<string, AssetTrackedFolderState>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["Courtroom"] = new AssetTrackedFolderState
+                    {
+                        Name = "Courtroom",
+                        DirectoryPath = @"C:\sync\background\Courtroom",
+                        Signature = "bg-same"
+                    }
+                },
+                BlipsSignature = "blips-new",
+                ChatsSignature = "chats-same",
+                EffectsSignature = "effects-same"
+            };
+
+            TargetedAssetRefreshPlan plan = ClientAssetRefreshService.BuildTrackedChangePlan(previous, current);
+
+            Assert.That(plan.CharacterNames, Contains.Item("Phoenix"));
+            Assert.That(plan.CharacterNames, Does.Not.Contain("Maya"));
+            Assert.That(plan.BackgroundNames, Is.Empty);
+            Assert.That(plan.RefreshBlips, Is.True);
+            Assert.That(plan.RefreshChats, Is.False);
+            Assert.That(plan.RefreshEffects, Is.False);
+        }
+
+        [Test]
         public void EvaluateRefreshRequirementReason_DoesNotRequireRefreshForLegacyMarkerWithMissingManagedMount()
         {
             string configPath = Path.Combine(configDirectory, "config.ini");
