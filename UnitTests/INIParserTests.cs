@@ -175,14 +175,53 @@ public class INIParserTests
         Assert.That(CharacterFolder.FullList.Exists(c => c.Name == "BrokenFolder"), Is.False);
     }
 
-    private static void CreateCharacter(string basePath, string name, string side)
+    [Test]
+    public void RefreshCharacterList_PrefersFirstMountedFolderForDuplicateName()
+    {
+        string overrideRoot = Path.Combine(Path.GetTempPath(), $"ini_parser_override_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(overrideRoot);
+
+        try
+        {
+            CreateCharacter(tempRoot!, "OrderCheck", "def", "BaseVersion");
+            CreateCharacter(overrideRoot, "OrderCheck", "pro", "OverrideVersion");
+
+            Globals.BaseFolders = new List<string> { tempRoot!, overrideRoot };
+            ResetCharacterCache();
+            CharacterFolder.RefreshCharacterList();
+
+            CharacterFolder character = CharacterFolder.FullList.Find(c => c.Name == "OrderCheck")!;
+            Assert.Multiple(() =>
+            {
+                Assert.That(character, Is.Not.Null);
+                Assert.That(character.configINI.ShowName, Is.EqualTo("BaseVersion"));
+                Assert.That(character.DirectoryPath, Is.EqualTo(Path.Combine(tempRoot!, "characters", "OrderCheck")));
+            });
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(overrideRoot))
+                {
+                    Directory.Delete(overrideRoot, true);
+                }
+            }
+            catch
+            {
+                // Ignore cleanup errors in tests.
+            }
+        }
+    }
+
+    private static void CreateCharacter(string basePath, string name, string side, string? showName = null)
     {
         string charDir = Path.Combine(basePath, "characters", name);
         Directory.CreateDirectory(charDir);
 
         string iniPath = Path.Combine(charDir, "char.ini");
         string ini = "[Options]\n" +
-                     $"showname={name}\n" +
+                     $"showname={showName ?? name}\n" +
                      "gender=unknown\n" +
                      $"side={side}\n" +
                      "[Time]\n" +

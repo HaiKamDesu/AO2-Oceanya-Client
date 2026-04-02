@@ -66,7 +66,7 @@ namespace AOBot_Testing.Structures
         {
             EnsureCacheFilePath();
 
-            Dictionary<string, Background> refreshedBackgrounds = new Dictionary<string, Background>(StringComparer.OrdinalIgnoreCase);
+            List<(string DirectoryPath, string FolderName)> candidates = new List<(string DirectoryPath, string FolderName)>();
             foreach (string backgroundFolder in BackgroundFolders)
             {
                 onChangedMountPath?.Invoke(backgroundFolder);
@@ -79,14 +79,37 @@ namespace AOBot_Testing.Structures
                 foreach (string directory in directories)
                 {
                     string folderName = Path.GetFileName(directory);
-                    if (refreshedBackgrounds.ContainsKey(folderName))
-                    {
-                        continue;
-                    }
-
-                    Background background = CreateBackgroundFromDirectory(directory);
-                    refreshedBackgrounds.Add(background.Name, background);
+                    candidates.Add((directory, folderName));
                 }
+            }
+
+            Background?[] parsedBackgrounds = new Background?[candidates.Count];
+            ParallelOptions options = new ParallelOptions
+            {
+                MaxDegreeOfParallelism = AssetRefreshParallelism.GetDegreeOfParallelism(candidates.Count)
+            };
+
+            Parallel.For(0, candidates.Count, options, index =>
+            {
+                parsedBackgrounds[index] = CreateBackgroundFromDirectory(candidates[index].DirectoryPath);
+            });
+
+            Dictionary<string, Background> refreshedBackgrounds = new Dictionary<string, Background>(StringComparer.OrdinalIgnoreCase);
+            for (int index = 0; index < candidates.Count; index++)
+            {
+                Background? parsedBackground = parsedBackgrounds[index];
+                if (parsedBackground == null)
+                {
+                    continue;
+                }
+
+                string folderName = candidates[index].FolderName;
+                if (refreshedBackgrounds.ContainsKey(folderName))
+                {
+                    continue;
+                }
+
+                refreshedBackgrounds.Add(parsedBackground.Name, parsedBackground);
             }
 
             backgroundsByName = refreshedBackgrounds;

@@ -1476,7 +1476,7 @@ namespace UnitTests
             AssetRefreshMarker marker = new AssetRefreshMarker
             {
                 SchemaVersion = 1,
-                AppVersion = "3.1.0.0",
+                AppVersion = AppVersionInfo.AssemblyVersion,
                 ConfigIniPath = configPath,
                 BaseFolders = new List<string>
                 {
@@ -1488,7 +1488,7 @@ namespace UnitTests
 
             string reason = ClientAssetRefreshService.EvaluateRefreshRequirementReason(
                 marker,
-                "3.1.0.0",
+                AppVersionInfo.AssemblyVersion,
                 configPath,
                 new List<string>
                 {
@@ -1511,14 +1511,14 @@ namespace UnitTests
             AssetRefreshMarker marker = new AssetRefreshMarker
             {
                 SchemaVersion = 1,
-                AppVersion = "3.1.0.0",
+                AppVersion = AppVersionInfo.AssemblyVersion,
                 ConfigIniPath = oldConfigPath,
                 BaseFolders = ClientAssetRefreshService.BuildConfiguredBaseFolderSignature(currentConfigPath)
             };
 
             string reason = ClientAssetRefreshService.EvaluateRefreshRequirementReason(
                 marker,
-                "3.1.0.0",
+                AppVersionInfo.AssemblyVersion,
                 currentConfigPath,
                 new List<string>(Globals.BaseFolders));
 

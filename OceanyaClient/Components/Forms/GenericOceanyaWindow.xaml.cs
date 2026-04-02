@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -418,33 +417,7 @@ namespace OceanyaClient
 
         private static string ResolveClientVersionDisplayText()
         {
-            Assembly? assembly = Assembly.GetEntryAssembly() ?? Assembly.GetExecutingAssembly();
-            if (assembly == null)
-            {
-                return "v?.?";
-            }
-
-            AssemblyInformationalVersionAttribute? informationalVersionAttribute =
-                assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>();
-            string informationalVersion = informationalVersionAttribute?.InformationalVersion?.Trim() ?? string.Empty;
-            if (!string.IsNullOrWhiteSpace(informationalVersion))
-            {
-                int metadataSeparatorIndex = informationalVersion.IndexOf('+');
-                string normalizedInformational = metadataSeparatorIndex >= 0
-                    ? informationalVersion[..metadataSeparatorIndex]
-                    : informationalVersion;
-                return normalizedInformational.StartsWith("v", StringComparison.OrdinalIgnoreCase)
-                    ? normalizedInformational
-                    : $"v{normalizedInformational}";
-            }
-
-            Version? assemblyVersion = assembly.GetName().Version;
-            if (assemblyVersion != null)
-            {
-                return $"v{assemblyVersion.Major}.{assemblyVersion.Minor}";
-            }
-
-            return "v?.?";
+            return AppVersionInfo.DisplayVersionWithPrefix;
         }
 
         private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)

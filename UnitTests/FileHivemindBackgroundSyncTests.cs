@@ -26,7 +26,8 @@ namespace UnitTests
                 {
                     launchedArgument = argument;
                     return true;
-                });
+                },
+                () => false);
             FileHivemindSettings settings = new FileHivemindSettings
             {
                 RunAgentAtStartup = true,

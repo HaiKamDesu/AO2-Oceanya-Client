@@ -1,5 +1,6 @@
 ﻿using Microsoft.Win32;
 using AOBot_Testing.Structures;
+using Common;
 using OceanyaClient.Features.Startup;
 using OceanyaClient.Utilities;
 using System;
@@ -9,6 +10,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media.Animation;
+using System.Windows.Threading;
 
 namespace OceanyaClient
 {
@@ -58,6 +60,35 @@ namespace OceanyaClient
             StartupFunctionalityOption selectedFunctionality = GetSelectedStartupFunctionality();
             string selectedServerEndpoint = selectedServer?.Endpoint?.Trim() ?? string.Empty;
             string selectedServerName = selectedServer?.Name?.Trim() ?? string.Empty;
+            bool refreshRequested = RefreshInfoCheckBox.IsChecked == true;
+            Window? startupLaunchOwner = HostWindow ?? Window.GetWindow(this) ?? Application.Current?.MainWindow;
+            bool launchWaitFormShown = false;
+            bool launchWaitFormClosed = true;
+            string launchTitle = "Opening " + selectedFunctionality.DisplayName + "...";
+
+            async Task EnsureLaunchWaitFormAsync(string subtitle)
+            {
+                if (startupLaunchOwner == null)
+                {
+                    return;
+                }
+
+                await WaitForm.ShowFormAsync(launchTitle, startupLaunchOwner);
+                launchWaitFormShown = true;
+                launchWaitFormClosed = false;
+                WaitForm.SetSubtitle(subtitle);
+            }
+
+            async Task CloseLaunchWaitFormAsync()
+            {
+                if (!launchWaitFormShown || launchWaitFormClosed)
+                {
+                    return;
+                }
+
+                launchWaitFormClosed = true;
+                await WaitForm.CloseFormAsync();
+            }
 
             if (string.IsNullOrWhiteSpace(configIniPath))
             {
@@ -93,14 +124,120 @@ namespace OceanyaClient
 
             try
             {
-                Globals.UpdateConfigINI(configIniPath);
-                if (selectedFunctionality.RequiresServerEndpoint)
+                await EnsureLaunchWaitFormAsync("Checking startup requirements...");
+
+                (string forcedRefreshReason, TargetedAssetRefreshPlan trackedChangePlan) preflightResult = await Task.Run(() =>
                 {
-                    Globals.SetSelectedServerEndpoint(selectedServerEndpoint);
+                    Globals.UpdateConfigINI(configIniPath);
+                    if (selectedFunctionality.RequiresServerEndpoint)
+                    {
+                        Globals.SetSelectedServerEndpoint(selectedServerEndpoint);
+                    }
+
+                    string computedForcedRefreshReason = string.Empty;
+                    TargetedAssetRefreshPlan computedTrackedChangePlan = new TargetedAssetRefreshPlan();
+                    if (!refreshRequested)
+                    {
+                        computedForcedRefreshReason =
+                            ClientAssetRefreshService.GetRefreshRequirementReasonForCurrentEnvironment();
+                    }
+
+                    if (string.IsNullOrWhiteSpace(computedForcedRefreshReason)
+                        && !refreshRequested
+                        && string.Equals(
+                            selectedFunctionality.Id,
+                            StartupFunctionalityIds.CharacterDatabaseViewer,
+                            StringComparison.OrdinalIgnoreCase)
+                        && CharacterFolder.FullList.Count == 0)
+                    {
+                        computedForcedRefreshReason =
+                            "The character database viewer does not currently have a loaded character/background index.";
+                    }
+
+                    if (!refreshRequested && string.IsNullOrWhiteSpace(computedForcedRefreshReason))
+                    {
+                        computedTrackedChangePlan =
+                            ClientAssetRefreshService.GetTrackedChangePlanForCurrentEnvironment();
+                    }
+
+                    return (computedForcedRefreshReason, computedTrackedChangePlan);
+                });
+
+                string forcedRefreshReason = preflightResult.forcedRefreshReason;
+                TargetedAssetRefreshPlan trackedChangePlan = preflightResult.trackedChangePlan;
+
+                SaveConfiguration(
+                    configIniPath,
+                    selectedFunctionality.Id,
+                    UseSingleClientCheckBox.IsChecked != false,
+                    selectedServerEndpoint,
+                    selectedServerName);
+
+                bool shouldRefreshAssets = refreshRequested || !string.IsNullOrWhiteSpace(forcedRefreshReason);
+                bool shouldRunTargetedRefresh = !refreshRequested
+                    && string.IsNullOrWhiteSpace(forcedRefreshReason)
+                    && trackedChangePlan.HasAnyWork;
+
+                if (!refreshRequested && !string.IsNullOrWhiteSpace(forcedRefreshReason))
+                {
+                    await CloseLaunchWaitFormAsync();
+
+                    MessageBoxResult refreshDecision = OceanyaMessageBox.Show(
+                        BuildForcedRefreshPrompt(forcedRefreshReason),
+                        "Refresh Required",
+                        MessageBoxButton.YesNo,
+                        MessageBoxImage.Question);
+                    if (refreshDecision != MessageBoxResult.Yes)
+                    {
+                        return;
+                    }
+
+                    shouldRefreshAssets = true;
                 }
+                else if (shouldRunTargetedRefresh)
+                {
+                    await CloseLaunchWaitFormAsync();
+
+                    MessageBoxResult refreshDecision = OceanyaMessageBox.Show(
+                        BuildTrackedRefreshPrompt(),
+                        "Refresh Changed Assets",
+                        MessageBoxButton.YesNo,
+                        MessageBoxImage.Question);
+                    shouldRunTargetedRefresh = refreshDecision == MessageBoxResult.Yes;
+                }
+
+                if (shouldRefreshAssets)
+                {
+                    Window? refreshOwner = HostWindow ?? Application.Current?.MainWindow;
+                    if (refreshOwner == null)
+                    {
+                        return;
+                    }
+
+                    await CloseLaunchWaitFormAsync();
+                    await ClientAssetRefreshService.RefreshCharactersAndBackgroundsAsync(refreshOwner);
+                }
+                else if (shouldRunTargetedRefresh)
+                {
+                    Window? refreshOwner = HostWindow ?? Application.Current?.MainWindow;
+                    if (refreshOwner == null)
+                    {
+                        return;
+                    }
+
+                    await CloseLaunchWaitFormAsync();
+                    await ClientAssetRefreshService.RefreshTargetedAssetsAsync(refreshOwner, trackedChangePlan);
+                }
+
+                await EnsureLaunchWaitFormAsync("Creating window...");
+
+                // Yield once so the wait form can paint before the heavy startup window is constructed.
+                await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Background);
             }
             catch (Exception ex)
             {
+                await CloseLaunchWaitFormAsync();
+
                 OceanyaMessageBox.Show(
                     "Error updating base folders: " + ex.Message,
                     "Error",
@@ -109,94 +246,54 @@ namespace OceanyaClient
                 return;
             }
 
-            SaveConfiguration(
-                configIniPath,
-                selectedFunctionality.Id,
-                UseSingleClientCheckBox.IsChecked != false,
-                selectedServerEndpoint,
-                selectedServerName);
-
-            bool refreshRequested = RefreshInfoCheckBox.IsChecked == true;
-            string forcedRefreshReason = string.Empty;
-            TargetedAssetRefreshPlan trackedChangePlan = new TargetedAssetRefreshPlan();
-            if (!refreshRequested)
+            async Task HandleStartupFunctionalityReadyAsync()
             {
-                forcedRefreshReason = ClientAssetRefreshService.GetRefreshRequirementReasonForCurrentEnvironment();
+                await CloseLaunchWaitFormAsync();
+                TryPlayStartupFunctionalityJingle();
             }
 
-            if (string.IsNullOrWhiteSpace(forcedRefreshReason)
-                && !refreshRequested
-                && string.Equals(
+            async Task HandleStartupFunctionalityClosedAsync()
+            {
+                await CloseLaunchWaitFormAsync();
+                ReopenConfigurationWindow();
+            }
+
+            void HandleStartupFunctionalityReady()
+            {
+                _ = HandleStartupFunctionalityReadyAsync();
+            }
+
+            void HandleStartupFunctionalityClosed()
+            {
+                _ = HandleStartupFunctionalityClosedAsync();
+            }
+
+            try
+            {
+                Window startupWindow = StartupWindowLauncher.CreateStartupWindow(
                     selectedFunctionality.Id,
-                    StartupFunctionalityIds.CharacterDatabaseViewer,
-                    StringComparison.OrdinalIgnoreCase)
-                && CharacterFolder.FullList.Count == 0)
-            {
-                forcedRefreshReason =
-                    "The character database viewer does not currently have a loaded character/background index.";
-            }
+                    onFunctionalityReady: HandleStartupFunctionalityReady,
+                    onFunctionalityClosed: HandleStartupFunctionalityClosed,
+                    useSharedStartupWaitForm: true);
 
-            if (!refreshRequested && string.IsNullOrWhiteSpace(forcedRefreshReason))
-            {
-                trackedChangePlan = ClientAssetRefreshService.GetTrackedChangePlanForCurrentEnvironment();
-            }
-
-            bool shouldRefreshAssets = refreshRequested || !string.IsNullOrWhiteSpace(forcedRefreshReason);
-            bool shouldRunTargetedRefresh = !refreshRequested
-                && string.IsNullOrWhiteSpace(forcedRefreshReason)
-                && trackedChangePlan.HasAnyWork;
-
-            if (!refreshRequested && !string.IsNullOrWhiteSpace(forcedRefreshReason))
-            {
-                MessageBoxResult refreshDecision = OceanyaMessageBox.Show(
-                    BuildForcedRefreshPrompt(forcedRefreshReason),
-                    "Refresh Required",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Question);
-                if (refreshDecision != MessageBoxResult.Yes)
+                startupWindow.Show();
+                if (launchWaitFormShown)
                 {
-                    return;
+                    WaitForm.SetSubtitle("Loading startup tasks...");
                 }
 
-                shouldRefreshAssets = true;
+                Hide();
             }
-            else if (shouldRunTargetedRefresh)
+            catch (Exception ex)
             {
-                MessageBoxResult refreshDecision = OceanyaMessageBox.Show(
-                    BuildTrackedRefreshPrompt(),
-                    "Refresh Changed Assets",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Question);
-                shouldRunTargetedRefresh = refreshDecision == MessageBoxResult.Yes;
+                await CloseLaunchWaitFormAsync();
+
+                OceanyaMessageBox.Show(
+                    "The selected functionality could not be opened:\n" + ex.Message,
+                    "Startup Error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
             }
-
-            if (shouldRefreshAssets)
-            {
-                Window? refreshOwner = HostWindow ?? Application.Current?.MainWindow;
-                if (refreshOwner == null)
-                {
-                    return;
-                }
-
-                await ClientAssetRefreshService.RefreshCharactersAndBackgroundsAsync(refreshOwner);
-            }
-            else if (shouldRunTargetedRefresh)
-            {
-                Window? refreshOwner = HostWindow ?? Application.Current?.MainWindow;
-                if (refreshOwner == null)
-                {
-                    return;
-                }
-
-                await ClientAssetRefreshService.RefreshTargetedAssetsAsync(refreshOwner, trackedChangePlan);
-            }
-
-            Window startupWindow = StartupWindowLauncher.CreateStartupWindow(
-                selectedFunctionality.Id,
-                onFunctionalityReady: PlayStartupFunctionalityJingle,
-                onFunctionalityClosed: ReopenConfigurationWindow);
-            startupWindow.Show();
-            Hide();
         }
 
         private void SelectServerButton_Click(object sender, RoutedEventArgs e)
@@ -485,9 +582,16 @@ namespace OceanyaClient
             BeginAnimation(HeightProperty, animation);
         }
 
-        private static void PlayStartupFunctionalityJingle()
+        private static void TryPlayStartupFunctionalityJingle()
         {
-            AudioPlayer.PlayEmbeddedSound("Resources/ApertureScienceJingleHD.mp3", 0.5f);
+            try
+            {
+                AudioPlayer.PlayEmbeddedSound("Resources/ApertureScienceJingleHD.mp3", 0.5f);
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Warning("Failed to play the startup functionality jingle.", ex);
+            }
         }
 
         private static string BuildForcedRefreshPrompt(string forcedRefreshReason)

@@ -53,6 +53,7 @@ namespace OceanyaClient
         private readonly Action? onAssetsRefreshed;
         private readonly Func<FolderVisualizerItem, bool>? canSetCharacterInClient;
         private readonly Action<FolderVisualizerItem>? setCharacterInClient;
+        private readonly bool suppressInitialLoadWaitForm;
         private readonly object progressiveLoadKeyLock = new object();
         private readonly List<FolderVisualizerItem> allItems = new List<FolderVisualizerItem>();
         private CancellationTokenSource? progressiveImageLoadCancellation;
@@ -199,7 +200,8 @@ namespace OceanyaClient
         public CharacterFolderVisualizerWindow(
             Action? onAssetsRefreshed,
             Func<FolderVisualizerItem, bool>? canSetCharacterInClient = null,
-            Action<FolderVisualizerItem>? setCharacterInClient = null)
+            Action<FolderVisualizerItem>? setCharacterInClient = null,
+            bool suppressInitialLoadWaitForm = false)
         {
             InitializeComponent();
             Title = "Character Folder Visualizer";
@@ -209,6 +211,7 @@ namespace OceanyaClient
             this.onAssetsRefreshed = onAssetsRefreshed;
             this.canSetCharacterInClient = canSetCharacterInClient;
             this.setCharacterInClient = setCharacterInClient;
+            this.suppressInitialLoadWaitForm = suppressInitialLoadWaitForm;
             searchDebounceTimer = new DispatcherTimer
             {
                 Interval = TimeSpan.FromMilliseconds(140)
@@ -266,7 +269,7 @@ namespace OceanyaClient
             }
 
             hasLoaded = true;
-            await LoadCharacterItemsAsync();
+            await LoadCharacterItemsAsync(showWaitForm: !suppressInitialLoadWaitForm);
             EnsureFolderListScrollViewerHooked();
 
             if (!hasRaisedFinishedLoading)
@@ -695,14 +698,18 @@ namespace OceanyaClient
             }
         }
 
-        private async Task LoadCharacterItemsAsync(bool forceRebuild = false)
+        private async Task LoadCharacterItemsAsync(bool forceRebuild = false, bool showWaitForm = true)
         {
             List<CharacterFolder> characters = CharacterFolder.FullList;
             string signature = BuildCharacterSignature(characters);
 
             if (!forceRebuild && TryLoadProjectedItemsFromDisk(signature, out List<FolderVisualizerItem>? diskCachedItems))
             {
-                await WaitForm.ShowFormAsync("Loading character folder visualizer...", this);
+                if (showWaitForm)
+                {
+                    await WaitForm.ShowFormAsync("Loading character folder visualizer...", this);
+                }
+
                 try
                 {
                     WaitForm.SetSubtitle("Loading indexed data from disk cache...");
@@ -726,13 +733,20 @@ namespace OceanyaClient
                 }
                 finally
                 {
-                    WaitForm.CloseForm();
+                    if (showWaitForm)
+                    {
+                        WaitForm.CloseForm();
+                    }
                 }
 
                 return;
             }
 
-            await WaitForm.ShowFormAsync("Loading character folder visualizer...", this);
+            if (showWaitForm)
+            {
+                await WaitForm.ShowFormAsync("Loading character folder visualizer...", this);
+            }
+
             try
             {
                 List<FolderVisualizerItem> projected = await Task.Run(() => BuildCharacterItems(characters));
@@ -758,7 +772,10 @@ namespace OceanyaClient
             }
             finally
             {
-                WaitForm.CloseForm();
+                if (showWaitForm)
+                {
+                    WaitForm.CloseForm();
+                }
             }
         }
 

@@ -2,10 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using AOBot_Testing.Structures;
@@ -30,7 +30,7 @@ namespace OceanyaClient
 
             try
             {
-                RefreshAllAssets(subtitle => WaitForm.SetSubtitle(subtitle));
+                await Task.Run(() => RefreshAllAssets(subtitle => WaitForm.SetSubtitle(subtitle)));
             }
             finally
             {
@@ -52,7 +52,7 @@ namespace OceanyaClient
 
             try
             {
-                RefreshAssets(plan, subtitle => WaitForm.SetSubtitle(subtitle));
+                await Task.Run(() => RefreshAssets(plan, subtitle => WaitForm.SetSubtitle(subtitle)));
             }
             finally
             {
@@ -433,11 +433,25 @@ namespace OceanyaClient
                     progress?.Invoke("Changed mount path: " + path);
                 });
 
-            foreach (CharacterFolder character in CharacterFolder.FullList)
+            List<CharacterFolder> characters = CharacterFolder.FullList.ToList();
+            int totalCharacters = characters.Count;
+            if (totalCharacters == 0)
             {
-                progress?.Invoke("Integrity verify: " + character.Name);
-                _ = CharacterIntegrityVerifier.RunAndPersist(character);
+                return;
             }
+
+            int completedCharacters = 0;
+            ParallelOptions options = new ParallelOptions
+            {
+                MaxDegreeOfParallelism = AssetRefreshParallelism.GetDegreeOfParallelism(totalCharacters)
+            };
+
+            Parallel.ForEach(characters, options, character =>
+            {
+                CharacterIntegrityVerifier.RunAndPersist(character);
+                int verifiedCount = Interlocked.Increment(ref completedCharacters);
+                progress?.Invoke($"Integrity verified {verifiedCount}/{totalCharacters}: {character.Name}");
+            });
         }
 
         private static void RefreshAllBackgrounds(Action<string>? progress)
@@ -610,9 +624,7 @@ namespace OceanyaClient
 
         private static string GetAppVersion()
         {
-            Version? version = Assembly.GetEntryAssembly()?.GetName().Version
-                ?? Assembly.GetExecutingAssembly().GetName().Version;
-            return version?.ToString() ?? "0.0.0.0";
+            return AppVersionInfo.AssemblyVersion;
         }
 
         private static string NormalizeRelativePath(string path)

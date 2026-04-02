@@ -14,10 +14,14 @@ namespace UnitTests
     public class AO2SoundListTests
     {
         private string tempRoot = string.Empty;
+        private List<string> originalBaseFolders = new List<string>();
+        private string originalConfigPath = string.Empty;
 
         [SetUp]
         public void SetUp()
         {
+            originalBaseFolders = new List<string>(Globals.BaseFolders);
+            originalConfigPath = Globals.PathToConfigINI;
             tempRoot = Path.Combine(Path.GetTempPath(), "ao2_soundlist_tests_" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(tempRoot);
         }
@@ -25,6 +29,9 @@ namespace UnitTests
         [TearDown]
         public void TearDown()
         {
+            Globals.BaseFolders = originalBaseFolders;
+            Globals.PathToConfigINI = originalConfigPath;
+
             try
             {
                 if (Directory.Exists(tempRoot))
@@ -70,6 +77,41 @@ namespace UnitTests
                 "Hit",
                 "Slash",
                 "Boom"
+            }));
+        }
+
+        [Test]
+        public void LoadEntries_UsesHighestPriorityBaseSoundList_FromLastConfiguredMountLikeAo2()
+        {
+            string baseDirectory = Path.Combine(tempRoot, "base");
+            string lowPriorityMount = Path.Combine(tempRoot, "content_low");
+            string highPriorityMount = Path.Combine(tempRoot, "content_high");
+            string configPath = Path.Combine(baseDirectory, "config.ini");
+            string characterDirectory = Path.Combine(baseDirectory, "characters", "Jason");
+
+            Directory.CreateDirectory(baseDirectory);
+            Directory.CreateDirectory(lowPriorityMount);
+            Directory.CreateDirectory(highPriorityMount);
+            Directory.CreateDirectory(characterDirectory);
+
+            File.WriteAllText(
+                configPath,
+                $"mount_paths={lowPriorityMount},{highPriorityMount}{Environment.NewLine}log_maximum=20");
+            File.WriteAllText(Path.Combine(lowPriorityMount, "soundlist.ini"), "low/boom = Low Boom");
+            File.WriteAllText(Path.Combine(highPriorityMount, "soundlist.ini"), "high/boom = High Boom");
+            File.WriteAllText(Path.Combine(baseDirectory, "soundlist.ini"), "base/boom = Base Boom");
+
+            Globals.UpdateConfigINI(configPath);
+
+            IReadOnlyList<AO2SoundListEntry> entries = AO2SoundList.LoadEntries(characterDirectory);
+
+            Assert.That(entries.Select(static entry => entry.Value).ToArray(), Is.EqualTo(new[]
+            {
+                "high/boom"
+            }));
+            Assert.That(entries.Select(static entry => entry.DisplayText).ToArray(), Is.EqualTo(new[]
+            {
+                "High Boom"
             }));
         }
     }

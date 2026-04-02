@@ -8,14 +8,17 @@ namespace OceanyaClient.Features.Startup
         public static Window CreateStartupWindow(
             string? functionalityId,
             Action? onFunctionalityReady = null,
-            Action? onFunctionalityClosed = null)
+            Action? onFunctionalityClosed = null,
+            bool useSharedStartupWaitForm = false)
         {
             StartupFunctionalityOption selected = StartupFunctionalityCatalog.GetByIdOrDefault(functionalityId);
             Window startupWindow;
             IStartupFunctionalityWindow? startupFunctionalityWindow = null;
             if (selected.Id == StartupFunctionalityIds.CharacterDatabaseViewer)
             {
-                CharacterFolderVisualizerWindow content = new CharacterFolderVisualizerWindow(onAssetsRefreshed: null);
+                CharacterFolderVisualizerWindow content = new CharacterFolderVisualizerWindow(
+                    onAssetsRefreshed: null,
+                    suppressInitialLoadWaitForm: useSharedStartupWaitForm);
                 startupFunctionalityWindow = content;
                 startupWindow = OceanyaWindowManager.CreateWindow(content);
             }
@@ -27,7 +30,8 @@ namespace OceanyaClient.Features.Startup
             }
             else if (selected.Id == StartupFunctionalityIds.OceanyanFileHivemind)
             {
-                OceanyanFileHivemindWindow content = new OceanyanFileHivemindWindow();
+                OceanyanFileHivemindWindow content = new OceanyanFileHivemindWindow(
+                    manageStartupWaitForm: !useSharedStartupWaitForm);
                 startupFunctionalityWindow = content;
                 startupWindow = OceanyaWindowManager.CreateWindow(content);
             }

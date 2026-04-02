@@ -220,14 +220,7 @@ namespace OceanyaClient.Utilities
 
         private static string GetAppVersion()
         {
-            Assembly? entryAssembly = Assembly.GetEntryAssembly();
-            if (entryAssembly == null)
-            {
-                return "Unknown";
-            }
-
-            Version? version = entryAssembly.GetName().Version;
-            return version?.ToString() ?? "Unknown";
+            return AppVersionInfo.AssemblyVersion;
         }
 
         private static string SafeAssemblyLocation(Assembly assembly)

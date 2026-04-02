@@ -42,8 +42,8 @@ namespace AOBot_Testing.Structures
         {
             EnsureCacheFilePath();
 
-            List<CharacterFolder> refreshedCharacters = new List<CharacterFolder>();
-            HashSet<string> seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            List<(string DirectoryPath, string IniFilePath, string FolderName)> candidates =
+                new List<(string DirectoryPath, string IniFilePath, string FolderName)>();
 
             foreach (string characterFolder in CharacterFolders)
             {
@@ -74,25 +74,49 @@ namespace AOBot_Testing.Structures
                     }
 
                     string folderName = Path.GetFileName(directory);
-                    if (seenNames.Contains(folderName))
-                    {
-                        continue;
-                    }
-
-                    try
-                    {
-                        CharacterFolder config = Structures.CharacterFolder.Create(iniFilePath);
-                        seenNames.Add(folderName);
-                        refreshedCharacters.Add(config);
-                        onParsedCharacter?.Invoke(config);
-                    }
-                    catch (Exception ex)
-                    {
-                        CustomConsole.Warning(
-                            $"Skipping broken character folder '{directory}' due to parse/validation failure.");
-                        CustomConsole.Error("Character parsing error", ex);
-                    }
+                    candidates.Add((directory, iniFilePath, folderName));
                 }
+            }
+
+            CharacterFolder?[] parsedCharacters = new CharacterFolder?[candidates.Count];
+            ParallelOptions options = new ParallelOptions
+            {
+                MaxDegreeOfParallelism = AssetRefreshParallelism.GetDegreeOfParallelism(candidates.Count)
+            };
+
+            Parallel.For(0, candidates.Count, options, index =>
+            {
+                (string directoryPath, string iniFilePath, _) = candidates[index];
+                try
+                {
+                    parsedCharacters[index] = Structures.CharacterFolder.Create(iniFilePath);
+                }
+                catch (Exception ex)
+                {
+                    CustomConsole.Warning(
+                        $"Skipping broken character folder '{directoryPath}' due to parse/validation failure.");
+                    CustomConsole.Error("Character parsing error", ex);
+                }
+            });
+
+            List<CharacterFolder> refreshedCharacters = new List<CharacterFolder>();
+            HashSet<string> seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (int index = 0; index < candidates.Count; index++)
+            {
+                CharacterFolder? parsedCharacter = parsedCharacters[index];
+                if (parsedCharacter == null)
+                {
+                    continue;
+                }
+
+                string folderName = candidates[index].FolderName;
+                if (!seenNames.Add(folderName))
+                {
+                    continue;
+                }
+
+                refreshedCharacters.Add(parsedCharacter);
+                onParsedCharacter?.Invoke(parsedCharacter);
             }
 
             characterConfigs = refreshedCharacters;

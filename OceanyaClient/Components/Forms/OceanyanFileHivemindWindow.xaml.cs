@@ -36,6 +36,7 @@ namespace OceanyaClient
         private readonly FileHivemindBackgroundAgentLauncher backgroundAgentLauncher;
         private readonly FileHivemindBackgroundLogStore backgroundLogStore;
         private readonly DispatcherTimer backgroundLogTimer;
+        private readonly bool manageStartupWaitForm;
         private long backgroundLogReadPosition;
         private bool backgroundLogHistoryLoaded;
         private bool suppressBackgroundAgentCheckboxEvents;
@@ -44,7 +45,9 @@ namespace OceanyaClient
         private bool hasFinishedInitialization;
         public event Action? FinishedLoading;
 
-        public OceanyanFileHivemindWindow(GoogleDriveSyncService? syncService = null)
+        public OceanyanFileHivemindWindow(
+            GoogleDriveSyncService? syncService = null,
+            bool manageStartupWaitForm = true)
         {
             InitializeComponent();
             this.syncService = syncService ?? new GoogleDriveSyncService();
@@ -53,6 +56,7 @@ namespace OceanyaClient
             credentialStore = new GoogleDriveSecureClientCredentialStore();
             backgroundAgentLauncher = new FileHivemindBackgroundAgentLauncher();
             backgroundLogStore = new FileHivemindBackgroundLogStore();
+            this.manageStartupWaitForm = manageStartupWaitForm;
             backgroundLogTimer = new DispatcherTimer
             {
                 Interval = TimeSpan.FromSeconds(1)
@@ -1006,10 +1010,16 @@ namespace OceanyaClient
 
             Window owner = ResolveOwnerWindow();
             IsEnabled = false;
+            bool ownsWaitForm = false;
 
             try
             {
-                await WaitForm.ShowFormAsync("Opening The Oceanyan File Hivemind...", owner);
+                if (manageStartupWaitForm)
+                {
+                    await WaitForm.ShowFormAsync("Opening The Oceanyan File Hivemind...", owner);
+                    ownsWaitForm = true;
+                }
+
                 WaitForm.SetSubtitle("Loading saved connections...");
 
                 // Yield once so the host window and wait form are both visible before doing startup work.
@@ -1049,7 +1059,10 @@ namespace OceanyaClient
             finally
             {
                 IsEnabled = true;
-                await WaitForm.CloseFormAsync();
+                if (ownsWaitForm)
+                {
+                    await WaitForm.CloseFormAsync();
+                }
             }
         }
 

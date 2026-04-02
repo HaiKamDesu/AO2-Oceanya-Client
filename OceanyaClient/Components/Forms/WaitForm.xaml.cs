@@ -3,7 +3,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media;
-using System.Windows.Media.Animation;
 using System.Windows.Threading;
 
 namespace OceanyaClient
@@ -29,7 +28,6 @@ namespace OceanyaClient
         {
             InitializeComponent();
             WindowHelper.AddWindow(this);
-            Opacity = 0; // Start fully transparent
             WindowStartupLocation = WindowStartupLocation.CenterScreen; // Default to center screen
 
             // Set initial values
@@ -55,9 +53,6 @@ namespace OceanyaClient
         {
             lock (_lock)
             {
-                // Clear old references
-                _instance = null;
-
                 // If thread is already running, just signal completion
                 if (_threadRunning)
                 {
@@ -125,6 +120,8 @@ namespace OceanyaClient
                     _instance = new WaitForm();
                 }
 
+                _instance.BeginAnimation(Window.OpacityProperty, null);
+                _instance.Opacity = 1;
                 _instance.lblMessage.Text = message;
                 _instance.lblSubtitle.Text = string.Empty;
                 _instance.lblSubtitle.Visibility = Visibility.Collapsed;
@@ -155,12 +152,17 @@ namespace OceanyaClient
                 {
                     _instance.Show();
                     Showing = true;
-
-                    // Fade in animation
-                    DoubleAnimation fadeInAnimation = new DoubleAnimation(0, 1, TimeSpan.FromSeconds(0.5));
-                    _instance.BeginAnimation(Window.OpacityProperty, fadeInAnimation);
                 }
+
+                _instance.Activate();
+                _instance.Focus();
+                _instance.UpdateLayout();
             });
+
+            await _formDispatcher.InvokeAsync(() =>
+            {
+                _instance?.UpdateLayout();
+            }, DispatcherPriority.Render);
         }
 
         public static async Task CloseFormAsync()
@@ -170,37 +172,18 @@ namespace OceanyaClient
             // Use the form's dispatcher to close it
             await _formDispatcher.InvokeAsync(() =>
             {
-                if (_instance != null && _instance.IsVisible)
-                {
-                    DoubleAnimation fadeOutAnimation = new DoubleAnimation(1, 0, TimeSpan.FromSeconds(0.5));
-                    fadeOutAnimation.Completed += (s, e) =>
-                    {
-                        _instance?.Close();
-                        Showing = false;
-                    };
-                    _instance.BeginAnimation(Window.OpacityProperty, fadeOutAnimation);
-                }
-            });
-
-            // Allow some time for animation to complete
-            await Task.Delay(600);
-
-            if (_formDispatcher == null)
-            {
-                return;
-            }
-
-            await _formDispatcher.InvokeAsync(() =>
-            {
                 if (_instance != null)
                 {
+                    _instance.BeginAnimation(Window.OpacityProperty, null);
+                    _instance.Opacity = 1;
+
                     try
                     {
                         _instance.Close();
                     }
                     catch
                     {
-                        // Best-effort cleanup if the fade animation path did not close the wait form.
+                        // Best-effort cleanup if the close path runs while the form is already disposing.
                     }
                 }
 

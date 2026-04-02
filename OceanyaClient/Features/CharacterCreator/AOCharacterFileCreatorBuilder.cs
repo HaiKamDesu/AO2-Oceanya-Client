@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Reflection;
 using System.Text;
 
 namespace OceanyaClient.Features.CharacterCreator
@@ -414,29 +413,7 @@ namespace OceanyaClient.Features.CharacterCreator
 
         private static string ResolveOceanyaVersionToken()
         {
-            try
-            {
-                Assembly assembly = typeof(AOCharacterFileCreatorBuilder).Assembly;
-                AssemblyInformationalVersionAttribute? informationalVersionAttribute =
-                    assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>();
-                string informational = informationalVersionAttribute?.InformationalVersion?.Trim() ?? string.Empty;
-                if (!string.IsNullOrWhiteSpace(informational))
-                {
-                    return informational;
-                }
-
-                Version? version = assembly.GetName().Version;
-                if (version != null)
-                {
-                    return $"{version.Major}.{Math.Max(0, version.Minor)}";
-                }
-            }
-            catch
-            {
-                // ignored
-            }
-
-            return "3.1";
+            return AppVersionInfo.DisplayVersion;
         }
     }
 }

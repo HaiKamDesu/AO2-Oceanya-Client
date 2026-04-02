@@ -117,6 +117,43 @@ namespace UnitTests
                 }
             }
         }
+
+        [Test]
+        public void Test_GetBaseFolders_ReversesConfiguredMounts_SoLastConfiguredMountWinsLikeAo2()
+        {
+            string testRoot = Path.Combine(Path.GetTempPath(), $"globals_mount_priority_test_{Guid.NewGuid()}");
+            string baseDirectory = Path.Combine(testRoot, "base");
+            string lowPriorityMount = Path.Combine(testRoot, "content_low");
+            string highPriorityMount = Path.Combine(testRoot, "content_high");
+            string configPath = Path.Combine(baseDirectory, "config.ini");
+
+            try
+            {
+                Directory.CreateDirectory(baseDirectory);
+                Directory.CreateDirectory(lowPriorityMount);
+                Directory.CreateDirectory(highPriorityMount);
+
+                File.WriteAllText(
+                    configPath,
+                    $"mount_paths={lowPriorityMount},{highPriorityMount}{Environment.NewLine}log_maximum=123");
+
+                List<string> baseFolders = Globals.GetBaseFolders(configPath);
+
+                Assert.That(baseFolders, Is.EqualTo(new List<string>
+                {
+                    Path.GetFullPath(highPriorityMount),
+                    Path.GetFullPath(lowPriorityMount),
+                    Path.GetFullPath(baseDirectory)
+                }));
+            }
+            finally
+            {
+                if (Directory.Exists(testRoot))
+                {
+                    Directory.Delete(testRoot, true);
+                }
+            }
+        }
     }
     
     [TestFixture]
