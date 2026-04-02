@@ -57,7 +57,42 @@ public class ICMessageTests
             Assert.That(command, Does.Contain("#Franziska#"));
             Assert.That(command, Does.Contain("#normal#"));
             Assert.That(command, Does.Contain("#This is a test message#"));
-            Assert.That(command.Split('#').Length, Is.GreaterThanOrEqualTo(28));
+            Assert.That(command.Split('#').Length, Is.GreaterThanOrEqualTo(34));
+        });
+    }
+
+    [Test]
+    public void GetCommand_UsesAo2ExtendedFieldLayout()
+    {
+        ICMessage message = CreateSampleMessage();
+        message.ScreenShake = true;
+        message.FramesShake = string.Empty;
+        message.FramesRealization = string.Empty;
+        message.FramesSfx = string.Empty;
+        message.Blips = "male";
+        message.EffectString = "realization||custom-realization";
+
+        string[] parts = ICMessage.GetCommand(message).Split('#');
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(parts[17], Is.EqualTo("-1"));
+            Assert.That(parts[18], Is.EqualTo(string.Empty));
+            Assert.That(parts[19], Is.EqualTo(string.Empty));
+            Assert.That(parts[20], Is.EqualTo("0<and>0"));
+            Assert.That(parts[21], Is.EqualTo("0"));
+            Assert.That(parts[22], Is.EqualTo("0"));
+            Assert.That(parts[23], Is.EqualTo("0"));
+            Assert.That(parts[24], Is.EqualTo("0"));
+            Assert.That(parts[25], Is.EqualTo("1"));
+            Assert.That(parts[26], Is.EqualTo(string.Empty));
+            Assert.That(parts[27], Is.EqualTo(string.Empty));
+            Assert.That(parts[28], Is.EqualTo(string.Empty));
+            Assert.That(parts[29], Is.EqualTo("0"));
+            Assert.That(parts[30], Is.EqualTo("realization||custom-realization"));
+            Assert.That(parts[31], Is.EqualTo("male"));
+            Assert.That(parts[32], Is.EqualTo(string.Empty));
+            Assert.That(parts[33], Is.EqualTo("%"));
         });
     }
 
@@ -94,6 +129,23 @@ public class ICMessageTests
         {
             Assert.That(invalidHeader, Is.Null);
             Assert.That(tooFewFields, Is.Null);
+        });
+    }
+
+    [Test]
+    public void EffectString_PreservesAo2PayloadWhileParsingEffectType()
+    {
+        ICMessage message = new ICMessage
+        {
+            EffectString = "realization|custom-folder|../../characters/test/realization"
+        };
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(message.Effect, Is.EqualTo(Effects.Realization));
+            Assert.That(
+                message.EffectString,
+                Is.EqualTo("realization|custom-folder|../../characters/test/realization"));
         });
     }
 

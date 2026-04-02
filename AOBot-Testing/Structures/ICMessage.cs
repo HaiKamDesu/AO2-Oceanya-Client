@@ -5,6 +5,8 @@ namespace AOBot_Testing.Structures
 {
     public class ICMessage
     {
+        private string effectString = string.Empty;
+
         public DeskMods DeskMod { get; set; }
         public string PreAnim { get; set; }
         public string Character { get; set; }
@@ -39,49 +41,17 @@ namespace AOBot_Testing.Structures
         {
             get
             {
-                string effect = "";
-                switch (Effect)
+                if (!string.IsNullOrEmpty(effectString))
                 {
-                    default:
-                    case Effects.None:
-                        effect = "||";
-                        break;
-                    case Effects.Realization:
-                        effect = "realization||sfx-realization";
-                        break;
-                    case Effects.Hearts:
-                        effect = "hearts||sfx-squee";
-                        break;
-                    case Effects.Reaction:
-                        effect = "reaction||sfx-reactionding";
-                        break;
-                    case Effects.Impact:
-                        effect = "impact||sfx-fan";
-                        break;
+                    return effectString;
                 }
-                return effect;
+
+                return BuildDefaultEffectString(Effect);
             }
             set
             {
-                switch (value)
-                {
-                    default:
-                    case "":
-                        Effect = Effects.None;
-                        break;
-                    case "realization||sfx-realization":
-                        Effect = Effects.Realization;
-                        break;
-                    case "hearts||sfx-squee":
-                        Effect = Effects.Hearts;
-                        break;
-                    case "reaction||sfx-reactionding":
-                        Effect = Effects.Reaction;
-                        break;
-                    case "impact||sfx-fan":
-                        Effect = Effects.Impact;
-                        break;
-                }
+                effectString = value ?? string.Empty;
+                Effect = ParseEffect(effectString);
             }
         }
         public string Blips { get; set; }
@@ -174,8 +144,40 @@ namespace AOBot_Testing.Structures
             FramesSfx = "";
             Additive = false;
             Effect = Effects.None;
+            effectString = string.Empty;
             Blips = "";
             OriginalCommand = "";
+        }
+
+        private static string BuildDefaultEffectString(Effects effect)
+        {
+            return effect switch
+            {
+                Effects.Realization => "realization||sfx-realization",
+                Effects.Hearts => "hearts||sfx-squee",
+                Effects.Reaction => "reaction||sfx-reactionding",
+                Effects.Impact => "impact||sfx-fan",
+                _ => string.Empty
+            };
+        }
+
+        private static Effects ParseEffect(string? value)
+        {
+            string normalized = (value ?? string.Empty).Trim();
+            if (string.IsNullOrEmpty(normalized))
+            {
+                return Effects.None;
+            }
+
+            string effectName = normalized.Split('|')[0].Trim();
+            return effectName.ToLowerInvariant() switch
+            {
+                "realization" => Effects.Realization,
+                "hearts" => Effects.Hearts,
+                "reaction" => Effects.Reaction,
+                "impact" => Effects.Impact,
+                _ => Effects.None
+            };
         }
 
         public static ICMessage? FromConsoleLine(string message)
@@ -195,7 +197,7 @@ namespace AOBot_Testing.Structures
 
             try
             {
-                bool isFullPacket = parts.Length >= 31;
+                bool isFullPacket = parts.Length >= 33;
 
                 // Handle SelfOffset safely, ensuring it properly parses even with special characters
                 var selfOffset = (Horizontal: 0, Vertical: 0);
@@ -285,7 +287,6 @@ namespace AOBot_Testing.Structures
         public static string GetCommand(ICMessage message)
         {
             string encodedBlips = Globals.ReplaceSymbolsForText(message.Blips ?? string.Empty);
-            string blipsSegment = string.IsNullOrEmpty(encodedBlips) ? "%" : $"{encodedBlips}#%";
 
             return $"MS#" +
                     $"{(message.DeskMod == DeskMods.Chat ? "chat" : ((int)message.DeskMod).ToString())}#" +
@@ -305,8 +306,12 @@ namespace AOBot_Testing.Structures
                     $"{(int)message.TextColor}#" +
                     $"{Globals.ReplaceSymbolsForText(message.ShowName)}#" +
                     $"{message.OtherCharId}#" +
+                    $"{Globals.ReplaceSymbolsForText(message.OtherName)}#" +
+                    $"{message.OtherEmote}#" +
                     $"{message.SelfOffset.Horizontal}<and>{message.SelfOffset.Vertical}#" +
-                    $"{(message.NonInterruptingPreAnim ? "1" : "0")}#" + // Changed to bool
+                    $"{message.OtherOffset}#" +
+                    $"{(message.OtherFlip ? "1" : "0")}#" +
+                    $"{(message.NonInterruptingPreAnim ? "1" : "0")}#" +
                     $"{(message.SfxLooping ? "1" : "0")}#" +
                     $"{(message.ScreenShake ? "1" : "0")}#" +
                     $"{message.FramesShake}#" +
@@ -314,7 +319,8 @@ namespace AOBot_Testing.Structures
                     $"{message.FramesSfx}#" +
                     $"{(message.Additive ? "1" : "0")}#" +
                     $"{message.EffectString}#" +
-                    $"{blipsSegment}";
+                    $"{encodedBlips}#" +
+                    $"#%";
         }
 
         public static Color GetColorFromTextColor(TextColors textColor)

@@ -178,12 +178,26 @@ namespace AOBot_Testing.Agents
                 msg.NonInterruptingPreAnim = Immediate;
                 msg.SfxLooping = false;
                 msg.ScreenShake = screenshake;
-                msg.FramesShake = $"{currentEmote.PreAnimation}^(b){currentEmote.Animation}^(a){currentEmote.Animation}^";
-                msg.FramesRealization = $"{currentEmote.PreAnimation}^(b){currentEmote.Animation}^(a){currentEmote.Animation}^";
-                msg.FramesSfx = $"{currentEmote.PreAnimation}^(b){currentEmote.Animation}^(a){currentEmote.Animation}^";
+                msg.FramesShake = string.Empty;
+                msg.FramesRealization = string.Empty;
+                msg.FramesSfx = string.Empty;
                 msg.Additive = Additive;
                 msg.Effect = effect;
                 msg.Blips = "";
+
+                bool hasSelectedCustomSfx =
+                    !string.IsNullOrWhiteSpace(curSFX) &&
+                    !string.Equals(curSFX, "Default", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(curSFX, "Nothing", StringComparison.OrdinalIgnoreCase);
+
+                if (hasSelectedCustomSfx && emoteMod == ICMessage.EmoteModifiers.NoPreanimation)
+                {
+                    // Match AO2's "send selected SFX on idle" behavior so narration can carry dropdown SFX.
+                    msg.PreAnim = string.Empty;
+                    msg.SfxDelay = 0;
+                    msg.EmoteModifier = ICMessage.EmoteModifiers.PlayPreanimation;
+                    msg.NonInterruptingPreAnim = false;
+                }
 
                 string command = ICMessage.GetCommand(msg);
 
