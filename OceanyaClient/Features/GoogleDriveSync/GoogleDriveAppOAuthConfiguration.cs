@@ -11,13 +11,10 @@ namespace OceanyaClient.Features.GoogleDriveSync
     /// </summary>
     public static class GoogleDriveAppOAuthConfiguration
     {
-        // Shared Desktop OAuth client ID for Oceanya's Google Drive integration.
-        private const string EmbeddedClientId =
-            "";
+        // Left blank on purpose. Connection-specific credentials are the preferred path now.
+        private const string EmbeddedClientId = "";
 
-        // Google still includes a client secret for installed-app credentials. This is an
-        // app-level OAuth credential, not an end-user credential, and is only used to allow
-        // clean-machine sign-in without requiring a sidecar JSON file.
+        // Left blank on purpose. Connection-specific credentials are the preferred path now.
         private const string EmbeddedClientSecret = "";
         private const string LocalJsonPathEnvironmentVariable = "OCEANYA_GOOGLE_DRIVE_CLIENT_JSON_PATH";
         private const string LocalJsonFileName = "google-drive-oauth.local.json";
@@ -41,8 +38,7 @@ namespace OceanyaClient.Features.GoogleDriveSync
             if (!IsConfigured)
             {
                 throw new InvalidOperationException(
-                    "Google Drive sign-in is not configured for this Oceanya build yet. " +
-                    "Set the app's Desktop OAuth client ID in GoogleDriveAppOAuthConfiguration.cs.");
+                    "Google Drive sign-in is not configured through the legacy app-wide fallback for this Oceanya build.");
             }
 
             return new GoogleDriveOAuthClientConfiguration

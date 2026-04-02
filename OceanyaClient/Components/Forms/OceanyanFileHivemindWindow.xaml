@@ -195,7 +195,7 @@
                 </StackPanel>
                 <TextBlock Margin="0,8,0,0"
                            Style="{StaticResource BodyHintText}"
-                           Text="Use this as the connection database: add as many remote folders/accounts as you need, export a connection file for friends, import shared connection files, then sync one or all connections from here."/>
+                           Text="Use this as the connection database: add as many remote folders/accounts as you need, export a connection file for friends, import shared connection files, then sync one or all connections from here. Hosts set up the Google Cloud Desktop app once per connection; importing users only need to sign into Google."/>
                 <CheckBox x:Name="RunAtStartupCheckBox"
                           Margin="0,12,0,0"
                           Foreground="#FFF0F0F0"
@@ -307,7 +307,7 @@
                                     Content="Add"
                                     Style="{StaticResource ModernButton}"
                                     Click="AddDriveConnectionButton_Click"
-                                    ToolTip="Create a new Google Drive connection profile and open its editor popup."/>
+                                    ToolTip="Create a new Google Drive connection profile and open its editor popup. The host can then paste the Google Cloud Desktop app client ID and client secret for that connection."/>
                             <Button Width="100"
                                     Margin="8,0,0,0"
                                     Content="Edit"
@@ -328,13 +328,13 @@
                                     Content="Import"
                                     Style="{StaticResource ModernButton}"
                                     Click="ImportConnectionButton_Click"
-                                    ToolTip="Import a shared hivemind connection file, sign into Google, create the local mirror automatically, and sync it once."/>
+                                    ToolTip="Import a shared hivemind connection file, including the remote folder settings and an obfuscated copy of that connection's Google Cloud app credentials. You still sign into your own Google account, but you do not need to open Google Cloud Console on this machine."/>
                             <Button Width="100"
                                     Margin="8,0,0,0"
                                     Content="Export"
                                     Style="{StaticResource ModernButton}"
                                     Click="ExportConnectionButton_Click"
-                                    ToolTip="Export the selected connection into a shareable file without any Google login tokens or saved local account state."/>
+                                    ToolTip="Export the selected connection into a shareable file that includes an obfuscated copy of the Google Cloud app credentials for that connection, but never includes any user's Google login tokens, saved local token files, or the local mirror path. Share exported files only with intended participants."/>
                         </WrapPanel>
                     </StackPanel>
                 </Grid>

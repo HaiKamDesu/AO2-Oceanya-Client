@@ -1019,8 +1019,11 @@ namespace OceanyaClient
 
         private static void NormalizeGoogleDriveSettings(GoogleDriveSyncSettings settings)
         {
-            settings.OAuthClientId = string.Empty;
+            settings.OAuthClientId = settings.OAuthClientId?.Trim() ?? string.Empty;
             settings.OAuthClientSecret = string.Empty;
+            settings.OAuthClientSecretStoreKey = string.IsNullOrWhiteSpace(settings.OAuthClientSecretStoreKey)
+                ? Guid.NewGuid().ToString("N")
+                : settings.OAuthClientSecretStoreKey.Trim();
             settings.TokenStoreKey = string.IsNullOrWhiteSpace(settings.TokenStoreKey)
                 ? Guid.NewGuid().ToString("N")
                 : settings.TokenStoreKey.Trim();
@@ -1132,7 +1135,8 @@ namespace OceanyaClient
             return new GoogleDriveSyncSettings
             {
                 OAuthClientId = settings.OAuthClientId,
-                OAuthClientSecret = settings.OAuthClientSecret,
+                OAuthClientSecret = string.Empty,
+                OAuthClientSecretStoreKey = settings.OAuthClientSecretStoreKey,
                 TokenStoreKey = settings.TokenStoreKey,
                 LastSignedInEmail = settings.LastSignedInEmail,
                 LastSignedInDisplayName = settings.LastSignedInDisplayName,

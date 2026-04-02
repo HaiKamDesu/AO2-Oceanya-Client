@@ -1,4 +1,5 @@
 using Microsoft.Win32;
+using OceanyaClient.Features.GoogleDriveSync;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -195,7 +196,12 @@ namespace OceanyaClient.Features.FileHivemind
             }
 
             GoogleDriveSyncSettings settings = connection.GoogleDrive ?? new GoogleDriveSyncSettings();
-            return !string.IsNullOrWhiteSpace(settings.RemoteFolderId)
+            return GoogleDriveConnectionCredentialSupport.TryBuildConfiguration(
+                    settings,
+                    out _,
+                    out _,
+                    allowLegacyFallback: false)
+                && !string.IsNullOrWhiteSpace(settings.RemoteFolderId)
                 && !string.IsNullOrWhiteSpace(settings.LocalFolderPath)
                 && !string.IsNullOrWhiteSpace(settings.TokenStoreKey)
                 && (!string.IsNullOrWhiteSpace(settings.LastSignedInEmail)

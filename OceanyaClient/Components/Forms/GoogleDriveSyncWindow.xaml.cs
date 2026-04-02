@@ -27,12 +27,16 @@ namespace OceanyaClient
             Error
         }
 
+        private const string StoredSecretMaskValue = "oceanya_stored_secret";
         private readonly GoogleDriveSyncService syncService;
         private readonly GoogleDriveRemoteChangeTracker remoteChangeTracker;
         private readonly GoogleDriveConnectionRuntimeStateStore runtimeStateStore;
+        private readonly GoogleDriveSecureClientCredentialStore credentialStore;
         private readonly FileHivemindConnectionProfile connection;
         private readonly Action<FileHivemindConnectionProfile> persistConnection;
         private readonly bool isDraftConnection;
+        private bool suppressSecretPasswordEvents;
+        private bool showingStoredSecretPlaceholder;
         private bool hasRaisedFinishedLoading;
         private bool hasPersistedConnection;
         public event Action? FinishedLoading;
@@ -47,6 +51,7 @@ namespace OceanyaClient
             this.syncService = syncService ?? new GoogleDriveSyncService();
             remoteChangeTracker = new GoogleDriveRemoteChangeTracker();
             runtimeStateStore = new GoogleDriveConnectionRuntimeStateStore();
+            credentialStore = new GoogleDriveSecureClientCredentialStore();
             this.connection = connection ?? FileHivemindConnectionProfile.CreateGoogleDriveProfile();
             this.persistConnection = persistConnection ?? (_ => SaveFile.Save());
             this.isDraftConnection = isDraftConnection;
@@ -67,27 +72,66 @@ namespace OceanyaClient
         private void LoadFromSettings()
         {
             ConnectionNameTextBox.Text = connection.DisplayName;
+            GoogleCloudClientIdTextBox.Text = Settings.OAuthClientId;
+            RestoreStoredSecretPlaceholderIfNeeded();
             RemoteFolderTextBox.Text = Settings.RemoteFolderId;
             LocalFolderTextBox.Text = Settings.LocalFolderPath;
             AutoAddMountPathCheckBox.IsChecked = Settings.AutoAddMountPath;
             MirrorDeletesCheckBox.IsChecked = Settings.MirrorDeletes;
             UseExistingMountPathCheckBox.IsChecked = Settings.UseExistingMountPath;
-            UpdateAppAuthenticationStatus();
+            UpdateGoogleCloudConfigurationStatus();
             UpdateAccountStatus();
             UpdateRemoteFolderStatus();
             AppendStatus("Google Drive connection window loaded.", StatusLogLevel.Success);
-            if (!GoogleDriveAppOAuthConfiguration.IsConfigured)
+            if (!GoogleDriveConnectionCredentialSupport.TryBuildConfiguration(
+                    Settings,
+                    out _,
+                    out string errorMessage,
+                    credentialStore,
+                    allowLegacyFallback: false))
             {
-                AppendStatus(
-                    "This build does not have a Google app OAuth client ID configured yet.",
-                    StatusLogLevel.Warning);
+                AppendStatus(errorMessage, StatusLogLevel.Warning);
             }
         }
 
         private bool PersistSettings(bool forcePersist)
         {
-            Settings.OAuthClientId = string.Empty;
-            Settings.OAuthClientSecret = string.Empty;
+            string previousClientId = Settings.OAuthClientId?.Trim() ?? string.Empty;
+            bool hadStoredSecret = HasSavedStoredSecretForCurrentClientId(previousClientId);
+            Settings.OAuthClientId = GoogleCloudClientIdTextBox.Text?.Trim() ?? string.Empty;
+            GoogleDriveConnectionCredentialSupport.EnsureSecretStoreKey(Settings);
+
+            string typedClientSecret = GetTypedClientSecret();
+            bool clientIdChanged = !string.Equals(previousClientId, Settings.OAuthClientId, StringComparison.Ordinal);
+            bool credentialsChanged = clientIdChanged;
+
+            if (clientIdChanged && hadStoredSecret && string.IsNullOrWhiteSpace(typedClientSecret))
+            {
+                GoogleDriveConnectionCredentialSupport.DeleteStoredSecret(Settings, credentialStore);
+                hadStoredSecret = false;
+            }
+
+            if (string.IsNullOrWhiteSpace(Settings.OAuthClientId) && hadStoredSecret && string.IsNullOrWhiteSpace(typedClientSecret))
+            {
+                GoogleDriveConnectionCredentialSupport.DeleteStoredSecret(Settings, credentialStore);
+                hadStoredSecret = false;
+                credentialsChanged = true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(typedClientSecret))
+            {
+                Settings.OAuthClientSecret = typedClientSecret;
+                GoogleDriveConnectionCredentialSupport.SaveSecretIfPresent(Settings, credentialStore);
+                credentialsChanged = true;
+            }
+
+            RestoreStoredSecretPlaceholderIfNeeded();
+            bool hasStoredSecret = HasSavedStoredSecretForCurrentClientId(Settings.OAuthClientId?.Trim() ?? string.Empty);
+            if (hadStoredSecret != hasStoredSecret)
+            {
+                credentialsChanged = true;
+            }
+
             Settings.TokenStoreKey = string.IsNullOrWhiteSpace(Settings.TokenStoreKey)
                 ? Guid.NewGuid().ToString("N")
                 : Settings.TokenStoreKey.Trim();
@@ -119,7 +163,14 @@ namespace OceanyaClient
             Settings.UseExistingMountPath = UseExistingMountPathCheckBox.IsChecked == true;
             connection.ProviderId = FileHivemindProviderIds.GoogleDrive;
             connection.DisplayName = ResolveConnectionDisplayName();
+            UpdateGoogleCloudConfigurationStatus();
             UpdateRemoteFolderStatus();
+
+            if (credentialsChanged)
+            {
+                syncService.SignOut(Settings);
+                runtimeStateStore.Delete(connection.Id);
+            }
 
             if (!forcePersist && isDraftConnection && !hasPersistedConnection && !HasMeaningfulConfiguration())
             {
@@ -134,6 +185,9 @@ namespace OceanyaClient
         private bool HasMeaningfulConfiguration()
         {
             return !string.IsNullOrWhiteSpace(ConnectionNameTextBox.Text)
+                || !string.IsNullOrWhiteSpace(GoogleCloudClientIdTextBox.Text)
+                || HasTypedClientSecretInput()
+                || GoogleDriveConnectionCredentialSupport.HasStoredSecret(Settings, credentialStore)
                 || !string.IsNullOrWhiteSpace(Settings.LastSignedInEmail)
                 || !string.IsNullOrWhiteSpace(Settings.LastSignedInDisplayName)
                 || !string.IsNullOrWhiteSpace(Settings.RemoteFolderId)
@@ -167,18 +221,40 @@ namespace OceanyaClient
             return string.Empty;
         }
 
-        private void UpdateAppAuthenticationStatus()
+        private void UpdateGoogleCloudConfigurationStatus()
         {
-            SignInButton.IsEnabled = GoogleDriveAppOAuthConfiguration.IsConfigured;
-            if (GoogleDriveAppOAuthConfiguration.IsConfigured)
+            string clientId = GoogleCloudClientIdTextBox.Text?.Trim() ?? string.Empty;
+            bool hasTypedSecret = HasTypedClientSecretInput();
+            bool hasStoredSecret = HasSavedStoredSecretForCurrentClientId(clientId);
+            VerifyCloudCredentialsButton.IsEnabled = !string.IsNullOrWhiteSpace(clientId) && (hasTypedSecret || hasStoredSecret);
+
+            if (string.IsNullOrWhiteSpace(clientId))
             {
-                AuthConfigurationTextBlock.Text = "Configured. End users only need to click Sign In and use the normal Google browser flow.";
+                SignInButton.IsEnabled = false;
+                CloudCredentialStatusTextBlock.Text = hasTypedSecret
+                    ? "A client secret is currently typed in, but the Google Cloud client ID is still missing."
+                    : GoogleDriveConnectionCredentialSupport.BuildStatusMessage(
+                        Settings,
+                        credentialStore,
+                        allowLegacyFallback: false);
+                return;
             }
-            else
+
+            SignInButton.IsEnabled = hasTypedSecret || hasStoredSecret;
+            if (hasTypedSecret)
             {
-                AuthConfigurationTextBlock.Text =
-                    "Not configured in this build. A single Oceanya app-level Desktop OAuth client ID still needs to be added before Google sign-in can work.";
+                CloudCredentialStatusTextBlock.Text =
+                    "A replacement client secret is currently typed in. Save, Verify, or Sign In to store it locally for this connection.";
+                return;
             }
+
+            CloudCredentialStatusTextBlock.Text = GoogleDriveConnectionCredentialSupport.BuildStatusMessage(
+                Settings,
+                credentialStore,
+                allowLegacyFallback: false)
+                + (hasStoredSecret
+                    ? " Exported connection files carry an obfuscated copy of these app credentials for trusted recipients."
+                    : string.Empty);
         }
 
         private void UpdateAccountStatus()
@@ -337,6 +413,40 @@ namespace OceanyaClient
                     ResolveOwnerWindow(),
                     "Could not verify the Google Drive folder:\n" + ex.Message,
                     "Verify Google Drive Folder",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+        }
+
+        private async void VerifyCloudCredentialsButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                PersistSettings(forcePersist: true);
+                if (!GoogleDriveConnectionCredentialSupport.TryBuildConfiguration(
+                        Settings,
+                        out GoogleDriveOAuthClientConfiguration configuration,
+                        out string errorMessage,
+                        credentialStore,
+                        allowLegacyFallback: false))
+                {
+                    throw new InvalidOperationException(errorMessage);
+                }
+
+                AppendStatus("Verifying Google Cloud credentials...", StatusLogLevel.Action);
+                await syncService.VerifyClientConfigurationAsync(configuration, CancellationToken.None);
+                CloudCredentialStatusTextBlock.Text =
+                    "Verified. Google accepted this Desktop app client configuration. Final end-to-end verification still happens when a user signs into Google.";
+                AppendStatus("Google Cloud credentials verified.", StatusLogLevel.Success);
+            }
+            catch (Exception ex)
+            {
+                CloudCredentialStatusTextBlock.Text = "Verification failed: " + ex.Message;
+                AppendStatus("Google Cloud credential verification failed: " + ex.Message, StatusLogLevel.Error);
+                OceanyaMessageBox.Show(
+                    ResolveOwnerWindow(),
+                    "Could not verify the Google Cloud credentials:\n" + ex.Message,
+                    "Verify Google Cloud Credentials",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
             }
@@ -634,13 +744,18 @@ namespace OceanyaClient
             }
         }
 
-        private static void EnsureGoogleAuthConfigured()
+        private void EnsureGoogleAuthConfigured()
         {
-            if (!GoogleDriveAppOAuthConfiguration.IsConfigured)
+            if (!GoogleDriveConnectionCredentialSupport.TryBuildConfiguration(
+                    Settings,
+                    out _,
+                    out string errorMessage,
+                    credentialStore,
+                    allowLegacyFallback: false))
             {
                 throw new InvalidOperationException(
-                    "Google Drive sign-in is not configured for this Oceanya build yet. " +
-                    "Add the app's Desktop OAuth client ID in GoogleDriveAppOAuthConfiguration.cs.");
+                    errorMessage + " Setup: create/select a Google Cloud project, enable Google Drive API, " +
+                    "create a Desktop app OAuth client, then paste the client ID and client secret into this connection.");
             }
         }
 
@@ -745,6 +860,113 @@ namespace OceanyaClient
             }
 
             UpdateRemoteFolderStatus();
+        }
+
+        private void GoogleCloudCredentialFields_Changed(object sender, TextChangedEventArgs e)
+        {
+            if (!IsCurrentClientIdMatchingSaved() && showingStoredSecretPlaceholder)
+            {
+                ClearStoredSecretPlaceholder();
+            }
+            else if (IsCurrentClientIdMatchingSaved())
+            {
+                RestoreStoredSecretPlaceholderIfNeeded();
+            }
+
+            UpdateGoogleCloudConfigurationStatus();
+        }
+
+        private void GoogleCloudClientSecretPasswordBox_PasswordChanged(object sender, RoutedEventArgs e)
+        {
+            if (suppressSecretPasswordEvents)
+            {
+                return;
+            }
+
+            showingStoredSecretPlaceholder = false;
+            UpdateGoogleCloudConfigurationStatus();
+        }
+
+        private void GoogleCloudClientSecretPasswordBox_GotKeyboardFocus(object sender, RoutedEventArgs e)
+        {
+            ClearStoredSecretPlaceholder();
+        }
+
+        private void GoogleCloudClientSecretPasswordBox_LostKeyboardFocus(object sender, RoutedEventArgs e)
+        {
+            RestoreStoredSecretPlaceholderIfNeeded();
+            UpdateGoogleCloudConfigurationStatus();
+        }
+
+        private bool HasTypedClientSecretInput()
+        {
+            return !showingStoredSecretPlaceholder
+                && !string.IsNullOrWhiteSpace(GoogleCloudClientSecretPasswordBox.Password?.Trim());
+        }
+
+        private string GetTypedClientSecret()
+        {
+            return showingStoredSecretPlaceholder
+                ? string.Empty
+                : (GoogleCloudClientSecretPasswordBox.Password?.Trim() ?? string.Empty);
+        }
+
+        private bool IsCurrentClientIdMatchingSaved()
+        {
+            string currentClientId = GoogleCloudClientIdTextBox.Text?.Trim() ?? string.Empty;
+            string savedClientId = Settings.OAuthClientId?.Trim() ?? string.Empty;
+            return string.Equals(currentClientId, savedClientId, StringComparison.Ordinal);
+        }
+
+        private bool HasSavedStoredSecretForCurrentClientId(string? currentClientId)
+        {
+            string savedClientId = Settings.OAuthClientId?.Trim() ?? string.Empty;
+            if (!string.Equals(savedClientId, currentClientId?.Trim() ?? string.Empty, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            return GoogleDriveConnectionCredentialSupport.HasStoredSecret(Settings, credentialStore);
+        }
+
+        private void ClearStoredSecretPlaceholder()
+        {
+            if (!showingStoredSecretPlaceholder)
+            {
+                return;
+            }
+
+            suppressSecretPasswordEvents = true;
+            GoogleCloudClientSecretPasswordBox.Password = string.Empty;
+            suppressSecretPasswordEvents = false;
+            showingStoredSecretPlaceholder = false;
+        }
+
+        private void RestoreStoredSecretPlaceholderIfNeeded()
+        {
+            bool hasStoredSecret = HasSavedStoredSecretForCurrentClientId(GoogleCloudClientIdTextBox.Text);
+            if (!hasStoredSecret)
+            {
+                if (showingStoredSecretPlaceholder)
+                {
+                    suppressSecretPasswordEvents = true;
+                    GoogleCloudClientSecretPasswordBox.Password = string.Empty;
+                    suppressSecretPasswordEvents = false;
+                    showingStoredSecretPlaceholder = false;
+                }
+
+                return;
+            }
+
+            if (HasTypedClientSecretInput())
+            {
+                return;
+            }
+
+            suppressSecretPasswordEvents = true;
+            GoogleCloudClientSecretPasswordBox.Password = StoredSecretMaskValue;
+            suppressSecretPasswordEvents = false;
+            showingStoredSecretPlaceholder = true;
         }
 
         private string GetEnteredRemoteFolderId()

@@ -37,6 +37,8 @@ namespace UnitTests
                         ProviderId = FileHivemindProviderIds.GoogleDrive,
                         GoogleDrive = new GoogleDriveSyncSettings
                         {
+                            OAuthClientId = "desktop-client-id.apps.googleusercontent.com",
+                            OAuthClientSecret = "desktop-client-secret",
                             RemoteFolderId = "folder-id",
                             LocalFolderPath = @"C:\sync",
                             TokenStoreKey = "token-key",
@@ -75,6 +77,8 @@ namespace UnitTests
                         ProviderId = FileHivemindProviderIds.GoogleDrive,
                         GoogleDrive = new GoogleDriveSyncSettings
                         {
+                            OAuthClientId = "desktop-client-id.apps.googleusercontent.com",
+                            OAuthClientSecret = "desktop-client-secret",
                             RemoteFolderId = "folder-id",
                             LocalFolderPath = @"C:\sync",
                             TokenStoreKey = "token-key",
@@ -150,6 +154,8 @@ namespace UnitTests
                         ProviderId = FileHivemindProviderIds.GoogleDrive,
                         GoogleDrive = new GoogleDriveSyncSettings
                         {
+                            OAuthClientId = "desktop-client-id.apps.googleusercontent.com",
+                            OAuthClientSecret = "desktop-client-secret",
                             RemoteFolderId = "folder-id",
                             LocalFolderPath = @"C:\sync",
                             TokenStoreKey = "token-key",

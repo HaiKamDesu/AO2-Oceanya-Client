@@ -113,6 +113,61 @@ namespace OceanyaClient.Features.GoogleDriveSync
             };
         }
 
+        public async Task VerifyClientConfigurationAsync(
+            GoogleDriveOAuthClientConfiguration configuration,
+            CancellationToken cancellationToken)
+        {
+            ValidateConfiguration(configuration);
+
+            Dictionary<string, string> formValues = new Dictionary<string, string>
+            {
+                ["client_id"] = configuration.ClientId.Trim(),
+                ["code"] = "oceanya_verify_invalid_code",
+                ["code_verifier"] = "oceanya_verify_invalid_code_verifier",
+                ["grant_type"] = "authorization_code",
+                ["redirect_uri"] = "http://localhost"
+            };
+            if (!string.IsNullOrWhiteSpace(configuration.ClientSecret))
+            {
+                formValues["client_secret"] = configuration.ClientSecret.Trim();
+            }
+
+            using FormUrlEncodedContent content = new FormUrlEncodedContent(formValues);
+            using HttpResponseMessage response = await httpClient.PostAsync(TokenEndpoint, content, cancellationToken);
+            string payload = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (response.IsSuccessStatusCode)
+            {
+                return;
+            }
+
+            string oauthError = ExtractOAuthError(payload);
+            string normalized = oauthError.Trim().ToLowerInvariant();
+            if (normalized.Contains("invalid_client")
+                || normalized.Contains("unauthorized_client")
+                || normalized.Contains("client secret")
+                || normalized.Contains("deleted_client"))
+            {
+                throw new InvalidOperationException("Google rejected the client ID or client secret: " + oauthError);
+            }
+
+            if (normalized.Contains("redirect_uri_mismatch"))
+            {
+                throw new InvalidOperationException(
+                    "Google rejected the Desktop app OAuth setup for this client. Make sure you created a Desktop app OAuth client in Google Cloud.");
+            }
+
+            if (normalized.Contains("invalid_grant")
+                || normalized.Contains("invalid grant")
+                || normalized.Contains("malformed auth code")
+                || normalized.Contains("authorization code")
+                || normalized.Contains("code verifier"))
+            {
+                return;
+            }
+
+            throw new InvalidOperationException("Could not verify the Google Cloud credentials: " + oauthError);
+        }
+
         private async Task<GoogleDriveTokenSet> ExchangeAuthorizationCodeAsync(
             GoogleDriveOAuthClientConfiguration configuration,
             string code,

@@ -7,15 +7,18 @@ namespace OceanyaClient.Features.GoogleDriveSync
     {
         private readonly HttpClient httpClient;
         private readonly GoogleDriveSecureTokenStore tokenStore;
+        private readonly GoogleDriveSecureClientCredentialStore credentialStore;
         private readonly GoogleDriveOAuthService oauthService;
 
         public GoogleDriveSessionFactory(
             HttpClient? httpClient = null,
             GoogleDriveSecureTokenStore? tokenStore = null,
+            GoogleDriveSecureClientCredentialStore? credentialStore = null,
             GoogleDriveOAuthService? oauthService = null)
         {
             this.httpClient = httpClient ?? new HttpClient();
             this.tokenStore = tokenStore ?? new GoogleDriveSecureTokenStore();
+            this.credentialStore = credentialStore ?? new GoogleDriveSecureClientCredentialStore();
             this.oauthService = oauthService ?? new GoogleDriveOAuthService(this.httpClient);
         }
 
@@ -60,9 +63,19 @@ namespace OceanyaClient.Features.GoogleDriveSync
             settings.LastSignedInEmail = string.Empty;
         }
 
-        private static GoogleDriveOAuthClientConfiguration BuildConfiguration(GoogleDriveSyncSettings settings)
+        private GoogleDriveOAuthClientConfiguration BuildConfiguration(GoogleDriveSyncSettings settings)
         {
-            return GoogleDriveAppOAuthConfiguration.Create();
+            if (!GoogleDriveConnectionCredentialSupport.TryBuildConfiguration(
+                    settings,
+                    out GoogleDriveOAuthClientConfiguration configuration,
+                    out string errorMessage,
+                    credentialStore,
+                    allowLegacyFallback: false))
+            {
+                throw new InvalidOperationException(errorMessage);
+            }
+
+            return configuration;
         }
     }
 }

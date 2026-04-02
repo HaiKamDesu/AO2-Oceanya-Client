@@ -57,48 +57,66 @@ namespace UnitTests
         [Test]
         public void SerializeAndParse_StripsSensitiveFieldsButKeepsShareableSettings()
         {
-            FileHivemindConnectionProfile original = new FileHivemindConnectionProfile
+            string root = Path.Combine(Path.GetTempPath(), "drive_connection_export_" + Guid.NewGuid().ToString("N"));
+
+            try
             {
-                Id = "existing-id",
-                DisplayName = "Shared Campaign",
-                ProviderId = FileHivemindProviderIds.GoogleDrive,
-                GoogleDrive = new GoogleDriveSyncSettings
+                GoogleDriveSecureClientCredentialStore credentialStore =
+                    new GoogleDriveSecureClientCredentialStore(root, new ObfuscatingProtector());
+                FileHivemindConnectionProfile original = new FileHivemindConnectionProfile
                 {
-                    OAuthClientId = "app-client-id",
-                    OAuthClientSecret = "app-client-secret",
-                    TokenStoreKey = "token-key",
-                    LastSignedInEmail = "tester@example.com",
-                    LastSignedInDisplayName = "Tester",
-                    RemoteFolderId = "1AbCdEfGhIjKlMnOpQrStUvWxYz123456",
-                    RemoteFolderName = "Campaign Assets",
-                    LocalFolderPath = @"C:\Private\Mirror",
-                    AutoAddMountPath = true,
-                    MirrorDeletes = false,
-                    UseExistingMountPath = true,
-                    LastSyncUtc = DateTimeOffset.UtcNow
+                    Id = "existing-id",
+                    DisplayName = "Shared Campaign",
+                    ProviderId = FileHivemindProviderIds.GoogleDrive,
+                    GoogleDrive = new GoogleDriveSyncSettings
+                    {
+                        OAuthClientId = "app-client-id",
+                        OAuthClientSecret = "app-client-secret",
+                        OAuthClientSecretStoreKey = "oauth-key",
+                        TokenStoreKey = "token-key",
+                        LastSignedInEmail = "tester@example.com",
+                        LastSignedInDisplayName = "Tester",
+                        RemoteFolderId = "1AbCdEfGhIjKlMnOpQrStUvWxYz123456",
+                        RemoteFolderName = "Campaign Assets",
+                        LocalFolderPath = @"C:\Private\Mirror",
+                        AutoAddMountPath = true,
+                        MirrorDeletes = false,
+                        UseExistingMountPath = true,
+                        LastSyncUtc = DateTimeOffset.UtcNow
+                    }
+                };
+
+                GoogleDriveConnectionCredentialSupport.SaveSecretIfPresent(original.GoogleDrive, credentialStore);
+
+                string serialized = FileHivemindConnectionExchangeSerializer.Serialize(original, credentialStore);
+                FileHivemindConnectionProfile parsed = FileHivemindConnectionExchangeSerializer.Parse(serialized);
+
+                Assert.That(serialized, Does.Not.Contain("tester@example.com"));
+                Assert.That(serialized, Does.Not.Contain("token-key"));
+                Assert.That(serialized, Does.Not.Contain("Private\\Mirror"));
+                Assert.That(serialized, Does.Not.Contain("app-client-secret"));
+                Assert.That(parsed.DisplayName, Is.EqualTo("Shared Campaign"));
+                Assert.That(parsed.ProviderId, Is.EqualTo(FileHivemindProviderIds.GoogleDrive));
+                Assert.That(parsed.GoogleDrive.RemoteFolderId, Is.EqualTo("1AbCdEfGhIjKlMnOpQrStUvWxYz123456"));
+                Assert.That(parsed.GoogleDrive.RemoteFolderName, Is.EqualTo("Campaign Assets"));
+                Assert.That(parsed.GoogleDrive.AutoAddMountPath, Is.True);
+                Assert.That(parsed.GoogleDrive.MirrorDeletes, Is.False);
+                Assert.That(parsed.GoogleDrive.OAuthClientId, Is.EqualTo("app-client-id"));
+                Assert.That(parsed.GoogleDrive.OAuthClientSecret, Is.EqualTo("app-client-secret"));
+                Assert.That(parsed.GoogleDrive.TokenStoreKey, Is.Empty);
+                Assert.That(parsed.GoogleDrive.LastSignedInEmail, Is.Empty);
+                Assert.That(parsed.GoogleDrive.LastSignedInDisplayName, Is.Empty);
+                Assert.That(parsed.GoogleDrive.LocalFolderPath, Is.Empty);
+                Assert.That(parsed.GoogleDrive.UseExistingMountPath, Is.False);
+                Assert.That(parsed.GoogleDrive.LastSyncUtc, Is.Null);
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
                 }
-            };
-
-            string serialized = FileHivemindConnectionExchangeSerializer.Serialize(original);
-            FileHivemindConnectionProfile parsed = FileHivemindConnectionExchangeSerializer.Parse(serialized);
-
-            Assert.That(serialized, Does.Not.Contain("tester@example.com"));
-            Assert.That(serialized, Does.Not.Contain("token-key"));
-            Assert.That(serialized, Does.Not.Contain("Private\\Mirror"));
-            Assert.That(parsed.DisplayName, Is.EqualTo("Shared Campaign"));
-            Assert.That(parsed.ProviderId, Is.EqualTo(FileHivemindProviderIds.GoogleDrive));
-            Assert.That(parsed.GoogleDrive.RemoteFolderId, Is.EqualTo("1AbCdEfGhIjKlMnOpQrStUvWxYz123456"));
-            Assert.That(parsed.GoogleDrive.RemoteFolderName, Is.EqualTo("Campaign Assets"));
-            Assert.That(parsed.GoogleDrive.AutoAddMountPath, Is.True);
-            Assert.That(parsed.GoogleDrive.MirrorDeletes, Is.False);
-            Assert.That(parsed.GoogleDrive.OAuthClientId, Is.Empty);
-            Assert.That(parsed.GoogleDrive.OAuthClientSecret, Is.Empty);
-            Assert.That(parsed.GoogleDrive.TokenStoreKey, Is.Empty);
-            Assert.That(parsed.GoogleDrive.LastSignedInEmail, Is.Empty);
-            Assert.That(parsed.GoogleDrive.LastSignedInDisplayName, Is.Empty);
-            Assert.That(parsed.GoogleDrive.LocalFolderPath, Is.Empty);
-            Assert.That(parsed.GoogleDrive.UseExistingMountPath, Is.False);
-            Assert.That(parsed.GoogleDrive.LastSyncUtc, Is.Null);
+            }
         }
 
         [Test]
@@ -110,6 +128,8 @@ namespace UnitTests
                 ProviderId = FileHivemindProviderIds.GoogleDrive,
                 GoogleDrive = new GoogleDriveSyncSettings
                 {
+                    OAuthClientId = "shared-client-id",
+                    OAuthClientSecret = "shared-client-secret",
                     RemoteFolderId = "1AbCdEfGhIjKlMnOpQrStUvWxYz123456",
                     RemoteFolderName = "Campaign Assets",
                     AutoAddMountPath = true,
@@ -121,6 +141,9 @@ namespace UnitTests
                 FileHivemindConnectionExchangeSerializer.CreateImportReadyProfile(parsed);
 
             Assert.That(imported.Id, Is.Not.Empty);
+            Assert.That(imported.GoogleDrive.OAuthClientId, Is.EqualTo("shared-client-id"));
+            Assert.That(imported.GoogleDrive.OAuthClientSecret, Is.EqualTo("shared-client-secret"));
+            Assert.That(imported.GoogleDrive.OAuthClientSecretStoreKey, Is.Not.Empty);
             Assert.That(imported.GoogleDrive.TokenStoreKey, Is.Not.Empty);
             Assert.That(
                 imported.GoogleDrive.LocalFolderPath,
@@ -132,6 +155,65 @@ namespace UnitTests
             Assert.That(imported.GoogleDrive.UseExistingMountPath, Is.False);
             Assert.That(imported.GoogleDrive.LastSignedInEmail, Is.Empty);
             Assert.That(imported.GoogleDrive.LastSignedInDisplayName, Is.Empty);
+        }
+
+        [Test]
+        public void ExportImportRoundTrip_RestoresConnectionCredentialsWithoutExtraCloudSetup()
+        {
+            string exportRoot = Path.Combine(Path.GetTempPath(), "drive_export_store_" + Guid.NewGuid().ToString("N"));
+            string importRoot = Path.Combine(Path.GetTempPath(), "drive_import_store_" + Guid.NewGuid().ToString("N"));
+
+            try
+            {
+                GoogleDriveSecureClientCredentialStore exportStore =
+                    new GoogleDriveSecureClientCredentialStore(exportRoot, new ObfuscatingProtector());
+                GoogleDriveSecureClientCredentialStore importStore =
+                    new GoogleDriveSecureClientCredentialStore(importRoot, new ObfuscatingProtector());
+                FileHivemindConnectionProfile original = new FileHivemindConnectionProfile
+                {
+                    DisplayName = "Shared Campaign",
+                    ProviderId = FileHivemindProviderIds.GoogleDrive,
+                    GoogleDrive = new GoogleDriveSyncSettings
+                    {
+                        OAuthClientId = "desktop-client-id.apps.googleusercontent.com",
+                        OAuthClientSecret = "desktop-client-secret",
+                        OAuthClientSecretStoreKey = "source-oauth-key",
+                        RemoteFolderId = "1AbCdEfGhIjKlMnOpQrStUvWxYz123456",
+                        RemoteFolderName = "Campaign Assets"
+                    }
+                };
+
+                GoogleDriveConnectionCredentialSupport.SaveSecretIfPresent(original.GoogleDrive, exportStore);
+
+                string serialized = FileHivemindConnectionExchangeSerializer.Serialize(original, exportStore);
+                FileHivemindConnectionProfile parsed = FileHivemindConnectionExchangeSerializer.Parse(serialized);
+                FileHivemindConnectionProfile imported = FileHivemindConnectionExchangeSerializer.CreateImportReadyProfile(parsed);
+                GoogleDriveConnectionCredentialSupport.SaveSecretIfPresent(imported.GoogleDrive, importStore);
+
+                bool success = GoogleDriveConnectionCredentialSupport.TryBuildConfiguration(
+                    imported.GoogleDrive,
+                    out GoogleDriveOAuthClientConfiguration configuration,
+                    out string errorMessage,
+                    importStore,
+                    allowLegacyFallback: false);
+
+                Assert.That(success, Is.True);
+                Assert.That(errorMessage, Is.Empty);
+                Assert.That(configuration.ClientId, Is.EqualTo("desktop-client-id.apps.googleusercontent.com"));
+                Assert.That(configuration.ClientSecret, Is.EqualTo("desktop-client-secret"));
+            }
+            finally
+            {
+                if (Directory.Exists(exportRoot))
+                {
+                    Directory.Delete(exportRoot, true);
+                }
+
+                if (Directory.Exists(importRoot))
+                {
+                    Directory.Delete(importRoot, true);
+                }
+            }
         }
 
         [Test]
@@ -198,6 +280,19 @@ namespace UnitTests
             Assert.That(filtered.Files.ContainsKey("desktop.ini"), Is.False);
             Assert.That(filtered.Files.ContainsKey(GoogleDriveManagedLocalFolderMarkerService.MarkerIconFileName), Is.False);
             Assert.That(filtered.Files.ContainsKey("characters/phoenix/char.ini"), Is.True);
+        }
+
+        private sealed class ObfuscatingProtector : ISecretProtector
+        {
+            public byte[] Protect(byte[] value)
+            {
+                return value.Select(b => (byte)(b ^ 0x5A)).ToArray();
+            }
+
+            public byte[] Unprotect(byte[] value)
+            {
+                return value.Select(b => (byte)(b ^ 0x5A)).ToArray();
+            }
         }
     }
 
@@ -313,6 +408,19 @@ namespace UnitTests
                 }
             }
         }
+
+        private sealed class ObfuscatingProtector : ISecretProtector
+        {
+            public byte[] Protect(byte[] value)
+            {
+                return value.Select(b => (byte)(b ^ 0x5A)).ToArray();
+            }
+
+            public byte[] Unprotect(byte[] value)
+            {
+                return value.Select(b => (byte)(b ^ 0x5A)).ToArray();
+            }
+        }
     }
 
     [TestFixture]
@@ -368,35 +476,134 @@ namespace UnitTests
     }
 
     [TestFixture]
+    public class GoogleDriveSecureClientCredentialStoreTests
+    {
+        [Test]
+        public void SaveAndLoad_RoundTripsEncryptedClientSecret()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "drive_oauth_store_" + Guid.NewGuid().ToString("N"));
+
+            try
+            {
+                GoogleDriveSecureClientCredentialStore credentialStore =
+                    new GoogleDriveSecureClientCredentialStore(root, new ObfuscatingProtector());
+
+                credentialStore.Save("oauth-key", "desktop-client-secret");
+
+                string filePath = credentialStore.GetFilePath("oauth-key");
+                string rawText = File.ReadAllText(filePath, Encoding.UTF8);
+                string loadedSecret = credentialStore.Load("oauth-key");
+
+                Assert.That(rawText, Does.Not.Contain("desktop-client-secret"));
+                Assert.That(loadedSecret, Is.EqualTo("desktop-client-secret"));
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        [Test]
+        public void TryBuildConfiguration_UsesStoredPerConnectionCredentials()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "drive_oauth_config_" + Guid.NewGuid().ToString("N"));
+
+            try
+            {
+                GoogleDriveSecureClientCredentialStore credentialStore =
+                    new GoogleDriveSecureClientCredentialStore(root, new ObfuscatingProtector());
+                GoogleDriveSyncSettings settings = new GoogleDriveSyncSettings
+                {
+                    OAuthClientId = "desktop-client-id.apps.googleusercontent.com",
+                    OAuthClientSecret = "desktop-client-secret",
+                    OAuthClientSecretStoreKey = "oauth-key"
+                };
+
+                GoogleDriveConnectionCredentialSupport.SaveSecretIfPresent(settings, credentialStore);
+
+                bool success = GoogleDriveConnectionCredentialSupport.TryBuildConfiguration(
+                    settings,
+                    out GoogleDriveOAuthClientConfiguration configuration,
+                    out string errorMessage,
+                    credentialStore,
+                    allowLegacyFallback: false);
+
+                Assert.That(success, Is.True);
+                Assert.That(errorMessage, Is.Empty);
+                Assert.That(configuration.ClientId, Is.EqualTo("desktop-client-id.apps.googleusercontent.com"));
+                Assert.That(configuration.ClientSecret, Is.EqualTo("desktop-client-secret"));
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        [Test]
+        public void TryBuildConfiguration_FailsWhenClientSecretIsMissing()
+        {
+            GoogleDriveSyncSettings settings = new GoogleDriveSyncSettings
+            {
+                OAuthClientId = "desktop-client-id.apps.googleusercontent.com",
+                OAuthClientSecretStoreKey = "missing-secret"
+            };
+
+            bool success = GoogleDriveConnectionCredentialSupport.TryBuildConfiguration(
+                settings,
+                out _,
+                out string errorMessage,
+                new GoogleDriveSecureClientCredentialStore(
+                    Path.Combine(Path.GetTempPath(), "drive_oauth_missing_" + Guid.NewGuid().ToString("N")),
+                    new ObfuscatingProtector()),
+                allowLegacyFallback: false);
+
+            Assert.That(success, Is.False);
+            Assert.That(errorMessage, Does.Contain("client secret is missing"));
+        }
+
+        private sealed class ObfuscatingProtector : ISecretProtector
+        {
+            public byte[] Protect(byte[] value)
+            {
+                return value.Select(b => (byte)(b ^ 0x5A)).ToArray();
+            }
+
+            public byte[] Unprotect(byte[] value)
+            {
+                return value.Select(b => (byte)(b ^ 0x5A)).ToArray();
+            }
+        }
+    }
+
+    [TestFixture]
     [NonParallelizable]
     public class GoogleDriveAppOAuthConfigurationTests
     {
         [Test]
-        public void Create_UsesEmbeddedDefaultsWhenNoOverridesArePresent()
+        public void TryLoadInstalledConfiguration_ReturnsNullWhenNoLocalJsonPresent()
         {
-            const string clientIdVariable = "OCEANYA_GOOGLE_DRIVE_CLIENT_ID";
-            const string clientSecretVariable = "OCEANYA_GOOGLE_DRIVE_CLIENT_SECRET";
-            const string clientJsonPathVariable = "OCEANYA_GOOGLE_DRIVE_CLIENT_JSON_PATH";
-            string? previousClientId = Environment.GetEnvironmentVariable(clientIdVariable);
-            string? previousClientSecret = Environment.GetEnvironmentVariable(clientSecretVariable);
-            string? previousClientJsonPath = Environment.GetEnvironmentVariable(clientJsonPathVariable);
+            string tempRoot = Path.Combine(Path.GetTempPath(), "oceanya_google_oauth_empty_" + Guid.NewGuid().ToString("N"));
 
             try
             {
-                Environment.SetEnvironmentVariable(clientIdVariable, null);
-                Environment.SetEnvironmentVariable(clientSecretVariable, null);
-                Environment.SetEnvironmentVariable(clientJsonPathVariable, null);
+                Directory.CreateDirectory(tempRoot);
+                GoogleDriveOAuthClientConfiguration? configuration =
+                    GoogleDriveAppOAuthConfiguration.TryLoadInstalledConfiguration(tempRoot);
 
-                GoogleDriveOAuthClientConfiguration configuration = GoogleDriveAppOAuthConfiguration.Create();
-
-                Assert.That(configuration.ClientId, Is.Not.Empty);
-                Assert.That(configuration.ClientSecret, Is.Not.Empty);
+                Assert.That(configuration, Is.Null);
             }
             finally
             {
-                Environment.SetEnvironmentVariable(clientIdVariable, previousClientId);
-                Environment.SetEnvironmentVariable(clientSecretVariable, previousClientSecret);
-                Environment.SetEnvironmentVariable(clientJsonPathVariable, previousClientJsonPath);
+                if (Directory.Exists(tempRoot))
+                {
+                    Directory.Delete(tempRoot, true);
+                }
             }
         }
 

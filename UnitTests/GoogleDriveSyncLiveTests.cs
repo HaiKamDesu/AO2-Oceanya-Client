@@ -27,7 +27,11 @@ namespace UnitTests
             HttpClient httpClient = new HttpClient();
             GoogleDriveSecureTokenStore tokenStore = new GoogleDriveSecureTokenStore(tokenRoot, new IdentityProtector());
             GoogleDriveOAuthService oauthService = new GoogleDriveOAuthService(httpClient);
-            GoogleDriveSessionFactory sessionFactory = new GoogleDriveSessionFactory(httpClient, tokenStore, oauthService);
+            GoogleDriveSessionFactory sessionFactory = new GoogleDriveSessionFactory(
+                httpClient,
+                tokenStore,
+                credentialStore: null,
+                oauthService: oauthService);
             GoogleDriveSyncService service = new GoogleDriveSyncService(sessionFactory);
 
             GoogleDriveSyncSettings rootSettings = new GoogleDriveSyncSettings

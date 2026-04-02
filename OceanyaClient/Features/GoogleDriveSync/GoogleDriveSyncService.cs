@@ -9,10 +9,12 @@ namespace OceanyaClient.Features.GoogleDriveSync
     {
         private const int MaxParallelDownloads = 6;
         private readonly GoogleDriveSessionFactory sessionFactory;
+        private readonly GoogleDriveOAuthService oauthService;
 
         public GoogleDriveSyncService(GoogleDriveSessionFactory? sessionFactory = null)
         {
             this.sessionFactory = sessionFactory ?? new GoogleDriveSessionFactory();
+            oauthService = new GoogleDriveOAuthService();
         }
 
         public async Task<GoogleDriveUserInfo> SignInAsync(
@@ -25,6 +27,13 @@ namespace OceanyaClient.Features.GoogleDriveSync
         public void SignOut(GoogleDriveSyncSettings settings)
         {
             sessionFactory.SignOut(settings);
+        }
+
+        public async Task VerifyClientConfigurationAsync(
+            GoogleDriveOAuthClientConfiguration configuration,
+            CancellationToken cancellationToken)
+        {
+            await oauthService.VerifyClientConfigurationAsync(configuration, cancellationToken);
         }
 
         public async Task<string> GetRemoteFolderNameAsync(

@@ -215,34 +215,95 @@
             <Border Style="{StaticResource SectionCardStyle}">
                 <StackPanel>
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="GOOGLE AUTH"
+                        <TextBlock Text="GOOGLE CLOUD"
                                    Style="{StaticResource SectionTitleText}"/>
                         <Button Content="(?)"
                                 Style="{StaticResource HelpBadgeStyle}"
-                                ToolTip="These settings identify the Oceanya app to Google's OAuth flow. They are not your personal Google login."/>
+                                ToolTip="This connection carries its own Google Cloud Desktop app credentials. The host sets these up once, exports the connection file, and everyone else imports it."/>
                     </StackPanel>
 
                     <TextBlock Margin="0,10,0,0"
                                Style="{StaticResource BodyHintText}"
-                               Text="This build is meant to use Oceanya's shared Google app configuration. End users should only need to click Sign In and complete the normal Google browser login."/>
+                               Text="Host setup only: create a Google Cloud Desktop app OAuth client, paste the client ID and client secret here, then export the connection file for friends. Every participant still signs into their own Google account in the normal browser window."/>
 
                     <StackPanel Orientation="Horizontal" Margin="0,12,0,5">
-                        <TextBlock Text="APP AUTH CONFIGURATION"
+                        <TextBlock Text="CLIENT ID"
                                    Style="{StaticResource LabelText}"
                                    Margin="0"
                                    VerticalAlignment="Center"/>
                         <Button Content="(?)"
                                 Style="{StaticResource HelpBadgeStyle}"
-                                ToolTip="This shows whether the app-level Google OAuth client ID is built into this Oceanya build. If this is not configured, sign-in cannot start yet."/>
+                                ToolTip="Google Cloud setup: create or select a project, enable Google Drive API, open Google Auth Platform, set the audience to External if needed, add test users while the app is in testing, then create a Desktop app OAuth client and paste its client ID here."/>
                     </StackPanel>
-                    <Border Padding="10"
-                            Background="#991F2327"
-                            BorderBrush="#FF3D4B57"
-                            BorderThickness="1"
-                            CornerRadius="4">
-                        <TextBox x:Name="AuthConfigurationTextBlock"
-                                 Style="{StaticResource SelectableInfoTextBox}"/>
-                    </Border>
+                    <TextBox x:Name="GoogleCloudClientIdTextBox"
+                             Style="{StaticResource ModernTextBox}"
+                             TextChanged="GoogleCloudCredentialFields_Changed"/>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,12,0,5">
+                        <TextBlock Text="CLIENT SECRET"
+                                   Style="{StaticResource LabelText}"
+                                   Margin="0"
+                                   VerticalAlignment="Center"/>
+                        <Button Content="(?)"
+                                Style="{StaticResource HelpBadgeStyle}"
+                                ToolTip="Paste the Desktop app client secret from Google Cloud here. Oceanya stores it locally for this connection and hides it after save. Exported connection files include an obfuscated copy of the Google Cloud app credentials, but never include any user's Google login tokens."/>
+                    </StackPanel>
+                    <PasswordBox x:Name="GoogleCloudClientSecretPasswordBox"
+                                 Style="{StaticResource ModernPasswordBox}"
+                                 PasswordChanged="GoogleCloudClientSecretPasswordBox_PasswordChanged"
+                                 GotKeyboardFocus="GoogleCloudClientSecretPasswordBox_GotKeyboardFocus"
+                                 LostKeyboardFocus="GoogleCloudClientSecretPasswordBox_LostKeyboardFocus"/>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,12,0,5">
+                        <TextBlock Text="CLOUD STATUS"
+                                   Style="{StaticResource LabelText}"
+                                   Margin="0"
+                                   VerticalAlignment="Center"/>
+                        <Button Content="(?)"
+                                Style="{StaticResource HelpBadgeStyle}"
+                                ToolTip="Shows whether this connection currently has usable Google Cloud credentials. Imported connections keep the secret hidden in local storage, so this status is the safest way to confirm they are ready."/>
+                    </StackPanel>
+                    <Grid Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="110"/>
+                            <ColumnDefinition Width="12"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Button x:Name="VerifyCloudCredentialsButton"
+                                Grid.Column="0"
+                                Width="110"
+                                Content="Verify"
+                                Style="{StaticResource ModernButton}"
+                                Click="VerifyCloudCredentialsButton_Click"
+                                ToolTip="Check whether this Google Cloud Desktop app client ID and client secret look usable. If the account is already signed in, Oceanya can fully verify them by contacting Google with the saved tokens; otherwise it performs a client-auth probe."/>
+
+                        <Border Grid.Column="2"
+                                Padding="10"
+                                Background="#991F2327"
+                                BorderBrush="#FF3D4B57"
+                                BorderThickness="1"
+                                CornerRadius="4">
+                            <TextBox x:Name="CloudCredentialStatusTextBlock"
+                                     Style="{StaticResource SelectableInfoTextBox}"/>
+                        </Border>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource SectionCardStyle}">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="GOOGLE ACCOUNT"
+                                   Style="{StaticResource SectionTitleText}"/>
+                        <Button Content="(?)"
+                                Style="{StaticResource HelpBadgeStyle}"
+                                ToolTip="This section controls the actual user login. Every participant signs into their own Google account here after the connection's Google Cloud Desktop app credentials are configured."/>
+                    </StackPanel>
+
+                    <TextBlock Margin="0,10,0,0"
+                               Style="{StaticResource BodyHintText}"
+                               Text="Once the Google Cloud section is configured and verified, users only need to click Sign In and complete the normal Google browser login."/>
 
                     <WrapPanel Margin="0,12,0,0">
                         <Button x:Name="SignInButton"
@@ -250,14 +311,14 @@
                                 Content="Sign In"
                                 Style="{StaticResource ModernButton}"
                                 Click="SignInButton_Click"
-                                ToolTip="Open Google's normal browser sign-in page and store the returned tokens securely for this Windows user."/>
+                                ToolTip="Open Google's normal browser sign-in page with this connection's Google Cloud client and store the returned user tokens securely for this Windows user."/>
                         <Button x:Name="SignOutButton"
                                 Width="110"
                                 Margin="8,0,0,0"
                                 Content="Sign Out"
                                 Style="{StaticResource ModernButton}"
                                 Click="SignOutButton_Click"
-                                ToolTip="Delete the locally stored encrypted Google tokens for this sync profile."/>
+                                ToolTip="Delete the locally stored encrypted Google user tokens for this sync connection. This does not delete the Google Cloud client secret."/>
                     </WrapPanel>
 
                     <StackPanel Orientation="Horizontal" Margin="0,12,0,5">

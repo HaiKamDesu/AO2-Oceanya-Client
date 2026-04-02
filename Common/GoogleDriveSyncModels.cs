@@ -96,8 +96,17 @@ namespace OceanyaClient
 
     public sealed class FileHivemindConnectionExchangeDocument
     {
-        public int FormatVersion { get; set; } = 1;
+        public int FormatVersion { get; set; } = 2;
         public FileHivemindConnectionProfile Connection { get; set; } = FileHivemindConnectionProfile.CreateGoogleDriveProfile();
+        public FileHivemindProviderCredentialEnvelope Credentials { get; set; } = new FileHivemindProviderCredentialEnvelope();
+    }
+
+    public sealed class FileHivemindProviderCredentialEnvelope
+    {
+        public string ProviderId { get; set; } = string.Empty;
+        public string ClientId { get; set; } = string.Empty;
+        public string ProtectedClientSecret { get; set; } = string.Empty;
+        public string ProtectionMode { get; set; } = string.Empty;
     }
 
     /// <summary>
@@ -107,6 +116,7 @@ namespace OceanyaClient
     {
         public string OAuthClientId { get; set; } = string.Empty;
         public string OAuthClientSecret { get; set; } = string.Empty;
+        public string OAuthClientSecretStoreKey { get; set; } = string.Empty;
         public string TokenStoreKey { get; set; } = string.Empty;
         public string LastSignedInEmail { get; set; } = string.Empty;
         public string LastSignedInDisplayName { get; set; } = string.Empty;

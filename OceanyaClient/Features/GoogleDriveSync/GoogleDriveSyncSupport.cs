@@ -97,6 +97,324 @@ namespace OceanyaClient.Features.GoogleDriveSync
         }
     }
 
+    public sealed class GoogleDriveSecureClientCredentialStore
+    {
+        private readonly string rootDirectory;
+        private readonly ISecretProtector secretProtector;
+
+        public GoogleDriveSecureClientCredentialStore(string? rootDirectory = null, ISecretProtector? secretProtector = null)
+        {
+            this.rootDirectory = string.IsNullOrWhiteSpace(rootDirectory)
+                ? Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    "OceanyaClient",
+                    "google_drive_oauth")
+                : rootDirectory;
+            this.secretProtector = secretProtector ?? new DpapiSecretProtector();
+        }
+
+        public void Save(string storeKey, string clientSecret)
+        {
+            if (string.IsNullOrWhiteSpace(storeKey))
+            {
+                throw new ArgumentException("An OAuth credential store key is required.", nameof(storeKey));
+            }
+
+            Directory.CreateDirectory(rootDirectory);
+            byte[] plaintext = Encoding.UTF8.GetBytes(clientSecret?.Trim() ?? string.Empty);
+            byte[] ciphertext = secretProtector.Protect(plaintext);
+            File.WriteAllBytes(GetFilePath(storeKey), ciphertext);
+        }
+
+        public string Load(string storeKey)
+        {
+            string filePath = GetFilePath(storeKey);
+            if (!File.Exists(filePath))
+            {
+                return string.Empty;
+            }
+
+            byte[] ciphertext = File.ReadAllBytes(filePath);
+            byte[] plaintext = secretProtector.Unprotect(ciphertext);
+            return Encoding.UTF8.GetString(plaintext).Trim();
+        }
+
+        public void Delete(string storeKey)
+        {
+            string filePath = GetFilePath(storeKey);
+            if (File.Exists(filePath))
+            {
+                File.Delete(filePath);
+            }
+        }
+
+        public string GetFilePath(string storeKey)
+        {
+            string sanitized = string.IsNullOrWhiteSpace(storeKey)
+                ? "default"
+                : storeKey.Trim();
+            return Path.Combine(rootDirectory, sanitized + ".bin");
+        }
+    }
+
+    public static class FileHivemindPortableCredentialProtector
+    {
+        private const string ProtectionMode = "portable_obfuscated_v1";
+        private const string Prefix = "oceanya_hivemind_secret:";
+        private static readonly byte[] Key = SHA256.HashData(
+            Encoding.UTF8.GetBytes("OceanyaClient.FileHivemind.GoogleCloudCredentials.v1"));
+
+        public static string Protect(string value)
+        {
+            string trimmed = value?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(trimmed))
+            {
+                return string.Empty;
+            }
+
+            using Aes aes = Aes.Create();
+            aes.Key = Key;
+            aes.GenerateIV();
+            aes.Mode = CipherMode.CBC;
+            aes.Padding = PaddingMode.PKCS7;
+
+            using ICryptoTransform encryptor = aes.CreateEncryptor();
+            byte[] plaintext = Encoding.UTF8.GetBytes(trimmed);
+            byte[] ciphertext = encryptor.TransformFinalBlock(plaintext, 0, plaintext.Length);
+            byte[] payload = new byte[aes.IV.Length + ciphertext.Length];
+            Buffer.BlockCopy(aes.IV, 0, payload, 0, aes.IV.Length);
+            Buffer.BlockCopy(ciphertext, 0, payload, aes.IV.Length, ciphertext.Length);
+            return Prefix + Convert.ToBase64String(payload);
+        }
+
+        public static string Unprotect(string value)
+        {
+            string trimmed = value?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(trimmed))
+            {
+                return string.Empty;
+            }
+
+            if (!trimmed.StartsWith(Prefix, StringComparison.Ordinal))
+            {
+                return trimmed;
+            }
+
+            try
+            {
+                byte[] payload = Convert.FromBase64String(trimmed[Prefix.Length..]);
+                using Aes aes = Aes.Create();
+                aes.Key = Key;
+                aes.Mode = CipherMode.CBC;
+                aes.Padding = PaddingMode.PKCS7;
+
+                byte[] iv = new byte[aes.BlockSize / 8];
+                byte[] ciphertext = new byte[payload.Length - iv.Length];
+                Buffer.BlockCopy(payload, 0, iv, 0, iv.Length);
+                Buffer.BlockCopy(payload, iv.Length, ciphertext, 0, ciphertext.Length);
+                aes.IV = iv;
+
+                using ICryptoTransform decryptor = aes.CreateDecryptor();
+                byte[] plaintext = decryptor.TransformFinalBlock(ciphertext, 0, ciphertext.Length);
+                return Encoding.UTF8.GetString(plaintext).Trim();
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        public static string Mode => ProtectionMode;
+    }
+
+    public static class GoogleDriveConnectionCredentialSupport
+    {
+        public static void EnsureSecretStoreKey(GoogleDriveSyncSettings settings)
+        {
+            if (settings == null)
+            {
+                throw new ArgumentNullException(nameof(settings));
+            }
+
+            settings.OAuthClientSecretStoreKey = string.IsNullOrWhiteSpace(settings.OAuthClientSecretStoreKey)
+                ? Guid.NewGuid().ToString("N")
+                : settings.OAuthClientSecretStoreKey.Trim();
+        }
+
+        public static string LoadSecret(
+            GoogleDriveSyncSettings settings,
+            GoogleDriveSecureClientCredentialStore? credentialStore = null)
+        {
+            if (settings == null)
+            {
+                return string.Empty;
+            }
+
+            string inMemory = settings.OAuthClientSecret?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(inMemory))
+            {
+                return inMemory;
+            }
+
+            EnsureSecretStoreKey(settings);
+            GoogleDriveSecureClientCredentialStore store = credentialStore ?? new GoogleDriveSecureClientCredentialStore();
+            return store.Load(settings.OAuthClientSecretStoreKey);
+        }
+
+        public static bool HasStoredSecret(
+            GoogleDriveSyncSettings settings,
+            GoogleDriveSecureClientCredentialStore? credentialStore = null)
+        {
+            return !string.IsNullOrWhiteSpace(LoadSecret(settings, credentialStore));
+        }
+
+        public static void SaveSecretIfPresent(
+            GoogleDriveSyncSettings settings,
+            GoogleDriveSecureClientCredentialStore? credentialStore = null)
+        {
+            if (settings == null)
+            {
+                return;
+            }
+
+            string secret = settings.OAuthClientSecret?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(secret))
+            {
+                return;
+            }
+
+            EnsureSecretStoreKey(settings);
+            GoogleDriveSecureClientCredentialStore store = credentialStore ?? new GoogleDriveSecureClientCredentialStore();
+            store.Save(settings.OAuthClientSecretStoreKey, secret);
+            settings.OAuthClientSecret = string.Empty;
+        }
+
+        public static void DeleteStoredSecret(
+            GoogleDriveSyncSettings settings,
+            GoogleDriveSecureClientCredentialStore? credentialStore = null)
+        {
+            if (settings == null)
+            {
+                return;
+            }
+
+            EnsureSecretStoreKey(settings);
+            GoogleDriveSecureClientCredentialStore store = credentialStore ?? new GoogleDriveSecureClientCredentialStore();
+            store.Delete(settings.OAuthClientSecretStoreKey);
+            settings.OAuthClientSecret = string.Empty;
+        }
+
+        public static bool TryBuildConfiguration(
+            GoogleDriveSyncSettings settings,
+            out GoogleDriveOAuthClientConfiguration configuration,
+            out string errorMessage,
+            GoogleDriveSecureClientCredentialStore? credentialStore = null,
+            bool allowLegacyFallback = false)
+        {
+            configuration = new GoogleDriveOAuthClientConfiguration();
+            errorMessage = string.Empty;
+
+            string clientId = settings?.OAuthClientId?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(clientId))
+            {
+                string clientSecret = LoadSecret(settings, credentialStore);
+                if (string.IsNullOrWhiteSpace(clientSecret))
+                {
+                    errorMessage =
+                        "This connection has a Google Cloud client ID saved, but the client secret is missing.";
+                    return false;
+                }
+
+                configuration = new GoogleDriveOAuthClientConfiguration
+                {
+                    ClientId = clientId,
+                    ClientSecret = clientSecret
+                };
+                return true;
+            }
+
+            if (allowLegacyFallback && GoogleDriveAppOAuthConfiguration.IsConfigured)
+            {
+                configuration = GoogleDriveAppOAuthConfiguration.Create();
+                return true;
+            }
+
+            errorMessage =
+                "This connection does not have Google Cloud credentials configured yet. " +
+                "Enter the Desktop app client ID and client secret in the Google Cloud section first.";
+            return false;
+        }
+
+        public static string BuildStatusMessage(
+            GoogleDriveSyncSettings settings,
+            GoogleDriveSecureClientCredentialStore? credentialStore = null,
+            bool allowLegacyFallback = false)
+        {
+            string clientId = settings?.OAuthClientId?.Trim() ?? string.Empty;
+            bool hasStoredSecret = HasStoredSecret(settings, credentialStore);
+
+            if (!string.IsNullOrWhiteSpace(clientId) && hasStoredSecret)
+            {
+                return "Configured for this connection. The client secret is stored locally and hidden in the UI.";
+            }
+
+            if (!string.IsNullOrWhiteSpace(clientId))
+            {
+                return "The Google Cloud client ID is saved for this connection, but the client secret is missing.";
+            }
+
+            if (allowLegacyFallback && GoogleDriveAppOAuthConfiguration.IsConfigured)
+            {
+                return "No connection-specific Google Cloud credentials are saved here. This machine can still use a legacy app-wide fallback, but exported connections will not carry it unless you fill these fields.";
+            }
+
+            return "Not configured yet. Enter the Google Cloud Desktop app client ID and client secret for this connection.";
+        }
+
+        public static FileHivemindProviderCredentialEnvelope CreatePortableCredentialEnvelope(
+            GoogleDriveSyncSettings settings,
+            GoogleDriveSecureClientCredentialStore? credentialStore = null,
+            bool allowLegacyFallback = false)
+        {
+            if (!TryBuildConfiguration(
+                    settings,
+                    out GoogleDriveOAuthClientConfiguration configuration,
+                    out _,
+                    credentialStore,
+                    allowLegacyFallback))
+            {
+                return new FileHivemindProviderCredentialEnvelope();
+            }
+
+            return new FileHivemindProviderCredentialEnvelope
+            {
+                ProviderId = FileHivemindProviderIds.GoogleDrive,
+                ClientId = configuration.ClientId,
+                ProtectedClientSecret = FileHivemindPortableCredentialProtector.Protect(configuration.ClientSecret),
+                ProtectionMode = FileHivemindPortableCredentialProtector.Mode
+            };
+        }
+
+        public static void ApplyPortableCredentialEnvelope(
+            GoogleDriveSyncSettings settings,
+            FileHivemindProviderCredentialEnvelope? envelope)
+        {
+            if (settings == null || envelope == null)
+            {
+                return;
+            }
+
+            if (!string.Equals(envelope.ProviderId, FileHivemindProviderIds.GoogleDrive, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            settings.OAuthClientId = envelope.ClientId?.Trim() ?? string.Empty;
+            settings.OAuthClientSecret = FileHivemindPortableCredentialProtector.Unprotect(envelope.ProtectedClientSecret);
+            EnsureSecretStoreKey(settings);
+        }
+    }
+
     public static class GoogleDriveInviteSerializer
     {
         public static string Serialize(GoogleDriveInvite invite)
@@ -204,11 +522,16 @@ namespace OceanyaClient.Features.GoogleDriveSync
 
     public static class FileHivemindConnectionExchangeSerializer
     {
-        public static string Serialize(FileHivemindConnectionProfile connection)
+        public static string Serialize(
+            FileHivemindConnectionProfile connection,
+            GoogleDriveSecureClientCredentialStore? credentialStore = null)
         {
             FileHivemindConnectionExchangeDocument document = new FileHivemindConnectionExchangeDocument
             {
-                Connection = CreateSanitizedConnectionCopy(connection)
+                Connection = CreateSanitizedConnectionCopy(connection),
+                Credentials = GoogleDriveConnectionCredentialSupport.CreatePortableCredentialEnvelope(
+                    connection.GoogleDrive,
+                    credentialStore)
             };
 
             return JsonSerializer.Serialize(document, new JsonSerializerOptions { WriteIndented = true });
@@ -229,7 +552,9 @@ namespace OceanyaClient.Features.GoogleDriveSync
                 throw new InvalidOperationException("Connection file is missing connection data.");
             }
 
-            return CreateSanitizedConnectionCopy(document.Connection);
+            FileHivemindConnectionProfile connection = CreateSanitizedConnectionCopy(document.Connection);
+            GoogleDriveConnectionCredentialSupport.ApplyPortableCredentialEnvelope(connection.GoogleDrive, document.Credentials);
+            return connection;
         }
 
         public static FileHivemindConnectionProfile CreateImportReadyProfile(FileHivemindConnectionProfile connection)
@@ -239,6 +564,9 @@ namespace OceanyaClient.Features.GoogleDriveSync
 
             if (string.Equals(imported.ProviderId, FileHivemindProviderIds.GoogleDrive, StringComparison.OrdinalIgnoreCase))
             {
+                imported.GoogleDrive.OAuthClientId = connection.GoogleDrive.OAuthClientId?.Trim() ?? string.Empty;
+                imported.GoogleDrive.OAuthClientSecret = connection.GoogleDrive.OAuthClientSecret?.Trim() ?? string.Empty;
+                imported.GoogleDrive.OAuthClientSecretStoreKey = Guid.NewGuid().ToString("N");
                 imported.GoogleDrive.TokenStoreKey = Guid.NewGuid().ToString("N");
                 imported.GoogleDrive.LocalFolderPath = GoogleDriveClientAssetIntegration.BuildManagedLocalFolderPath(
                     imported.EffectiveDisplayName,

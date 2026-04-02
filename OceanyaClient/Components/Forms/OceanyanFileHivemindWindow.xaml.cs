@@ -32,6 +32,7 @@ namespace OceanyaClient
         private readonly GoogleDriveSyncService syncService;
         private readonly GoogleDriveRemoteChangeTracker remoteChangeTracker;
         private readonly GoogleDriveConnectionRuntimeStateStore runtimeStateStore;
+        private readonly GoogleDriveSecureClientCredentialStore credentialStore;
         private readonly FileHivemindBackgroundAgentLauncher backgroundAgentLauncher;
         private readonly FileHivemindBackgroundLogStore backgroundLogStore;
         private readonly DispatcherTimer backgroundLogTimer;
@@ -49,6 +50,7 @@ namespace OceanyaClient
             this.syncService = syncService ?? new GoogleDriveSyncService();
             remoteChangeTracker = new GoogleDriveRemoteChangeTracker();
             runtimeStateStore = new GoogleDriveConnectionRuntimeStateStore();
+            credentialStore = new GoogleDriveSecureClientCredentialStore();
             backgroundAgentLauncher = new FileHivemindBackgroundAgentLauncher();
             backgroundLogStore = new FileHivemindBackgroundLogStore();
             backgroundLogTimer = new DispatcherTimer
@@ -239,6 +241,7 @@ namespace OceanyaClient
 
         private void PersistConnection(FileHivemindConnectionProfile connection)
         {
+            GoogleDriveConnectionCredentialSupport.SaveSecretIfPresent(connection.GoogleDrive, credentialStore);
             bool hadAnyConnections = SaveFile.Data.FileHivemind.Connections.Count > 0;
             FileHivemindConnectionProfile? existingConnection = SaveFile.Data.FileHivemind.Connections.FirstOrDefault(existing =>
                 string.Equals(existing.Id, connection.Id, StringComparison.OrdinalIgnoreCase));
@@ -614,7 +617,7 @@ namespace OceanyaClient
                     return;
                 }
 
-                string fileText = FileHivemindConnectionExchangeSerializer.Serialize(connection);
+                string fileText = FileHivemindConnectionExchangeSerializer.Serialize(connection, credentialStore);
                 File.WriteAllText(dialog.FileName, fileText, new UTF8Encoding(false));
                 AppendStatus("Exported a shareable connection file.", StatusLogLevel.Success, connection.EffectiveDisplayName);
             }
@@ -664,6 +667,7 @@ namespace OceanyaClient
             }
 
             syncService.SignOut(connection.GoogleDrive);
+            GoogleDriveConnectionCredentialSupport.DeleteStoredSecret(connection.GoogleDrive, credentialStore);
             SaveFile.Data.FileHivemind.Connections.Remove(connection);
             SaveFile.Data.FileHivemind.SelectedConnectionId = SaveFile.Data.FileHivemind.Connections.FirstOrDefault()?.Id ?? string.Empty;
             SaveFile.Save();
@@ -830,6 +834,12 @@ namespace OceanyaClient
             }
 
             imported.Id = existingConnection.Id;
+            imported.GoogleDrive.OAuthClientId = string.IsNullOrWhiteSpace(imported.GoogleDrive.OAuthClientId)
+                ? existingConnection.GoogleDrive.OAuthClientId?.Trim() ?? string.Empty
+                : imported.GoogleDrive.OAuthClientId.Trim();
+            imported.GoogleDrive.OAuthClientSecretStoreKey = string.IsNullOrWhiteSpace(existingConnection.GoogleDrive.OAuthClientSecretStoreKey)
+                ? imported.GoogleDrive.OAuthClientSecretStoreKey
+                : existingConnection.GoogleDrive.OAuthClientSecretStoreKey.Trim();
             imported.GoogleDrive.TokenStoreKey = string.IsNullOrWhiteSpace(existingConnection.GoogleDrive.TokenStoreKey)
                 ? Guid.NewGuid().ToString("N")
                 : existingConnection.GoogleDrive.TokenStoreKey.Trim();
@@ -860,6 +870,33 @@ namespace OceanyaClient
 
             string fileName = builder.Length == 0 ? "oceanyan_file_hivemind_connection" : builder.ToString();
             return fileName + ".oceanyahive.json";
+        }
+
+        private void AppendCredentialWarningsForInvalidConnections()
+        {
+            foreach (FileHivemindConnectionProfile savedConnection in SaveFile.Data.FileHivemind.Connections)
+            {
+                if (!string.Equals(savedConnection.ProviderId, FileHivemindProviderIds.GoogleDrive, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (GoogleDriveConnectionCredentialSupport.TryBuildConfiguration(
+                        savedConnection.GoogleDrive,
+                        out _,
+                        out _,
+                        credentialStore,
+                        allowLegacyFallback: false))
+                {
+                    continue;
+                }
+
+                string credentialMessage = GoogleDriveConnectionCredentialSupport.BuildStatusMessage(
+                    savedConnection.GoogleDrive,
+                    credentialStore,
+                    allowLegacyFallback: false);
+                AppendStatus(credentialMessage, StatusLogLevel.Warning, savedConnection.EffectiveDisplayName);
+            }
         }
 
         private async Task ExecuteAllConnectionsAsync(
@@ -982,6 +1019,9 @@ namespace OceanyaClient
 
                 WaitForm.SetSubtitle("Preparing background sync status...");
                 RefreshBackgroundAgentControls();
+
+                WaitForm.SetSubtitle("Checking saved Google Cloud credentials...");
+                AppendCredentialWarningsForInvalidConnections();
 
                 WaitForm.SetSubtitle("Loading recent background agent activity...");
                 EnsureBackgroundLogFeedRunning();
