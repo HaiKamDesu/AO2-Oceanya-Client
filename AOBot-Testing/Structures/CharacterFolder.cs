@@ -38,7 +38,10 @@ namespace AOBot_Testing.Structures
             }
         }
 
-        public static void RefreshCharacterList(Action<CharacterFolder>? onParsedCharacter = null, Action<string>? onChangedMountPath = null)
+        public static void RefreshCharacterList(
+            Action<CharacterFolder>? onParsedCharacter = null,
+            Action<string>? onChangedMountPath = null,
+            Action<CharacterFolder, int, int>? onParsedCharacterProgress = null)
         {
             EnsureCacheFilePath();
 
@@ -116,7 +119,14 @@ namespace AOBot_Testing.Structures
                 }
 
                 refreshedCharacters.Add(parsedCharacter);
+            }
+
+            int totalParsedCharacters = refreshedCharacters.Count;
+            for (int index = 0; index < refreshedCharacters.Count; index++)
+            {
+                CharacterFolder parsedCharacter = refreshedCharacters[index];
                 onParsedCharacter?.Invoke(parsedCharacter);
+                onParsedCharacterProgress?.Invoke(parsedCharacter, index + 1, totalParsedCharacters);
             }
 
             characterConfigs = refreshedCharacters;

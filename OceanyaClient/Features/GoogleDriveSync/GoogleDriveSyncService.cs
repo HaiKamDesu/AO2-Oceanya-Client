@@ -76,6 +76,23 @@ namespace OceanyaClient.Features.GoogleDriveSync
             return await PushLocalFolderAsync(client, settings, progress, cancellationToken);
         }
 
+        public async Task<GoogleDriveSyncSummary> MergeWithDriveAsync(
+            GoogleDriveSyncSettings settings,
+            GoogleDriveLocalMirrorState localBaseline,
+            GoogleDriveLocalMirrorState remoteBaseline,
+            Action<string>? progress,
+            CancellationToken cancellationToken)
+        {
+            IGoogleDriveRemoteClient client = await sessionFactory.CreateAuthorizedClientAsync(settings, cancellationToken);
+            return await MergeWithDriveAsync(
+                client,
+                settings,
+                localBaseline,
+                remoteBaseline,
+                progress,
+                cancellationToken);
+        }
+
         public async Task<GoogleDriveSyncSummary> PullFromDriveAsync(
             IGoogleDriveRemoteClient client,
             GoogleDriveSyncSettings settings,
@@ -99,6 +116,7 @@ namespace OceanyaClient.Features.GoogleDriveSync
                 FilesSkipped = Math.Max(0, remoteSnapshot.Files.Count - plan.Operations.Count(operation =>
                     operation.Kind == GoogleDriveSyncOperationKind.DownloadFile))
             };
+            summary.FinalRemoteSnapshot = CloneSnapshot(remoteSnapshot);
 
             List<GoogleDriveSyncOperation> directoryOperations = plan.Operations
                 .Where(operation => operation.Kind == GoogleDriveSyncOperationKind.EnsureLocalDirectory)
@@ -214,9 +232,10 @@ namespace OceanyaClient.Features.GoogleDriveSync
                 FilesSkipped = Math.Max(0, localSnapshot.Files.Count - plan.Operations.Count(operation =>
                     operation.Kind == GoogleDriveSyncOperationKind.UploadFile))
             };
+            GoogleDriveSyncSnapshot finalRemoteSnapshot = CloneSnapshot(remoteSnapshot);
+            summary.FinalRemoteSnapshot = finalRemoteSnapshot;
 
-            Dictionary<string, GoogleDriveSyncFolderEntry> remoteFolders = remoteSnapshot.Folders
-                .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, GoogleDriveSyncFolderEntry> remoteFolders = finalRemoteSnapshot.Folders;
             List<GoogleDriveSyncOperation> uploadOperations = plan.Operations
                 .Where(operation => operation.Kind == GoogleDriveSyncOperationKind.UploadFile)
                 .ToList();
@@ -263,6 +282,12 @@ namespace OceanyaClient.Features.GoogleDriveSync
                             localPath,
                             string.IsNullOrWhiteSpace(operation.RemoteItemId) ? null : operation.RemoteItemId,
                             cancellationToken);
+                        UpsertRemoteFile(
+                            finalRemoteSnapshot,
+                            operation.RelativePath,
+                            uploadedItemId,
+                            parentFolderId ?? settings.RemoteFolderId,
+                            localPath);
                         completedUploads++;
                         progress?.Invoke($"Uploaded {completedUploads}/{Math.Max(1, totalUploads)}: {operation.RelativePath}");
                         summary.FilesUploaded++;
@@ -276,12 +301,14 @@ namespace OceanyaClient.Features.GoogleDriveSync
                     case GoogleDriveSyncOperationKind.DeleteRemoteFile:
                         progress?.Invoke("Deleting Drive file: " + operation.RelativePath);
                         await client.DeleteItemAsync(operation.RemoteItemId, cancellationToken);
+                        RemoveRemotePath(finalRemoteSnapshot, operation.RelativePath, removeDescendants: false);
                         summary.RemoteFilesDeleted++;
                         summary.LocalChanges.RecordDeleted(operation.RelativePath);
                         break;
                     case GoogleDriveSyncOperationKind.DeleteRemoteDirectory:
                         progress?.Invoke("Deleting Drive folder: " + operation.RelativePath);
                         await client.DeleteItemAsync(operation.RemoteItemId, cancellationToken);
+                        RemoveRemotePath(finalRemoteSnapshot, operation.RelativePath, removeDescendants: true);
                         summary.RemoteDirectoriesDeleted++;
                         summary.LocalChanges.RecordDeleted(operation.RelativePath);
                         break;
@@ -290,6 +317,237 @@ namespace OceanyaClient.Features.GoogleDriveSync
 
             settings.LastSyncUtc = DateTimeOffset.UtcNow;
             return summary;
+        }
+
+        public async Task<GoogleDriveSyncSummary> MergeWithDriveAsync(
+            IGoogleDriveRemoteClient client,
+            GoogleDriveSyncSettings settings,
+            GoogleDriveLocalMirrorState localBaseline,
+            GoogleDriveLocalMirrorState remoteBaseline,
+            Action<string>? progress,
+            CancellationToken cancellationToken)
+        {
+            ValidateSyncSettings(settings);
+            Directory.CreateDirectory(settings.LocalFolderPath);
+            GoogleDriveManagedLocalFolderMarkerService.EnsureMarkerIfNeeded(settings);
+
+            progress?.Invoke("Scanning local sync folder...");
+            GoogleDriveSyncSnapshot localSnapshot = GoogleDriveLocalSnapshotBuilder.Build(settings.LocalFolderPath);
+
+            progress?.Invoke("Reading Google Drive folder structure...");
+            GoogleDriveSyncSnapshot remoteSnapshot = GoogleDriveLocalSnapshotBuilder.FilterReservedSupportFiles(
+                await client.GetSnapshotAsync(settings.RemoteFolderId, cancellationToken));
+
+            GoogleDriveSyncPlan plan = GoogleDriveSyncPlanner.BuildBidirectionalPlan(
+                localBaseline,
+                remoteBaseline,
+                localSnapshot,
+                remoteSnapshot,
+                settings.MirrorDeletes);
+
+            GoogleDriveSyncSummary summary = new GoogleDriveSyncSummary();
+            GoogleDriveSyncSnapshot finalRemoteSnapshot = CloneSnapshot(remoteSnapshot);
+            summary.FinalRemoteSnapshot = finalRemoteSnapshot;
+            Dictionary<string, GoogleDriveSyncFolderEntry> remoteFolders = finalRemoteSnapshot.Folders;
+
+            List<GoogleDriveSyncOperation> localFileDeleteOperations = plan.Operations
+                .Where(operation => operation.Kind == GoogleDriveSyncOperationKind.DeleteLocalFile)
+                .ToList();
+            List<GoogleDriveSyncOperation> localDirectoryDeleteOperations = plan.Operations
+                .Where(operation => operation.Kind == GoogleDriveSyncOperationKind.DeleteLocalDirectory)
+                .ToList();
+            List<GoogleDriveSyncOperation> remoteFileDeleteOperations = plan.Operations
+                .Where(operation => operation.Kind == GoogleDriveSyncOperationKind.DeleteRemoteFile)
+                .ToList();
+            List<GoogleDriveSyncOperation> remoteDirectoryDeleteOperations = plan.Operations
+                .Where(operation => operation.Kind == GoogleDriveSyncOperationKind.DeleteRemoteDirectory)
+                .ToList();
+            List<GoogleDriveSyncOperation> ensureLocalDirectoryOperations = plan.Operations
+                .Where(operation => operation.Kind == GoogleDriveSyncOperationKind.EnsureLocalDirectory)
+                .ToList();
+            List<GoogleDriveSyncOperation> ensureRemoteDirectoryOperations = plan.Operations
+                .Where(operation => operation.Kind == GoogleDriveSyncOperationKind.EnsureRemoteDirectory)
+                .ToList();
+            List<GoogleDriveSyncOperation> downloadOperations = plan.Operations
+                .Where(operation => operation.Kind == GoogleDriveSyncOperationKind.DownloadFile)
+                .ToList();
+            List<GoogleDriveSyncOperation> uploadOperations = plan.Operations
+                .Where(operation => operation.Kind == GoogleDriveSyncOperationKind.UploadFile)
+                .ToList();
+
+            foreach (GoogleDriveSyncOperation operation in localFileDeleteOperations)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string localPath = ResolveLocalPath(settings.LocalFolderPath, operation.RelativePath);
+                progress?.Invoke("Deleting local file: " + operation.RelativePath);
+                if (File.Exists(localPath))
+                {
+                    File.Delete(localPath);
+                    summary.LocalFilesDeleted++;
+                }
+
+                summary.LocalChanges.RecordDeleted(operation.RelativePath);
+            }
+
+            foreach (GoogleDriveSyncOperation operation in localDirectoryDeleteOperations)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string localPath = ResolveLocalPath(settings.LocalFolderPath, operation.RelativePath);
+                progress?.Invoke("Deleting local folder: " + operation.RelativePath);
+                if (Directory.Exists(localPath))
+                {
+                    Directory.Delete(localPath, true);
+                    summary.LocalDirectoriesDeleted++;
+                }
+
+                summary.LocalChanges.RecordDeleted(operation.RelativePath);
+            }
+
+            foreach (GoogleDriveSyncOperation operation in remoteFileDeleteOperations)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                progress?.Invoke("Deleting Drive file: " + operation.RelativePath);
+                await client.DeleteItemAsync(operation.RemoteItemId, cancellationToken);
+                RemoveRemotePath(finalRemoteSnapshot, operation.RelativePath, removeDescendants: false);
+                summary.RemoteFilesDeleted++;
+                summary.LocalChanges.RecordDeleted(operation.RelativePath);
+            }
+
+            foreach (GoogleDriveSyncOperation operation in remoteDirectoryDeleteOperations)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                progress?.Invoke("Deleting Drive folder: " + operation.RelativePath);
+                await client.DeleteItemAsync(operation.RemoteItemId, cancellationToken);
+                RemoveRemotePath(finalRemoteSnapshot, operation.RelativePath, removeDescendants: true);
+                summary.RemoteDirectoriesDeleted++;
+                summary.LocalChanges.RecordDeleted(operation.RelativePath);
+            }
+
+            foreach (GoogleDriveSyncOperation operation in ensureLocalDirectoryOperations)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string localPath = ResolveLocalPath(settings.LocalFolderPath, operation.RelativePath);
+                progress?.Invoke("Ensuring local folder: " + operation.RelativePath);
+                Directory.CreateDirectory(localPath);
+                summary.DirectoriesCreated++;
+            }
+
+            foreach (GoogleDriveSyncOperation operation in ensureRemoteDirectoryOperations)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (remoteFolders.ContainsKey(operation.RelativePath))
+                {
+                    continue;
+                }
+
+                string? parentFolderId = ResolveParentFolderId(settings.RemoteFolderId, remoteFolders, operation.ParentRelativePath);
+                progress?.Invoke("Creating Drive folder: " + operation.RelativePath);
+                GoogleDriveSyncFolderEntry created = await client.CreateFolderAsync(
+                    parentFolderId,
+                    Path.GetFileName(operation.RelativePath),
+                    cancellationToken);
+                created.RelativePath = operation.RelativePath;
+                remoteFolders[operation.RelativePath] = created;
+                summary.DirectoriesCreated++;
+                if (!string.IsNullOrWhiteSpace(created.ItemId))
+                {
+                    summary.KnownRemoteItemIds.Add(created.ItemId.Trim());
+                }
+            }
+
+            int totalDownloads = downloadOperations.Count;
+            int completedDownloads = 0;
+            foreach (GoogleDriveSyncOperation operation in downloadOperations)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string localPath = ResolveLocalPath(settings.LocalFolderPath, operation.RelativePath);
+                progress?.Invoke($"Downloading {completedDownloads + 1}/{Math.Max(1, totalDownloads)}: {operation.RelativePath}");
+                Directory.CreateDirectory(Path.GetDirectoryName(localPath) ?? settings.LocalFolderPath);
+                await client.DownloadFileAsync(operation.RemoteItemId, localPath, cancellationToken);
+                completedDownloads++;
+                progress?.Invoke($"Downloaded {completedDownloads}/{Math.Max(1, totalDownloads)}: {operation.RelativePath}");
+                summary.FilesDownloaded++;
+                summary.LocalChanges.RecordAddedOrUpdated(operation.RelativePath);
+            }
+
+            int totalUploads = uploadOperations.Count;
+            int completedUploads = 0;
+            foreach (GoogleDriveSyncOperation operation in uploadOperations)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string localPath = ResolveLocalPath(settings.LocalFolderPath, operation.RelativePath);
+                string fileName = Path.GetFileName(localPath);
+                string? parentFolderId = ResolveParentFolderId(settings.RemoteFolderId, remoteFolders, operation.ParentRelativePath);
+                progress?.Invoke($"Uploading {completedUploads + 1}/{Math.Max(1, totalUploads)}: {operation.RelativePath}");
+                string uploadedItemId = await client.UploadFileAsync(
+                    parentFolderId ?? settings.RemoteFolderId,
+                    fileName,
+                    localPath,
+                    string.IsNullOrWhiteSpace(operation.RemoteItemId) ? null : operation.RemoteItemId,
+                    cancellationToken);
+                UpsertRemoteFile(
+                    finalRemoteSnapshot,
+                    operation.RelativePath,
+                    uploadedItemId,
+                    parentFolderId ?? settings.RemoteFolderId,
+                    localPath);
+                completedUploads++;
+                progress?.Invoke($"Uploaded {completedUploads}/{Math.Max(1, totalUploads)}: {operation.RelativePath}");
+                summary.FilesUploaded++;
+                summary.LocalChanges.RecordAddedOrUpdated(operation.RelativePath);
+                if (!string.IsNullOrWhiteSpace(uploadedItemId))
+                {
+                    summary.KnownRemoteItemIds.Add(uploadedItemId.Trim());
+                }
+            }
+
+            settings.LastSyncUtc = DateTimeOffset.UtcNow;
+            return summary;
+        }
+
+        public async Task<GoogleDriveConnectionRuntimeState> BuildRuntimeStateAfterSyncAsync(
+            string connectionId,
+            GoogleDriveSyncSettings settings,
+            GoogleDriveSyncSummary summary,
+            CancellationToken cancellationToken)
+        {
+            IGoogleDriveRemoteClient client = await sessionFactory.CreateAuthorizedClientAsync(settings, cancellationToken);
+            return await BuildRuntimeStateAfterSyncAsync(
+                client,
+                connectionId,
+                settings,
+                summary,
+                cancellationToken);
+        }
+
+        public async Task<GoogleDriveConnectionRuntimeState> BuildRuntimeStateAfterSyncAsync(
+            IGoogleDriveRemoteClient client,
+            string connectionId,
+            GoogleDriveSyncSettings settings,
+            GoogleDriveSyncSummary summary,
+            CancellationToken cancellationToken)
+        {
+            ValidateSyncSettings(settings);
+            if (summary == null)
+            {
+                throw new ArgumentNullException(nameof(summary));
+            }
+
+            GoogleDriveSyncSnapshot remoteSnapshot = GoogleDriveLocalSnapshotBuilder.FilterReservedSupportFiles(
+                summary.FinalRemoteSnapshot
+                ?? await client.GetSnapshotAsync(settings.RemoteFolderId, cancellationToken));
+            string changePageToken = await client.GetStartPageTokenAsync(cancellationToken);
+            GoogleDriveConnectionRuntimeState runtimeState = GoogleDriveRemoteChangeTracker.BuildRuntimeState(
+                connectionId,
+                settings.RemoteFolderId,
+                remoteSnapshot,
+                changePageToken);
+            runtimeState.LocalMirrorState = GoogleDriveLocalMirrorStateSupport.CaptureExact(settings.LocalFolderPath);
+            runtimeState.HasRemoteMirrorState = true;
+            runtimeState = GoogleDriveRemoteChangeTracker.MergeKnownRemoteItemIds(runtimeState, summary.KnownRemoteItemIds);
+            runtimeState.LastSuccessfulSyncUtc = DateTimeOffset.UtcNow;
+            runtimeState.LastErrorMessage = string.Empty;
+            return GoogleDriveConnectionRuntimeStateStore.Normalize(runtimeState);
         }
 
         private static void ValidateSyncSettings(GoogleDriveSyncSettings settings)
@@ -334,6 +592,84 @@ namespace OceanyaClient.Features.GoogleDriveSync
             return remoteFolders.TryGetValue(parentRelativePath, out GoogleDriveSyncFolderEntry? folder)
                 ? folder.ItemId
                 : rootFolderId;
+        }
+
+        private static GoogleDriveSyncSnapshot CloneSnapshot(GoogleDriveSyncSnapshot snapshot)
+        {
+            GoogleDriveSyncSnapshot clone = new GoogleDriveSyncSnapshot();
+            foreach (KeyValuePair<string, GoogleDriveSyncFolderEntry> pair in snapshot?.Folders
+                ?? new Dictionary<string, GoogleDriveSyncFolderEntry>(StringComparer.OrdinalIgnoreCase))
+            {
+                clone.Folders[pair.Key] = new GoogleDriveSyncFolderEntry
+                {
+                    RelativePath = pair.Value.RelativePath,
+                    ItemId = pair.Value.ItemId
+                };
+            }
+
+            foreach (KeyValuePair<string, GoogleDriveSyncFileEntry> pair in snapshot?.Files
+                ?? new Dictionary<string, GoogleDriveSyncFileEntry>(StringComparer.OrdinalIgnoreCase))
+            {
+                clone.Files[pair.Key] = new GoogleDriveSyncFileEntry
+                {
+                    RelativePath = pair.Value.RelativePath,
+                    ItemId = pair.Value.ItemId,
+                    ParentId = pair.Value.ParentId,
+                    Size = pair.Value.Size,
+                    Hash = pair.Value.Hash
+                };
+            }
+
+            return clone;
+        }
+
+        private static void UpsertRemoteFile(
+            GoogleDriveSyncSnapshot snapshot,
+            string relativePath,
+            string itemId,
+            string parentFolderId,
+            string localFilePath)
+        {
+            string normalizedRelativePath = GoogleDriveLocalSnapshotBuilder.NormalizeRelativePath(relativePath);
+            snapshot.Files[normalizedRelativePath] = new GoogleDriveSyncFileEntry
+            {
+                RelativePath = normalizedRelativePath,
+                ItemId = itemId?.Trim() ?? string.Empty,
+                ParentId = parentFolderId?.Trim() ?? string.Empty,
+                Size = new FileInfo(localFilePath).Length,
+                Hash = GoogleDriveLocalSnapshotBuilder.ComputeMd5(localFilePath)
+            };
+            snapshot.Folders.Remove(normalizedRelativePath);
+        }
+
+        private static void RemoveRemotePath(
+            GoogleDriveSyncSnapshot snapshot,
+            string relativePath,
+            bool removeDescendants)
+        {
+            string normalizedRelativePath = GoogleDriveLocalSnapshotBuilder.NormalizeRelativePath(relativePath);
+            snapshot.Files.Remove(normalizedRelativePath);
+            snapshot.Folders.Remove(normalizedRelativePath);
+
+            if (!removeDescendants || string.IsNullOrWhiteSpace(normalizedRelativePath))
+            {
+                return;
+            }
+
+            string nestedPrefix = normalizedRelativePath + "/";
+            foreach (string nestedFilePath in snapshot.Files.Keys
+                .Where(path => path.StartsWith(nestedPrefix, StringComparison.OrdinalIgnoreCase))
+                .ToList())
+            {
+                snapshot.Files.Remove(nestedFilePath);
+            }
+
+            foreach (string nestedFolderPath in snapshot.Folders.Keys
+                .Where(path => path.StartsWith(nestedPrefix, StringComparison.OrdinalIgnoreCase))
+                .ToList())
+            {
+                snapshot.Folders.Remove(nestedFolderPath);
+            }
         }
     }
 }

@@ -426,7 +426,11 @@ namespace OceanyaClient
             CharacterFolder.RefreshCharacterList(
                 onParsedCharacter: character =>
                 {
-                    progress?.Invoke("Parsed Character: " + character.Name);
+                    progress?.Invoke("Parsed character: " + character.Name);
+                },
+                onParsedCharacterProgress: (character, currentIndex, totalCharacters) =>
+                {
+                    progress?.Invoke($"Parsed character ({currentIndex}/{totalCharacters}): {character.Name}");
                 },
                 onChangedMountPath: path =>
                 {

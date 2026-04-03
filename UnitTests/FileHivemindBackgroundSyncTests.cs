@@ -174,6 +174,87 @@ namespace UnitTests
         }
 
         [Test]
+        public void StartForCurrentSession_LaunchesWhenEligibleConnectionExistsEvenIfAutoStartIsDisabled()
+        {
+            FakeAutoStartRegistrar registrar = new FakeAutoStartRegistrar();
+            string launchedArgument = string.Empty;
+            FileHivemindBackgroundAgentLauncher launcher = new FileHivemindBackgroundAgentLauncher(
+                registrar,
+                argument =>
+                {
+                    launchedArgument = argument;
+                    return true;
+                },
+                () => false);
+            FileHivemindSettings settings = new FileHivemindSettings
+            {
+                RunAgentAtStartup = false,
+                Connections = new List<FileHivemindConnectionProfile>
+                {
+                    new FileHivemindConnectionProfile
+                    {
+                        ProviderId = FileHivemindProviderIds.GoogleDrive,
+                        GoogleDrive = new GoogleDriveSyncSettings
+                        {
+                            OAuthClientId = "desktop-client-id.apps.googleusercontent.com",
+                            OAuthClientSecret = "desktop-client-secret",
+                            RemoteFolderId = "folder-id",
+                            LocalFolderPath = @"C:\sync",
+                            TokenStoreKey = "token-key",
+                            LastSignedInEmail = "tester@example.com"
+                        }
+                    }
+                }
+            };
+
+            bool launched = launcher.StartForCurrentSession(settings);
+
+            Assert.That(launched, Is.True);
+            Assert.That(registrar.LastEnabledValue, Is.False);
+            Assert.That(launchedArgument, Is.EqualTo(FileHivemindBackgroundAgentCommandLine.AgentArgument));
+        }
+
+        [Test]
+        public void RequestStopForCurrentSession_SignalsStopWhenAgentIsRunning()
+        {
+            int stopRequests = 0;
+            FileHivemindBackgroundAgentLauncher launcher = new FileHivemindBackgroundAgentLauncher(
+                new FakeAutoStartRegistrar(),
+                _ => true,
+                () => true,
+                () =>
+                {
+                    stopRequests++;
+                    return true;
+                });
+
+            bool stopped = launcher.RequestStopForCurrentSession();
+
+            Assert.That(stopped, Is.True);
+            Assert.That(stopRequests, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void RequestStopForCurrentSession_DoesNothingWhenAgentIsNotRunning()
+        {
+            int stopRequests = 0;
+            FileHivemindBackgroundAgentLauncher launcher = new FileHivemindBackgroundAgentLauncher(
+                new FakeAutoStartRegistrar(),
+                _ => true,
+                () => false,
+                () =>
+                {
+                    stopRequests++;
+                    return true;
+                });
+
+            bool stopped = launcher.RequestStopForCurrentSession();
+
+            Assert.That(stopped, Is.False);
+            Assert.That(stopRequests, Is.EqualTo(0));
+        }
+
+        [Test]
         public void ResolveAgentExecutablePath_PrefersCompanionAgentExecutable()
         {
             string root = Path.Combine(Path.GetTempPath(), "hivemind_agent_path_" + Guid.NewGuid().ToString("N"));
@@ -283,6 +364,76 @@ namespace UnitTests
             Assert.That(
                 FileHivemindBackgroundSyncAgent.BuildActionStartNotificationMessage(isPull: true),
                 Is.EqualTo("Detected a remote change, pulling from Drive..."));
+            Assert.That(
+                FileHivemindBackgroundSyncAgent.BuildMergeActionStartNotificationMessage(),
+                Is.EqualTo("Detected local and remote changes, reconciling with Drive..."));
+        }
+
+        [Test]
+        public void DecideAutomaticRemoteChangeHandling_MergesWhenBothSidesChanged()
+        {
+            GoogleDriveRemoteChangeCheckResult result = new GoogleDriveRemoteChangeCheckResult
+            {
+                HasRelevantChanges = true
+            };
+
+            FileHivemindBackgroundSyncAgent.AutomaticRemoteChangeHandling handling =
+                FileHivemindBackgroundSyncAgent.DecideAutomaticRemoteChangeHandling(
+                    hasUnsyncedLocalChanges: true,
+                    result);
+
+            Assert.That(
+                handling,
+                Is.EqualTo(FileHivemindBackgroundSyncAgent.AutomaticRemoteChangeHandling.MergeBidirectional));
+        }
+
+        [Test]
+        public void DecideAutomaticRemoteChangeHandling_PullsWhenOnlyRemoteChanged()
+        {
+            GoogleDriveRemoteChangeCheckResult result = new GoogleDriveRemoteChangeCheckResult
+            {
+                HasRelevantChanges = true
+            };
+
+            FileHivemindBackgroundSyncAgent.AutomaticRemoteChangeHandling handling =
+                FileHivemindBackgroundSyncAgent.DecideAutomaticRemoteChangeHandling(
+                    hasUnsyncedLocalChanges: false,
+                    result);
+
+            Assert.That(
+                handling,
+                Is.EqualTo(FileHivemindBackgroundSyncAgent.AutomaticRemoteChangeHandling.PullFromDrive));
+        }
+
+        [Test]
+        public void DecideAutomaticRemoteChangeHandling_BlocksWhenBidirectionalBaselineIsUnavailable()
+        {
+            GoogleDriveRemoteChangeCheckResult result = new GoogleDriveRemoteChangeCheckResult
+            {
+                HasRelevantChanges = true
+            };
+
+            FileHivemindBackgroundSyncAgent.AutomaticRemoteChangeHandling handling =
+                FileHivemindBackgroundSyncAgent.DecideAutomaticRemoteChangeHandling(
+                    hasUnsyncedLocalChanges: true,
+                    result,
+                    canMergeBidirectionally: false);
+
+            Assert.That(
+                handling,
+                Is.EqualTo(FileHivemindBackgroundSyncAgent.AutomaticRemoteChangeHandling.BlockAutomaticSync));
+        }
+
+        [Test]
+        public void BuildAutomaticSyncConflictMessage_DistinguishesTokenResetCase()
+        {
+            string normalConflict = FileHivemindBackgroundSyncAgent.BuildAutomaticSyncConflictMessage(
+                requiresFullResync: false);
+            string tokenResetConflict = FileHivemindBackgroundSyncAgent.BuildAutomaticSyncConflictMessage(
+                requiresFullResync: true);
+
+            Assert.That(normalConflict, Does.Contain("enough baseline data"));
+            Assert.That(tokenResetConflict, Does.Contain("change token"));
         }
 
         [Test]
@@ -311,6 +462,21 @@ namespace UnitTests
             string message = FileHivemindBackgroundSyncAgent.BuildCompletionNotificationMessage(summary, isPull: true);
 
             Assert.That(message, Is.EqualTo("Synced with Drive (Downloaded 2 files, deleted 2 items)"));
+        }
+
+        [Test]
+        public void BuildMergeCompletionNotificationMessage_IncludesUploadsDownloadsAndDeletes()
+        {
+            GoogleDriveSyncSummary summary = new GoogleDriveSyncSummary
+            {
+                FilesDownloaded = 2,
+                FilesUploaded = 1,
+                LocalFilesDeleted = 1
+            };
+
+            string message = FileHivemindBackgroundSyncAgent.BuildMergeCompletionNotificationMessage(summary);
+
+            Assert.That(message, Is.EqualTo("Synced with Drive (Downloaded 2 files, Uploaded 1 files, Deleted 1 items)"));
         }
 
         [Test]
@@ -690,6 +856,35 @@ namespace UnitTests
         }
 
         [Test]
+        public void LocalMirrorStateSupport_HasDifferences_IgnoresTimestampOnlyChangesWhenHashesMatch()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "google_drive_local_state_" + Guid.NewGuid().ToString("N"));
+
+            try
+            {
+                string charactersPath = Path.Combine(root, "characters");
+                string charPath = Path.Combine(charactersPath, "char.ini");
+                Directory.CreateDirectory(charactersPath);
+                File.WriteAllText(charPath, "name=Phoenix");
+
+                GoogleDriveLocalMirrorState baseline = GoogleDriveLocalMirrorStateSupport.CaptureExact(root);
+                File.SetLastWriteTimeUtc(charPath, DateTime.UtcNow.AddMinutes(5));
+                GoogleDriveLocalMirrorState current = GoogleDriveLocalMirrorStateSupport.CaptureExact(root);
+
+                bool hasDifferences = GoogleDriveLocalMirrorStateSupport.HasDifferences(baseline, current);
+
+                Assert.That(hasDifferences, Is.False);
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        [Test]
         public void DestructiveDeletionProtection_DetectsMissingOrEmptyMirrorAgainstLargeBaseline()
         {
             FileHivemindConnectionProfile connection = new FileHivemindConnectionProfile
@@ -798,6 +993,20 @@ namespace UnitTests
                             }
                         }
                     },
+                    RemoteMirrorState = new GoogleDriveLocalMirrorState
+                    {
+                        DirectoryPaths = new List<string> { "characters" },
+                        Files = new List<GoogleDriveLocalMirrorFileState>
+                        {
+                            new GoogleDriveLocalMirrorFileState
+                            {
+                                RelativePath = "characters/char.ini",
+                                Size = 18,
+                                ContentHash = "hash-1"
+                            }
+                        }
+                    },
+                    HasRemoteMirrorState = true,
                     LastSuccessfulSyncUtc = DateTimeOffset.UtcNow
                 };
 
@@ -811,6 +1020,10 @@ namespace UnitTests
                 Assert.That(loaded.LocalMirrorState.DirectoryPaths, Contains.Item("characters"));
                 Assert.That(loaded.LocalMirrorState.Files.Count, Is.EqualTo(1));
                 Assert.That(loaded.LocalMirrorState.Files[0].RelativePath, Is.EqualTo("characters/char.ini"));
+                Assert.That(loaded.RemoteMirrorState.DirectoryPaths, Contains.Item("characters"));
+                Assert.That(loaded.RemoteMirrorState.Files.Count, Is.EqualTo(1));
+                Assert.That(loaded.RemoteMirrorState.Files[0].ContentHash, Is.EqualTo("hash-1"));
+                Assert.That(loaded.HasRemoteMirrorState, Is.True);
                 Assert.That(loaded.LastSuccessfulSyncUtc, Is.EqualTo(state.LastSuccessfulSyncUtc));
             }
             finally

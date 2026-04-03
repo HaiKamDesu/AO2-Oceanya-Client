@@ -859,6 +859,232 @@ namespace UnitTests
                 operation.Kind == GoogleDriveSyncOperationKind.DownloadFile
                 && operation.RelativePath == "characters/phoenix/char.ini"), Is.True);
         }
+
+        [Test]
+        public void BuildBidirectionalPlan_ReconcilesDisjointChangesWithoutCrossDeleting()
+        {
+            GoogleDriveLocalMirrorState localBaseline = new GoogleDriveLocalMirrorState();
+            localBaseline.Files.Add(new GoogleDriveLocalMirrorFileState
+            {
+                RelativePath = "shared.txt",
+                Size = 4,
+                ContentHash = "base"
+            });
+
+            GoogleDriveLocalMirrorState remoteBaseline = new GoogleDriveLocalMirrorState();
+            remoteBaseline.Files.Add(new GoogleDriveLocalMirrorFileState
+            {
+                RelativePath = "shared.txt",
+                Size = 4,
+                ContentHash = "base"
+            });
+
+            GoogleDriveSyncSnapshot local = new GoogleDriveSyncSnapshot();
+            local.Files["shared.txt"] = new GoogleDriveSyncFileEntry
+            {
+                RelativePath = "shared.txt",
+                Size = 4,
+                Hash = "base"
+            };
+            local.Files["local-only.txt"] = new GoogleDriveSyncFileEntry
+            {
+                RelativePath = "local-only.txt",
+                Size = 5,
+                Hash = "local"
+            };
+
+            GoogleDriveSyncSnapshot remote = new GoogleDriveSyncSnapshot();
+            remote.Files["shared.txt"] = new GoogleDriveSyncFileEntry
+            {
+                RelativePath = "shared.txt",
+                ItemId = "shared-id",
+                Size = 4,
+                Hash = "base"
+            };
+            remote.Files["remote-only.txt"] = new GoogleDriveSyncFileEntry
+            {
+                RelativePath = "remote-only.txt",
+                ItemId = "remote-id",
+                Size = 6,
+                Hash = "remote"
+            };
+
+            GoogleDriveSyncPlan plan = GoogleDriveSyncPlanner.BuildBidirectionalPlan(
+                localBaseline,
+                remoteBaseline,
+                local,
+                remote,
+                mirrorDeletes: true);
+
+            Assert.That(plan.Operations.Any(operation =>
+                operation.Kind == GoogleDriveSyncOperationKind.UploadFile
+                && operation.RelativePath == "local-only.txt"), Is.True);
+            Assert.That(plan.Operations.Any(operation =>
+                operation.Kind == GoogleDriveSyncOperationKind.DownloadFile
+                && operation.RelativePath == "remote-only.txt"), Is.True);
+            Assert.That(plan.Operations.Any(operation =>
+                operation.Kind == GoogleDriveSyncOperationKind.DeleteLocalFile
+                || operation.Kind == GoogleDriveSyncOperationKind.DeleteRemoteFile), Is.False);
+        }
+
+        [Test]
+        public void BuildBidirectionalPlan_PrefersRemoteVersionForDirectFileConflict()
+        {
+            GoogleDriveLocalMirrorState localBaseline = new GoogleDriveLocalMirrorState();
+            localBaseline.Files.Add(new GoogleDriveLocalMirrorFileState
+            {
+                RelativePath = "shared.txt",
+                Size = 4,
+                ContentHash = "base"
+            });
+
+            GoogleDriveLocalMirrorState remoteBaseline = new GoogleDriveLocalMirrorState();
+            remoteBaseline.Files.Add(new GoogleDriveLocalMirrorFileState
+            {
+                RelativePath = "shared.txt",
+                Size = 4,
+                ContentHash = "base"
+            });
+
+            GoogleDriveSyncSnapshot local = new GoogleDriveSyncSnapshot();
+            local.Files["shared.txt"] = new GoogleDriveSyncFileEntry
+            {
+                RelativePath = "shared.txt",
+                Size = 5,
+                Hash = "local"
+            };
+
+            GoogleDriveSyncSnapshot remote = new GoogleDriveSyncSnapshot();
+            remote.Files["shared.txt"] = new GoogleDriveSyncFileEntry
+            {
+                RelativePath = "shared.txt",
+                ItemId = "shared-id",
+                Size = 6,
+                Hash = "remote"
+            };
+
+            GoogleDriveSyncPlan plan = GoogleDriveSyncPlanner.BuildBidirectionalPlan(
+                localBaseline,
+                remoteBaseline,
+                local,
+                remote,
+                mirrorDeletes: true);
+
+            Assert.That(plan.Operations.Any(operation =>
+                operation.Kind == GoogleDriveSyncOperationKind.DownloadFile
+                && operation.RelativePath == "shared.txt"), Is.True);
+            Assert.That(plan.Operations.Any(operation =>
+                operation.Kind == GoogleDriveSyncOperationKind.UploadFile
+                && operation.RelativePath == "shared.txt"), Is.False);
+        }
+
+        [Test]
+        public void BuildBidirectionalPlan_PropagatesLocalDeletionWhilePreservingUnrelatedRemoteAddition()
+        {
+            GoogleDriveLocalMirrorState localBaseline = new GoogleDriveLocalMirrorState();
+            localBaseline.Files.Add(new GoogleDriveLocalMirrorFileState
+            {
+                RelativePath = "delete-me.txt",
+                Size = 4,
+                ContentHash = "base"
+            });
+
+            GoogleDriveLocalMirrorState remoteBaseline = new GoogleDriveLocalMirrorState();
+            remoteBaseline.Files.Add(new GoogleDriveLocalMirrorFileState
+            {
+                RelativePath = "delete-me.txt",
+                Size = 4,
+                ContentHash = "base"
+            });
+
+            GoogleDriveSyncSnapshot local = new GoogleDriveSyncSnapshot();
+
+            GoogleDriveSyncSnapshot remote = new GoogleDriveSyncSnapshot();
+            remote.Files["delete-me.txt"] = new GoogleDriveSyncFileEntry
+            {
+                RelativePath = "delete-me.txt",
+                ItemId = "delete-id",
+                Size = 4,
+                Hash = "base"
+            };
+            remote.Files["remote-only.txt"] = new GoogleDriveSyncFileEntry
+            {
+                RelativePath = "remote-only.txt",
+                ItemId = "remote-id",
+                Size = 6,
+                Hash = "remote"
+            };
+
+            GoogleDriveSyncPlan plan = GoogleDriveSyncPlanner.BuildBidirectionalPlan(
+                localBaseline,
+                remoteBaseline,
+                local,
+                remote,
+                mirrorDeletes: true);
+
+            Assert.That(plan.Operations.Any(operation =>
+                operation.Kind == GoogleDriveSyncOperationKind.DeleteRemoteFile
+                && operation.RelativePath == "delete-me.txt"), Is.True);
+            Assert.That(plan.Operations.Any(operation =>
+                operation.Kind == GoogleDriveSyncOperationKind.DownloadFile
+                && operation.RelativePath == "remote-only.txt"), Is.True);
+            Assert.That(plan.Operations.Any(operation =>
+                operation.Kind == GoogleDriveSyncOperationKind.DeleteLocalFile
+                && operation.RelativePath == "remote-only.txt"), Is.False);
+        }
+
+        [Test]
+        public void BuildBidirectionalPlan_PropagatesRemoteDeletionWhilePreservingUnrelatedLocalAddition()
+        {
+            GoogleDriveLocalMirrorState localBaseline = new GoogleDriveLocalMirrorState();
+            localBaseline.Files.Add(new GoogleDriveLocalMirrorFileState
+            {
+                RelativePath = "delete-me.txt",
+                Size = 4,
+                ContentHash = "base"
+            });
+
+            GoogleDriveLocalMirrorState remoteBaseline = new GoogleDriveLocalMirrorState();
+            remoteBaseline.Files.Add(new GoogleDriveLocalMirrorFileState
+            {
+                RelativePath = "delete-me.txt",
+                Size = 4,
+                ContentHash = "base"
+            });
+
+            GoogleDriveSyncSnapshot local = new GoogleDriveSyncSnapshot();
+            local.Files["delete-me.txt"] = new GoogleDriveSyncFileEntry
+            {
+                RelativePath = "delete-me.txt",
+                Size = 4,
+                Hash = "base"
+            };
+            local.Files["local-only.txt"] = new GoogleDriveSyncFileEntry
+            {
+                RelativePath = "local-only.txt",
+                Size = 5,
+                Hash = "local"
+            };
+
+            GoogleDriveSyncSnapshot remote = new GoogleDriveSyncSnapshot();
+
+            GoogleDriveSyncPlan plan = GoogleDriveSyncPlanner.BuildBidirectionalPlan(
+                localBaseline,
+                remoteBaseline,
+                local,
+                remote,
+                mirrorDeletes: true);
+
+            Assert.That(plan.Operations.Any(operation =>
+                operation.Kind == GoogleDriveSyncOperationKind.DeleteLocalFile
+                && operation.RelativePath == "delete-me.txt"), Is.True);
+            Assert.That(plan.Operations.Any(operation =>
+                operation.Kind == GoogleDriveSyncOperationKind.UploadFile
+                && operation.RelativePath == "local-only.txt"), Is.True);
+            Assert.That(plan.Operations.Any(operation =>
+                operation.Kind == GoogleDriveSyncOperationKind.DeleteRemoteFile
+                && operation.RelativePath == "local-only.txt"), Is.False);
+        }
     }
 
     [TestFixture]
@@ -951,6 +1177,46 @@ namespace UnitTests
         }
 
         [Test]
+        public async Task PullFromDriveAsync_CapturesFinalRemoteSnapshotForPostSyncRuntimeState()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "drive_pull_snapshot_test_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                Directory.CreateDirectory(root);
+
+                FakeGoogleDriveRemoteClient client = new FakeGoogleDriveRemoteClient();
+                client.AddFolder("characters", "folder-characters");
+                client.AddFolder("characters/phoenix", "folder-phoenix");
+                client.AddFile("characters/phoenix/char.ini", "file-char", "name=Phoenix");
+
+                GoogleDriveSyncSettings settings = new GoogleDriveSyncSettings
+                {
+                    LocalFolderPath = root,
+                    RemoteFolderId = client.RootFolderId,
+                    MirrorDeletes = true
+                };
+
+                GoogleDriveSyncService service = new GoogleDriveSyncService();
+                GoogleDriveSyncSummary summary = await service.PullFromDriveAsync(
+                    client,
+                    settings,
+                    _ => { },
+                    CancellationToken.None);
+
+                Assert.That(summary.FinalRemoteSnapshot, Is.Not.Null);
+                Assert.That(summary.FinalRemoteSnapshot!.Folders.ContainsKey("characters"), Is.True);
+                Assert.That(summary.FinalRemoteSnapshot.Files.ContainsKey("characters/phoenix/char.ini"), Is.True);
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        [Test]
         public async Task PushLocalFolderAsync_UploadsFilesAndDeletesObsoleteRemoteEntries()
         {
             string root = Path.Combine(Path.GetTempPath(), "drive_push_test_" + Guid.NewGuid().ToString("N"));
@@ -989,6 +1255,313 @@ namespace UnitTests
                 Assert.That(summary.KnownRemoteItemIds.Count, Is.GreaterThanOrEqualTo(2));
                 Assert.That(summary.KnownRemoteItemIds, Has.Some.StartsWith("folder-"));
                 Assert.That(summary.KnownRemoteItemIds, Has.Some.StartsWith("file-"));
+                Assert.That(summary.FinalRemoteSnapshot, Is.Not.Null);
+                Assert.That(summary.FinalRemoteSnapshot!.Folders.ContainsKey("background"), Is.True);
+                Assert.That(summary.FinalRemoteSnapshot.Files.ContainsKey("background/scene.png"), Is.True);
+                Assert.That(summary.FinalRemoteSnapshot.Files.ContainsKey("obsolete/old.txt"), Is.False);
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        [Test]
+        public async Task BuildRuntimeStateAfterSyncAsync_UsesSummarySnapshotWithoutRequestingAnotherRemoteTreeRead()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "drive_runtime_state_after_sync_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                Directory.CreateDirectory(root);
+
+                FakeGoogleDriveRemoteClient client = new FakeGoogleDriveRemoteClient();
+                client.AddFolder("characters", "folder-characters");
+                client.AddFolder("characters/phoenix", "folder-phoenix");
+                client.AddFile("characters/phoenix/char.ini", "file-char", "name=Phoenix");
+
+                GoogleDriveSyncSettings settings = new GoogleDriveSyncSettings
+                {
+                    LocalFolderPath = root,
+                    RemoteFolderId = client.RootFolderId,
+                    MirrorDeletes = true
+                };
+
+                GoogleDriveSyncService service = new GoogleDriveSyncService();
+                GoogleDriveSyncSummary summary = await service.PullFromDriveAsync(
+                    client,
+                    settings,
+                    _ => { },
+                    CancellationToken.None);
+
+                client.ResetCallCounters();
+
+                GoogleDriveConnectionRuntimeState runtimeState = await service.BuildRuntimeStateAfterSyncAsync(
+                    client,
+                    "connection-1",
+                    settings,
+                    summary,
+                    CancellationToken.None);
+
+                Assert.That(client.GetSnapshotCallCount, Is.EqualTo(0));
+                Assert.That(client.GetStartPageTokenCallCount, Is.EqualTo(1));
+                Assert.That(runtimeState.KnownRemoteItemIds, Contains.Item("folder-characters"));
+                Assert.That(runtimeState.KnownRemoteItemIds, Contains.Item("file-char"));
+                Assert.That(runtimeState.LocalMirrorState.Files.Any(file =>
+                    string.Equals(file.RelativePath, "characters/phoenix/char.ini", StringComparison.OrdinalIgnoreCase)), Is.True);
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        [Test]
+        public async Task MergeWithDriveAsync_ReconcilesDisjointLocalAndRemoteChanges()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "drive_merge_test_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                Directory.CreateDirectory(root);
+                File.WriteAllText(Path.Combine(root, "shared.txt"), "base");
+
+                FakeGoogleDriveRemoteClient client = new FakeGoogleDriveRemoteClient();
+                client.AddFile("shared.txt", "file-shared", "base");
+
+                GoogleDriveSyncSettings settings = new GoogleDriveSyncSettings
+                {
+                    LocalFolderPath = root,
+                    RemoteFolderId = client.RootFolderId,
+                    MirrorDeletes = true
+                };
+
+                GoogleDriveLocalMirrorState localBaseline = GoogleDriveLocalMirrorStateSupport.CaptureExact(root);
+                GoogleDriveLocalMirrorState remoteBaseline = GoogleDriveLocalMirrorStateSupport.FromSnapshot(client.Snapshot);
+
+                File.WriteAllText(Path.Combine(root, "local-only.txt"), "local");
+                client.AddFile("remote-only.txt", "file-remote", "remote");
+
+                GoogleDriveSyncService service = new GoogleDriveSyncService();
+                GoogleDriveSyncSummary summary = await service.MergeWithDriveAsync(
+                    client,
+                    settings,
+                    localBaseline,
+                    remoteBaseline,
+                    _ => { },
+                    CancellationToken.None);
+
+                Assert.That(File.ReadAllText(Path.Combine(root, "local-only.txt")), Is.EqualTo("local"));
+                Assert.That(File.ReadAllText(Path.Combine(root, "remote-only.txt")), Is.EqualTo("remote"));
+                Assert.That(client.Snapshot.Files.ContainsKey("local-only.txt"), Is.True);
+                Assert.That(client.GetFileText("local-only.txt"), Is.EqualTo("local"));
+                Assert.That(summary.FilesUploaded, Is.EqualTo(1));
+                Assert.That(summary.FilesDownloaded, Is.EqualTo(1));
+                Assert.That(summary.RemoteFilesDeleted, Is.EqualTo(0));
+                Assert.That(summary.LocalFilesDeleted, Is.EqualTo(0));
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        [Test]
+        public async Task MergeWithDriveAsync_RemoteVersionWinsWhenBothSidesEditSameFile()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "drive_merge_conflict_test_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                Directory.CreateDirectory(root);
+                string sharedPath = Path.Combine(root, "shared.txt");
+                File.WriteAllText(sharedPath, "base");
+
+                FakeGoogleDriveRemoteClient client = new FakeGoogleDriveRemoteClient();
+                client.AddFile("shared.txt", "file-shared", "base");
+
+                GoogleDriveSyncSettings settings = new GoogleDriveSyncSettings
+                {
+                    LocalFolderPath = root,
+                    RemoteFolderId = client.RootFolderId,
+                    MirrorDeletes = true
+                };
+
+                GoogleDriveLocalMirrorState localBaseline = GoogleDriveLocalMirrorStateSupport.CaptureExact(root);
+                GoogleDriveLocalMirrorState remoteBaseline = GoogleDriveLocalMirrorStateSupport.FromSnapshot(client.Snapshot);
+
+                File.WriteAllText(sharedPath, "local");
+                client.AddFile("shared.txt", "file-shared", "remote");
+
+                GoogleDriveSyncService service = new GoogleDriveSyncService();
+                GoogleDriveSyncSummary summary = await service.MergeWithDriveAsync(
+                    client,
+                    settings,
+                    localBaseline,
+                    remoteBaseline,
+                    _ => { },
+                    CancellationToken.None);
+
+                Assert.That(File.ReadAllText(sharedPath), Is.EqualTo("remote"));
+                Assert.That(client.GetFileText("shared.txt"), Is.EqualTo("remote"));
+                Assert.That(summary.FilesDownloaded, Is.EqualTo(1));
+                Assert.That(summary.FilesUploaded, Is.EqualTo(0));
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        [Test]
+        public async Task MergeWithDriveAsync_RemoteDeletionWinsWhenBothSidesChangeSameFile()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "drive_merge_delete_conflict_test_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                Directory.CreateDirectory(root);
+                string sharedPath = Path.Combine(root, "shared.txt");
+                File.WriteAllText(sharedPath, "base");
+
+                FakeGoogleDriveRemoteClient client = new FakeGoogleDriveRemoteClient();
+                client.AddFile("shared.txt", "file-shared", "base");
+
+                GoogleDriveSyncSettings settings = new GoogleDriveSyncSettings
+                {
+                    LocalFolderPath = root,
+                    RemoteFolderId = client.RootFolderId,
+                    MirrorDeletes = true
+                };
+
+                GoogleDriveLocalMirrorState localBaseline = GoogleDriveLocalMirrorStateSupport.CaptureExact(root);
+                GoogleDriveLocalMirrorState remoteBaseline = GoogleDriveLocalMirrorStateSupport.FromSnapshot(client.Snapshot);
+
+                File.WriteAllText(sharedPath, "local");
+                await client.DeleteItemAsync("file-shared", CancellationToken.None);
+
+                GoogleDriveSyncService service = new GoogleDriveSyncService();
+                GoogleDriveSyncSummary summary = await service.MergeWithDriveAsync(
+                    client,
+                    settings,
+                    localBaseline,
+                    remoteBaseline,
+                    _ => { },
+                    CancellationToken.None);
+
+                Assert.That(File.Exists(sharedPath), Is.False);
+                Assert.That(client.Snapshot.Files.ContainsKey("shared.txt"), Is.False);
+                Assert.That(summary.LocalFilesDeleted, Is.EqualTo(1));
+                Assert.That(summary.FilesUploaded, Is.EqualTo(0));
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        [Test]
+        public async Task MergeWithDriveAsync_PropagatesLocalDeletionWithoutMirroringUnrelatedRemoteAddition()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "drive_merge_local_delete_test_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                Directory.CreateDirectory(root);
+                string deletePath = Path.Combine(root, "delete-me.txt");
+                File.WriteAllText(deletePath, "base");
+
+                FakeGoogleDriveRemoteClient client = new FakeGoogleDriveRemoteClient();
+                client.AddFile("delete-me.txt", "file-delete", "base");
+
+                GoogleDriveSyncSettings settings = new GoogleDriveSyncSettings
+                {
+                    LocalFolderPath = root,
+                    RemoteFolderId = client.RootFolderId,
+                    MirrorDeletes = true
+                };
+
+                GoogleDriveLocalMirrorState localBaseline = GoogleDriveLocalMirrorStateSupport.CaptureExact(root);
+                GoogleDriveLocalMirrorState remoteBaseline = GoogleDriveLocalMirrorStateSupport.FromSnapshot(client.Snapshot);
+
+                File.Delete(deletePath);
+                client.AddFile("remote-only.txt", "file-remote", "remote");
+
+                GoogleDriveSyncService service = new GoogleDriveSyncService();
+                GoogleDriveSyncSummary summary = await service.MergeWithDriveAsync(
+                    client,
+                    settings,
+                    localBaseline,
+                    remoteBaseline,
+                    _ => { },
+                    CancellationToken.None);
+
+                Assert.That(File.Exists(deletePath), Is.False);
+                Assert.That(client.Snapshot.Files.ContainsKey("delete-me.txt"), Is.False);
+                Assert.That(File.ReadAllText(Path.Combine(root, "remote-only.txt")), Is.EqualTo("remote"));
+                Assert.That(client.Snapshot.Files.ContainsKey("remote-only.txt"), Is.True);
+                Assert.That(summary.RemoteFilesDeleted, Is.EqualTo(1));
+                Assert.That(summary.FilesDownloaded, Is.EqualTo(1));
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        [Test]
+        public async Task MergeWithDriveAsync_PropagatesRemoteDeletionWithoutMirroringUnrelatedLocalAddition()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "drive_merge_remote_delete_test_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                Directory.CreateDirectory(root);
+                string deletePath = Path.Combine(root, "delete-me.txt");
+                File.WriteAllText(deletePath, "base");
+
+                FakeGoogleDriveRemoteClient client = new FakeGoogleDriveRemoteClient();
+                client.AddFile("delete-me.txt", "file-delete", "base");
+
+                GoogleDriveSyncSettings settings = new GoogleDriveSyncSettings
+                {
+                    LocalFolderPath = root,
+                    RemoteFolderId = client.RootFolderId,
+                    MirrorDeletes = true
+                };
+
+                GoogleDriveLocalMirrorState localBaseline = GoogleDriveLocalMirrorStateSupport.CaptureExact(root);
+                GoogleDriveLocalMirrorState remoteBaseline = GoogleDriveLocalMirrorStateSupport.FromSnapshot(client.Snapshot);
+
+                File.WriteAllText(Path.Combine(root, "local-only.txt"), "local");
+                await client.DeleteItemAsync("file-delete", CancellationToken.None);
+
+                GoogleDriveSyncService service = new GoogleDriveSyncService();
+                GoogleDriveSyncSummary summary = await service.MergeWithDriveAsync(
+                    client,
+                    settings,
+                    localBaseline,
+                    remoteBaseline,
+                    _ => { },
+                    CancellationToken.None);
+
+                Assert.That(File.Exists(deletePath), Is.False);
+                Assert.That(client.Snapshot.Files.ContainsKey("delete-me.txt"), Is.False);
+                Assert.That(client.GetFileText("local-only.txt"), Is.EqualTo("local"));
+                Assert.That(summary.LocalFilesDeleted, Is.EqualTo(1));
+                Assert.That(summary.FilesUploaded, Is.EqualTo(1));
             }
             finally
             {
@@ -1062,8 +1635,16 @@ namespace UnitTests
             public string StartPageToken { get; set; } = "token-0";
             public TimeSpan DownloadDelay { get; set; } = TimeSpan.Zero;
             public int MaxConcurrentDownloads { get; private set; }
+            public int GetSnapshotCallCount { get; private set; }
+            public int GetStartPageTokenCallCount { get; private set; }
 
             public GoogleDriveSyncSnapshot Snapshot { get; } = new GoogleDriveSyncSnapshot();
+
+            public void ResetCallCounters()
+            {
+                GetSnapshotCallCount = 0;
+                GetStartPageTokenCallCount = 0;
+            }
 
             public void AddFolder(string relativePath, string folderId)
             {
@@ -1139,6 +1720,7 @@ namespace UnitTests
 
             public Task<string> GetStartPageTokenAsync(CancellationToken cancellationToken)
             {
+                GetStartPageTokenCallCount++;
                 return Task.FromResult(StartPageToken);
             }
 
@@ -1157,6 +1739,7 @@ namespace UnitTests
 
             public Task<GoogleDriveSyncSnapshot> GetSnapshotAsync(string rootFolderId, CancellationToken cancellationToken)
             {
+                GetSnapshotCallCount++;
                 GoogleDriveSyncSnapshot clone = new GoogleDriveSyncSnapshot();
                 foreach (KeyValuePair<string, GoogleDriveSyncFolderEntry> pair in Snapshot.Folders)
                 {

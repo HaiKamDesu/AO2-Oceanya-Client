@@ -233,6 +233,18 @@
                            Margin="0,8,0,0"
                            Style="{StaticResource BodyHintText}"
                            Text="Background sync agent status unavailable."/>
+                <StackPanel Margin="0,12,0,0"
+                            Orientation="Horizontal">
+                    <Button x:Name="BackgroundAgentSessionButton"
+                            MinWidth="170"
+                            Style="{StaticResource ModernButton}"
+                            Click="BackgroundAgentSessionButton_Click"
+                            Content="Launch Agent Now"/>
+                    <TextBlock Margin="12,0,0,0"
+                               VerticalAlignment="Center"
+                               Style="{StaticResource BodyHintText}"
+                               Text="This controls the hidden agent for the current Windows session without changing your saved startup preference."/>
+                </StackPanel>
             </StackPanel>
         </Border>
 

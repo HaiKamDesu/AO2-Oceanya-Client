@@ -30,7 +30,6 @@ namespace OceanyaClient
         }
 
         private readonly GoogleDriveSyncService syncService;
-        private readonly GoogleDriveRemoteChangeTracker remoteChangeTracker;
         private readonly GoogleDriveConnectionRuntimeStateStore runtimeStateStore;
         private readonly GoogleDriveSecureClientCredentialStore credentialStore;
         private readonly FileHivemindBackgroundAgentLauncher backgroundAgentLauncher;
@@ -51,7 +50,6 @@ namespace OceanyaClient
         {
             InitializeComponent();
             this.syncService = syncService ?? new GoogleDriveSyncService();
-            remoteChangeTracker = new GoogleDriveRemoteChangeTracker();
             runtimeStateStore = new GoogleDriveConnectionRuntimeStateStore();
             credentialStore = new GoogleDriveSecureClientCredentialStore();
             backgroundAgentLauncher = new FileHivemindBackgroundAgentLauncher();
@@ -204,6 +202,13 @@ namespace OceanyaClient
             int pollIntervalSeconds = SaveFile.Data.FileHivemind.RemotePollIntervalSeconds;
             int eligibleConnections = SaveFile.Data.FileHivemind.Connections.Count(FileHivemindBackgroundAgentLauncher.IsEligibleConnection);
             string toastStatus = SaveFile.Data.FileHivemind.ShowDesktopToasts ? "desktop toasts enabled" : "desktop toasts disabled";
+            BackgroundAgentSessionButton.Content = agentRunning ? "Stop Agent Now" : "Launch Agent Now";
+            BackgroundAgentSessionButton.IsEnabled = agentRunning || eligibleConnections > 0;
+            BackgroundAgentSessionButton.ToolTip = agentRunning
+                ? "Ask the hidden Hivemind agent to stop for this Windows session. Your saved startup preference stays the same."
+                : eligibleConnections > 0
+                    ? "Launch the hidden Hivemind agent now for this Windows session without waiting for Windows startup."
+                    : "Sign into and fully configure at least one connection before launching the hidden Hivemind agent.";
             BackgroundAgentStatusTextBlock.Text = eligibleConnections == 0
                 ? $"Background sync is idle because there are no signed-in, fully configured connections yet. Current poll interval: {pollIntervalSeconds} seconds, {toastStatus}."
                 : runAtStartup
@@ -317,7 +322,7 @@ namespace OceanyaClient
                     GoogleDriveSyncSummary summary = await operation(connection.GoogleDrive);
                     AppendStatus("Refreshing only the AO assets touched by this sync.", StatusLogLevel.Action, connection.EffectiveDisplayName);
                     RefreshMountedAssets(connection, summary.LocalChanges);
-                    await TryRefreshRuntimeStateAsync(connection, summary.KnownRemoteItemIds);
+                    await TryRefreshRuntimeStateAsync(connection, summary);
                     SaveFile.Save();
                     UpdateSelectedConnectionDetails(connection);
                     AppendStatus(BuildSummaryMessage(summary), StatusLogLevel.Success, connection.EffectiveDisplayName);
@@ -375,17 +380,15 @@ namespace OceanyaClient
 
         private async Task TryRefreshRuntimeStateAsync(
             FileHivemindConnectionProfile connection,
-            IEnumerable<string>? additionalKnownItemIds = null)
+            GoogleDriveSyncSummary summary)
         {
             try
             {
-                GoogleDriveConnectionRuntimeState runtimeState = await remoteChangeTracker.CaptureRuntimeStateAsync(
+                GoogleDriveConnectionRuntimeState runtimeState = await syncService.BuildRuntimeStateAfterSyncAsync(
                     connection.Id,
                     connection.GoogleDrive,
+                    summary,
                     CancellationToken.None);
-                runtimeState = GoogleDriveRemoteChangeTracker.MergeKnownRemoteItemIds(runtimeState, additionalKnownItemIds);
-                runtimeState.LastSuccessfulSyncUtc = DateTimeOffset.UtcNow;
-                runtimeState.LastErrorMessage = string.Empty;
                 runtimeStateStore.Save(runtimeState);
             }
             catch (Exception ex)
@@ -421,6 +424,49 @@ namespace OceanyaClient
             SaveFile.Data.FileHivemind.SelectedConnectionId = selectedConnection?.Id ?? string.Empty;
             SaveFile.Save();
             UpdateSelectedConnectionDetails(selectedConnection);
+        }
+
+        private async void BackgroundAgentSessionButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                bool isRunning = backgroundAgentLauncher.IsAgentRunning();
+                if (isRunning)
+                {
+                    bool stopRequested = backgroundAgentLauncher.RequestStopForCurrentSession();
+                    AppendStatus(
+                        stopRequested
+                            ? "Requested the hidden Hivemind background agent to stop for this Windows session."
+                            : "The hidden Hivemind background agent is not running.",
+                        stopRequested ? StatusLogLevel.Info : StatusLogLevel.Warning);
+                }
+                else
+                {
+                    if (!FileHivemindBackgroundAgentLauncher.HasEligibleConnections(SaveFile.Data.FileHivemind))
+                    {
+                        AppendStatus(
+                            "At least one signed-in, fully configured connection is required before launching the hidden Hivemind agent.",
+                            StatusLogLevel.Warning);
+                        RefreshBackgroundAgentControls();
+                        return;
+                    }
+
+                    bool started = backgroundAgentLauncher.StartForCurrentSession(SaveFile.Data.FileHivemind);
+                    AppendStatus(
+                        started
+                            ? "Launched the hidden Hivemind background agent for this Windows session."
+                            : "The hidden Hivemind background agent could not be launched.",
+                        started ? StatusLogLevel.Success : StatusLogLevel.Warning);
+                }
+
+                RefreshBackgroundAgentControls();
+                await Task.Delay(900);
+                RefreshBackgroundAgentControls();
+            }
+            catch (Exception ex)
+            {
+                AppendStatus("Background agent session control failed: " + ex.Message, StatusLogLevel.Error);
+            }
         }
 
         private void RunAtStartupCheckBox_Changed(object sender, RoutedEventArgs e)
@@ -941,7 +987,7 @@ namespace OceanyaClient
                         GoogleDriveSyncSummary summary = await operation(connection);
                         AppendStatus("Refreshing only the AO assets touched by this sync.", StatusLogLevel.Action, connection.EffectiveDisplayName);
                         RefreshMountedAssets(connection, summary.LocalChanges);
-                        await TryRefreshRuntimeStateAsync(connection, summary.KnownRemoteItemIds);
+                        await TryRefreshRuntimeStateAsync(connection, summary);
                         AppendStatus(BuildSummaryMessage(summary), StatusLogLevel.Success, connection.EffectiveDisplayName);
                     }
 

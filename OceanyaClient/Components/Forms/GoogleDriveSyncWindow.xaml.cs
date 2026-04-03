@@ -29,7 +29,6 @@ namespace OceanyaClient
 
         private const string StoredSecretMaskValue = "oceanya_stored_secret";
         private readonly GoogleDriveSyncService syncService;
-        private readonly GoogleDriveRemoteChangeTracker remoteChangeTracker;
         private readonly GoogleDriveConnectionRuntimeStateStore runtimeStateStore;
         private readonly GoogleDriveSecureClientCredentialStore credentialStore;
         private readonly FileHivemindConnectionProfile connection;
@@ -49,7 +48,6 @@ namespace OceanyaClient
         {
             InitializeComponent();
             this.syncService = syncService ?? new GoogleDriveSyncService();
-            remoteChangeTracker = new GoogleDriveRemoteChangeTracker();
             runtimeStateStore = new GoogleDriveConnectionRuntimeStateStore();
             credentialStore = new GoogleDriveSecureClientCredentialStore();
             this.connection = connection ?? FileHivemindConnectionProfile.CreateGoogleDriveProfile();
@@ -687,7 +685,7 @@ namespace OceanyaClient
                 try
                 {
                     GoogleDriveSyncSummary summary = await action();
-                    await TryRefreshRuntimeStateAsync(summary.KnownRemoteItemIds);
+                    await TryRefreshRuntimeStateAsync(summary);
                     PersistSettings(forcePersist: true);
                     UpdateAccountStatus();
                 }
@@ -708,17 +706,15 @@ namespace OceanyaClient
             }
         }
 
-        private async Task TryRefreshRuntimeStateAsync(IEnumerable<string>? additionalKnownItemIds = null)
+        private async Task TryRefreshRuntimeStateAsync(GoogleDriveSyncSummary summary)
         {
             try
             {
-                GoogleDriveConnectionRuntimeState runtimeState = await remoteChangeTracker.CaptureRuntimeStateAsync(
+                GoogleDriveConnectionRuntimeState runtimeState = await syncService.BuildRuntimeStateAfterSyncAsync(
                     connection.Id,
                     Settings,
+                    summary,
                     CancellationToken.None);
-                runtimeState = GoogleDriveRemoteChangeTracker.MergeKnownRemoteItemIds(runtimeState, additionalKnownItemIds);
-                runtimeState.LastSuccessfulSyncUtc = DateTimeOffset.UtcNow;
-                runtimeState.LastErrorMessage = string.Empty;
                 runtimeStateStore.Save(runtimeState);
             }
             catch (Exception ex)

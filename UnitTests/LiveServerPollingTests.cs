@@ -32,17 +32,18 @@ public class LiveServerPollingTests
 
     [Test]
     [CancelAfter(300000)]
-    public async Task LivePolling_SelectableServers_ExposePlayerCounts()
+    public async Task LivePolling_SelectableServers_RemainLaunchableWhenCountsAreUnavailable()
     {
         string configIniPath = GetConfiguredIniPathOrIgnore();
 
         List<ServerEndpointDefinition> servers = await ServerEndpointCatalog.LoadAsync(configIniPath, CancellationToken.None);
         List<ServerEndpointDefinition> selectableServers = servers
+            .Where(server => server.Source == ServerEndpointSource.AoServerPoll)
             .Where(server => server.IsSelectable)
             .ToList();
 
         Assert.That(selectableServers.Count, Is.GreaterThan(0),
-            "Expected at least one selectable server from live polling.");
+            "Expected at least one selectable AO poll server from live polling.");
 
         List<ServerEndpointDefinition> missingCounts = selectableServers
             .Where(server => !server.OnlinePlayers.HasValue || !server.MaxPlayers.HasValue)
@@ -52,11 +53,8 @@ public class LiveServerPollingTests
         {
             string details = string.Join(Environment.NewLine, missingCounts.Select(server =>
                 $"- {server.SourceDisplayName} | {server.Name} | {server.Endpoint} | players={server.OnlinePlayers?.ToString() ?? "null"}/{server.MaxPlayers?.ToString() ?? "null"}"));
-
-            Assert.Fail(
-                "Every selectable server must expose player counts (AO style). Missing counts:" +
-                Environment.NewLine +
-                details);
+            TestContext.Progress.WriteLine(
+                "Selectable servers without player counts:" + Environment.NewLine + details);
         }
 
         int nonSelectableCount = servers.Count - selectableServers.Count;
@@ -75,8 +73,8 @@ public class LiveServerPollingTests
             .Where(server => server.Source == ServerEndpointSource.AoServerPoll)
             .Where(server => server.IsOnline)
             .Where(server => !server.IsLegacy)
-            .Where(server => server.IsAoClientCompatible)
             .Where(server => InitialConfigurationWindow.IsValidServerEndpoint(server.Endpoint))
+            .Where(server => !server.IsSelectable)
             .Where(server => !server.OnlinePlayers.HasValue || !server.MaxPlayers.HasValue)
             .OrderBy(server => server.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -143,6 +141,80 @@ public class LiveServerPollingTests
 
         Assert.That(targetServer.MaxPlayers, Is.EqualTo(100),
             "Expected max players of 100 for 'AO official server (Vanilla)' to match AO behavior.");
+    }
+
+    [Test]
+    [CancelAfter(180000)]
+    public async Task LivePolling_ChillAndDices_DirectEntry_RemainsSelectableWhenCountsAreUnavailable()
+    {
+        string configIniPath = GetConfiguredIniPathOrIgnore();
+        string chillEndpoint = Globals.IPs.TryGetValue(Globals.Servers.ChillAndDices, out string? configuredEndpoint)
+            ? configuredEndpoint?.Trim() ?? string.Empty
+            : string.Empty;
+
+        if (string.IsNullOrWhiteSpace(chillEndpoint))
+        {
+            Assert.Ignore("Chill and Dices endpoint is not configured in Globals.");
+        }
+
+        List<ServerEndpointDefinition> servers = await ServerEndpointCatalog.LoadAsync(configIniPath, CancellationToken.None);
+        ServerEndpointDefinition? targetServer = servers.FirstOrDefault(server =>
+            string.Equals(server.Endpoint, chillEndpoint, StringComparison.OrdinalIgnoreCase)
+            && server.Source != ServerEndpointSource.AoServerPoll);
+
+        if (targetServer == null)
+        {
+            Assert.Ignore("Chill and Dices default/favorite entry was not present in the loaded catalog.");
+        }
+
+        TestContext.Progress.WriteLine(
+            $"Chill probe: source={targetServer.Source} selectable={targetServer.IsSelectable} online={targetServer.IsOnline} players={targetServer.OnlinePlayers?.ToString() ?? "null"}/{targetServer.MaxPlayers?.ToString() ?? "null"} endpoint={targetServer.Endpoint}");
+
+        if (!targetServer.IsOnline)
+        {
+            Assert.Ignore("Chill and Dices is currently offline or unreachable.");
+        }
+
+        Assert.That(targetServer.IsSelectable, Is.True,
+            "Expected Chill and Dices to remain launchable even when live player counts are unavailable.");
+
+        if (!targetServer.OnlinePlayers.HasValue || !targetServer.MaxPlayers.HasValue)
+        {
+            TestContext.Progress.WriteLine("Chill and Dices is currently reachable without exposed player counts.");
+        }
+    }
+
+    [Test]
+    [CancelAfter(180000)]
+    public async Task LivePolling_ChillAndDices_DirectProbe_LogsTranscript()
+    {
+        string chillEndpoint = Globals.IPs.TryGetValue(Globals.Servers.ChillAndDices, out string? configuredEndpoint)
+            ? configuredEndpoint?.Trim() ?? string.Empty
+            : string.Empty;
+
+        if (string.IsNullOrWhiteSpace(chillEndpoint))
+        {
+            Assert.Ignore("Chill and Dices endpoint is not configured in Globals.");
+        }
+
+        AoPlayerCountProbeResult result = await ServerEndpointCatalog.ProbeAoPlayerCountDetailedForTestingAsync(
+            chillEndpoint,
+            CancellationToken.None);
+
+        TestContext.Progress.WriteLine(
+            $"Chill direct probe: success={result.Success} incompatible={result.IncompatibleClient} players={result.Players?.ToString() ?? "null"}/{result.MaxPlayers?.ToString() ?? "null"}");
+        foreach (string sentPacket in result.SentPackets)
+        {
+            TestContext.Progress.WriteLine("Sent: " + sentPacket);
+        }
+
+        foreach (string receivedPacket in result.ReceivedPackets)
+        {
+            TestContext.Progress.WriteLine("Received: " + receivedPacket);
+        }
+
+        Assert.That(result.ReceivedPackets.Count, Is.GreaterThan(0),
+            "Expected the Chill and Dices direct probe to receive at least one packet.");
     }
 
     private static string GetConfiguredIniPathOrIgnore()

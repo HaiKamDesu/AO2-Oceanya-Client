@@ -153,7 +153,7 @@ namespace OceanyaClient
                     return;
                 }
 
-                if (!TryParseWebsocketEndpoint(selectedServer.Endpoint, out string selectedAddress, out int selectedPort))
+                if (!TryParseWebsocketEndpoint(selectedServer.Endpoint, out string selectedAddress, out int selectedPort, out bool selectedSecure))
                 {
                     OceanyaMessageBox.Show(
                         "Only WebSocket servers can be added to favorites.",
@@ -182,7 +182,8 @@ namespace OceanyaClient
                         Address = selectedAddress,
                         Port = selectedPort,
                         Description = selectedServer.Description,
-                        Legacy = false
+                        Legacy = false,
+                        Secure = selectedSecure
                     });
 
                 await RefreshFavoritesOnlyAsync(selectedServer.Endpoint, switchToFavoritesTab: true);
@@ -200,13 +201,23 @@ namespace OceanyaClient
                 return;
             }
 
-            if (!TryParseWebsocketEndpoint(endpoint, out string address, out int port))
+            if (!TryParseWebsocketEndpoint(endpoint, out string address, out int port, out bool secure))
             {
                 OceanyaMessageBox.Show(
                     "Invalid endpoint format. Use ws:// or wss:// and include host/port.",
                     "Invalid Endpoint",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
+                return;
+            }
+
+            if (TrySelectExistingFavorite(endpoint.Trim(), excludedFavoriteIndex: null))
+            {
+                OceanyaMessageBox.Show(
+                    "That endpoint is already saved in your favorites.",
+                    "Duplicate Favorite",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
                 return;
             }
 
@@ -218,7 +229,8 @@ namespace OceanyaClient
                     Address = address,
                     Port = port,
                     Description = description,
-                    Legacy = false
+                    Legacy = false,
+                    Secure = secure
                 });
 
             await RefreshFavoritesOnlyAsync(endpoint.Trim(), switchToFavoritesTab: true);
@@ -245,7 +257,7 @@ namespace OceanyaClient
                 return;
             }
 
-            if (!TryParseWebsocketEndpoint(endpoint, out string address, out int port))
+            if (!TryParseWebsocketEndpoint(endpoint, out string address, out int port, out bool secure))
             {
                 OceanyaMessageBox.Show(
                     "Invalid endpoint format. Use ws:// or wss:// and include host/port.",
@@ -255,14 +267,23 @@ namespace OceanyaClient
                 return;
             }
 
-            int favoriteIndex = ServerEndpointCatalog.FindFavoriteIndexByEndpoint(configIniPath, selected.Endpoint);
-            if (favoriteIndex < 0)
+            if (!ServerEndpointCatalog.TryGetFavoriteIndex(selected, out int favoriteIndex))
             {
                 OceanyaMessageBox.Show(
                     "Selected favorite was not found. Please refresh and try again.",
                     "Favorite Missing",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
+                return;
+            }
+
+            if (TrySelectExistingFavorite(endpoint.Trim(), favoriteIndex))
+            {
+                OceanyaMessageBox.Show(
+                    "Another favorite already uses that endpoint.",
+                    "Duplicate Favorite",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
                 return;
             }
 
@@ -275,7 +296,8 @@ namespace OceanyaClient
                     Address = address,
                     Port = port,
                     Description = description,
-                    Legacy = false
+                    Legacy = false,
+                    Secure = secure
                 });
 
             await RefreshFavoritesOnlyAsync(endpoint.Trim(), switchToFavoritesTab: true);
@@ -298,8 +320,7 @@ namespace OceanyaClient
                 return;
             }
 
-            int favoriteIndex = ServerEndpointCatalog.FindFavoriteIndexByEndpoint(configIniPath, selected.Endpoint);
-            if (favoriteIndex < 0)
+            if (!ServerEndpointCatalog.TryGetFavoriteIndex(selected, out int favoriteIndex))
             {
                 return;
             }
@@ -619,6 +640,15 @@ namespace OceanyaClient
                 favorite.IsOnline = known.IsOnline;
                 favorite.OnlinePlayers = known.OnlinePlayers;
                 favorite.MaxPlayers = known.MaxPlayers;
+                favorite.IsAoClientCompatible = known.IsAoClientCompatible;
+            }
+
+            if (!string.IsNullOrWhiteSpace(selectEndpoint))
+            {
+                List<ServerEndpointDefinition> targets = favorites
+                    .Where(favorite => string.Equals(favorite.Endpoint, selectEndpoint, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                await ServerEndpointCatalog.PopulateSupplementalStatusAsync(targets, CancellationToken.None);
             }
 
             allEntries.RemoveAll(server => server.Source == ServerEndpointSource.Favorites);
@@ -690,47 +720,10 @@ namespace OceanyaClient
             SelectedEndpointTextBlock.Text = selected.Endpoint;
             NotSelectableReasonTextBlock.Text = selected.IsSelectable
                 ? string.Empty
-                : GetNotSelectableReason(selected);
+                : ServerEndpointCatalog.GetNotSelectableReason(selected);
             SetDescriptionWithLinks(string.IsNullOrWhiteSpace(selected.Description)
                 ? "No description provided."
                 : selected.Description);
-        }
-
-        private static string GetNotSelectableReason(ServerEndpointDefinition server)
-        {
-            List<string> reasons = new List<string>();
-
-            if (!server.IsOnline)
-            {
-                reasons.Add("Server appears offline.");
-            }
-
-            if (server.IsOnline && (!server.OnlinePlayers.HasValue || !server.MaxPlayers.HasValue))
-            {
-                reasons.Add("Could not retrieve AO player counts.");
-            }
-
-            if (server.IsLegacy)
-            {
-                reasons.Add("Legacy TCP server (no WebSocket support).");
-            }
-
-            if (!server.IsAoClientCompatible)
-            {
-                reasons.Add("Server rejected AO2-compatible client probe.");
-            }
-
-            if (!InitialConfigurationWindow.IsValidServerEndpoint(server.Endpoint))
-            {
-                reasons.Add("Invalid WebSocket endpoint.");
-            }
-
-            if (reasons.Count == 0)
-            {
-                reasons.Add("Unavailable for connection.");
-            }
-
-            return "Reason: " + string.Join(" ", reasons);
         }
 
         private void SetDescriptionWithLinks(string description)
@@ -804,10 +797,33 @@ namespace OceanyaClient
             }
         }
 
-        private static bool TryParseWebsocketEndpoint(string endpoint, out string address, out int port)
+        private bool TrySelectExistingFavorite(string endpoint, int? excludedFavoriteIndex)
+        {
+            ServerEndpointDefinition? existingFavorite = allEntries
+                .Where(server => server.Source == ServerEndpointSource.Favorites)
+                .FirstOrDefault(server =>
+                    !string.IsNullOrWhiteSpace(server.Endpoint)
+                    && string.Equals(server.Endpoint, endpoint, StringComparison.OrdinalIgnoreCase)
+                    && (!ServerEndpointCatalog.TryGetFavoriteIndex(server, out int serverIndex)
+                        || !excludedFavoriteIndex.HasValue
+                        || serverIndex != excludedFavoriteIndex.Value));
+
+            if (existingFavorite == null)
+            {
+                return false;
+            }
+
+            ServerTabs.SelectedIndex = 2;
+            SelectByEndpoint(existingFavorite.Endpoint, ServerEndpointSource.Favorites, switchToMatchedTab: false);
+            UpdateSelectionState();
+            return true;
+        }
+
+        private static bool TryParseWebsocketEndpoint(string endpoint, out string address, out int port, out bool secure)
         {
             address = string.Empty;
             port = 0;
+            secure = false;
 
             if (!Uri.TryCreate(endpoint?.Trim(), UriKind.Absolute, out Uri? uri) || uri == null)
             {
@@ -828,6 +844,7 @@ namespace OceanyaClient
 
             address = uri.Host;
             port = uri.Port;
+            secure = string.Equals(uri.Scheme, "wss", StringComparison.OrdinalIgnoreCase);
             return true;
         }
 

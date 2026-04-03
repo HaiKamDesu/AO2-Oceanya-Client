@@ -12,7 +12,7 @@ namespace OceanyaHivemindAgent
         private static void Main(string[] args)
         {
             SaveData snapshot = SaveFile.LoadSnapshotFromDisk();
-            if (!FileHivemindBackgroundAgentLauncher.ShouldRunForSettings(snapshot.FileHivemind))
+            if (!FileHivemindBackgroundAgentLauncher.HasEligibleConnections(snapshot.FileHivemind))
             {
                 return;
             }
@@ -30,6 +30,8 @@ namespace OceanyaHivemindAgent
         private readonly FileHivemindBackgroundSyncAgent agent;
         private readonly FileHivemindTrayIconController trayIconController;
         private readonly Forms.Timer completionTimer;
+        private readonly Forms.Timer stopSignalTimer;
+        private readonly EventWaitHandle stopRequestedEvent;
         private readonly Task agentTask;
         private bool exitRequested;
 
@@ -38,12 +40,23 @@ namespace OceanyaHivemindAgent
             cancellationTokenSource = new CancellationTokenSource();
             trayIconController = new FileHivemindTrayIconController(RequestExit);
             agent = new FileHivemindBackgroundSyncAgent(backgroundNotifier: trayIconController);
+            stopRequestedEvent = new EventWaitHandle(
+                false,
+                EventResetMode.ManualReset,
+                FileHivemindBackgroundAgentCommandLine.AgentStopSignalEventName);
+            stopRequestedEvent.Reset();
             completionTimer = new Forms.Timer
             {
                 Interval = 500,
                 Enabled = true
             };
             completionTimer.Tick += CompletionTimer_Tick;
+            stopSignalTimer = new Forms.Timer
+            {
+                Interval = 500,
+                Enabled = true
+            };
+            stopSignalTimer.Tick += StopSignalTimer_Tick;
             agentTask = Task.Run(() => agent.RunAsync(cancellationTokenSource.Token));
         }
 
@@ -75,9 +88,20 @@ namespace OceanyaHivemindAgent
             cancellationTokenSource.Cancel();
         }
 
+        private void StopSignalTimer_Tick(object? sender, EventArgs e)
+        {
+            if (!stopRequestedEvent.WaitOne(0))
+            {
+                return;
+            }
+
+            RequestExit();
+        }
+
         protected override void ExitThreadCore()
         {
             completionTimer.Stop();
+            stopSignalTimer.Stop();
             cancellationTokenSource.Cancel();
 
             try
@@ -94,6 +118,8 @@ namespace OceanyaHivemindAgent
 
             trayIconController.Dispose();
             completionTimer.Dispose();
+            stopSignalTimer.Dispose();
+            stopRequestedEvent.Dispose();
             agent.Dispose();
             cancellationTokenSource.Dispose();
             base.ExitThreadCore();

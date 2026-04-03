@@ -10,12 +10,14 @@ namespace OceanyaClient.Features.GoogleDriveSync
 {
     public sealed class GoogleDriveConnectionRuntimeState
     {
-        public int FormatVersion { get; set; } = 1;
+        public int FormatVersion { get; set; } = 2;
         public string ConnectionId { get; set; } = string.Empty;
         public string RootFolderId { get; set; } = string.Empty;
         public string ChangePageToken { get; set; } = string.Empty;
         public List<string> KnownRemoteItemIds { get; set; } = new List<string>();
         public GoogleDriveLocalMirrorState LocalMirrorState { get; set; } = new GoogleDriveLocalMirrorState();
+        public GoogleDriveLocalMirrorState RemoteMirrorState { get; set; } = new GoogleDriveLocalMirrorState();
+        public bool HasRemoteMirrorState { get; set; }
         public DateTimeOffset? LastSuccessfulSyncUtc { get; set; }
         public string LastErrorMessage { get; set; } = string.Empty;
     }
@@ -102,6 +104,12 @@ namespace OceanyaClient.Features.GoogleDriveSync
             state.RootFolderId = state.RootFolderId?.Trim() ?? string.Empty;
             state.ChangePageToken = state.ChangePageToken?.Trim() ?? string.Empty;
             state.LocalMirrorState = GoogleDriveLocalMirrorStateSupport.Normalize(state.LocalMirrorState);
+            state.RemoteMirrorState = GoogleDriveLocalMirrorStateSupport.Normalize(state.RemoteMirrorState);
+            if (!state.HasRemoteMirrorState
+                && (state.RemoteMirrorState.DirectoryPaths.Count > 0 || state.RemoteMirrorState.Files.Count > 0))
+            {
+                state.HasRemoteMirrorState = true;
+            }
             state.LastErrorMessage = state.LastErrorMessage?.Trim() ?? string.Empty;
             state.KnownRemoteItemIds = (state.KnownRemoteItemIds ?? new List<string>())
                 .Where(itemId => !string.IsNullOrWhiteSpace(itemId))
@@ -133,7 +141,8 @@ namespace OceanyaClient.Features.GoogleDriveSync
                 connectionId,
                 settings.RemoteFolderId,
                 cancellationToken);
-            state.LocalMirrorState = GoogleDriveLocalMirrorStateSupport.Capture(settings.LocalFolderPath);
+            state.LocalMirrorState = GoogleDriveLocalMirrorStateSupport.CaptureExact(settings.LocalFolderPath);
+            state.HasRemoteMirrorState = true;
             return GoogleDriveConnectionRuntimeStateStore.Normalize(state);
         }
 
@@ -164,6 +173,16 @@ namespace OceanyaClient.Features.GoogleDriveSync
                 await client.GetSnapshotAsync(rootFolderId, cancellationToken));
             string changePageToken = await client.GetStartPageTokenAsync(cancellationToken);
             return BuildRuntimeState(connectionId, rootFolderId, snapshot, changePageToken);
+        }
+
+        public async Task<GoogleDriveLocalMirrorState> CaptureRemoteMirrorStateAsync(
+            GoogleDriveSyncSettings settings,
+            CancellationToken cancellationToken)
+        {
+            IGoogleDriveRemoteClient client = await sessionFactory.CreateAuthorizedClientAsync(settings, cancellationToken);
+            GoogleDriveSyncSnapshot snapshot = GoogleDriveLocalSnapshotBuilder.FilterReservedSupportFiles(
+                await client.GetSnapshotAsync(settings.RemoteFolderId, cancellationToken));
+            return GoogleDriveLocalMirrorStateSupport.FromSnapshot(snapshot);
         }
 
         public async Task<GoogleDriveRemoteChangeCheckResult> CheckForRelevantChangesAsync(
@@ -284,7 +303,9 @@ namespace OceanyaClient.Features.GoogleDriveSync
                 ConnectionId = connectionId?.Trim() ?? string.Empty,
                 RootFolderId = rootFolderId?.Trim() ?? string.Empty,
                 ChangePageToken = changePageToken?.Trim() ?? string.Empty,
-                KnownRemoteItemIds = knownItemIds
+                KnownRemoteItemIds = knownItemIds,
+                RemoteMirrorState = GoogleDriveLocalMirrorStateSupport.FromSnapshot(filteredSnapshot),
+                HasRemoteMirrorState = true
             });
         }
 

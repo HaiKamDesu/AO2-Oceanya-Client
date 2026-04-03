@@ -10,6 +10,8 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Linq;
+using System.Windows;
+using System.Windows.Resources;
 
 namespace OceanyaClient.Features.GoogleDriveSync
 {
@@ -334,44 +336,7 @@ namespace OceanyaClient.Features.GoogleDriveSync
                 string state = context.Request.QueryString["state"] ?? string.Empty;
                 string error = context.Request.QueryString["error"] ?? string.Empty;
 
-                string responseHtml = string.IsNullOrWhiteSpace(error)
-                    ? """
-                      <html>
-                      <body style="font-family:Segoe UI,Arial,sans-serif;background:#14181c;color:#f0f0f0;padding:24px;">
-                      <h2>Oceanya Google Drive sign-in completed.</h2>
-                      <p>Returning to Oceanya. This tab should close automatically.</p>
-                      <script>
-                      (function () {
-                        function finish() {
-                          try {
-                            window.open('', '_self', '');
-                            window.close();
-                          } catch (e) {
-                          }
-                          setTimeout(function () {
-                            try {
-                              window.location.replace('about:blank');
-                            } catch (e) {
-                            }
-                          }, 250);
-                        }
-                        window.addEventListener('load', function () {
-                          setTimeout(finish, 100);
-                        });
-                      })();
-                      </script>
-                      <p>If this tab stays open, you can close it manually.</p>
-                      </body>
-                      </html>
-                      """
-                    : """
-                      <html>
-                      <body style="font-family:Segoe UI,Arial,sans-serif;background:#14181c;color:#f0f0f0;padding:24px;">
-                      <h2>Google Drive sign-in failed.</h2>
-                      <p>You can close this tab and return to Oceanya.</p>
-                      </body>
-                      </html>
-                      """;
+                string responseHtml = BuildCallbackResponseHtml(error);
                 byte[] bytes = Encoding.UTF8.GetBytes(responseHtml);
                 context.Response.ContentType = "text/html; charset=utf-8";
                 context.Response.ContentLength64 = bytes.LongLength;
@@ -407,6 +372,265 @@ namespace OceanyaClient.Features.GoogleDriveSync
                 int port = ((IPEndPoint)tcpListener.LocalEndpoint).Port;
                 tcpListener.Stop();
                 return port;
+            }
+        }
+
+        private static string BuildCallbackResponseHtml(string? error)
+        {
+            bool succeeded = string.IsNullOrWhiteSpace(error);
+            string accentColor = succeeded ? "#87f07a" : "#ff8c8c";
+            string title = succeeded ? "Google Drive Sign-In Complete" : "Google Drive Sign-In Failed";
+            string subtitle = succeeded
+                ? "Oceanya received your Google sign-in and can continue in the client."
+                : "Google did not complete the sign-in request.";
+            string detail = succeeded
+                ? "You can close this tab and return to Oceanya."
+                : "Return to Oceanya, fix the issue, then try the sign-in again.";
+            string footer = succeeded
+                ? "Browsers often refuse automatic tab closing after OAuth. Leaving this page visible is normal."
+                : "This page will stay open so you can read the result instead of being dumped onto about:blank.";
+            string errorMarkup = succeeded
+                ? string.Empty
+                : "<div class=\"detail-box\"><strong>Google said:</strong> "
+                    + WebUtility.HtmlEncode(error?.Trim() ?? string.Empty)
+                    + "</div>";
+            string logoDataUri = TryLoadPackResourceDataUri(
+                "pack://application:,,,/OceanyaClient;component/Resources/OceanyaFullLogo.png",
+                "image/png");
+            string backgroundDataUri = TryLoadPackResourceDataUri(
+                "pack://application:,,,/OceanyaClient;component/Resources/LogBG.png",
+                "image/png");
+            string logoMarkup = string.IsNullOrWhiteSpace(logoDataUri)
+                ? "<div class=\"text-logo\">OCEANYA</div>"
+                : "<img class=\"brand-logo\" src=\"" + logoDataUri + "\" alt=\"Oceanya\" />";
+            string backgroundStyle = string.IsNullOrWhiteSpace(backgroundDataUri)
+                ? "linear-gradient(180deg, rgba(7, 12, 18, 0.94), rgba(4, 8, 12, 0.98))"
+                : "linear-gradient(180deg, rgba(7, 12, 18, 0.80), rgba(4, 8, 12, 0.96)), url('"
+                    + backgroundDataUri
+                    + "')";
+
+            return """
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <meta charset="utf-8" />
+                    <meta name="viewport" content="width=device-width, initial-scale=1" />
+                    <title>Oceanya Google Drive Sign-In</title>
+                    <style>
+                        :root {
+                            color-scheme: dark;
+                        }
+
+                        * {
+                            box-sizing: border-box;
+                        }
+
+                        body {
+                            margin: 0;
+                            min-height: 100vh;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            padding: 28px;
+                            font-family: "Segoe UI", Arial, sans-serif;
+                            color: #f3f7fb;
+                            background: BACKGROUND_STYLE;
+                            background-position: center;
+                            background-size: cover;
+                        }
+
+                        .shell {
+                            width: min(760px, 100%);
+                            border: 1px solid rgba(143, 214, 255, 0.18);
+                            border-radius: 24px;
+                            overflow: hidden;
+                            background: linear-gradient(180deg, rgba(13, 22, 31, 0.92), rgba(8, 13, 18, 0.96));
+                            box-shadow: 0 28px 90px rgba(0, 0, 0, 0.42);
+                            backdrop-filter: blur(12px);
+                        }
+
+                        .hero {
+                            position: relative;
+                            padding: 28px 32px 18px;
+                            background:
+                                radial-gradient(circle at top right, rgba(113, 198, 255, 0.18), transparent 40%),
+                                radial-gradient(circle at bottom left, rgba(81, 255, 191, 0.12), transparent 34%);
+                        }
+
+                        .hero::after {
+                            content: "";
+                            position: absolute;
+                            inset: auto -12% -48px auto;
+                            width: 240px;
+                            height: 240px;
+                            border-radius: 50%;
+                            background: radial-gradient(circle, ACCENT_COLOR22 0%, transparent 66%);
+                            pointer-events: none;
+                        }
+
+                        .brand-logo {
+                            display: block;
+                            max-width: min(320px, 72vw);
+                            max-height: 92px;
+                            margin-bottom: 20px;
+                            filter: drop-shadow(0 8px 20px rgba(0, 0, 0, 0.32));
+                        }
+
+                        .text-logo {
+                            margin-bottom: 20px;
+                            font-size: 30px;
+                            font-weight: 800;
+                            letter-spacing: 0.32em;
+                            color: #daf4ff;
+                        }
+
+                        .status-pill {
+                            display: inline-flex;
+                            align-items: center;
+                            gap: 10px;
+                            padding: 8px 14px;
+                            border-radius: 999px;
+                            border: 1px solid rgba(255, 255, 255, 0.08);
+                            background: rgba(255, 255, 255, 0.05);
+                            color: #d8f4ff;
+                            font-size: 12px;
+                            font-weight: 700;
+                            letter-spacing: 0.12em;
+                            text-transform: uppercase;
+                        }
+
+                        .status-pill::before {
+                            content: "";
+                            width: 10px;
+                            height: 10px;
+                            border-radius: 50%;
+                            background: ACCENT_COLOR;
+                            box-shadow: 0 0 18px ACCENT_COLOR88;
+                        }
+
+                        .title {
+                            margin: 18px 0 10px;
+                            font-size: clamp(30px, 4vw, 42px);
+                            line-height: 1.06;
+                            letter-spacing: 0.01em;
+                        }
+
+                        .subtitle {
+                            margin: 0;
+                            max-width: 54ch;
+                            color: rgba(235, 243, 250, 0.84);
+                            font-size: 16px;
+                            line-height: 1.6;
+                        }
+
+                        .body {
+                            padding: 0 32px 32px;
+                        }
+
+                        .detail-box {
+                            margin-top: 20px;
+                            padding: 16px 18px;
+                            border-radius: 16px;
+                            border: 1px solid rgba(255, 255, 255, 0.08);
+                            background: rgba(255, 255, 255, 0.045);
+                            color: #f7d3d3;
+                            line-height: 1.6;
+                        }
+
+                        .footer {
+                            margin-top: 18px;
+                            color: rgba(211, 223, 233, 0.72);
+                            font-size: 14px;
+                            line-height: 1.6;
+                        }
+
+                        .actions {
+                            display: flex;
+                            gap: 12px;
+                            flex-wrap: wrap;
+                            margin-top: 26px;
+                        }
+
+                        .button {
+                            appearance: none;
+                            border: 0;
+                            border-radius: 999px;
+                            padding: 12px 18px;
+                            background: linear-gradient(135deg, ACCENT_COLOR, #6ed2ff);
+                            color: #071019;
+                            font-size: 14px;
+                            font-weight: 800;
+                            cursor: pointer;
+                        }
+
+                        .button.secondary {
+                            background: rgba(255, 255, 255, 0.08);
+                            color: #f3f7fb;
+                        }
+
+                        @media (max-width: 640px) {
+                            body {
+                                padding: 16px;
+                            }
+
+                            .hero,
+                            .body {
+                                padding-left: 20px;
+                                padding-right: 20px;
+                            }
+                        }
+                    </style>
+                </head>
+                <body>
+                    <main class="shell">
+                        <section class="hero">
+                            LOGO_MARKUP
+                            <div class="status-pill">Google Drive OAuth</div>
+                            <h1 class="title">TITLE_TEXT</h1>
+                            <p class="subtitle">SUBTITLE_TEXT</p>
+                        </section>
+                        <section class="body">
+                            <div class="detail-box">DETAIL_TEXT</div>
+                            ERROR_MARKUP
+                            <div class="actions">
+                                <button class="button" type="button" onclick="window.close()">Close Tab</button>
+                            </div>
+                            <p class="footer">FOOTER_TEXT</p>
+                        </section>
+                    </main>
+                </body>
+                </html>
+                """
+                .Replace("BACKGROUND_STYLE", backgroundStyle, StringComparison.Ordinal)
+                .Replace("ACCENT_COLOR22", accentColor + "22", StringComparison.Ordinal)
+                .Replace("ACCENT_COLOR88", accentColor + "88", StringComparison.Ordinal)
+                .Replace("ACCENT_COLOR", accentColor, StringComparison.Ordinal)
+                .Replace("LOGO_MARKUP", logoMarkup, StringComparison.Ordinal)
+                .Replace("TITLE_TEXT", WebUtility.HtmlEncode(title), StringComparison.Ordinal)
+                .Replace("SUBTITLE_TEXT", WebUtility.HtmlEncode(subtitle), StringComparison.Ordinal)
+                .Replace("DETAIL_TEXT", WebUtility.HtmlEncode(detail), StringComparison.Ordinal)
+                .Replace("ERROR_MARKUP", errorMarkup, StringComparison.Ordinal)
+                .Replace("FOOTER_TEXT", WebUtility.HtmlEncode(footer), StringComparison.Ordinal);
+        }
+
+        private static string TryLoadPackResourceDataUri(string packUri, string contentType)
+        {
+            try
+            {
+                StreamResourceInfo? resource = Application.GetResourceStream(new Uri(packUri, UriKind.Absolute));
+                if (resource?.Stream == null)
+                {
+                    return string.Empty;
+                }
+
+                using Stream stream = resource.Stream;
+                using MemoryStream memoryStream = new MemoryStream();
+                stream.CopyTo(memoryStream);
+                return $"data:{contentType};base64,{Convert.ToBase64String(memoryStream.ToArray())}";
+            }
+            catch
+            {
+                return string.Empty;
             }
         }
 

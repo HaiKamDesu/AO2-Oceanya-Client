@@ -16,11 +16,12 @@ namespace OceanyaClient.Features.GoogleDriveSync
         public string RelativePath { get; set; } = string.Empty;
         public long Size { get; set; }
         public long LastWriteUtcTicks { get; set; }
+        public string ContentHash { get; set; } = string.Empty;
     }
 
     public static class GoogleDriveLocalMirrorStateSupport
     {
-        public static GoogleDriveLocalMirrorState Capture(string? rootDirectory)
+        public static GoogleDriveLocalMirrorState Capture(string? rootDirectory, bool includeContentHashes = false)
         {
             string normalizedRoot = rootDirectory?.Trim() ?? string.Empty;
             if (string.IsNullOrWhiteSpace(normalizedRoot))
@@ -59,11 +60,46 @@ namespace OceanyaClient.Features.GoogleDriveSync
                         {
                             RelativePath = relativePath,
                             Size = info.Length,
-                            LastWriteUtcTicks = File.GetLastWriteTimeUtc(filePath).Ticks
+                            LastWriteUtcTicks = File.GetLastWriteTimeUtc(filePath).Ticks,
+                            ContentHash = includeContentHashes
+                                ? GoogleDriveLocalSnapshotBuilder.ComputeMd5(filePath)
+                                : string.Empty
                         };
                     })
                     .Where(file => file != null && !string.IsNullOrWhiteSpace(file.RelativePath))
                     .Cast<GoogleDriveLocalMirrorFileState>()
+                    .OrderBy(file => file.RelativePath, StringComparer.OrdinalIgnoreCase)
+                    .ToList()
+            };
+
+            return Normalize(state);
+        }
+
+        public static GoogleDriveLocalMirrorState CaptureExact(string? rootDirectory)
+        {
+            return Capture(rootDirectory, includeContentHashes: true);
+        }
+
+        public static GoogleDriveLocalMirrorState FromSnapshot(GoogleDriveSyncSnapshot? snapshot)
+        {
+            GoogleDriveSyncSnapshot source = snapshot ?? new GoogleDriveSyncSnapshot();
+            GoogleDriveLocalMirrorState state = new GoogleDriveLocalMirrorState
+            {
+                DirectoryPaths = source.Folders.Values
+                    .Select(folder => GoogleDriveLocalSnapshotBuilder.NormalizeRelativePath(folder.RelativePath))
+                    .Where(relativePath => !string.IsNullOrWhiteSpace(relativePath))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(relativePath => relativePath, StringComparer.OrdinalIgnoreCase)
+                    .ToList(),
+                Files = source.Files.Values
+                    .Select(file => new GoogleDriveLocalMirrorFileState
+                    {
+                        RelativePath = GoogleDriveLocalSnapshotBuilder.NormalizeRelativePath(file.RelativePath),
+                        Size = Math.Max(0L, file.Size),
+                        LastWriteUtcTicks = 0L,
+                        ContentHash = (file.Hash ?? string.Empty).Trim().ToLowerInvariant()
+                    })
+                    .Where(file => !string.IsNullOrWhiteSpace(file.RelativePath))
                     .OrderBy(file => file.RelativePath, StringComparer.OrdinalIgnoreCase)
                     .ToList()
             };
@@ -87,7 +123,8 @@ namespace OceanyaClient.Features.GoogleDriveSync
                 {
                     RelativePath = GoogleDriveLocalSnapshotBuilder.NormalizeRelativePath(file.RelativePath),
                     Size = Math.Max(0L, file.Size),
-                    LastWriteUtcTicks = Math.Max(0L, file.LastWriteUtcTicks)
+                    LastWriteUtcTicks = Math.Max(0L, file.LastWriteUtcTicks),
+                    ContentHash = (file.ContentHash ?? string.Empty).Trim().ToLowerInvariant()
                 })
                 .Where(file => !string.IsNullOrWhiteSpace(file.RelativePath))
                 .GroupBy(file => file.RelativePath, StringComparer.OrdinalIgnoreCase)
@@ -139,13 +176,29 @@ namespace OceanyaClient.Features.GoogleDriveSync
                 }
 
                 if (baselineFile.Size != currentFile.Size
-                    || baselineFile.LastWriteUtcTicks != currentFile.LastWriteUtcTicks)
+                    || !FileStateMatches(baselineFile, currentFile))
                 {
                     return true;
                 }
             }
 
             return false;
+        }
+
+        private static bool FileStateMatches(
+            GoogleDriveLocalMirrorFileState baselineFile,
+            GoogleDriveLocalMirrorFileState currentFile)
+        {
+            if (!string.IsNullOrWhiteSpace(baselineFile.ContentHash)
+                && !string.IsNullOrWhiteSpace(currentFile.ContentHash))
+            {
+                return string.Equals(
+                    baselineFile.ContentHash,
+                    currentFile.ContentHash,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+
+            return baselineFile.LastWriteUtcTicks == currentFile.LastWriteUtcTicks;
         }
     }
 }

@@ -91,6 +91,7 @@ namespace OceanyaClient.Features.GoogleDriveSync
         public GoogleDriveSyncLocalChangeSet LocalChanges { get; } = new GoogleDriveSyncLocalChangeSet();
         public HashSet<string> KnownRemoteItemIds { get; } =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        public GoogleDriveSyncSnapshot? FinalRemoteSnapshot { get; set; }
     }
 
     public sealed class GoogleDriveSyncLocalChangeSet

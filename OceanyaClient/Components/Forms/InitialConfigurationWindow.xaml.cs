@@ -7,6 +7,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media.Animation;
@@ -125,6 +127,30 @@ namespace OceanyaClient
             try
             {
                 await EnsureLaunchWaitFormAsync("Checking startup requirements...");
+
+                if (selectedFunctionality.RequiresServerEndpoint)
+                {
+                    ServerEndpointDefinition validatedServer = await ValidateSelectedServerForLaunchAsync(
+                        selectedServer,
+                        selectedServerName,
+                        selectedServerEndpoint);
+                    if (!validatedServer.IsSelectable)
+                    {
+                        await CloseLaunchWaitFormAsync();
+
+                        OceanyaMessageBox.Show(
+                            $"The selected server '{validatedServer.Name}' is not available.\n\n{ServerEndpointCatalog.GetNotSelectableReason(validatedServer)}",
+                            "Server Unavailable",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Warning);
+                        return;
+                    }
+
+                    selectedServer = validatedServer;
+                    selectedServerEndpoint = validatedServer.Endpoint.Trim();
+                    selectedServerName = validatedServer.Name.Trim();
+                    UpdateSelectedServerDisplay();
+                }
 
                 (string forcedRefreshReason, TargetedAssetRefreshPlan trackedChangePlan) preflightResult = await Task.Run(() =>
                 {
@@ -294,6 +320,41 @@ namespace OceanyaClient
                     MessageBoxButton.OK,
                     MessageBoxImage.Error);
             }
+        }
+
+        private static async Task<ServerEndpointDefinition> ValidateSelectedServerForLaunchAsync(
+            ServerEndpointDefinition? selectedServer,
+            string selectedServerName,
+            string selectedServerEndpoint)
+        {
+            ServerEndpointDefinition validationTarget = selectedServer != null
+                ? new ServerEndpointDefinition
+                {
+                    Name = selectedServer.Name,
+                    Endpoint = selectedServer.Endpoint,
+                    Description = selectedServer.Description,
+                    Source = selectedServer.Source,
+                    IsLegacy = selectedServer.IsLegacy,
+                    FavoriteStoreIndex = selectedServer.FavoriteStoreIndex,
+                    IsAoClientCompatible = selectedServer.IsAoClientCompatible,
+                    IsOnline = selectedServer.IsOnline,
+                    OnlinePlayers = selectedServer.OnlinePlayers,
+                    MaxPlayers = selectedServer.MaxPlayers
+                }
+                : new ServerEndpointDefinition
+                {
+                    Name = string.IsNullOrWhiteSpace(selectedServerName) ? selectedServerEndpoint : selectedServerName,
+                    Endpoint = selectedServerEndpoint,
+                    Description = "Previously selected endpoint.",
+                    Source = ServerEndpointSource.Defaults,
+                    IsLegacy = false
+                };
+
+            await ServerEndpointCatalog.PopulateSupplementalStatusAsync(
+                new[] { validationTarget },
+                CancellationToken.None);
+
+            return validationTarget;
         }
 
         private void SelectServerButton_Click(object sender, RoutedEventArgs e)

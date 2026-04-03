@@ -56,9 +56,9 @@ namespace OceanyaClient.Features.FileHivemind
                 while (!cancellationToken.IsCancellationRequested)
                 {
                     SaveData snapshot = SaveFile.LoadSnapshotFromDisk();
-                    if (!FileHivemindBackgroundAgentLauncher.ShouldRunForSettings(snapshot.FileHivemind))
+                    if (!FileHivemindBackgroundAgentLauncher.HasEligibleConnections(snapshot.FileHivemind))
                     {
-                        LogInfo("The Oceanyan File Hivemind background agent stopped because auto-start sync is disabled or no eligible connections remain.");
+                        LogInfo("The Oceanyan File Hivemind background agent stopped because no eligible connections remain.");
                         return;
                     }
 
@@ -221,6 +221,21 @@ namespace OceanyaClient.Features.FileHivemind
             DateTimeOffset? pendingPushUtc = state.GetPendingLocalPushUtc();
             if (!pendingPushUtc.HasValue && localMirrorAssessment.Kind == LocalMirrorAssessmentKind.NormalChanges)
             {
+                if (state.AutomaticSyncConflictActive)
+                {
+                    if (state.NextRemotePollUtc <= now)
+                    {
+                        await PollRemoteChangesAsync(
+                            state,
+                            configIniPath,
+                            remotePollInterval,
+                            hasUnsyncedLocalChanges: true,
+                            cancellationToken);
+                    }
+
+                    return;
+                }
+
                 state.ScheduleLocalPush(LocalChangeDebounce);
                 LogAgentMessage(
                     "Action",
@@ -243,11 +258,7 @@ namespace OceanyaClient.Features.FileHivemind
                 {
                     if (pendingPushUtc.Value <= now)
                     {
-                        LogAgentMessage(
-                            "Action",
-                            state.Connection,
-                            "Local mirror differs from the last synced state. Pushing changes to Drive.");
-                        await ExecutePushAsync(state, configIniPath, "local mirror changes", remotePollInterval, cancellationToken);
+                        await EvaluatePendingLocalPushAsync(state, configIniPath, remotePollInterval, cancellationToken);
                     }
 
                     return;
@@ -256,7 +267,12 @@ namespace OceanyaClient.Features.FileHivemind
 
             if (state.NextRemotePollUtc <= now)
             {
-                await PollRemoteChangesAsync(state, configIniPath, remotePollInterval, cancellationToken);
+                await PollRemoteChangesAsync(
+                    state,
+                    configIniPath,
+                    remotePollInterval,
+                    hasUnsyncedLocalChanges: localMirrorAssessment.Kind == LocalMirrorAssessmentKind.NormalChanges,
+                    cancellationToken);
             }
         }
 
@@ -264,6 +280,7 @@ namespace OceanyaClient.Features.FileHivemind
             ConnectionMonitorState state,
             string configIniPath,
             TimeSpan remotePollInterval,
+            bool hasUnsyncedLocalChanges,
             CancellationToken cancellationToken)
         {
             GoogleDriveConnectionRuntimeState? runtimeState = runtimeStateStore.Load(state.Connection.Id);
@@ -279,33 +296,67 @@ namespace OceanyaClient.Features.FileHivemind
                     state.Connection.GoogleDrive,
                     runtimeState,
                     cancellationToken);
-                runtimeStateStore.Save(result.UpdatedState);
                 state.NextRemotePollUtc = DateTimeOffset.UtcNow + remotePollInterval;
 
-                if (result.RequiresFullResync)
+                AutomaticRemoteChangeHandling handling = DecideAutomaticRemoteChangeHandling(
+                    hasUnsyncedLocalChanges,
+                    result,
+                    canMergeBidirectionally: CanRunBidirectionalMerge(runtimeState));
+                switch (handling)
                 {
-                    LogAgentMessage(
-                        "Warning",
-                        state.Connection,
-                        "The saved change token is no longer usable. Performing a full pull.");
-                    await ExecutePullAsync(state, configIniPath, "change-token reset", remotePollInterval, cancellationToken);
-                    return;
-                }
+                    case AutomaticRemoteChangeHandling.SaveStateOnly:
+                        runtimeStateStore.Save(result.UpdatedState);
+                        if (state.AutomaticSyncConflictActive)
+                        {
+                            ClearAutomaticSyncConflictState(state, "Remote changes are no longer pending. Automatic syncing resumed.");
+                        }
 
-                if (!result.HasRelevantChanges)
-                {
-                    LogAgentMessage(
-                        "Info",
-                        state.Connection,
-                        "Remote poll found no relevant Google Drive changes.");
-                    return;
-                }
+                        LogAgentMessage(
+                            "Info",
+                            state.Connection,
+                            "Remote poll found no relevant Google Drive changes.");
+                        return;
+                    case AutomaticRemoteChangeHandling.PullFromDrive:
+                        if (state.AutomaticSyncConflictActive)
+                        {
+                            ClearAutomaticSyncConflictState(state, "Automatic sync conflict cleared. Pulling latest Google Drive changes.");
+                        }
 
-                LogAgentMessage(
-                    "Action",
-                    state.Connection,
-                    "Remote poll detected relevant Google Drive changes. Pulling updates.");
-                await ExecutePullAsync(state, configIniPath, "remote Google Drive changes", remotePollInterval, cancellationToken);
+                        if (result.RequiresFullResync)
+                        {
+                            LogAgentMessage(
+                                "Warning",
+                                state.Connection,
+                                "The saved change token is no longer usable. Performing a full pull.");
+                            await ExecutePullAsync(state, configIniPath, "change-token reset", remotePollInterval, cancellationToken);
+                            return;
+                        }
+
+                        LogAgentMessage(
+                            "Action",
+                            state.Connection,
+                            "Remote poll detected relevant Google Drive changes. Pulling updates.");
+                        await ExecutePullAsync(state, configIniPath, "remote Google Drive changes", remotePollInterval, cancellationToken);
+                        return;
+                    case AutomaticRemoteChangeHandling.MergeBidirectional:
+                        if (state.AutomaticSyncConflictActive)
+                        {
+                            ClearAutomaticSyncConflictState(state, "Automatic sync conflict cleared. Reconciling local and Google Drive changes.");
+                        }
+
+                        LogAgentMessage(
+                            "Action",
+                            state.Connection,
+                            "Remote poll detected relevant changes on both sides. Reconciling per-file differences.");
+                        await ExecuteMergeAsync(state, configIniPath, "local and remote changes", remotePollInterval, cancellationToken);
+                        return;
+                    case AutomaticRemoteChangeHandling.BlockAutomaticSync:
+                        state.ClearPendingLocalPush();
+                        EnterAutomaticSyncConflictState(state, result.RequiresFullResync);
+                        return;
+                    default:
+                        throw new InvalidOperationException("Unhandled automatic remote change handling decision.");
+                }
             }
             catch (Exception ex)
             {
@@ -316,6 +367,76 @@ namespace OceanyaClient.Features.FileHivemind
                     "Error",
                     state.Connection,
                     "Remote change polling failed. Backing off before retry: " + ex.Message);
+            }
+        }
+
+        private async Task EvaluatePendingLocalPushAsync(
+            ConnectionMonitorState state,
+            string configIniPath,
+            TimeSpan remotePollInterval,
+            CancellationToken cancellationToken)
+        {
+            GoogleDriveConnectionRuntimeState? runtimeState = runtimeStateStore.Load(state.Connection.Id);
+
+            try
+            {
+                GoogleDriveRemoteChangeCheckResult result = await remoteChangeTracker.CheckForRelevantChangesAsync(
+                    state.Connection.Id,
+                    state.Connection.GoogleDrive,
+                    runtimeState,
+                    cancellationToken);
+
+                AutomaticRemoteChangeHandling handling = DecideAutomaticRemoteChangeHandling(
+                    hasUnsyncedLocalChanges: true,
+                    result,
+                    canMergeBidirectionally: CanRunBidirectionalMerge(runtimeState));
+                switch (handling)
+                {
+                    case AutomaticRemoteChangeHandling.SaveStateOnly:
+                        runtimeStateStore.Save(result.UpdatedState);
+                        if (state.AutomaticSyncConflictActive)
+                        {
+                            ClearAutomaticSyncConflictState(state, "Automatic sync conflict cleared. Pushing local changes to Drive.");
+                        }
+
+                        LogAgentMessage(
+                            "Action",
+                            state.Connection,
+                            "Local mirror differs from the last synced state. Pushing changes to Drive.");
+                        await ExecutePushAsync(state, configIniPath, "local mirror changes", remotePollInterval, cancellationToken);
+                        return;
+                    case AutomaticRemoteChangeHandling.MergeBidirectional:
+                        state.NextRemotePollUtc = DateTimeOffset.UtcNow + remotePollInterval;
+                        if (state.AutomaticSyncConflictActive)
+                        {
+                            ClearAutomaticSyncConflictState(state, "Automatic sync conflict cleared. Reconciling local and Google Drive changes.");
+                        }
+
+                        LogAgentMessage(
+                            "Action",
+                            state.Connection,
+                            "Both local and remote changes were detected before an automatic push. Reconciling per-file differences.");
+                        await ExecuteMergeAsync(state, configIniPath, "local and remote changes", remotePollInterval, cancellationToken);
+                        return;
+                    case AutomaticRemoteChangeHandling.BlockAutomaticSync:
+                        state.NextRemotePollUtc = DateTimeOffset.UtcNow + remotePollInterval;
+                        state.ClearPendingLocalPush();
+                        EnterAutomaticSyncConflictState(state, result.RequiresFullResync);
+                        return;
+                    default:
+                        throw new InvalidOperationException("Unexpected automatic push decision.");
+                }
+            }
+            catch (Exception ex)
+            {
+                PersistRuntimeError(state.Connection.Id, runtimeState, ex.Message);
+                state.ScheduleLocalPush(ErrorBackoff);
+                state.NextRemotePollUtc = DateTimeOffset.UtcNow + ErrorBackoff;
+                LogWarning($"Hivemind local push preflight failed for '{state.Connection.EffectiveDisplayName}'.", ex);
+                LogAgentMessage(
+                    "Error",
+                    state.Connection,
+                    "Local change preflight failed. Backing off before retry: " + ex.Message);
             }
         }
 
@@ -352,7 +473,7 @@ namespace OceanyaClient.Features.FileHivemind
                     message => ReportOperationProgress(state, message, showProgressToast),
                     cancellationToken);
                 RefreshMountedAssetsIfPossible(configIniPath, state.Connection, summary.LocalChanges);
-                await CaptureRuntimeStateAsync(state, cancellationToken, summary.KnownRemoteItemIds);
+                await CaptureRuntimeStateAsync(state, summary, cancellationToken);
                 state.RequiresInitialPull = false;
                 state.NextRemotePollUtc = DateTimeOffset.UtcNow + remotePollInterval;
                 state.IgnoreLocalChangesUntilUtc = DateTimeOffset.UtcNow + PullWatcherIgnoreDuration;
@@ -422,7 +543,7 @@ namespace OceanyaClient.Features.FileHivemind
                     message => ReportOperationProgress(state, message, showProgressToast),
                     cancellationToken);
                 RefreshMountedAssetsIfPossible(configIniPath, state.Connection, summary.LocalChanges);
-                await CaptureRuntimeStateAsync(state, cancellationToken, summary.KnownRemoteItemIds);
+                await CaptureRuntimeStateAsync(state, summary, cancellationToken);
                 state.RequiresInitialPull = false;
                 state.NextRemotePollUtc = DateTimeOffset.UtcNow + remotePollInterval;
                 if (showProgressToast)
@@ -458,6 +579,91 @@ namespace OceanyaClient.Features.FileHivemind
             }
         }
 
+        private async Task ExecuteMergeAsync(
+            ConnectionMonitorState state,
+            string configIniPath,
+            string reason,
+            TimeSpan remotePollInterval,
+            CancellationToken cancellationToken)
+        {
+            using FileHivemindConnectionExecutionLock? executionLock =
+                FileHivemindConnectionExecutionLock.TryAcquire(state.Connection.Id, TimeSpan.Zero);
+            if (executionLock == null)
+            {
+                state.ScheduleLocalPush(LocalChangeDebounce);
+                state.NextRemotePollUtc = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
+                LogAgentMessage(
+                    "Warning",
+                    state.Connection,
+                    "Merge skipped because another Oceanya process is already syncing this connection. Will retry.");
+                return;
+            }
+
+            GoogleDriveConnectionRuntimeState? runtimeState = runtimeStateStore.Load(state.Connection.Id);
+            if (!CanRunBidirectionalMerge(runtimeState))
+            {
+                state.ScheduleLocalPush(ErrorBackoff);
+                state.NextRemotePollUtc = DateTimeOffset.UtcNow + ErrorBackoff;
+                EnterAutomaticSyncConflictState(state, requiresFullResync: false);
+                return;
+            }
+
+            bool showProgressToast = false;
+            try
+            {
+                state.ClearPendingLocalPush();
+                state.IgnoreLocalChangesUntilUtc = DateTimeOffset.MaxValue;
+                EnsureMountedIfPossible(configIniPath, state.Connection);
+                showProgressToast = MaybeShowBidirectionalChangeNotification(state.Connection, reason);
+                UpdateNotifierStatus(state.Connection, "Reconciling local and Google Drive changes...");
+                LogAgentMessage("Action", state.Connection, $"Merge started ({reason}).");
+                GoogleDriveSyncSummary summary = await syncService.MergeWithDriveAsync(
+                    state.Connection.GoogleDrive,
+                    runtimeState!.LocalMirrorState,
+                    runtimeState.RemoteMirrorState,
+                    message => ReportOperationProgress(state, message, showProgressToast),
+                    cancellationToken);
+                RefreshMountedAssetsIfPossible(configIniPath, state.Connection, summary.LocalChanges);
+                await CaptureRuntimeStateAsync(state, summary, cancellationToken);
+                state.RequiresInitialPull = false;
+                state.NextRemotePollUtc = DateTimeOffset.UtcNow + remotePollInterval;
+                state.IgnoreLocalChangesUntilUtc = DateTimeOffset.UtcNow + PullWatcherIgnoreDuration;
+                if (showProgressToast)
+                {
+                    backgroundNotifier.CloseProgressNotification(state.Connection.Id);
+                }
+
+                backgroundNotifier.ShowNotification(
+                    state.Connection.EffectiveDisplayName,
+                    BuildMergeCompletionNotificationMessage(summary),
+                    FileHivemindAgentNotificationSeverity.Success);
+                backgroundNotifier.ClearStatusText();
+                LogAgentMessage(
+                    "Success",
+                    state.Connection,
+                    $"Merge finished. Downloaded {summary.FilesDownloaded}, uploaded {summary.FilesUploaded}, deleted {summary.LocalFilesDeleted + summary.LocalDirectoriesDeleted + summary.RemoteFilesDeleted + summary.RemoteDirectoriesDeleted} items.");
+            }
+            catch (Exception ex)
+            {
+                PersistRuntimeError(state.Connection.Id, runtimeStateStore.Load(state.Connection.Id), ex.Message);
+                state.ScheduleLocalPush(ErrorBackoff);
+                state.NextRemotePollUtc = DateTimeOffset.UtcNow + ErrorBackoff;
+                state.IgnoreLocalChangesUntilUtc = DateTimeOffset.UtcNow + PullWatcherIgnoreDuration;
+                if (showProgressToast)
+                {
+                    backgroundNotifier.CloseProgressNotification(state.Connection.Id);
+                }
+
+                backgroundNotifier.ShowNotification(
+                    "Hivemind Sync Failed",
+                    state.Connection.EffectiveDisplayName + ": " + ex.Message,
+                    FileHivemindAgentNotificationSeverity.Error);
+                backgroundNotifier.ClearStatusText();
+                LogWarning($"Hivemind merge failed for '{state.Connection.EffectiveDisplayName}'.", ex);
+                LogAgentMessage("Error", state.Connection, "Merge failed: " + ex.Message);
+            }
+        }
+
         private async Task CaptureRuntimeStateOnlyAsync(
             ConnectionMonitorState state,
             TimeSpan remotePollInterval,
@@ -475,6 +681,19 @@ namespace OceanyaClient.Features.FileHivemind
                 LogWarning($"Hivemind runtime-state capture failed for '{state.Connection.EffectiveDisplayName}'.", ex);
                 LogAgentMessage("Warning", state.Connection, "Runtime state capture failed: " + ex.Message);
             }
+        }
+
+        private async Task CaptureRuntimeStateAsync(
+            ConnectionMonitorState state,
+            GoogleDriveSyncSummary summary,
+            CancellationToken cancellationToken)
+        {
+            GoogleDriveConnectionRuntimeState runtimeState = await syncService.BuildRuntimeStateAfterSyncAsync(
+                state.Connection.Id,
+                state.Connection.GoogleDrive,
+                summary,
+                cancellationToken);
+            runtimeStateStore.Save(runtimeState);
         }
 
         private async Task CaptureRuntimeStateAsync(
@@ -520,12 +739,43 @@ namespace OceanyaClient.Features.FileHivemind
                 return new LocalMirrorAssessment(LocalMirrorAssessmentKind.NoChanges, string.Empty);
             }
 
-            if (TryGetSuspiciousMassDeletionMessage(state.Connection, baseline, current, out string message))
+            GoogleDriveLocalMirrorState currentExact;
+            try
+            {
+                currentExact = GoogleDriveLocalMirrorStateSupport.CaptureExact(state.Connection.GoogleDrive.LocalFolderPath);
+            }
+            catch
+            {
+                currentExact = current;
+            }
+
+            if (!GoogleDriveLocalMirrorStateSupport.HasDifferences(baseline, currentExact))
+            {
+                RefreshRuntimeLocalMirrorState(state.Connection.Id, runtimeState, currentExact);
+                return new LocalMirrorAssessment(LocalMirrorAssessmentKind.NoChanges, string.Empty);
+            }
+
+            if (TryGetSuspiciousMassDeletionMessage(state.Connection, baseline, currentExact, out string message))
             {
                 return new LocalMirrorAssessment(LocalMirrorAssessmentKind.SuspiciousMassDeletion, message);
             }
 
             return new LocalMirrorAssessment(LocalMirrorAssessmentKind.NormalChanges, string.Empty);
+        }
+
+        private void RefreshRuntimeLocalMirrorState(
+            string connectionId,
+            GoogleDriveConnectionRuntimeState? existingState,
+            GoogleDriveLocalMirrorState currentState)
+        {
+            GoogleDriveConnectionRuntimeState state = GoogleDriveConnectionRuntimeStateStore.Normalize(existingState
+                ?? new GoogleDriveConnectionRuntimeState
+                {
+                    ConnectionId = connectionId
+                });
+            state.ConnectionId = connectionId?.Trim() ?? string.Empty;
+            state.LocalMirrorState = GoogleDriveLocalMirrorStateSupport.Normalize(currentState);
+            runtimeStateStore.Save(state);
         }
 
         private static bool TryGetSuspiciousMassDeletionMessage(
@@ -827,9 +1077,32 @@ namespace OceanyaClient.Features.FileHivemind
             return true;
         }
 
+        private bool MaybeShowBidirectionalChangeNotification(
+            FileHivemindConnectionProfile connection,
+            string reason)
+        {
+            if (!ShouldNotifyActionStart(reason, isPull: false))
+            {
+                return false;
+            }
+
+            backgroundNotifier.ShowProgressNotification(
+                connection.Id,
+                connection.EffectiveDisplayName,
+                BuildMergeActionStartNotificationMessage(),
+                "Preparing sync...",
+                null);
+            return true;
+        }
+
         internal static bool ShouldNotifyActionStart(string? reason, bool isPull)
         {
             string normalizedReason = reason?.Trim() ?? string.Empty;
+            if (string.Equals(normalizedReason, "local and remote changes", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
             if (isPull)
             {
                 return string.Equals(normalizedReason, "remote Google Drive changes", StringComparison.OrdinalIgnoreCase);
@@ -838,11 +1111,45 @@ namespace OceanyaClient.Features.FileHivemind
             return string.Equals(normalizedReason, "local mirror changes", StringComparison.OrdinalIgnoreCase);
         }
 
+        internal static AutomaticRemoteChangeHandling DecideAutomaticRemoteChangeHandling(
+            bool hasUnsyncedLocalChanges,
+            GoogleDriveRemoteChangeCheckResult? result,
+            bool canMergeBidirectionally = true)
+        {
+            if (result == null)
+            {
+                throw new ArgumentNullException(nameof(result));
+            }
+
+            if (result.RequiresFullResync || result.HasRelevantChanges)
+            {
+                return hasUnsyncedLocalChanges
+                    ? (canMergeBidirectionally
+                        ? AutomaticRemoteChangeHandling.MergeBidirectional
+                        : AutomaticRemoteChangeHandling.BlockAutomaticSync)
+                    : AutomaticRemoteChangeHandling.PullFromDrive;
+            }
+
+            return AutomaticRemoteChangeHandling.SaveStateOnly;
+        }
+
+        internal static string BuildAutomaticSyncConflictMessage(bool requiresFullResync)
+        {
+            return requiresFullResync
+                ? "Automatic sync paused because both local and remote changes were detected before Oceanya had enough baseline data to merge them safely, and the saved Drive change token must be reset first. Let a one-way sync finish or review this connection manually before continuing."
+                : "Automatic sync paused because both local and remote changes were detected before Oceanya had enough baseline data to merge them safely. Let a one-way sync finish or review this connection manually before continuing.";
+        }
+
         internal static string BuildActionStartNotificationMessage(bool isPull)
         {
             return isPull
                 ? "Detected a remote change, pulling from Drive..."
                 : "Detected a local change, pushing to Drive...";
+        }
+
+        internal static string BuildMergeActionStartNotificationMessage()
+        {
+            return "Detected local and remote changes, reconciling with Drive...";
         }
 
         internal static ParsedOperationProgress ParseOperationProgress(string? message)
@@ -891,6 +1198,34 @@ namespace OceanyaClient.Features.FileHivemind
             return "Synced with Drive";
         }
 
+        internal static string BuildMergeCompletionNotificationMessage(GoogleDriveSyncSummary summary)
+        {
+            GoogleDriveSyncSummary normalizedSummary = summary ?? new GoogleDriveSyncSummary();
+            List<string> parts = new List<string>();
+            if (normalizedSummary.FilesDownloaded > 0)
+            {
+                parts.Add("Downloaded " + normalizedSummary.FilesDownloaded + " files");
+            }
+
+            if (normalizedSummary.FilesUploaded > 0)
+            {
+                parts.Add("Uploaded " + normalizedSummary.FilesUploaded + " files");
+            }
+
+            int deletedItems = normalizedSummary.LocalFilesDeleted
+                + normalizedSummary.LocalDirectoriesDeleted
+                + normalizedSummary.RemoteFilesDeleted
+                + normalizedSummary.RemoteDirectoriesDeleted;
+            if (deletedItems > 0)
+            {
+                parts.Add("Deleted " + deletedItems + " items");
+            }
+
+            return parts.Count == 0
+                ? "Synced with Drive"
+                : "Synced with Drive (" + string.Join(", ", parts) + ")";
+        }
+
         private static double? TryExtractProgressFraction(string message)
         {
             string value = message?.Trim() ?? string.Empty;
@@ -930,6 +1265,52 @@ namespace OceanyaClient.Features.FileHivemind
             return TimeSpan.FromSeconds(seconds);
         }
 
+        private void EnterAutomaticSyncConflictState(ConnectionMonitorState state, bool requiresFullResync)
+        {
+            string message = BuildAutomaticSyncConflictMessage(requiresFullResync);
+            if (state.AutomaticSyncConflictActive
+                && string.Equals(state.LastAutomaticSyncConflictMessage, message, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            state.AutomaticSyncConflictActive = true;
+            state.LastAutomaticSyncConflictMessage = message;
+            LogAgentMessage("Warning", state.Connection, message);
+            backgroundNotifier.ShowNotification(
+                "Hivemind Sync Paused",
+                state.Connection.EffectiveDisplayName + ": " + message,
+                FileHivemindAgentNotificationSeverity.Warning);
+        }
+
+        private void ClearAutomaticSyncConflictState(ConnectionMonitorState state, string message)
+        {
+            if (!state.AutomaticSyncConflictActive)
+            {
+                return;
+            }
+
+            state.AutomaticSyncConflictActive = false;
+            state.LastAutomaticSyncConflictMessage = string.Empty;
+            if (!string.IsNullOrWhiteSpace(message))
+            {
+                LogAgentMessage("Info", state.Connection, message);
+            }
+        }
+
+        internal enum AutomaticRemoteChangeHandling
+        {
+            SaveStateOnly,
+            PullFromDrive,
+            MergeBidirectional,
+            BlockAutomaticSync
+        }
+
+        private static bool CanRunBidirectionalMerge(GoogleDriveConnectionRuntimeState? runtimeState)
+        {
+            return runtimeState != null && runtimeState.HasRemoteMirrorState;
+        }
+
         private sealed class ConnectionMonitorState
         {
             private readonly object stateLock = new object();
@@ -947,6 +1328,8 @@ namespace OceanyaClient.Features.FileHivemind
             public bool RequiresInitialPull { get; set; } = true;
             public bool DestructiveDeletionProtectionActive { get; set; }
             public string LastDestructiveDeletionProtectionMessage { get; set; } = string.Empty;
+            public bool AutomaticSyncConflictActive { get; set; }
+            public string LastAutomaticSyncConflictMessage { get; set; } = string.Empty;
             public DateTimeOffset NextRemotePollUtc { get; set; } = DateTimeOffset.UtcNow;
             public DateTimeOffset IgnoreLocalChangesUntilUtc { get; set; }
 

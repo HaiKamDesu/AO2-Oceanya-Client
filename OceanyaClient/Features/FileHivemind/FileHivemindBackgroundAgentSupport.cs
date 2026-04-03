@@ -14,6 +14,7 @@ namespace OceanyaClient.Features.FileHivemind
         public const string AgentArgument = "--hivemind-agent";
         public const string AutoStartValueName = "OceanyaClient.FileHivemindAgent";
         public const string AgentMutexName = @"Local\OceanyaClient.FileHivemind.Agent";
+        public const string AgentStopSignalEventName = @"Local\OceanyaClient.FileHivemind.Agent.Stop";
         public const string AgentExecutableFileName = "OceanyaHivemindAgent.exe";
         public const string MainApplicationExecutableFileName = "OceanyaClient.exe";
 
@@ -128,15 +129,18 @@ namespace OceanyaClient.Features.FileHivemind
         private readonly IFileHivemindAutoStartRegistrar autoStartRegistrar;
         private readonly Func<string, bool> startAgentProcess;
         private readonly Func<bool> isAgentRunning;
+        private readonly Func<bool> requestAgentStop;
 
         public FileHivemindBackgroundAgentLauncher(
             IFileHivemindAutoStartRegistrar? autoStartRegistrar = null,
             Func<string, bool>? startAgentProcess = null,
-            Func<bool>? isAgentRunning = null)
+            Func<bool>? isAgentRunning = null,
+            Func<bool>? requestAgentStop = null)
         {
             this.autoStartRegistrar = autoStartRegistrar ?? new WindowsFileHivemindAutoStartRegistrar();
             this.startAgentProcess = startAgentProcess ?? LaunchHiddenAgentProcess;
             this.isAgentRunning = isAgentRunning ?? IsAgentRunning;
+            this.requestAgentStop = requestAgentStop ?? SignalAgentStopRequest;
         }
 
         public void ApplyRegistration(FileHivemindSettings settings)
@@ -157,7 +161,35 @@ namespace OceanyaClient.Features.FileHivemind
                 return true;
             }
 
+            ResetAgentStopRequest();
             return startAgentProcess(FileHivemindBackgroundAgentCommandLine.AgentArgument);
+        }
+
+        public bool StartForCurrentSession(FileHivemindSettings settings)
+        {
+            ApplyRegistration(settings);
+            if (!HasEligibleConnections(settings))
+            {
+                return false;
+            }
+
+            if (isAgentRunning())
+            {
+                return true;
+            }
+
+            ResetAgentStopRequest();
+            return startAgentProcess(FileHivemindBackgroundAgentCommandLine.AgentArgument);
+        }
+
+        public bool RequestStopForCurrentSession()
+        {
+            if (!isAgentRunning())
+            {
+                return false;
+            }
+
+            return requestAgentStop();
         }
 
         public bool IsRegistered()
@@ -179,8 +211,13 @@ namespace OceanyaClient.Features.FileHivemind
         public static bool ShouldRunForSettings(FileHivemindSettings? settings)
         {
             return settings?.RunAgentAtStartup == true
-                && (settings.Connections ?? new List<FileHivemindConnectionProfile>())
-                    .Any(IsEligibleConnection);
+                && HasEligibleConnections(settings);
+        }
+
+        public static bool HasEligibleConnections(FileHivemindSettings? settings)
+        {
+            return (settings?.Connections ?? new List<FileHivemindConnectionProfile>())
+                .Any(IsEligibleConnection);
         }
 
         public static bool IsEligibleConnection(FileHivemindConnectionProfile? connection)
@@ -220,6 +257,26 @@ namespace OceanyaClient.Features.FileHivemind
                 WindowStyle = ProcessWindowStyle.Hidden
             });
             return true;
+        }
+
+        private static void ResetAgentStopRequest()
+        {
+            using EventWaitHandle stopSignal = OpenOrCreateStopSignalEvent();
+            stopSignal.Reset();
+        }
+
+        private static bool SignalAgentStopRequest()
+        {
+            using EventWaitHandle stopSignal = OpenOrCreateStopSignalEvent();
+            return stopSignal.Set();
+        }
+
+        private static EventWaitHandle OpenOrCreateStopSignalEvent()
+        {
+            return new EventWaitHandle(
+                false,
+                EventResetMode.ManualReset,
+                FileHivemindBackgroundAgentCommandLine.AgentStopSignalEventName);
         }
     }
 
