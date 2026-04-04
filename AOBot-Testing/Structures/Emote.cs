@@ -16,6 +16,7 @@ namespace AOBot_Testing.Structures
 
         public string sfxName { get; set; } = "1";
         public int sfxDelay { get; set; } = 1;
+        public string sfxLooping { get; set; } = "0";
 
         public static Emote ParseEmoteLine(string data)
         {

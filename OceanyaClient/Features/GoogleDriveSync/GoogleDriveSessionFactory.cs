@@ -27,7 +27,10 @@ namespace OceanyaClient.Features.GoogleDriveSync
             CancellationToken cancellationToken)
         {
             GoogleDriveOAuthClientConfiguration configuration = BuildConfiguration(settings);
-            GoogleDriveTokenSet tokens = await oauthService.SignInInteractiveAsync(configuration, cancellationToken);
+            GoogleDriveTokenSet tokens = await oauthService.SignInInteractiveAsync(
+                configuration,
+                settings.LastSignedInEmail,
+                cancellationToken);
             tokenStore.Save(settings.TokenStoreKey, tokens);
 
             GoogleDriveApiClient apiClient = new GoogleDriveApiClient(httpClient, tokens.AccessToken);

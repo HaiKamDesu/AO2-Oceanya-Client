@@ -242,6 +242,7 @@ namespace OceanyaClient
 
                     await CloseLaunchWaitFormAsync();
                     await ClientAssetRefreshService.RefreshCharactersAndBackgroundsAsync(refreshOwner);
+                    RefreshInfoCheckBox.IsChecked = false;
                 }
                 else if (shouldRunTargetedRefresh)
                 {
@@ -253,6 +254,7 @@ namespace OceanyaClient
 
                     await CloseLaunchWaitFormAsync();
                     await ClientAssetRefreshService.RefreshTargetedAssetsAsync(refreshOwner, trackedChangePlan);
+                    RefreshInfoCheckBox.IsChecked = false;
                 }
 
                 await EnsureLaunchWaitFormAsync("Creating window...");

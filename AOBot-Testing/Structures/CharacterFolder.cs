@@ -521,71 +521,91 @@ namespace AOBot_Testing.Structures
             int maxEmotionEntryId = 0;
 
             #region Config Parsing
-            var lines = File.ReadAllLines(configINIPath);
-            string section = "";
-            foreach (var line in lines.Select(l => l.Trim()))
-            {
-                if (string.IsNullOrWhiteSpace(line) || line.StartsWith(";")) continue;
+            IniDocument document = IniDocument.Load(configINIPath);
 
-                if (line.StartsWith("[") && line.EndsWith("]"))
+            ShowName = document.GetLatestValueOrDefault("Options", "showname");
+            Gender = document.GetLatestValueOrDefault("Options", "gender");
+            Side = document.GetLatestValueOrDefault("Options", "side");
+            Blips = document.GetLatestValueOrDefault("Options", "blips");
+            EffectsFolder = document.GetLatestValueOrDefault("Options", "effects");
+            Realization = document.GetLatestValueOrDefault("Options", "realization");
+
+            if (int.TryParse(document.GetLatestValueOrDefault("Time", "preanim"), out int preanimTime))
+            {
+                PreAnimationTime = preanimTime;
+            }
+
+            if (int.TryParse(document.GetLatestValueOrDefault("Emotions", "number"), out int emotionCount))
+            {
+                EmotionsCount = emotionCount;
+            }
+
+            foreach (IniEntry entry in document.GetEntries("Emotions"))
+            {
+                if (string.Equals(entry.Key, "number", StringComparison.OrdinalIgnoreCase))
                 {
-                    section = line.Trim('[', ']').ToLower();
                     continue;
                 }
 
-                var split = line.Split('=', 2);
-                if (split.Length != 2) continue;
-
-                string key = split[0].Trim().ToLower();
-                string value = split[1].Trim();
-
-                switch (section)
+                if (!int.TryParse(entry.Key, out int emotionId))
                 {
-                    case "options":
-                        if (key == "showname") ShowName = value;
-                        else if (key == "gender") Gender = value;
-                        else if (key == "side") Side = value;
-                        else if (key == "blips") Blips = value;
-                        else if (key == "effects") EffectsFolder = value;
-                        else if (key == "realization") Realization = value;
-                        break;
-
-                    case "time":
-                        if (key == "preanim" && int.TryParse(value, out int preanimTime))
-                            PreAnimationTime = preanimTime;
-                        break;
-
-                    case "emotions":
-                        if (key == "number" && int.TryParse(value, out int emotionCount))
-                            EmotionsCount = emotionCount;
-                        else if (int.TryParse(key, out int emotionId))
-                        {
-                            maxEmotionEntryId = Math.Max(maxEmotionEntryId, emotionId);
-                            if (!Emotions.ContainsKey(emotionId))
-                                Emotions[emotionId] = new Emote(emotionId);
-                            Emotions[emotionId] = Emote.ParseEmoteLine(value);
-                            Emotions[emotionId].ID = emotionId;
-                        }
-                        break;
-
-                    case "soundn":
-                        if (int.TryParse(key, out int soundId))
-                        {
-                            if (!Emotions.ContainsKey(soundId))
-                                Emotions[soundId] = new Emote(soundId);
-                            Emotions[soundId].sfxName = string.IsNullOrEmpty(value) ? "1" : value;
-                        }
-                        break;
-
-                    case "soundt":
-                        if (int.TryParse(key, out int soundTimeId) && int.TryParse(value, out int timeValue))
-                        {
-                            if (!Emotions.ContainsKey(soundTimeId))
-                                Emotions[soundTimeId] = new Emote(soundTimeId);
-                            Emotions[soundTimeId].sfxDelay = timeValue;
-                        }
-                        break;
+                    continue;
                 }
+
+                maxEmotionEntryId = Math.Max(maxEmotionEntryId, emotionId);
+                if (!Emotions.ContainsKey(emotionId))
+                {
+                    Emotions[emotionId] = new Emote(emotionId);
+                }
+
+                Emotions[emotionId] = Emote.ParseEmoteLine(entry.Value);
+                Emotions[emotionId].ID = emotionId;
+            }
+
+            foreach (IniEntry entry in document.GetEntries("SoundN"))
+            {
+                if (!int.TryParse(entry.Key, out int soundId))
+                {
+                    continue;
+                }
+
+                if (!Emotions.ContainsKey(soundId))
+                {
+                    Emotions[soundId] = new Emote(soundId);
+                }
+
+                Emotions[soundId].sfxName = string.IsNullOrEmpty(entry.Value) ? "1" : entry.Value;
+            }
+
+            foreach (IniEntry entry in document.GetEntries("SoundT"))
+            {
+                if (!int.TryParse(entry.Key, out int soundTimeId)
+                    || !int.TryParse(entry.Value, out int timeValue))
+                {
+                    continue;
+                }
+
+                if (!Emotions.ContainsKey(soundTimeId))
+                {
+                    Emotions[soundTimeId] = new Emote(soundTimeId);
+                }
+
+                Emotions[soundTimeId].sfxDelay = timeValue;
+            }
+
+            foreach (IniEntry entry in document.GetEntries("SoundL"))
+            {
+                if (!int.TryParse(entry.Key, out int soundLoopId))
+                {
+                    continue;
+                }
+
+                if (!Emotions.ContainsKey(soundLoopId))
+                {
+                    Emotions[soundLoopId] = new Emote(soundLoopId);
+                }
+
+                Emotions[soundLoopId].sfxLooping = string.IsNullOrWhiteSpace(entry.Value) ? "0" : entry.Value;
             }
             #endregion
 
@@ -647,6 +667,84 @@ namespace AOBot_Testing.Structures
             }
             #endregion
         }
+    }
+
+    internal sealed class IniDocument
+    {
+        public Dictionary<string, List<IniEntry>> Sections { get; } =
+            new Dictionary<string, List<IniEntry>>(StringComparer.OrdinalIgnoreCase);
+
+        public static IniDocument Load(string path)
+        {
+            IniDocument document = new IniDocument();
+            string currentSection = string.Empty;
+            foreach (string rawLine in File.ReadLines(path))
+            {
+                string line = (rawLine ?? string.Empty).Trim().TrimStart('\uFEFF');
+                if (string.IsNullOrWhiteSpace(line) || line.StartsWith(";", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (line.StartsWith("[", StringComparison.Ordinal) && line.EndsWith("]", StringComparison.Ordinal))
+                {
+                    currentSection = line[1..^1].Trim();
+                    _ = document.GetEntries(currentSection);
+                    continue;
+                }
+
+                int separator = line.IndexOf('=');
+                if (separator <= 0)
+                {
+                    continue;
+                }
+
+                string key = line[..separator].Trim();
+                string value = line[(separator + 1)..].Trim();
+                document.GetEntries(currentSection).Add(new IniEntry(key, value));
+            }
+
+            return document;
+        }
+
+        public List<IniEntry> GetEntries(string sectionName)
+        {
+            string key = (sectionName ?? string.Empty).Trim();
+            if (!Sections.TryGetValue(key, out List<IniEntry>? entries))
+            {
+                entries = new List<IniEntry>();
+                Sections[key] = entries;
+            }
+
+            return entries;
+        }
+
+        public string GetLatestValueOrDefault(string sectionName, string key)
+        {
+            List<IniEntry> entries = GetEntries(sectionName);
+            for (int i = entries.Count - 1; i >= 0; i--)
+            {
+                if (string.Equals(entries[i].Key, key, StringComparison.OrdinalIgnoreCase))
+                {
+                    return entries[i].Value;
+                }
+            }
+
+            return string.Empty;
+        }
+    }
+
+    internal readonly struct IniEntry
+    {
+        public IniEntry(string key, string value)
+        {
+            Key = key ?? string.Empty;
+            Value = value ?? string.Empty;
+        }
+
+        public string Key { get; }
+
+        public string Value { get; }
     }
 
     internal sealed class CharacterCacheContainer

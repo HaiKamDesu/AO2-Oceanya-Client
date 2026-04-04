@@ -31,6 +31,7 @@ namespace OceanyaClient
         private readonly GoogleDriveSyncService syncService;
         private readonly GoogleDriveConnectionRuntimeStateStore runtimeStateStore;
         private readonly GoogleDriveSecureClientCredentialStore credentialStore;
+        private readonly GoogleDriveSecureTokenStore tokenStore;
         private readonly FileHivemindConnectionProfile connection;
         private readonly Action<FileHivemindConnectionProfile> persistConnection;
         private readonly bool isDraftConnection;
@@ -50,6 +51,7 @@ namespace OceanyaClient
             this.syncService = syncService ?? new GoogleDriveSyncService();
             runtimeStateStore = new GoogleDriveConnectionRuntimeStateStore();
             credentialStore = new GoogleDriveSecureClientCredentialStore();
+            tokenStore = new GoogleDriveSecureTokenStore();
             this.connection = connection ?? FileHivemindConnectionProfile.CreateGoogleDriveProfile();
             this.persistConnection = persistConnection ?? (_ => SaveFile.Save());
             this.isDraftConnection = isDraftConnection;
@@ -97,6 +99,7 @@ namespace OceanyaClient
         {
             string previousClientId = Settings.OAuthClientId?.Trim() ?? string.Empty;
             bool hadStoredSecret = HasSavedStoredSecretForCurrentClientId(previousClientId);
+            string previousEffectiveSecret = GoogleDriveConnectionCredentialSupport.LoadSecret(Settings, credentialStore);
             Settings.OAuthClientId = GoogleCloudClientIdTextBox.Text?.Trim() ?? string.Empty;
             GoogleDriveConnectionCredentialSupport.EnsureSecretStoreKey(Settings);
 
@@ -121,11 +124,16 @@ namespace OceanyaClient
             {
                 Settings.OAuthClientSecret = typedClientSecret;
                 GoogleDriveConnectionCredentialSupport.SaveSecretIfPresent(Settings, credentialStore);
-                credentialsChanged = true;
             }
 
             RestoreStoredSecretPlaceholderIfNeeded();
             bool hasStoredSecret = HasSavedStoredSecretForCurrentClientId(Settings.OAuthClientId?.Trim() ?? string.Empty);
+            string currentEffectiveSecret = GoogleDriveConnectionCredentialSupport.LoadSecret(Settings, credentialStore);
+            if (!string.Equals(previousEffectiveSecret, currentEffectiveSecret, StringComparison.Ordinal))
+            {
+                credentialsChanged = true;
+            }
+
             if (hadStoredSecret != hasStoredSecret)
             {
                 credentialsChanged = true;
@@ -170,6 +178,10 @@ namespace OceanyaClient
             {
                 syncService.SignOut(Settings);
                 runtimeStateStore.Delete(connection.Id);
+            }
+            else if (TryAdoptExistingSignInForMatchingCredentials())
+            {
+                UpdateAccountStatus();
             }
 
             if (!forcePersist && isDraftConnection && !hasPersistedConnection && !HasMeaningfulConfiguration())
@@ -715,8 +727,74 @@ namespace OceanyaClient
             connection.DisplayName = ResolveConnectionDisplayName();
             persistConnection(connection);
             hasPersistedConnection = true;
+            RestoreStoredSecretPlaceholderIfNeeded();
             UpdateGoogleCloudConfigurationStatus();
             UpdateRemoteFolderStatus();
+        }
+
+        private bool TryAdoptExistingSignInForMatchingCredentials()
+        {
+            if (!isDraftConnection || hasPersistedConnection)
+            {
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(Settings.LastSignedInEmail))
+            {
+                return false;
+            }
+
+            string currentClientId = Settings.OAuthClientId?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(currentClientId))
+            {
+                return false;
+            }
+
+            string currentSecret = GoogleDriveConnectionCredentialSupport.LoadSecret(Settings, credentialStore);
+            if (string.IsNullOrWhiteSpace(currentSecret))
+            {
+                return false;
+            }
+
+            GoogleDriveConnectionCredentialSupport.EnsureSecretStoreKey(Settings);
+            Settings.TokenStoreKey = string.IsNullOrWhiteSpace(Settings.TokenStoreKey)
+                ? Guid.NewGuid().ToString("N")
+                : Settings.TokenStoreKey.Trim();
+
+            FileHivemindConnectionProfile? sourceConnection = SaveFile.Data.FileHivemind.Connections
+                .Where(existing => !string.Equals(existing.Id, connection.Id, StringComparison.OrdinalIgnoreCase))
+                .Where(existing => string.Equals(
+                    existing.GoogleDrive.OAuthClientId?.Trim() ?? string.Empty,
+                    currentClientId,
+                    StringComparison.Ordinal))
+                .Where(existing => !string.IsNullOrWhiteSpace(existing.GoogleDrive.TokenStoreKey))
+                .Where(existing => !string.IsNullOrWhiteSpace(existing.GoogleDrive.LastSignedInEmail))
+                .OrderByDescending(existing => existing.GoogleDrive.LastSyncUtc ?? DateTimeOffset.MinValue)
+                .FirstOrDefault(existing => string.Equals(
+                    GoogleDriveConnectionCredentialSupport.LoadSecret(existing.GoogleDrive, credentialStore),
+                    currentSecret,
+                    StringComparison.Ordinal));
+            if (sourceConnection == null)
+            {
+                return false;
+            }
+
+            GoogleDriveTokenSet? existingTokens = tokenStore.Load(sourceConnection.GoogleDrive.TokenStoreKey);
+            if (existingTokens == null)
+            {
+                return false;
+            }
+
+            tokenStore.Save(Settings.TokenStoreKey, existingTokens);
+            Settings.LastSignedInEmail = sourceConnection.GoogleDrive.LastSignedInEmail?.Trim() ?? string.Empty;
+            Settings.LastSignedInDisplayName = sourceConnection.GoogleDrive.LastSignedInDisplayName?.Trim() ?? string.Empty;
+            AppendStatus(
+                "Reused the existing Google sign-in from "
+                + (string.IsNullOrWhiteSpace(Settings.LastSignedInEmail)
+                    ? "another connection."
+                    : Settings.LastSignedInEmail + "."),
+                StatusLogLevel.Info);
+            return true;
         }
 
         private async Task TryRefreshRuntimeStateAsync(GoogleDriveSyncSummary summary)

@@ -34,6 +34,7 @@ namespace OceanyaClient.Features.GoogleDriveSync
 
         public async Task<GoogleDriveTokenSet> SignInInteractiveAsync(
             GoogleDriveOAuthClientConfiguration configuration,
+            string? loginHint,
             CancellationToken cancellationToken)
         {
             ValidateConfiguration(configuration);
@@ -43,7 +44,12 @@ namespace OceanyaClient.Features.GoogleDriveSync
             string codeChallenge = CreateCodeChallenge(codeVerifier);
 
             using LoopbackOAuthReceiver receiver = new LoopbackOAuthReceiver();
-            string authorizationUrl = BuildAuthorizationUrl(configuration.ClientId, receiver.RedirectUri, codeChallenge, state);
+            string authorizationUrl = BuildAuthorizationUrl(
+                configuration.ClientId,
+                receiver.RedirectUri,
+                codeChallenge,
+                state,
+                loginHint);
 
             TryLaunchBrowser(authorizationUrl);
             LoopbackAuthorizationResponse callback = await receiver.WaitForCallbackAsync(state, cancellationToken);
@@ -216,7 +222,8 @@ namespace OceanyaClient.Features.GoogleDriveSync
             string clientId,
             string redirectUri,
             string codeChallenge,
-            string state)
+            string state,
+            string? loginHint)
         {
             Dictionary<string, string> values = new Dictionary<string, string>
             {
@@ -226,11 +233,15 @@ namespace OceanyaClient.Features.GoogleDriveSync
                 ["scope"] = DriveScope,
                 ["access_type"] = "offline",
                 ["include_granted_scopes"] = "true",
-                ["prompt"] = "consent",
                 ["code_challenge"] = codeChallenge,
                 ["code_challenge_method"] = "S256",
                 ["state"] = state
             };
+            string normalizedLoginHint = loginHint?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(normalizedLoginHint))
+            {
+                values["login_hint"] = normalizedLoginHint;
+            }
 
             StringBuilder builder = new StringBuilder(AuthorizationEndpoint);
             builder.Append('?');

@@ -214,6 +214,76 @@ public class INIParserTests
         }
     }
 
+    [Test]
+    public void CharacterConfig_DuplicateKeysUseLatestValueLikeAo2QSettings()
+    {
+        string characterDir = Path.Combine(tempRoot!, "characters", "DuplicateKeys");
+        Directory.CreateDirectory(characterDir);
+        File.WriteAllText(
+            Path.Combine(characterDir, "char.ini"),
+            "[Options]\n" +
+            "showname=Old Name\n" +
+            "showname=New Name\n" +
+            "side=wit\n" +
+            "side=pro\n" +
+            "[Emotions]\n" +
+            "number=1\n" +
+            "1=normal#-#old_anim#0#99\n" +
+            "1=normal#-#new_anim#1#1\n" +
+            "[SoundN]\n" +
+            "1=old_sfx\n" +
+            "1=new_sfx\n" +
+            "[SoundT]\n" +
+            "1=2\n" +
+            "1=5\n" +
+            "[SoundL]\n" +
+            "1=0\n" +
+            "1=1\n");
+
+        ResetCharacterCache();
+        CharacterFolder.RefreshCharacterList();
+
+        CharacterFolder character = CharacterFolder.FullList.Find(c => c.Name == "DuplicateKeys")!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(character.configINI.ShowName, Is.EqualTo("New Name"));
+            Assert.That(character.configINI.Side, Is.EqualTo("pro"));
+            Assert.That(character.configINI.Emotions[1].Animation, Is.EqualTo("new_anim"));
+            Assert.That(character.configINI.Emotions[1].Modifier, Is.EqualTo(ICMessage.EmoteModifiers.PlayPreanimation));
+            Assert.That(character.configINI.Emotions[1].DeskMod, Is.EqualTo(ICMessage.DeskMods.Shown));
+            Assert.That(character.configINI.Emotions[1].sfxName, Is.EqualTo("new_sfx"));
+            Assert.That(character.configINI.Emotions[1].sfxDelay, Is.EqualTo(5));
+            Assert.That(character.configINI.Emotions[1].sfxLooping, Is.EqualTo("1"));
+        });
+    }
+
+    [Test]
+    public void GetBaseFolders_UsesLastConfiguredMountPathAsHighestPriorityLikeAo2()
+    {
+        string baseRoot = Path.Combine(Path.GetTempPath(), $"ini_parser_mount_base_{Guid.NewGuid():N}");
+        string firstMount = Path.Combine(Path.GetTempPath(), $"ini_parser_mount_first_{Guid.NewGuid():N}");
+        string secondMount = Path.Combine(Path.GetTempPath(), $"ini_parser_mount_second_{Guid.NewGuid():N}");
+
+        Directory.CreateDirectory(baseRoot);
+        Directory.CreateDirectory(firstMount);
+        Directory.CreateDirectory(secondMount);
+
+        string configPath = Path.Combine(baseRoot, "config.ini");
+        File.WriteAllText(configPath, "mount_paths=" + firstMount + "," + secondMount + "\n");
+
+        try
+        {
+            List<string> result = Globals.GetBaseFolders(configPath);
+            Assert.That(result, Is.EqualTo(new[] { secondMount, firstMount, baseRoot }));
+        }
+        finally
+        {
+            TryDeleteDirectory(baseRoot);
+            TryDeleteDirectory(firstMount);
+            TryDeleteDirectory(secondMount);
+        }
+    }
+
     private static void CreateCharacter(string basePath, string name, string side, string? showName = null)
     {
         string charDir = Path.Combine(basePath, "characters", name);
@@ -259,6 +329,21 @@ public class INIParserTests
             {
                 // Ignore cleanup errors in tests.
             }
+        }
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, true);
+            }
+        }
+        catch
+        {
+            // Ignore cleanup errors in tests.
         }
     }
 }
