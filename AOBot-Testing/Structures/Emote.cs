@@ -28,14 +28,14 @@ namespace AOBot_Testing.Structures
                 Animation = parts.Length > 2 ? parts[2] : "",
                 Modifier = parts.Length > 3 ? (int.TryParse(parts[3], out int newEmoteMod) ?
                         (ICMessage.EmoteModifiers)newEmoteMod :
-                        ICMessage.EmoteModifiers.PlayPreanimation)
-                    : ICMessage.EmoteModifiers.PlayPreanimation,
+                        ICMessage.EmoteModifiers.NoPreanimation)
+                    : ICMessage.EmoteModifiers.NoPreanimation,
                 DeskMod = 
                     parts.Length > 4 ? 
                         (int.TryParse(parts[4], out int newDeskmod) ? 
                         (ICMessage.DeskMods)newDeskmod :
-                        ICMessage.DeskMods.Chat) 
-                    : ICMessage.DeskMods.Chat
+                        ICMessage.DeskMods.Unspecified) 
+                    : ICMessage.DeskMods.Unspecified
             };
         }
     }

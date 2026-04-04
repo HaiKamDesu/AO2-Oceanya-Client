@@ -77,6 +77,7 @@ namespace OceanyaClient
             AutoAddMountPathCheckBox.IsChecked = Settings.AutoAddMountPath;
             MirrorDeletesCheckBox.IsChecked = Settings.MirrorDeletes;
             UseExistingMountPathCheckBox.IsChecked = Settings.UseExistingMountPath;
+            AutoSyncEnabledCheckBox.IsChecked = connection.AutoSyncEnabled;
             UpdateGoogleCloudConfigurationStatus();
             UpdateAccountStatus();
             UpdateRemoteFolderStatus();
@@ -160,6 +161,7 @@ namespace OceanyaClient
             Settings.MirrorDeletes = MirrorDeletesCheckBox.IsChecked != false;
             Settings.UseExistingMountPath = UseExistingMountPathCheckBox.IsChecked == true;
             connection.ProviderId = FileHivemindProviderIds.GoogleDrive;
+            connection.AutoSyncEnabled = AutoSyncEnabledCheckBox.IsChecked != false;
             connection.DisplayName = ResolveConnectionDisplayName();
             UpdateGoogleCloudConfigurationStatus();
             UpdateRemoteFolderStatus();
@@ -327,7 +329,7 @@ namespace OceanyaClient
                 AppendStatus("Opening browser for Google Drive sign-in...", StatusLogLevel.Action);
                 GoogleDriveUserInfo user = await syncService.SignInAsync(Settings, CancellationToken.None);
                 BringHostWindowToFront();
-                PersistSettings(forcePersist: true);
+                PersistConnectionAfterSuccessfulSignIn();
                 UpdateAccountStatus();
                 AppendStatus(
                     "Signed in as " + (string.IsNullOrWhiteSpace(user.EmailAddress) ? user.DisplayName : user.EmailAddress) + ".",
@@ -614,7 +616,7 @@ namespace OceanyaClient
         private async void PushToDriveButton_Click(object sender, RoutedEventArgs e)
         {
             await ExecuteSyncOperationAsync(
-                "Publishing local folder to Google Drive...",
+                "Pushing local folder to Google Drive...",
                 async () =>
                 {
                     GoogleDriveSyncSummary summary = await syncService.PushLocalFolderAsync(
@@ -622,7 +624,7 @@ namespace OceanyaClient
                         subtitle => WaitForm.SetSubtitle(subtitle),
                         CancellationToken.None);
                     RefreshMountedAssets(summary.LocalChanges);
-                    AppendStatus(BuildSummaryMessage("Local -> Drive publish completed", summary), StatusLogLevel.Success);
+                    AppendStatus(BuildSummaryMessage("Local -> Drive push completed", summary), StatusLogLevel.Success);
                     return summary;
                 });
         }
@@ -704,6 +706,17 @@ namespace OceanyaClient
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
             }
+        }
+
+        private void PersistConnectionAfterSuccessfulSignIn()
+        {
+            connection.ProviderId = FileHivemindProviderIds.GoogleDrive;
+            connection.AutoSyncEnabled = AutoSyncEnabledCheckBox.IsChecked != false;
+            connection.DisplayName = ResolveConnectionDisplayName();
+            persistConnection(connection);
+            hasPersistedConnection = true;
+            UpdateGoogleCloudConfigurationStatus();
+            UpdateRemoteFolderStatus();
         }
 
         private async Task TryRefreshRuntimeStateAsync(GoogleDriveSyncSummary summary)

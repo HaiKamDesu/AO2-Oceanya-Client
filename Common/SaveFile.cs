@@ -1043,6 +1043,12 @@ namespace OceanyaClient
             data.FileHivemind.RemotePollIntervalSeconds = Math.Clamp(data.FileHivemind.RemotePollIntervalSeconds <= 0
                 ? 20
                 : data.FileHivemind.RemotePollIntervalSeconds, 5, 3600);
+            if (!data.FileHivemind.DesktopToastPreferenceConfigured)
+            {
+                data.FileHivemind.ShowDesktopToasts = true;
+                data.FileHivemind.DesktopToastPreferenceConfigured = true;
+            }
+
             bool migratedLegacyProfile = false;
 
             if (data.FileHivemind.Connections.Count == 0 && HasMeaningfulGoogleDriveSyncSettings(data.GoogleDriveSync))

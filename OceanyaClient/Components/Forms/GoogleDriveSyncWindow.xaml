@@ -507,7 +507,7 @@
                         <Button x:Name="PushToDriveButton"
                                 Width="150"
                                 Margin="8,0,0,0"
-                                Content="Publish Local Folder"
+                                Content="Push To Drive"
                                 Style="{StaticResource ModernButton}"
                                 Click="PushToDriveButton_Click"
                                 ToolTip="Upload the current local sync folder contents to Google Drive so other clients can pull the changes."/>
@@ -519,6 +519,15 @@
                                 Click="RefreshAssetsButton_Click"
                                 ToolTip="Re-read config.ini and rebuild the relevant character/background asset indexes immediately."/>
                     </WrapPanel>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                        <CheckBox x:Name="AutoSyncEnabledCheckBox"
+                                  Style="{StaticResource ModernCheckBox}"
+                                  Content="Auto-sync enabled for this connection"/>
+                        <Button Content="(?)"
+                                Style="{StaticResource HelpBadgeStyle}"
+                                ToolTip="When enabled, the hidden Hivemind background agent is allowed to poll and sync this connection automatically. Manual Sync From Drive and Push To Drive still work even when this is off."/>
+                    </StackPanel>
                 </StackPanel>
             </Border>
 

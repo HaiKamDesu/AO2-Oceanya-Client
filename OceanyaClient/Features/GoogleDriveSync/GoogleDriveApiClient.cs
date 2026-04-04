@@ -13,6 +13,7 @@ namespace OceanyaClient.Features.GoogleDriveSync
         private const string DriveApiBaseUrl = "https://www.googleapis.com/drive/v3";
         private const string DriveUploadBaseUrl = "https://www.googleapis.com/upload/drive/v3";
         private const string FolderMimeType = "application/vnd.google-apps.folder";
+        private static readonly TimeSpan DefaultOperationTimeout = TimeSpan.FromSeconds(90);
         private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
         {
             PropertyNameCaseInsensitive = true
@@ -20,29 +21,37 @@ namespace OceanyaClient.Features.GoogleDriveSync
 
         private readonly HttpClient httpClient;
         private readonly string accessToken;
+        private readonly TimeSpan operationTimeout;
 
-        public GoogleDriveApiClient(HttpClient httpClient, string accessToken)
+        public GoogleDriveApiClient(HttpClient httpClient, string accessToken, TimeSpan? operationTimeout = null)
         {
             this.httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
             this.accessToken = string.IsNullOrWhiteSpace(accessToken)
                 ? throw new ArgumentException("An access token is required.", nameof(accessToken))
                 : accessToken.Trim();
+            this.operationTimeout = operationTimeout.GetValueOrDefault(DefaultOperationTimeout);
         }
 
         public async Task<GoogleDriveUserInfo> GetCurrentUserAsync(CancellationToken cancellationToken)
         {
-            using HttpRequestMessage request = CreateRequest(
-                HttpMethod.Get,
-                $"{DriveApiBaseUrl}/about?fields=user(displayName,emailAddress)");
-            using HttpResponseMessage response = await httpClient.SendAsync(request, cancellationToken);
-            await EnsureSuccessAsync(response, cancellationToken);
+            return await ExecuteWithTimeoutAsync(
+                async timedCancellationToken =>
+                {
+                    using HttpRequestMessage request = CreateRequest(
+                        HttpMethod.Get,
+                        $"{DriveApiBaseUrl}/about?fields=user(displayName,emailAddress)");
+                    using HttpResponseMessage response = await httpClient.SendAsync(request, timedCancellationToken);
+                    await EnsureSuccessAsync(response, timedCancellationToken);
 
-            GoogleDriveAboutResponse? about = await DeserializeAsync<GoogleDriveAboutResponse>(response, cancellationToken);
-            return new GoogleDriveUserInfo
-            {
-                DisplayName = about?.User?.DisplayName?.Trim() ?? string.Empty,
-                EmailAddress = about?.User?.EmailAddress?.Trim() ?? string.Empty
-            };
+                    GoogleDriveAboutResponse? about = await DeserializeAsync<GoogleDriveAboutResponse>(response, timedCancellationToken);
+                    return new GoogleDriveUserInfo
+                    {
+                        DisplayName = about?.User?.DisplayName?.Trim() ?? string.Empty,
+                        EmailAddress = about?.User?.EmailAddress?.Trim() ?? string.Empty
+                    };
+                },
+                cancellationToken,
+                "account verification");
         }
 
         public async Task<string> GetFolderNameAsync(string folderId, CancellationToken cancellationToken)
@@ -52,39 +61,51 @@ namespace OceanyaClient.Features.GoogleDriveSync
                 throw new InvalidOperationException("A Google Drive folder ID is required.");
             }
 
-            using HttpRequestMessage request = CreateRequest(
-                HttpMethod.Get,
-                $"{DriveApiBaseUrl}/files/{Uri.EscapeDataString(folderId.Trim())}?supportsAllDrives=true&fields=id,name,mimeType");
-            using HttpResponseMessage response = await httpClient.SendAsync(request, cancellationToken);
-            await EnsureSuccessAsync(response, cancellationToken);
+            return await ExecuteWithTimeoutAsync(
+                async timedCancellationToken =>
+                {
+                    using HttpRequestMessage request = CreateRequest(
+                        HttpMethod.Get,
+                        $"{DriveApiBaseUrl}/files/{Uri.EscapeDataString(folderId.Trim())}?supportsAllDrives=true&fields=id,name,mimeType");
+                    using HttpResponseMessage response = await httpClient.SendAsync(request, timedCancellationToken);
+                    await EnsureSuccessAsync(response, timedCancellationToken);
 
-            GoogleDriveFileResponse? folder = await DeserializeAsync<GoogleDriveFileResponse>(response, cancellationToken);
-            string folderName = folder?.Name?.Trim() ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(folderName))
-            {
-                throw new InvalidOperationException("Google Drive did not return a folder name for the selected folder.");
-            }
+                    GoogleDriveFileResponse? folder = await DeserializeAsync<GoogleDriveFileResponse>(response, timedCancellationToken);
+                    string folderName = folder?.Name?.Trim() ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(folderName))
+                    {
+                        throw new InvalidOperationException("Google Drive did not return a folder name for the selected folder.");
+                    }
 
-            return folderName;
+                    return folderName;
+                },
+                cancellationToken,
+                "folder verification");
         }
 
         public async Task<string> GetStartPageTokenAsync(CancellationToken cancellationToken)
         {
-            using HttpRequestMessage request = CreateRequest(
-                HttpMethod.Get,
-                $"{DriveApiBaseUrl}/changes/startPageToken?supportsAllDrives=true");
-            using HttpResponseMessage response = await httpClient.SendAsync(request, cancellationToken);
-            await EnsureSuccessAsync(response, cancellationToken);
+            return await ExecuteWithTimeoutAsync(
+                async timedCancellationToken =>
+                {
+                    using HttpRequestMessage request = CreateRequest(
+                        HttpMethod.Get,
+                        $"{DriveApiBaseUrl}/changes/startPageToken?supportsAllDrives=true");
+                    using HttpResponseMessage response = await httpClient.SendAsync(request, timedCancellationToken);
+                    await EnsureSuccessAsync(response, timedCancellationToken);
 
-            GoogleDriveStartPageTokenResponse? tokenResponse =
-                await DeserializeAsync<GoogleDriveStartPageTokenResponse>(response, cancellationToken);
-            string token = tokenResponse?.StartPageToken?.Trim() ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(token))
-            {
-                throw new InvalidOperationException("Google Drive did not return a start page token.");
-            }
+                    GoogleDriveStartPageTokenResponse? tokenResponse =
+                        await DeserializeAsync<GoogleDriveStartPageTokenResponse>(response, timedCancellationToken);
+                    string token = tokenResponse?.StartPageToken?.Trim() ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(token))
+                    {
+                        throw new InvalidOperationException("Google Drive did not return a start page token.");
+                    }
 
-            return token;
+                    return token;
+                },
+                cancellationToken,
+                "change-token retrieval");
         }
 
         public async Task<GoogleDriveChangePage> GetChangesAsync(string pageToken, CancellationToken cancellationToken)
@@ -94,45 +115,51 @@ namespace OceanyaClient.Features.GoogleDriveSync
                 throw new InvalidOperationException("A Google Drive change page token is required.");
             }
 
-            string url = $"{DriveApiBaseUrl}/changes"
-                + $"?pageToken={Uri.EscapeDataString(pageToken.Trim())}"
-                + "&pageSize=1000"
-                + "&supportsAllDrives=true"
-                + "&includeItemsFromAllDrives=true"
-                + "&includeRemoved=true"
-                + $"&fields={Uri.EscapeDataString("nextPageToken,newStartPageToken,changes(fileId,removed,file(id,parents,name,mimeType,trashed))")}";
-            using HttpRequestMessage request = CreateRequest(HttpMethod.Get, url);
-            using HttpResponseMessage response = await httpClient.SendAsync(request, cancellationToken);
-            await EnsureSuccessAsync(response, cancellationToken);
-
-            GoogleDriveChangesResponse? changesResponse =
-                await DeserializeAsync<GoogleDriveChangesResponse>(response, cancellationToken);
-            GoogleDriveChangePage page = new GoogleDriveChangePage
-            {
-                NextPageToken = changesResponse?.NextPageToken?.Trim() ?? string.Empty,
-                NewStartPageToken = changesResponse?.NewStartPageToken?.Trim() ?? string.Empty
-            };
-
-            foreach (GoogleDriveChangeResponse change in changesResponse?.Changes ?? new List<GoogleDriveChangeResponse>())
-            {
-                string itemId = change.FileId?.Trim() ?? change.File?.Id?.Trim() ?? string.Empty;
-                if (string.IsNullOrWhiteSpace(itemId))
+            return await ExecuteWithTimeoutAsync(
+                async timedCancellationToken =>
                 {
-                    continue;
-                }
+                    string url = $"{DriveApiBaseUrl}/changes"
+                        + $"?pageToken={Uri.EscapeDataString(pageToken.Trim())}"
+                        + "&pageSize=1000"
+                        + "&supportsAllDrives=true"
+                        + "&includeItemsFromAllDrives=true"
+                        + "&includeRemoved=true"
+                        + $"&fields={Uri.EscapeDataString("nextPageToken,newStartPageToken,changes(fileId,removed,file(id,parents,name,mimeType,trashed))")}";
+                    using HttpRequestMessage request = CreateRequest(HttpMethod.Get, url);
+                    using HttpResponseMessage response = await httpClient.SendAsync(request, timedCancellationToken);
+                    await EnsureSuccessAsync(response, timedCancellationToken);
 
-                page.Changes.Add(new GoogleDriveChangeEntry
-                {
-                    ItemId = itemId,
-                    Removed = change.Removed,
-                    ParentIds = (change.File?.Parents ?? new List<string>())
-                        .Where(parentId => !string.IsNullOrWhiteSpace(parentId))
-                        .Select(parentId => parentId.Trim())
-                        .ToList()
-                });
-            }
+                    GoogleDriveChangesResponse? changesResponse =
+                        await DeserializeAsync<GoogleDriveChangesResponse>(response, timedCancellationToken);
+                    GoogleDriveChangePage page = new GoogleDriveChangePage
+                    {
+                        NextPageToken = changesResponse?.NextPageToken?.Trim() ?? string.Empty,
+                        NewStartPageToken = changesResponse?.NewStartPageToken?.Trim() ?? string.Empty
+                    };
 
-            return page;
+                    foreach (GoogleDriveChangeResponse change in changesResponse?.Changes ?? new List<GoogleDriveChangeResponse>())
+                    {
+                        string itemId = change.FileId?.Trim() ?? change.File?.Id?.Trim() ?? string.Empty;
+                        if (string.IsNullOrWhiteSpace(itemId))
+                        {
+                            continue;
+                        }
+
+                        page.Changes.Add(new GoogleDriveChangeEntry
+                        {
+                            ItemId = itemId,
+                            Removed = change.Removed,
+                            ParentIds = (change.File?.Parents ?? new List<string>())
+                                .Where(parentId => !string.IsNullOrWhiteSpace(parentId))
+                                .Select(parentId => parentId.Trim())
+                                .ToList()
+                        });
+                    }
+
+                    return page;
+                },
+                cancellationToken,
+                "remote change polling");
         }
 
         public async Task<GoogleDriveSyncSnapshot> GetSnapshotAsync(string rootFolderId, CancellationToken cancellationToken)
@@ -217,19 +244,25 @@ namespace OceanyaClient.Features.GoogleDriveSync
             }
 
             string payload = JsonSerializer.Serialize(metadata);
-            using HttpRequestMessage request = CreateRequest(
-                HttpMethod.Post,
-                $"{DriveApiBaseUrl}/files?supportsAllDrives=true&fields=id,name");
-            request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
+            return await ExecuteWithTimeoutAsync(
+                async timedCancellationToken =>
+                {
+                    using HttpRequestMessage request = CreateRequest(
+                        HttpMethod.Post,
+                        $"{DriveApiBaseUrl}/files?supportsAllDrives=true&fields=id,name");
+                    request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
 
-            using HttpResponseMessage response = await httpClient.SendAsync(request, cancellationToken);
-            await EnsureSuccessAsync(response, cancellationToken);
-            GoogleDriveFileResponse? created = await DeserializeAsync<GoogleDriveFileResponse>(response, cancellationToken);
-            return new GoogleDriveSyncFolderEntry
-            {
-                RelativePath = folderName,
-                ItemId = created?.Id?.Trim() ?? string.Empty
-            };
+                    using HttpResponseMessage response = await httpClient.SendAsync(request, timedCancellationToken);
+                    await EnsureSuccessAsync(response, timedCancellationToken);
+                    GoogleDriveFileResponse? created = await DeserializeAsync<GoogleDriveFileResponse>(response, timedCancellationToken);
+                    return new GoogleDriveSyncFolderEntry
+                    {
+                        RelativePath = folderName,
+                        ItemId = created?.Id?.Trim() ?? string.Empty
+                    };
+                },
+                cancellationToken,
+                "folder creation");
         }
 
         public async Task<string> UploadFileAsync(
@@ -264,13 +297,19 @@ namespace OceanyaClient.Features.GoogleDriveSync
                 : $"{DriveUploadBaseUrl}/files/{Uri.EscapeDataString(existingFileId.Trim())}?uploadType=multipart&supportsAllDrives=true&fields=id";
             HttpMethod method = string.IsNullOrWhiteSpace(existingFileId) ? HttpMethod.Post : HttpMethod.Patch;
 
-            using HttpRequestMessage request = CreateRequest(method, uploadUrl);
-            request.Content = content;
+            return await ExecuteWithTimeoutAsync(
+                async timedCancellationToken =>
+                {
+                    using HttpRequestMessage request = CreateRequest(method, uploadUrl);
+                    request.Content = content;
 
-            using HttpResponseMessage response = await httpClient.SendAsync(request, cancellationToken);
-            await EnsureSuccessAsync(response, cancellationToken);
-            GoogleDriveFileResponse? uploaded = await DeserializeAsync<GoogleDriveFileResponse>(response, cancellationToken);
-            return uploaded?.Id?.Trim() ?? existingFileId?.Trim() ?? string.Empty;
+                    using HttpResponseMessage response = await httpClient.SendAsync(request, timedCancellationToken);
+                    await EnsureSuccessAsync(response, timedCancellationToken);
+                    GoogleDriveFileResponse? uploaded = await DeserializeAsync<GoogleDriveFileResponse>(response, timedCancellationToken);
+                    return uploaded?.Id?.Trim() ?? existingFileId?.Trim() ?? string.Empty;
+                },
+                cancellationToken,
+                "file upload");
         }
 
         public async Task DownloadFileAsync(string fileId, string destinationPath, CancellationToken cancellationToken)
@@ -278,37 +317,44 @@ namespace OceanyaClient.Features.GoogleDriveSync
             string directory = Path.GetDirectoryName(destinationPath) ?? string.Empty;
             Directory.CreateDirectory(directory);
 
-            using HttpRequestMessage request = CreateRequest(
-                HttpMethod.Get,
-                $"{DriveApiBaseUrl}/files/{Uri.EscapeDataString(fileId)}?alt=media&supportsAllDrives=true");
-            using HttpResponseMessage response = await httpClient.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken);
-            await EnsureSuccessAsync(response, cancellationToken);
+            await ExecuteWithTimeoutAsync(
+                async timedCancellationToken =>
+                {
+                    using HttpRequestMessage request = CreateRequest(
+                        HttpMethod.Get,
+                        $"{DriveApiBaseUrl}/files/{Uri.EscapeDataString(fileId)}?alt=media&supportsAllDrives=true");
+                    using HttpResponseMessage response = await httpClient.SendAsync(
+                        request,
+                        HttpCompletionOption.ResponseHeadersRead,
+                        timedCancellationToken);
+                    await EnsureSuccessAsync(response, timedCancellationToken);
 
-            string tempPath = destinationPath + ".tmp";
-            await using (Stream responseStream = await response.Content.ReadAsStreamAsync(cancellationToken))
-            await using (FileStream output = File.Create(tempPath))
-            {
-                await responseStream.CopyToAsync(output, cancellationToken);
-            }
+                    string tempPath = destinationPath + ".tmp";
+                    await using (Stream responseStream = await response.Content.ReadAsStreamAsync(timedCancellationToken))
+                    await using (FileStream output = File.Create(tempPath))
+                    {
+                        await responseStream.CopyToAsync(output, timedCancellationToken);
+                    }
 
-            if (File.Exists(destinationPath))
-            {
-                File.Delete(destinationPath);
-            }
-
-            File.Move(tempPath, destinationPath);
+                    PersistentFileStoreSupport.ReplaceFile(tempPath, destinationPath);
+                },
+                cancellationToken,
+                "file download");
         }
 
         public async Task DeleteItemAsync(string itemId, CancellationToken cancellationToken)
         {
-            using HttpRequestMessage request = CreateRequest(
-                HttpMethod.Delete,
-                $"{DriveApiBaseUrl}/files/{Uri.EscapeDataString(itemId)}?supportsAllDrives=true");
-            using HttpResponseMessage response = await httpClient.SendAsync(request, cancellationToken);
-            await EnsureSuccessAsync(response, cancellationToken);
+            await ExecuteWithTimeoutAsync(
+                async timedCancellationToken =>
+                {
+                    using HttpRequestMessage request = CreateRequest(
+                        HttpMethod.Delete,
+                        $"{DriveApiBaseUrl}/files/{Uri.EscapeDataString(itemId)}?supportsAllDrives=true");
+                    using HttpResponseMessage response = await httpClient.SendAsync(request, timedCancellationToken);
+                    await EnsureSuccessAsync(response, timedCancellationToken);
+                },
+                cancellationToken,
+                "remote deletion");
         }
 
         private async Task<GoogleDriveFileListResponse> ListChildrenAsync(
@@ -328,11 +374,61 @@ namespace OceanyaClient.Features.GoogleDriveSync
                 url += "&pageToken=" + Uri.EscapeDataString(pageToken);
             }
 
-            using HttpRequestMessage request = CreateRequest(HttpMethod.Get, url);
-            using HttpResponseMessage response = await httpClient.SendAsync(request, cancellationToken);
-            await EnsureSuccessAsync(response, cancellationToken);
-            return await DeserializeAsync<GoogleDriveFileListResponse>(response, cancellationToken)
-                ?? new GoogleDriveFileListResponse();
+            return await ExecuteWithTimeoutAsync(
+                async timedCancellationToken =>
+                {
+                    using HttpRequestMessage request = CreateRequest(HttpMethod.Get, url);
+                    using HttpResponseMessage response = await httpClient.SendAsync(request, timedCancellationToken);
+                    await EnsureSuccessAsync(response, timedCancellationToken);
+                    return await DeserializeAsync<GoogleDriveFileListResponse>(response, timedCancellationToken)
+                        ?? new GoogleDriveFileListResponse();
+                },
+                cancellationToken,
+                "folder listing");
+        }
+
+        private async Task ExecuteWithTimeoutAsync(
+            Func<CancellationToken, Task> operation,
+            CancellationToken cancellationToken,
+            string operationName)
+        {
+            using CancellationTokenSource timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutSource.CancelAfter(operationTimeout);
+
+            try
+            {
+                await operation(timeoutSource.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && timeoutSource.IsCancellationRequested)
+            {
+                throw BuildTimeoutException(operationName);
+            }
+        }
+
+        private async Task<T> ExecuteWithTimeoutAsync<T>(
+            Func<CancellationToken, Task<T>> operation,
+            CancellationToken cancellationToken,
+            string operationName)
+        {
+            using CancellationTokenSource timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutSource.CancelAfter(operationTimeout);
+
+            try
+            {
+                return await operation(timeoutSource.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && timeoutSource.IsCancellationRequested)
+            {
+                throw BuildTimeoutException(operationName);
+            }
+        }
+
+        private InvalidOperationException BuildTimeoutException(string operationName)
+        {
+            return new InvalidOperationException(
+                "Google Drive " + operationName + " timed out after "
+                + Math.Max(1, (int)operationTimeout.TotalSeconds)
+                + " seconds. The network may have stalled or disconnected.");
         }
 
         private HttpRequestMessage CreateRequest(HttpMethod method, string url)

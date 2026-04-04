@@ -18,6 +18,7 @@ namespace AOBot_Testing.Agents
         public Stopwatch aliveTime = new Stopwatch();
         private CountdownTimer? speakTimer;
         bool AbleToSpeak { get; set; } = true;
+        private readonly HashSet<string> serverFeatures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
 
         /// <summary>
@@ -65,6 +66,7 @@ namespace AOBot_Testing.Agents
         public ICMessage.Effects effect = ICMessage.Effects.None;
         public bool screenshake = false;
         public ICMessage.TextColors textColor = ICMessage.TextColors.White;
+        public bool PreanimEnabled = false;
         public bool Immediate = false;
         public bool Additive = false;
         public (int Horizontal, int Vertical) SelfOffset;
@@ -147,59 +149,79 @@ namespace AOBot_Testing.Agents
                 }
 
                 ICMessage msg = new ICMessage();
-                msg.DeskMod = deskMod;
+                msg.DeskMod = ResolveDeskModForPacket(currentEmote.Modifier, currentEmote.DeskMod);
                 msg.PreAnim = currentEmote.PreAnimation;
                 msg.Character = CurrentINI.Name;
                 msg.Emote = currentEmote.Animation;
+                msg.Message = textColor == ICMessage.TextColors.Red
+                    ? (message.StartsWith("~", StringComparison.Ordinal) ? message + "~" : "~" + message + "~")
+                    : message;
 
-                // Fix for red text color not applying
-                if (textColor == ICMessage.TextColors.Red)
-                {
-                    msg.Message = message.StartsWith("~") ? $"{message}~" : $"~{message}~";
-                }
-                else
-                {
-                    msg.Message = message;
-                }
-
-                msg.Side = curPos;
-                msg.SfxName = curSFX == "Default" ? currentEmote.sfxName : curSFX == "Nothing" ? "1" : curSFX;
-                msg.EmoteModifier = Immediate ? ICMessage.EmoteModifiers.NoPreanimation : emoteMod;
+                msg.Side = ResolveCurrentOrDefaultSide();
+                msg.SfxName = "1";
+                msg.EmoteModifier = ResolveEmoteModifierForPacket(currentEmote.Modifier);
                 msg.CharId = iniPuppetID;
                 msg.SfxDelay = currentEmote.sfxDelay;
-                msg.ShoutModifier = shoutModifiers;
+                msg.ShoutModifier = ResolveShoutModifierForPacket();
                 msg.EvidenceID = "0";
-                msg.Flip = flip;
+                msg.Flip = SupportsServerFeature("FLIPPING") && flip;
+                msg.FlipFieldRaw = SupportsServerFeature("FLIPPING")
+                    ? string.Empty
+                    : iniPuppetID.ToString();
                 msg.Realization = effect == ICMessage.Effects.Realization;
-                msg.TextColor = textColor;
-                msg.ShowName = ICShowname;
+                msg.TextColor = NormalizeTextColorForPacket(textColor);
+                msg.ShowName = ResolveShowNameForPacket();
                 msg.OtherCharId = -1;
                 msg.SelfOffset = SelfOffset;
-                msg.NonInterruptingPreAnim = Immediate;
+                msg.NonInterruptingPreAnim = PreanimEnabled && Immediate;
                 msg.SfxLooping = false;
                 msg.ScreenShake = screenshake;
-                msg.FramesShake = string.Empty;
-                msg.FramesRealization = string.Empty;
-                msg.FramesSfx = string.Empty;
+                msg.FramesShake = $"{currentEmote.PreAnimation}^(b){currentEmote.Animation}^(a){currentEmote.Animation}^";
+                msg.FramesRealization = $"{currentEmote.PreAnimation}^(b){currentEmote.Animation}^(a){currentEmote.Animation}^";
+                msg.FramesSfx = $"{currentEmote.PreAnimation}^(b){currentEmote.Animation}^(a){currentEmote.Animation}^";
                 msg.Additive = Additive;
                 msg.Effect = effect;
+                msg.EffectString = ResolveEffectStringForPacket(hasSelectedCustomSfx: false);
                 msg.Blips = "";
+                msg.Slide = false;
+
+                if (PreanimEnabled)
+                {
+                    msg.SfxName = ResolveSelectedSfxName();
+                }
 
                 bool hasSelectedCustomSfx =
                     !string.IsNullOrWhiteSpace(curSFX) &&
-                    !string.Equals(curSFX, "Default", StringComparison.OrdinalIgnoreCase) &&
-                    !string.Equals(curSFX, "Nothing", StringComparison.OrdinalIgnoreCase);
+                    !string.Equals(curSFX, "Default", StringComparison.OrdinalIgnoreCase);
 
-                if (hasSelectedCustomSfx && emoteMod == ICMessage.EmoteModifiers.NoPreanimation)
+                if (hasSelectedCustomSfx)
                 {
-                    // Match AO2's "send selected SFX on idle" behavior so narration can carry dropdown SFX.
-                    msg.PreAnim = string.Empty;
-                    msg.SfxDelay = 0;
-                    msg.EmoteModifier = ICMessage.EmoteModifiers.PlayPreanimation;
-                    msg.NonInterruptingPreAnim = false;
+                    msg.SfxName = ResolveSelectedSfxName();
+                    if (msg.EmoteModifier == ICMessage.EmoteModifiers.NoPreanimation
+                        || msg.EmoteModifier == ICMessage.EmoteModifiers.NoPreanimationAndZoom)
+                    {
+                        msg.PreAnim = string.Empty;
+                        msg.SfxDelay = 0;
+                        msg.EmoteModifier = msg.EmoteModifier == ICMessage.EmoteModifiers.NoPreanimationAndZoom
+                            ? ICMessage.EmoteModifiers.ObjectionAndZoomNoPreanim
+                            : ICMessage.EmoteModifiers.PlayPreanimation;
+                    }
                 }
 
-                string command = ICMessage.GetCommand(msg);
+                msg.EffectString = ResolveEffectStringForPacket(hasSelectedCustomSfx);
+
+                ICMessage.SerializationOptions serializationOptions = new ICMessage.SerializationOptions
+                {
+                    IncludeCcccIcSupport = SupportsServerFeature("CCCC_IC_SUPPORT"),
+                    IncludeLoopingSfx = SupportsServerFeature("LOOPING_SFX"),
+                    IncludeAdditive = SupportsServerFeature("ADDITIVE"),
+                    IncludeEffects = SupportsServerFeature("EFFECTS"),
+                    IncludeCustomBlips = SupportsServerFeature("CUSTOM_BLIPS"),
+                    IncludeVerticalOffset = SupportsServerFeature("Y_OFFSET"),
+                    IncludeSlide = SupportsServerFeature("CUSTOM_BLIPS")
+                };
+                string command = ICMessage.GetCommand(msg, serializationOptions);
+                CustomConsole.Debug("Outgoing IC packet: " + command);
 
                 /// If the message is queued, add it to the list of pending messages.
                 /// It'll be sent when the current messages are done processing.
@@ -412,6 +434,22 @@ namespace AOBot_Testing.Agents
                 }
                 CustomConsole.Info("Server Character List updated.");
             }
+            else if (message.StartsWith("FL#"))
+            {
+                string[] featureParts = message.Substring(3).TrimEnd('#', '%')
+                    .Split('#', StringSplitOptions.RemoveEmptyEntries);
+                serverFeatures.Clear();
+                foreach (string feature in featureParts)
+                {
+                    string trimmedFeature = Globals.ReplaceTextForSymbols(feature).Trim();
+                    if (!string.IsNullOrWhiteSpace(trimmedFeature))
+                    {
+                        serverFeatures.Add(trimmedFeature);
+                    }
+                }
+
+                CustomConsole.Debug("Server features: " + string.Join(", ", serverFeatures.OrderBy(feature => feature, StringComparer.OrdinalIgnoreCase)));
+            }
             else if (message.StartsWith("MS#"))
             {
                 ICMessage? icMessage = ICMessage.FromConsoleLine(message);
@@ -516,6 +554,7 @@ namespace AOBot_Testing.Agents
         {
             aliveTime.Reset();
             lastCharsCheck = string.Empty;
+            serverFeatures.Clear();
             ws = new ClientWebSocket();
             // Add required headers (modify as needed)
             ws.Options.SetRequestHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
@@ -559,6 +598,181 @@ namespace AOBot_Testing.Agents
                 throw;
             }
         }
+
+        private bool SupportsServerFeature(string featureName)
+        {
+            return serverFeatures.Contains(featureName?.Trim() ?? string.Empty);
+        }
+
+        private string ResolveCurrentOrDefaultSide()
+        {
+            if (!string.IsNullOrWhiteSpace(curPos))
+            {
+                return curPos;
+            }
+
+            return CurrentINI?.configINI?.Side ?? string.Empty;
+        }
+
+        private string ResolveSelectedSfxName()
+        {
+            if (string.IsNullOrWhiteSpace(curSFX) || string.Equals(curSFX, "Default", StringComparison.OrdinalIgnoreCase))
+            {
+                return currentEmote?.sfxName ?? "1";
+            }
+
+            if (string.Equals(curSFX, "Nothing", StringComparison.OrdinalIgnoreCase))
+            {
+                return "1";
+            }
+
+            return curSFX;
+        }
+
+        private string ResolveShowNameForPacket()
+        {
+            string explicitShowName = ICShowname?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(explicitShowName))
+            {
+                return explicitShowName;
+            }
+
+            return CurrentINI?.configINI?.ShowName ?? string.Empty;
+        }
+
+        private string ResolveEffectStringForPacket(bool hasSelectedCustomSfx)
+        {
+            string effectName = effect switch
+            {
+                ICMessage.Effects.Realization => "realization",
+                ICMessage.Effects.Hearts => "hearts",
+                ICMessage.Effects.Reaction => "reaction",
+                ICMessage.Effects.Impact => "impact",
+                _ => string.Empty
+            };
+
+            string effectFolder = CurrentINI?.configINI?.EffectsFolder ?? string.Empty;
+            string sound = effect switch
+            {
+                ICMessage.Effects.Realization => string.IsNullOrWhiteSpace(CurrentINI?.configINI?.Realization)
+                    ? "sfx-realization"
+                    : CurrentINI.configINI.Realization,
+                ICMessage.Effects.Hearts => "sfx-squee",
+                ICMessage.Effects.Reaction => "sfx-reactionding",
+                ICMessage.Effects.Impact => "sfx-fan",
+                _ => string.Empty
+            };
+
+            if (!PreanimEnabled && hasSelectedCustomSfx)
+            {
+                sound = "0";
+            }
+
+            return $"{effectName}|{effectFolder}|{sound}";
+        }
+
+        private ICMessage.EmoteModifiers ResolveEmoteModifierForPacket(ICMessage.EmoteModifiers baseModifier)
+        {
+            ICMessage.EmoteModifiers resolved = baseModifier;
+
+            if (resolved == ICMessage.EmoteModifiers.PlayPreanimationAndObjection)
+            {
+                resolved = ICMessage.EmoteModifiers.PlayPreanimation;
+            }
+            else if (resolved == ICMessage.EmoteModifiers.Unused3)
+            {
+                resolved = ICMessage.EmoteModifiers.NoPreanimation;
+            }
+            else if (resolved == ICMessage.EmoteModifiers.Unused4)
+            {
+                resolved = ICMessage.EmoteModifiers.NoPreanimationAndZoom;
+            }
+
+            if (PreanimEnabled && !Immediate)
+            {
+                if (resolved == ICMessage.EmoteModifiers.NoPreanimation)
+                {
+                    resolved = ICMessage.EmoteModifiers.PlayPreanimation;
+                }
+                else if (resolved == ICMessage.EmoteModifiers.NoPreanimationAndZoom
+                    && SupportsServerFeature("PREZOOM"))
+                {
+                    resolved = ICMessage.EmoteModifiers.ObjectionAndZoomNoPreanim;
+                }
+            }
+            else
+            {
+                if (resolved == ICMessage.EmoteModifiers.PlayPreanimation)
+                {
+                    resolved = ICMessage.EmoteModifiers.NoPreanimation;
+                }
+                else if (resolved == ICMessage.EmoteModifiers.ObjectionAndZoomNoPreanim)
+                {
+                    resolved = ICMessage.EmoteModifiers.NoPreanimationAndZoom;
+                }
+            }
+
+            return resolved;
+        }
+
+        private ICMessage.DeskMods ResolveDeskModForPacket(
+            ICMessage.EmoteModifiers baseModifier,
+            ICMessage.DeskMods baseDeskMod)
+        {
+            if (!SupportsServerFeature("DESKMOD"))
+            {
+                return ICMessage.DeskMods.Shown;
+            }
+
+            ICMessage.DeskMods resolved = baseDeskMod;
+            if (!SupportsServerFeature("EXPANDED_DESK_MODS"))
+            {
+                if (resolved == ICMessage.DeskMods.HiddenDuringPreanimShownAfter
+                    || resolved == ICMessage.DeskMods.HiddenDuringPreanimCenteredAfter)
+                {
+                    resolved = ICMessage.DeskMods.Hidden;
+                }
+                else if (resolved == ICMessage.DeskMods.ShownDuringPreanimHiddenAfter
+                    || resolved == ICMessage.DeskMods.ShownDuringPreanimCenteredAfter)
+                {
+                    resolved = ICMessage.DeskMods.Shown;
+                }
+            }
+
+            if (resolved == ICMessage.DeskMods.Unspecified
+                && (baseModifier == ICMessage.EmoteModifiers.NoPreanimationAndZoom
+                    || baseModifier == ICMessage.EmoteModifiers.ObjectionAndZoomNoPreanim))
+            {
+                return ICMessage.DeskMods.Hidden;
+            }
+
+            if (resolved == ICMessage.DeskMods.Unspecified)
+            {
+                return ICMessage.DeskMods.Shown;
+            }
+
+            return resolved;
+        }
+
+        private ICMessage.ShoutModifiers ResolveShoutModifierForPacket()
+        {
+            if (shoutModifiers == ICMessage.ShoutModifiers.Custom
+                && !SupportsServerFeature("CUSTOMOBJECTIONS"))
+            {
+                return ICMessage.ShoutModifiers.Nothing;
+            }
+
+            return shoutModifiers;
+        }
+
+        private static ICMessage.TextColors NormalizeTextColorForPacket(ICMessage.TextColors color)
+        {
+            int colorValue = (int)color;
+            return colorValue is < 0 or >= 9
+                ? ICMessage.TextColors.White
+                : color;
+        }
+
 
         private void SetCurrentArea(string newArea)
         {
@@ -754,8 +968,20 @@ namespace AOBot_Testing.Agents
             // Step 5: Receive Character List
             response = await WaitForPacketAsync(packet => packet.StartsWith("SC#"), "SC");
 
+            // Step 6: Mirror AO2's courtroom bootstrap: request area/music data after SC.
+            await SendPacket("RM#%");
+
+            // Step 7: Wait for area/music bootstrap before declaring ready.
+            response = await WaitForPacketAsync(
+                packet => packet.StartsWith("SM#") || packet.StartsWith("FA#"),
+                "SM/FA");
+
             // Step 8: Send Ready Signal
             await SendPacket("RD#%");
+
+            // AO2 immediately emits an empty OOC packet after RD during courtroom load.
+            string encodedShowname = Globals.ReplaceSymbolsForText(OOCShowname ?? string.Empty);
+            await SendPacket($"CT#{encodedShowname}##%");
 
             // Step 9: Wait for final confirmation
             response = await WaitForPacketAsync(packet => packet.StartsWith("DONE#"), "DONE");
@@ -857,6 +1083,7 @@ namespace AOBot_Testing.Agents
                 CustomConsole.Info("WebSocket is not connected.");
             }
 
+            serverFeatures.Clear();
             OnDisconnect?.Invoke();
         }
 
@@ -870,6 +1097,8 @@ namespace AOBot_Testing.Agents
             {
                 CustomConsole.Info("WebSocket is not connected.");
             }
+
+            serverFeatures.Clear();
         }
         #endregion
 
@@ -960,7 +1189,7 @@ namespace AOBot_Testing.Agents
                     $"Requested server character index {serverCharID} but available range is 0..{Math.Max(0, serverCharacterList.Count - 1)}.");
             }
 
-            await SendPacket($"CC#0#{serverCharID}#{hdid}#%");
+            await SendPacket($"CC#{playerID}#{serverCharID}#{hdid}#%");
 
             var characterName = serverCharacterList.ElementAt(serverCharID).Key;
 

@@ -2,6 +2,7 @@ using Microsoft.Win32;
 using OceanyaClient.Features.FileHivemind;
 using OceanyaClient.Features.GoogleDriveSync;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -9,7 +10,6 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -20,6 +20,29 @@ namespace OceanyaClient
 {
     public partial class OceanyanFileHivemindWindow : OceanyaWindowContentControl, Features.Startup.IStartupFunctionalityWindow
     {
+        private sealed class ConnectionListEntry
+        {
+            public ConnectionListEntry(
+                FileHivemindConnectionProfile connection,
+                Brush primaryForeground,
+                Brush secondaryForeground,
+                string statusText)
+            {
+                Connection = connection;
+                PrimaryForeground = primaryForeground;
+                SecondaryForeground = secondaryForeground;
+                StatusText = statusText;
+            }
+
+            public FileHivemindConnectionProfile Connection { get; }
+
+            public Brush PrimaryForeground { get; }
+
+            public Brush SecondaryForeground { get; }
+
+            public string StatusText { get; }
+        }
+
         private enum StatusLogLevel
         {
             Info,
@@ -35,13 +58,19 @@ namespace OceanyaClient
         private readonly FileHivemindBackgroundAgentLauncher backgroundAgentLauncher;
         private readonly FileHivemindBackgroundLogStore backgroundLogStore;
         private readonly DispatcherTimer backgroundLogTimer;
+        private readonly HashSet<string> activeConnectionIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly List<OceanyanFileHivemindStatusLogEntry> statusLogEntries =
+            new List<OceanyanFileHivemindStatusLogEntry>();
         private readonly bool manageStartupWaitForm;
         private long backgroundLogReadPosition;
         private bool backgroundLogHistoryLoaded;
         private bool suppressBackgroundAgentCheckboxEvents;
+        private bool suppressSelectedConnectionSettingEvents;
         private bool hasRaisedFinishedLoading;
         private bool hasStartedInitialization;
         private bool hasFinishedInitialization;
+        private Window? statusLogHostWindow;
+        private OceanyanFileHivemindStatusLogWindow? statusLogWindow;
         public event Action? FinishedLoading;
 
         public OceanyanFileHivemindWindow(
@@ -80,17 +109,19 @@ namespace OceanyaClient
                 selectedId = SaveFile.Data.FileHivemind.SelectedConnectionId?.Trim();
             }
 
-            var connections = SaveFile.Data.FileHivemind.Connections
+            List<ConnectionListEntry> connections = SaveFile.Data.FileHivemind.Connections
                 .OrderBy(connection => connection.EffectiveDisplayName, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(connection => connection.Id, StringComparer.OrdinalIgnoreCase)
+                .Select(BuildConnectionListEntry)
                 .ToList();
 
             ConnectionsListBox.ItemsSource = null;
             ConnectionsListBox.ItemsSource = connections;
-            FileHivemindConnectionProfile? selectedConnection = connections.FirstOrDefault(connection =>
-                string.Equals(connection.Id, selectedId, StringComparison.OrdinalIgnoreCase))
+            ConnectionListEntry? selectedEntry = connections.FirstOrDefault(connection =>
+                string.Equals(connection.Connection.Id, selectedId, StringComparison.OrdinalIgnoreCase))
                 ?? connections.FirstOrDefault();
-            ConnectionsListBox.SelectedItem = selectedConnection;
+            ConnectionsListBox.SelectedItem = selectedEntry;
+            FileHivemindConnectionProfile? selectedConnection = selectedEntry?.Connection;
             SaveFile.Data.FileHivemind.SelectedConnectionId = selectedConnection?.Id ?? string.Empty;
             UpdateSelectedConnectionDetails(selectedConnection);
             RefreshBackgroundAgentControls();
@@ -107,6 +138,10 @@ namespace OceanyaClient
                 SelectedConnectionRemoteTextBlock.Text = "-";
                 SelectedConnectionLocalTextBlock.Text = "-";
                 SelectedConnectionLastSyncTextBlock.Text = "-";
+                suppressSelectedConnectionSettingEvents = true;
+                SelectedConnectionAutoSyncCheckBox.IsChecked = false;
+                SelectedConnectionAutoSyncCheckBox.IsEnabled = false;
+                suppressSelectedConnectionSettingEvents = false;
                 return;
             }
 
@@ -126,66 +161,77 @@ namespace OceanyaClient
             SelectedConnectionLastSyncTextBlock.Text = lastSyncUtc.HasValue
                 ? lastSyncUtc.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
                 : "Never";
+            suppressSelectedConnectionSettingEvents = true;
+            SelectedConnectionAutoSyncCheckBox.IsChecked = connection.AutoSyncEnabled;
+            SelectedConnectionAutoSyncCheckBox.IsEnabled = true;
+            suppressSelectedConnectionSettingEvents = false;
         }
 
         private FileHivemindConnectionProfile? GetSelectedConnection()
         {
-            return ConnectionsListBox.SelectedItem as FileHivemindConnectionProfile;
+            return (ConnectionsListBox.SelectedItem as ConnectionListEntry)?.Connection;
         }
 
         private void AppendStatus(string message, StatusLogLevel level = StatusLogLevel.Info, string? connectionName = null)
         {
-            Paragraph paragraph = new Paragraph
+            OceanyanFileHivemindStatusLogEntry entry = new OceanyanFileHivemindStatusLogEntry
             {
-                Margin = new Thickness(0)
+                Timestamp = DateTime.Now,
+                Level = level.ToString(),
+                Message = message ?? string.Empty,
+                ConnectionName = connectionName?.Trim() ?? string.Empty
             };
-            paragraph.Inlines.Add(new Run($"[{DateTime.Now:HH:mm:ss}] ")
+            statusLogEntries.Add(entry);
+            statusLogWindow?.AppendEntry(entry);
+        }
+
+        private ConnectionListEntry BuildConnectionListEntry(FileHivemindConnectionProfile connection)
+        {
+            (Brush primaryBrush, Brush secondaryBrush, string statusText) = ResolveConnectionListPresentation(connection);
+            return new ConnectionListEntry(connection, primaryBrush, secondaryBrush, statusText);
+        }
+
+        private (Brush PrimaryBrush, Brush SecondaryBrush, string StatusText) ResolveConnectionListPresentation(
+            FileHivemindConnectionProfile connection)
+        {
+            if (!connection.AutoSyncEnabled)
             {
-                Foreground = new SolidColorBrush(Color.FromRgb(130, 130, 130))
-            });
-            paragraph.Inlines.Add(new Run("[" + level.ToString().ToUpperInvariant() + "] ")
-            {
-                Foreground = GetSeverityBrush(level),
-                FontWeight = FontWeights.SemiBold
-            });
-            if (!string.IsNullOrWhiteSpace(connectionName))
-            {
-                paragraph.Inlines.Add(new Run("[" + connectionName.Trim() + "] ")
-                {
-                    Foreground = new SolidColorBrush(Color.FromRgb(120, 180, 255)),
-                    FontWeight = FontWeights.SemiBold
-                });
+                return (
+                    new SolidColorBrush(Color.FromRgb(255, 184, 184)),
+                    new SolidColorBrush(Color.FromRgb(244, 166, 166)),
+                    "Auto-sync disabled");
             }
 
-            paragraph.Inlines.Add(new Run(message)
+            if (activeConnectionIds.Contains(connection.Id))
             {
-                Foreground = GetMessageBrush(level)
-            });
+                return (
+                    new SolidColorBrush(Color.FromRgb(255, 226, 155)),
+                    new SolidColorBrush(Color.FromRgb(240, 210, 142)),
+                    "Currently updating");
+            }
 
-            StatusRichTextBox.Document.Blocks.Add(paragraph);
-            StatusRichTextBox.ScrollToEnd();
-        }
-
-        private static Brush GetSeverityBrush(StatusLogLevel level)
-        {
-            return level switch
+            GoogleDriveConnectionRuntimeState? runtimeState = runtimeStateStore.Load(connection.Id);
+            if (!string.IsNullOrWhiteSpace(runtimeState?.LastErrorMessage))
             {
-                StatusLogLevel.Action => new SolidColorBrush(Color.FromRgb(91, 192, 255)),
-                StatusLogLevel.Success => new SolidColorBrush(Color.FromRgb(118, 224, 141)),
-                StatusLogLevel.Warning => new SolidColorBrush(Color.FromRgb(255, 196, 92)),
-                StatusLogLevel.Error => new SolidColorBrush(Color.FromRgb(255, 116, 116)),
-                _ => new SolidColorBrush(Color.FromRgb(200, 200, 200))
-            };
-        }
+                return (
+                    new SolidColorBrush(Color.FromRgb(255, 198, 198)),
+                    new SolidColorBrush(Color.FromRgb(236, 178, 178)),
+                    runtimeState.LastErrorMessage);
+            }
 
-        private static Brush GetMessageBrush(StatusLogLevel level)
-        {
-            return level switch
+            DateTimeOffset? lastSuccessfulSyncUtc = runtimeState?.LastSuccessfulSyncUtc ?? connection.GoogleDrive.LastSyncUtc;
+            if (lastSuccessfulSyncUtc.HasValue)
             {
-                StatusLogLevel.Warning => new SolidColorBrush(Color.FromRgb(255, 224, 168)),
-                StatusLogLevel.Error => new SolidColorBrush(Color.FromRgb(255, 198, 198)),
-                _ => new SolidColorBrush(Color.FromRgb(231, 231, 231))
-            };
+                return (
+                    new SolidColorBrush(Color.FromRgb(176, 240, 188)),
+                    new SolidColorBrush(Color.FromRgb(154, 224, 170)),
+                    "Synced " + lastSuccessfulSyncUtc.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"));
+            }
+
+            return (
+                new SolidColorBrush(Color.FromRgb(245, 245, 245)),
+                new SolidColorBrush(Color.FromRgb(212, 212, 212)),
+                "Waiting for first sync check");
         }
 
         private void RefreshBackgroundAgentControls()
@@ -246,6 +292,28 @@ namespace OceanyaClient
             {
                 AppendStatus("Background agent setup failed: " + ex.Message, StatusLogLevel.Error);
             }
+        }
+
+        private void MarkConnectionUpdating(FileHivemindConnectionProfile connection)
+        {
+            if (connection == null)
+            {
+                return;
+            }
+
+            activeConnectionIds.Add(connection.Id);
+            RefreshConnections(connection.Id);
+        }
+
+        private void ClearConnectionUpdating(FileHivemindConnectionProfile connection)
+        {
+            if (connection == null)
+            {
+                return;
+            }
+
+            activeConnectionIds.Remove(connection.Id);
+            RefreshConnections(connection.Id);
         }
 
         private void PersistConnection(FileHivemindConnectionProfile connection)
@@ -314,6 +382,7 @@ namespace OceanyaClient
             try
             {
                 AppendStatus("Starting sync operation.", StatusLogLevel.Action, connection.EffectiveDisplayName);
+                MarkConnectionUpdating(connection);
                 Window waitOwner = ResolveOwnerWindow();
                 await WaitForm.ShowFormAsync(title, waitOwner);
                 try
@@ -331,10 +400,12 @@ namespace OceanyaClient
                 finally
                 {
                     await WaitForm.CloseFormAsync();
+                    ClearConnectionUpdating(connection);
                 }
             }
             catch (Exception ex)
             {
+                ClearConnectionUpdating(connection);
                 AppendStatus("Sync failed: " + ex.Message, StatusLogLevel.Error, connection.EffectiveDisplayName);
                 OceanyaMessageBox.Show(
                     ResolveOwnerWindow(),
@@ -495,6 +566,7 @@ namespace OceanyaClient
             }
 
             SaveFile.Data.FileHivemind.ShowDesktopToasts = DesktopToastsCheckBox.IsChecked == true;
+            SaveFile.Data.FileHivemind.DesktopToastPreferenceConfigured = true;
             SaveFile.Save();
             RefreshBackgroundAgentControls();
             AppendStatus(
@@ -502,6 +574,31 @@ namespace OceanyaClient
                     ? "Enabled desktop toast popups for important Hivemind background sync events."
                     : "Disabled desktop toast popups for Hivemind background sync events.",
                 StatusLogLevel.Info);
+        }
+
+        private void SelectedConnectionAutoSyncCheckBox_Changed(object sender, RoutedEventArgs e)
+        {
+            if (suppressSelectedConnectionSettingEvents)
+            {
+                return;
+            }
+
+            FileHivemindConnectionProfile? connection = GetSelectedConnection();
+            if (connection == null)
+            {
+                return;
+            }
+
+            connection.AutoSyncEnabled = SelectedConnectionAutoSyncCheckBox.IsChecked == true;
+            SaveFile.Save();
+            RefreshConnections(connection.Id);
+            TryApplyBackgroundAgentPreferences(ensureCurrentSessionAgent: true);
+            AppendStatus(
+                connection.AutoSyncEnabled
+                    ? "Enabled automatic background syncing for this connection."
+                    : "Disabled automatic background syncing for this connection.",
+                StatusLogLevel.Info,
+                connection.EffectiveDisplayName);
         }
 
         private void RemotePollIntervalTextBox_LostFocus(object sender, RoutedEventArgs e)
@@ -982,13 +1079,21 @@ namespace OceanyaClient
                         }
 
                         AppendStatus("Preparing sync.", StatusLogLevel.Action, connection.EffectiveDisplayName);
+                        MarkConnectionUpdating(connection);
                         WaitForm.SetSubtitle(connection.EffectiveDisplayName + ": preparing sync...");
-                        EnsureMountedIfEnabled(connection);
-                        GoogleDriveSyncSummary summary = await operation(connection);
-                        AppendStatus("Refreshing only the AO assets touched by this sync.", StatusLogLevel.Action, connection.EffectiveDisplayName);
-                        RefreshMountedAssets(connection, summary.LocalChanges);
-                        await TryRefreshRuntimeStateAsync(connection, summary);
-                        AppendStatus(BuildSummaryMessage(summary), StatusLogLevel.Success, connection.EffectiveDisplayName);
+                        try
+                        {
+                            EnsureMountedIfEnabled(connection);
+                            GoogleDriveSyncSummary summary = await operation(connection);
+                            AppendStatus("Refreshing only the AO assets touched by this sync.", StatusLogLevel.Action, connection.EffectiveDisplayName);
+                            RefreshMountedAssets(connection, summary.LocalChanges);
+                            await TryRefreshRuntimeStateAsync(connection, summary);
+                            AppendStatus(BuildSummaryMessage(summary), StatusLogLevel.Success, connection.EffectiveDisplayName);
+                        }
+                        finally
+                        {
+                            ClearConnectionUpdating(connection);
+                        }
                     }
 
                     SaveFile.Save();
@@ -1117,6 +1222,32 @@ namespace OceanyaClient
             backgroundLogTimer.Stop();
         }
 
+        private void OpenStatusLogButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (statusLogHostWindow != null && statusLogHostWindow.IsLoaded)
+            {
+                statusLogHostWindow.Activate();
+                return;
+            }
+
+            statusLogWindow = new OceanyanFileHivemindStatusLogWindow
+            {
+                Owner = ResolveOwnerWindow(),
+                WindowStartupLocation = WindowStartupLocation.CenterOwner
+            };
+            statusLogWindow.LoadEntries(statusLogEntries);
+
+            statusLogHostWindow = OceanyaWindowManager.CreateWindow(statusLogWindow);
+            statusLogHostWindow.Owner = ResolveOwnerWindow();
+            statusLogHostWindow.WindowStartupLocation = WindowStartupLocation.CenterOwner;
+            statusLogHostWindow.Closed += (_, _) =>
+            {
+                statusLogHostWindow = null;
+                statusLogWindow = null;
+            };
+            statusLogHostWindow.Show();
+        }
+
         private void EnsureBackgroundLogFeedRunning()
         {
             if (!backgroundLogHistoryLoaded)
@@ -1154,10 +1285,33 @@ namespace OceanyaClient
 
         private void AppendBackgroundLogEntry(FileHivemindBackgroundLogEntry entry)
         {
+            UpdateConnectionActivityFromBackgroundLog(entry);
             AppendStatus(
                 "[Agent] " + entry.Message,
                 MapBackgroundLogLevel(entry.Level),
                 string.IsNullOrWhiteSpace(entry.ConnectionName) ? null : entry.ConnectionName);
+        }
+
+        private void UpdateConnectionActivityFromBackgroundLog(FileHivemindBackgroundLogEntry entry)
+        {
+            string connectionId = entry.ConnectionId?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(connectionId))
+            {
+                return;
+            }
+
+            string normalizedLevel = entry.Level?.Trim() ?? string.Empty;
+            if (string.Equals(normalizedLevel, "ACTION", StringComparison.OrdinalIgnoreCase))
+            {
+                activeConnectionIds.Add(connectionId);
+            }
+            else
+            {
+                activeConnectionIds.Remove(connectionId);
+            }
+
+            FileHivemindConnectionProfile? selectedConnection = GetSelectedConnection();
+            RefreshConnections(selectedConnection?.Id ?? connectionId);
         }
 
         private static StatusLogLevel MapBackgroundLogLevel(string? level)

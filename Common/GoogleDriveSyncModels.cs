@@ -15,6 +15,7 @@ namespace OceanyaClient
         public string SelectedConnectionId { get; set; } = string.Empty;
         public bool RunAgentAtStartup { get; set; }
         public bool ShowDesktopToasts { get; set; }
+        public bool DesktopToastPreferenceConfigured { get; set; }
         public bool BackgroundStartupPreferenceConfigured { get; set; }
         public int RemotePollIntervalSeconds { get; set; } = 20;
     }
@@ -24,6 +25,7 @@ namespace OceanyaClient
         public string Id { get; set; } = Guid.NewGuid().ToString("N");
         public string DisplayName { get; set; } = string.Empty;
         public string ProviderId { get; set; } = FileHivemindProviderIds.GoogleDrive;
+        public bool AutoSyncEnabled { get; set; } = true;
         public GoogleDriveSyncSettings GoogleDrive { get; set; } = new GoogleDriveSyncSettings();
 
         [JsonIgnore]

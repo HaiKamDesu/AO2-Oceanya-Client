@@ -223,6 +223,18 @@ namespace OceanyaClient
                 TakeThat.IsChecked = false;
                 Custom.IsChecked = false;
             };
+            ICMessageSettingsControl.OnRefreshCharacterRequested += async characterName =>
+            {
+                await RefreshCharacterAssetsAsync(characterName, refreshAllCharacters: false, refreshAllAssets: false);
+            };
+            ICMessageSettingsControl.OnRefreshAllAssetsRequested += async () =>
+            {
+                await RefreshCharacterAssetsAsync(null, refreshAllCharacters: false, refreshAllAssets: true);
+            };
+            ICMessageSettingsControl.OnRefreshAllCharactersRequested += async () =>
+            {
+                await RefreshCharacterAssetsAsync(null, refreshAllCharacters: true, refreshAllAssets: false);
+            };
 
             OOCLogControl.txtOOCShowname.Text = SaveFile.Data.OOCName;
             chkPosOnIniSwap.IsChecked = SaveFile.Data.SwitchPosOnIniSwap;
@@ -1856,6 +1868,81 @@ namespace OceanyaClient
             }
 
             SelectClient(currentClient);
+        }
+
+        private async Task RefreshCharacterAssetsAsync(
+            string? characterName,
+            bool refreshAllCharacters,
+            bool refreshAllAssets)
+        {
+            Window owner = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            if (owner == null)
+            {
+                return;
+            }
+
+            if (refreshAllAssets)
+            {
+                await ClientAssetRefreshService.RefreshCharactersAndBackgroundsAsync(owner);
+            }
+            else if (refreshAllCharacters)
+            {
+                await ClientAssetRefreshService.RefreshAllCharactersAsync(owner);
+            }
+            else if (!string.IsNullOrWhiteSpace(characterName))
+            {
+                await ClientAssetRefreshService.RefreshCharacterAsync(owner, characterName);
+            }
+            else
+            {
+                return;
+            }
+
+            RebindClientsToRefreshedCharacters();
+            OnAssetsRefreshedFromVisualizer();
+        }
+
+        private void RebindClientsToRefreshedCharacters()
+        {
+            List<AOClient> clientsToRebind = clients.Values
+                .Concat(singleInternalClient != null ? new[] { singleInternalClient } : Array.Empty<AOClient>())
+                .Distinct()
+                .ToList();
+
+            foreach (AOClient client in clientsToRebind)
+            {
+                CharacterFolder? currentCharacter = client.currentINI;
+                if (currentCharacter == null)
+                {
+                    continue;
+                }
+
+                CharacterFolder? refreshedCharacter = CharacterFolder.FullList.FirstOrDefault(character =>
+                    string.Equals(character.DirectoryPath, currentCharacter.DirectoryPath, StringComparison.OrdinalIgnoreCase))
+                    ?? CharacterFolder.FullList.FirstOrDefault(character =>
+                        string.Equals(character.Name, currentCharacter.Name, StringComparison.OrdinalIgnoreCase));
+                if (refreshedCharacter == null)
+                {
+                    continue;
+                }
+
+                string currentPosition = client.curPos;
+                string currentEmoteDisplayId = client.currentEmote?.DisplayID ?? string.Empty;
+
+                client.SetCharacter(refreshedCharacter);
+
+                if (!string.IsNullOrWhiteSpace(currentEmoteDisplayId)
+                    && refreshedCharacter.configINI.Emotions.Values.Any(emote =>
+                        string.Equals(emote.DisplayID, currentEmoteDisplayId, StringComparison.OrdinalIgnoreCase)))
+                {
+                    client.SetEmote(currentEmoteDisplayId);
+                }
+
+                if (!string.IsNullOrWhiteSpace(currentPosition))
+                {
+                    client.SetPos(currentPosition);
+                }
+            }
         }
 
         private async void Button_Click(object sender, RoutedEventArgs e)

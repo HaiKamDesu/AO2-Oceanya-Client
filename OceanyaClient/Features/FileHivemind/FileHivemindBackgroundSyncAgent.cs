@@ -673,6 +673,10 @@ namespace OceanyaClient.Features.FileHivemind
             {
                 await CaptureRuntimeStateAsync(state, cancellationToken);
                 state.NextRemotePollUtc = DateTimeOffset.UtcNow + remotePollInterval;
+                LogAgentMessage(
+                    "Success",
+                    state.Connection,
+                    "Background sync state checked successfully. Connection is ready.");
             }
             catch (Exception ex)
             {

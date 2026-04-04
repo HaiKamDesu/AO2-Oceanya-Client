@@ -291,20 +291,25 @@
                                         BorderThickness="1"
                                         CornerRadius="4">
                                     <StackPanel>
-                                        <TextBlock Text="{Binding EffectiveDisplayName}"
-                                                   Foreground="White"
+                                        <TextBlock Text="{Binding Connection.EffectiveDisplayName}"
+                                                   Foreground="{Binding PrimaryForeground}"
                                                    FontSize="14"
                                                    FontWeight="SemiBold"/>
                                         <TextBlock Margin="0,4,0,0"
-                                                   Foreground="#FFD4D4D4"
-                                                   Text="{Binding ProviderDisplayName}"/>
+                                                   Foreground="{Binding SecondaryForeground}"
+                                                   Text="{Binding Connection.ProviderDisplayName}"/>
                                         <TextBlock Margin="0,2,0,0"
-                                                   Foreground="#FFBEBEBE"
-                                                   Text="{Binding AccountDisplayName}"
+                                                   Foreground="{Binding SecondaryForeground}"
+                                                   Text="{Binding Connection.AccountDisplayName}"
                                                    TextWrapping="Wrap"/>
                                         <TextBlock Margin="0,2,0,0"
-                                                   Foreground="#FFBEBEBE"
-                                                   Text="{Binding RemoteDisplayName}"
+                                                   Foreground="{Binding SecondaryForeground}"
+                                                   Text="{Binding Connection.RemoteDisplayName}"
+                                                   TextWrapping="Wrap"/>
+                                        <TextBlock Margin="0,4,0,0"
+                                                   Foreground="{Binding SecondaryForeground}"
+                                                   FontStyle="Italic"
+                                                   Text="{Binding StatusText}"
                                                    TextWrapping="Wrap"/>
                                     </StackPanel>
                                 </Border>
@@ -417,6 +422,18 @@
                                     Click="PushSelectedButton_Click"
                                     ToolTip="Push only the selected connection's local mirror folder back to Drive."/>
                         </WrapPanel>
+                        <StackPanel Orientation="Horizontal"
+                                    Margin="0,12,0,0"
+                                    HorizontalAlignment="Center">
+                            <CheckBox x:Name="SelectedConnectionAutoSyncCheckBox"
+                                      Foreground="#FFF0F0F0"
+                                      Checked="SelectedConnectionAutoSyncCheckBox_Changed"
+                                      Unchecked="SelectedConnectionAutoSyncCheckBox_Changed"
+                                      Content="Auto-sync enabled for this connection"/>
+                            <Button Content="(?)"
+                                    Style="{StaticResource HelpBadgeStyle}"
+                                    ToolTip="When enabled, the hidden Hivemind background agent can poll and sync this connection automatically. Manual Sync From Drive and Push To Drive still work when this is off."/>
+                        </StackPanel>
                     </StackPanel>
                 </Border>
 
@@ -465,23 +482,22 @@
                 <Border Grid.Row="2"
                         Style="{StaticResource SectionCardStyle}"
                         Margin="0,0,0,0">
-                    <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="*"/>
-                        </Grid.RowDefinitions>
+                    <StackPanel>
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="STATUS LOG"
                                        Style="{StaticResource SectionTitleText}"/>
                             <Button Content="(?)"
                                     Style="{StaticResource HelpBadgeStyle}"
-                                    ToolTip="This log shows connection edits, sync progress, mount-path updates, and any warnings or failures from the hivemind manager."/>
+                                    ToolTip="Open a larger popup log with connection edits, sync progress, mount-path updates, and any warnings or failures from the hivemind manager."/>
                         </StackPanel>
-                        <RichTextBox x:Name="StatusRichTextBox"
-                                     Grid.Row="1"
-                                     Margin="0,12,0,0"
-                                     Style="{StaticResource StatusLogStyle}"/>
-                    </Grid>
+                        <Button Width="170"
+                                Margin="0,8,0,0"
+                                Content="Open Status Log"
+                                HorizontalAlignment="Left"
+                                Style="{StaticResource ModernButton}"
+                                Click="OpenStatusLogButton_Click"
+                                ToolTip="Open the larger status log popup for this hivemind session."/>
+                    </StackPanel>
                 </Border>
             </Grid>
         </Grid>

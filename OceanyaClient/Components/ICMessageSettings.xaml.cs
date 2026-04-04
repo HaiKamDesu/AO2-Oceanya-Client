@@ -37,6 +37,9 @@ namespace OceanyaClient.Components
         public bool stickyEffects;
 
         public Action<string>? OnSendICMessage;
+        public Action<string>? OnRefreshCharacterRequested;
+        public Action? OnRefreshAllAssetsRequested;
+        public Action? OnRefreshAllCharactersRequested;
 
         public ICMessageSettings()
         {
@@ -53,6 +56,7 @@ namespace OceanyaClient.Components
                 CharacterDropdown.Add(ini.Name, ini.CharIconPath);
             }
             CharacterDropdown.OnConfirm += CharacterDropdown_OnConfirm;
+            CharacterDropdown.ContextMenu = BuildCharacterDropdownContextMenu();
             #endregion
 
             EmoteDropdown.OnConfirm += EmoteDropdown_OnConfirm;
@@ -130,6 +134,64 @@ namespace OceanyaClient.Components
                 var path = $"pack://application:,,,/Resources/Buttons/MessageEffects/{effect.ToString().ToLower()}.png";
                 EffectDropdown.Add(effect.ToString(), effect == ICMessage.Effects.None ? "" : path);
             }
+        }
+
+        private ContextMenu BuildCharacterDropdownContextMenu()
+        {
+            ContextMenu contextMenu = new ContextMenu();
+            MenuItem refreshCurrentCharacterItem = new MenuItem();
+            refreshCurrentCharacterItem.Click += (_, _) =>
+            {
+                string characterName = ResolveCurrentCharacterName();
+                if (!string.IsNullOrWhiteSpace(characterName))
+                {
+                    OnRefreshCharacterRequested?.Invoke(characterName);
+                }
+            };
+
+            MenuItem refreshAllAssetsItem = new MenuItem
+            {
+                Header = "Refresh All Assets"
+            };
+            refreshAllAssetsItem.Click += (_, _) => OnRefreshAllAssetsRequested?.Invoke();
+
+            MenuItem refreshAllCharactersItem = new MenuItem
+            {
+                Header = "Refresh All Characters"
+            };
+            refreshAllCharactersItem.Click += (_, _) => OnRefreshAllCharactersRequested?.Invoke();
+
+            contextMenu.Items.Add(refreshCurrentCharacterItem);
+            contextMenu.Items.Add(refreshAllAssetsItem);
+            contextMenu.Items.Add(refreshAllCharactersItem);
+            contextMenu.Opened += (_, _) =>
+            {
+                string characterName = ResolveCurrentCharacterName();
+                refreshCurrentCharacterItem.Header = string.IsNullOrWhiteSpace(characterName)
+                    ? "Refresh Current Character"
+                    : "Refresh " + characterName;
+                refreshCurrentCharacterItem.IsEnabled = !string.IsNullOrWhiteSpace(characterName);
+                refreshAllAssetsItem.IsEnabled = true;
+                refreshAllCharactersItem.IsEnabled = true;
+            };
+
+            return contextMenu;
+        }
+
+        private string ResolveCurrentCharacterName()
+        {
+            string selectedText = CharacterDropdown.SelectedText?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(selectedText))
+            {
+                return selectedText;
+            }
+
+            if (!string.IsNullOrWhiteSpace(curClient?.currentINI?.Name))
+            {
+                return curClient.currentINI.Name;
+            }
+
+            return string.Empty;
         }
 
         private void EffectDropdown_OnConfirm(object? sender, string newEffect)
@@ -235,7 +297,7 @@ namespace OceanyaClient.Components
             SetINI(iniToUse);
             txtICShowname.Text = client.ICShowname;
 
-            chkPreanim.IsChecked = client.emoteMod == ICMessage.EmoteModifiers.PlayPreanimation;
+            chkPreanim.IsChecked = client.PreanimEnabled;
             chkFlip.IsChecked = client.flip;
             chkAdditive.IsChecked = client.Additive;
             chkImmediate.IsChecked = client.Immediate;
@@ -576,7 +638,6 @@ namespace OceanyaClient.Components
             var emote = emotes.FirstOrDefault(x => x.Value == clickedButton).Key;
             EmoteDropdown.SelectedText = emote.DisplayID;
             curClient.SetEmote(emote.DisplayID);
-            chkPreanim.IsChecked = true;
             txtICMessage.Focus();
         }
         private void EmoteToggleBtn_Unchecked(object sender, RoutedEventArgs e)
@@ -636,7 +697,7 @@ namespace OceanyaClient.Components
             {
                 // Assuming 'currentClient' is an instance of AOBot
                 if (curClient == null) return;
-                curClient.emoteMod = checkBox.IsChecked == true ? ICMessage.EmoteModifiers.PlayPreanimation : ICMessage.EmoteModifiers.NoPreanimation;
+                curClient.PreanimEnabled = checkBox.IsChecked == true;
                 txtICMessage.Focus();
             }
         }

@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text.Json;
+using System.Threading;
 
 namespace OceanyaClient.Features.GoogleDriveSync
 {
@@ -51,40 +52,71 @@ namespace OceanyaClient.Features.GoogleDriveSync
         public GoogleDriveConnectionRuntimeState? Load(string connectionId)
         {
             string filePath = GetFilePath(connectionId);
-            if (!File.Exists(filePath))
-            {
-                return null;
-            }
+            return PersistentFileStoreSupport.RunWithPathMutex(
+                filePath,
+                () =>
+                {
+                    if (!File.Exists(filePath))
+                    {
+                        return null;
+                    }
 
-            string json = File.ReadAllText(filePath);
-            GoogleDriveConnectionRuntimeState? state = JsonSerializer.Deserialize<GoogleDriveConnectionRuntimeState>(json);
-            return state == null ? null : Normalize(state);
+                    using FileStream stream = new FileStream(
+                        filePath,
+                        FileMode.Open,
+                        FileAccess.Read,
+                        FileShare.ReadWrite | FileShare.Delete);
+                    GoogleDriveConnectionRuntimeState? state =
+                        JsonSerializer.Deserialize<GoogleDriveConnectionRuntimeState>(stream);
+                    return state == null ? null : Normalize(state);
+                });
         }
 
         public void Save(GoogleDriveConnectionRuntimeState state)
         {
             GoogleDriveConnectionRuntimeState normalized = Normalize(state);
             string filePath = GetFilePath(normalized.ConnectionId);
-            Directory.CreateDirectory(Path.GetDirectoryName(filePath) ?? rootDirectory);
-            string tempPath = filePath + ".tmp";
-            string json = JsonSerializer.Serialize(normalized, JsonOptions);
-            File.WriteAllText(tempPath, json);
+            PersistentFileStoreSupport.RunWithPathMutex(
+                filePath,
+                () =>
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(filePath) ?? rootDirectory);
+                    string tempPath = filePath + ".tmp";
+                    string json = JsonSerializer.Serialize(normalized, JsonOptions);
+                    try
+                    {
+                        using FileStream stream = new FileStream(
+                            tempPath,
+                            FileMode.Create,
+                            FileAccess.Write,
+                            FileShare.ReadWrite | FileShare.Delete);
+                        using StreamWriter writer = new StreamWriter(stream);
+                        writer.Write(json);
+                    }
+                    catch
+                    {
+                        PersistentFileStoreSupport.DeleteFileIfPresent(tempPath);
+                        throw;
+                    }
 
-            if (File.Exists(filePath))
-            {
-                File.Delete(filePath);
-            }
-
-            File.Move(tempPath, filePath);
+                    try
+                    {
+                        PersistentFileStoreSupport.ReplaceFile(tempPath, filePath);
+                    }
+                    catch
+                    {
+                        PersistentFileStoreSupport.DeleteFileIfPresent(tempPath);
+                        throw;
+                    }
+                });
         }
 
         public void Delete(string connectionId)
         {
             string filePath = GetFilePath(connectionId);
-            if (File.Exists(filePath))
-            {
-                File.Delete(filePath);
-            }
+            PersistentFileStoreSupport.RunWithPathMutex(
+                filePath,
+                () => PersistentFileStoreSupport.DeleteFileIfPresent(filePath));
         }
 
         public string GetFilePath(string connectionId)

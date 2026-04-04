@@ -2,7 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using System.Threading;
 
 namespace OceanyaClient.Features.FileHivemind
 {
@@ -43,52 +46,133 @@ namespace OceanyaClient.Features.FileHivemind
 
         public void Append(FileHivemindBackgroundLogEntry entry)
         {
-            string directory = Path.GetDirectoryName(filePath) ?? string.Empty;
-            Directory.CreateDirectory(directory);
+            ExecuteWithFileMutex(() =>
+            {
+                string directory = Path.GetDirectoryName(filePath) ?? string.Empty;
+                Directory.CreateDirectory(directory);
 
-            FileHivemindBackgroundLogEntry normalized = Normalize(entry);
-            string line = JsonSerializer.Serialize(normalized, JsonOptions) + Environment.NewLine;
+                FileHivemindBackgroundLogEntry normalized = Normalize(entry);
+                string line = JsonSerializer.Serialize(normalized, JsonOptions) + Environment.NewLine;
 
-            using FileStream stream = new FileStream(filePath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
-            using StreamWriter writer = new StreamWriter(stream);
-            writer.Write(line);
+                using FileStream stream = new FileStream(
+                    filePath,
+                    FileMode.Append,
+                    FileAccess.Write,
+                    FileShare.ReadWrite | FileShare.Delete);
+                using StreamWriter writer = new StreamWriter(stream);
+                writer.Write(line);
+            });
         }
 
         public FileHivemindBackgroundLogReadResult ReadFrom(long position)
         {
-            if (!File.Exists(filePath))
+            return ExecuteWithFileMutex(() =>
             {
+                if (!File.Exists(filePath))
+                {
+                    return new FileHivemindBackgroundLogReadResult
+                    {
+                        NextPosition = 0
+                    };
+                }
+
+                using FileStream stream = new FileStream(
+                    filePath,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete);
+                long safePosition = Math.Clamp(position, 0, stream.Length);
+                stream.Seek(safePosition, SeekOrigin.Begin);
+                using StreamReader reader = new StreamReader(stream);
+                string text = reader.ReadToEnd();
+                long nextPosition = stream.Length;
+
                 return new FileHivemindBackgroundLogReadResult
                 {
-                    NextPosition = 0
+                    NextPosition = nextPosition,
+                    Entries = ParseLines(text)
                 };
-            }
-
-            using FileStream stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            long safePosition = Math.Clamp(position, 0, stream.Length);
-            stream.Seek(safePosition, SeekOrigin.Begin);
-            using StreamReader reader = new StreamReader(stream);
-            string text = reader.ReadToEnd();
-            long nextPosition = stream.Length;
-
-            return new FileHivemindBackgroundLogReadResult
-            {
-                NextPosition = nextPosition,
-                Entries = ParseLines(text)
-            };
+            });
         }
 
         public IReadOnlyList<FileHivemindBackgroundLogEntry> ReadRecent(int maxEntries)
         {
-            if (!File.Exists(filePath))
+            return ExecuteWithFileMutex(() =>
             {
-                return Array.Empty<FileHivemindBackgroundLogEntry>();
-            }
+                if (!File.Exists(filePath))
+                {
+                    return (IReadOnlyList<FileHivemindBackgroundLogEntry>)Array.Empty<FileHivemindBackgroundLogEntry>();
+                }
 
-            string text = File.ReadAllText(filePath);
-            return ParseLines(text)
-                .TakeLast(Math.Max(1, maxEntries))
-                .ToList();
+                using FileStream stream = new FileStream(
+                    filePath,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete);
+                using StreamReader reader = new StreamReader(stream);
+                string text = reader.ReadToEnd();
+                return (IReadOnlyList<FileHivemindBackgroundLogEntry>)ParseLines(text)
+                    .TakeLast(Math.Max(1, maxEntries))
+                    .ToList();
+            });
+        }
+
+        private void ExecuteWithFileMutex(Action action)
+        {
+            Mutex mutex = new Mutex(false, BuildMutexName(filePath));
+            bool acquired = false;
+
+            try
+            {
+                try
+                {
+                    acquired = mutex.WaitOne(TimeSpan.FromSeconds(5));
+                }
+                catch (AbandonedMutexException)
+                {
+                    acquired = true;
+                }
+
+                if (!acquired)
+                {
+                    throw new IOException("Timed out waiting for background-agent.log access.");
+                }
+
+                action();
+            }
+            finally
+            {
+                if (acquired)
+                {
+                    try
+                    {
+                        mutex.ReleaseMutex();
+                    }
+                    catch (ApplicationException)
+                    {
+                    }
+                }
+
+                mutex.Dispose();
+            }
+        }
+
+        private T ExecuteWithFileMutex<T>(Func<T> action)
+        {
+            T? result = default;
+            ExecuteWithFileMutex(() =>
+            {
+                result = action();
+            });
+
+            return result!;
+        }
+
+        private static string BuildMutexName(string path)
+        {
+            string normalized = (path ?? string.Empty).Trim().ToLowerInvariant();
+            byte[] hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(normalized));
+            return @"Local\OceanyaClient.FileHivemind.Log." + Convert.ToHexString(hashBytes);
         }
 
         private static List<FileHivemindBackgroundLogEntry> ParseLines(string? text)

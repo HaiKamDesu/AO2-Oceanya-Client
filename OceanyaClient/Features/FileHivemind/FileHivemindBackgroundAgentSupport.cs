@@ -227,6 +227,11 @@ namespace OceanyaClient.Features.FileHivemind
                 return false;
             }
 
+            if (!connection.AutoSyncEnabled)
+            {
+                return false;
+            }
+
             if (!string.Equals(connection.ProviderId, FileHivemindProviderIds.GoogleDrive, StringComparison.OrdinalIgnoreCase))
             {
                 return false;

@@ -5,6 +5,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 
 namespace OceanyaClient.Features.GoogleDriveSync
 {
@@ -13,6 +14,90 @@ namespace OceanyaClient.Features.GoogleDriveSync
         byte[] Protect(byte[] value);
 
         byte[] Unprotect(byte[] value);
+    }
+
+    internal static class PersistentFileStoreSupport
+    {
+        public static T RunWithPathMutex<T>(string filePath, Func<T> operation, TimeSpan? timeout = null)
+        {
+            string mutexName = BuildMutexName(filePath);
+            using Mutex mutex = new Mutex(false, mutexName);
+            bool lockTaken = false;
+
+            try
+            {
+                lockTaken = mutex.WaitOne(timeout ?? TimeSpan.FromSeconds(5));
+                if (!lockTaken)
+                {
+                    throw new IOException("Timed out waiting for access to the persistent store file.");
+                }
+
+                return operation();
+            }
+            finally
+            {
+                if (lockTaken)
+                {
+                    mutex.ReleaseMutex();
+                }
+            }
+        }
+
+        public static void RunWithPathMutex(string filePath, Action operation, TimeSpan? timeout = null)
+        {
+            RunWithPathMutex(
+                filePath,
+                () =>
+                {
+                    operation();
+                    return true;
+                },
+                timeout);
+        }
+
+        public static void DeleteFileIfPresent(string filePath)
+        {
+            string normalizedPath = filePath?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(normalizedPath) || !File.Exists(normalizedPath))
+            {
+                return;
+            }
+
+            TryNormalizeFileAttributes(normalizedPath);
+            File.Delete(normalizedPath);
+        }
+
+        public static void ReplaceFile(string tempPath, string targetPath)
+        {
+            string normalizedTempPath = tempPath?.Trim() ?? string.Empty;
+            string normalizedTargetPath = targetPath?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(normalizedTempPath) || string.IsNullOrWhiteSpace(normalizedTargetPath))
+            {
+                throw new InvalidOperationException("Both the temporary path and target path are required.");
+            }
+
+            DeleteFileIfPresent(normalizedTargetPath);
+            File.Move(normalizedTempPath, normalizedTargetPath);
+        }
+
+        private static void TryNormalizeFileAttributes(string filePath)
+        {
+            try
+            {
+                File.SetAttributes(filePath, FileAttributes.Normal);
+            }
+            catch
+            {
+                // Best effort only. If the delete still fails, let the caller surface the real exception.
+            }
+        }
+
+        private static string BuildMutexName(string filePath)
+        {
+            string normalizedPath = Path.GetFullPath(filePath?.Trim() ?? string.Empty).ToUpperInvariant();
+            byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(normalizedPath));
+            return @"Local\OceanyaClient.PersistentStore." + Convert.ToHexString(hash);
+        }
     }
 
     public sealed class DpapiSecretProtector : ISecretProtector
@@ -82,10 +167,7 @@ namespace OceanyaClient.Features.GoogleDriveSync
         public void Delete(string tokenStoreKey)
         {
             string filePath = GetFilePath(tokenStoreKey);
-            if (File.Exists(filePath))
-            {
-                File.Delete(filePath);
-            }
+            PersistentFileStoreSupport.DeleteFileIfPresent(filePath);
         }
 
         public string GetFilePath(string tokenStoreKey)
@@ -142,10 +224,7 @@ namespace OceanyaClient.Features.GoogleDriveSync
         public void Delete(string storeKey)
         {
             string filePath = GetFilePath(storeKey);
-            if (File.Exists(filePath))
-            {
-                File.Delete(filePath);
-            }
+            PersistentFileStoreSupport.DeleteFileIfPresent(filePath);
         }
 
         public string GetFilePath(string storeKey)

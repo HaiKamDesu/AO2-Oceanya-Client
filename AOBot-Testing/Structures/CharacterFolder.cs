@@ -2,6 +2,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using Common;
 
 namespace AOBot_Testing.Structures
@@ -82,6 +83,7 @@ namespace AOBot_Testing.Structures
             }
 
             CharacterFolder?[] parsedCharacters = new CharacterFolder?[candidates.Count];
+            int parsedCharacterCount = 0;
             ParallelOptions options = new ParallelOptions
             {
                 MaxDegreeOfParallelism = AssetRefreshParallelism.GetDegreeOfParallelism(candidates.Count)
@@ -92,7 +94,11 @@ namespace AOBot_Testing.Structures
                 (string directoryPath, string iniFilePath, _) = candidates[index];
                 try
                 {
-                    parsedCharacters[index] = Structures.CharacterFolder.Create(iniFilePath);
+                    CharacterFolder parsedCharacter = Structures.CharacterFolder.Create(iniFilePath);
+                    parsedCharacters[index] = parsedCharacter;
+                    int currentCount = Interlocked.Increment(ref parsedCharacterCount);
+                    onParsedCharacter?.Invoke(parsedCharacter);
+                    onParsedCharacterProgress?.Invoke(parsedCharacter, currentCount, candidates.Count);
                 }
                 catch (Exception ex)
                 {
@@ -120,15 +126,6 @@ namespace AOBot_Testing.Structures
 
                 refreshedCharacters.Add(parsedCharacter);
             }
-
-            int totalParsedCharacters = refreshedCharacters.Count;
-            for (int index = 0; index < refreshedCharacters.Count; index++)
-            {
-                CharacterFolder parsedCharacter = refreshedCharacters[index];
-                onParsedCharacter?.Invoke(parsedCharacter);
-                onParsedCharacterProgress?.Invoke(parsedCharacter, index + 1, totalParsedCharacters);
-            }
-
             characterConfigs = refreshedCharacters;
             SaveToJson(cacheFile, characterConfigs);
             CustomConsole.Info("Character list saved to cache.");
@@ -509,6 +506,9 @@ namespace AOBot_Testing.Structures
         public string ShowName { get; set; } = string.Empty;
         public string Gender { get; set; } = string.Empty;
         public string Side { get; set; } = string.Empty;
+        public string Blips { get; set; } = string.Empty;
+        public string EffectsFolder { get; set; } = string.Empty;
+        public string Realization { get; set; } = string.Empty;
         public int PreAnimationTime { get; set; }
         public int EmotionsCount { get; set; }
         public Dictionary<int, Emote> Emotions { get; set; } = new();
@@ -545,6 +545,9 @@ namespace AOBot_Testing.Structures
                         if (key == "showname") ShowName = value;
                         else if (key == "gender") Gender = value;
                         else if (key == "side") Side = value;
+                        else if (key == "blips") Blips = value;
+                        else if (key == "effects") EffectsFolder = value;
+                        else if (key == "realization") Realization = value;
                         break;
 
                     case "time":

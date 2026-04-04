@@ -5,6 +5,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -750,6 +752,60 @@ namespace UnitTests
             Assert.That(data.FileHivemind.Connections[0].ProviderId, Is.EqualTo(FileHivemindProviderIds.GoogleDrive));
             Assert.That(data.FileHivemind.Connections[0].GoogleDrive.RemoteFolderId, Is.EqualTo("drive-folder-id"));
             Assert.That(data.FileHivemind.SelectedConnectionId, Is.EqualTo(data.FileHivemind.Connections[0].Id));
+        }
+
+        [Test]
+        public void NormalizeLoadedData_DefaultsDesktopToastsOnWhenPreferenceWasNeverConfigured()
+        {
+            SaveData data = new SaveData
+            {
+                FileHivemind = new FileHivemindSettings
+                {
+                    ShowDesktopToasts = false,
+                    DesktopToastPreferenceConfigured = false
+                }
+            };
+
+            MethodInfo? normalizeMethod = typeof(SaveFile).GetMethod(
+                "NormalizeLoadedData",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.That(normalizeMethod, Is.Not.Null);
+
+            normalizeMethod!.Invoke(null, new object[] { data });
+
+            Assert.That(data.FileHivemind.ShowDesktopToasts, Is.True);
+            Assert.That(data.FileHivemind.DesktopToastPreferenceConfigured, Is.True);
+        }
+    }
+
+    [TestFixture]
+    public class GoogleDriveApiClientTimeoutTests
+    {
+        [Test]
+        public void GetFolderNameAsync_WhenRequestStalls_ThrowsHelpfulTimeout()
+        {
+            using HttpClient httpClient = new HttpClient(new NeverRespondingHandler());
+            GoogleDriveApiClient client = new GoogleDriveApiClient(
+                httpClient,
+                "access-token",
+                TimeSpan.FromMilliseconds(50));
+
+            InvalidOperationException exception = Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                await client.GetFolderNameAsync("folder-id", CancellationToken.None))!;
+
+            Assert.That(exception.Message, Does.Contain("timed out"));
+            Assert.That(exception.Message, Does.Contain("network may have stalled or disconnected"));
+        }
+
+        private sealed class NeverRespondingHandler : HttpMessageHandler
+        {
+            protected override async Task<HttpResponseMessage> SendAsync(
+                HttpRequestMessage request,
+                CancellationToken cancellationToken)
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                throw new InvalidOperationException("The request should have been cancelled before completion.");
+            }
         }
     }
 

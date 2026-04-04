@@ -66,8 +66,8 @@ namespace UnitTests
                 Assert.That(partialEmote.Name, Is.EqualTo("happy"), "Name should be parsed correctly");
                 Assert.That(partialEmote.PreAnimation, Is.EqualTo("pre_happy"), "PreAnimation should be parsed correctly");
                 Assert.That(partialEmote.Animation, Is.EqualTo(""), "Animation should default to empty when not provided");
-                Assert.That(partialEmote.Modifier, Is.EqualTo(ICMessage.EmoteModifiers.PlayPreanimation), "Modifier should default to PlayPreanimation");
-                Assert.That(partialEmote.DeskMod, Is.EqualTo(ICMessage.DeskMods.Chat), "DeskMod should default to Chat");
+                Assert.That(partialEmote.Modifier, Is.EqualTo(ICMessage.EmoteModifiers.NoPreanimation), "Modifier should default to AO2 idle/no-preanimation");
+                Assert.That(partialEmote.DeskMod, Is.EqualTo(ICMessage.DeskMods.Unspecified), "DeskMod should default to AO2 unspecified");
             });
             
             // Test parsing with invalid numeric fields
@@ -77,8 +77,8 @@ namespace UnitTests
             Assert.Multiple(() =>
             {
                 Assert.That(invalidEmote.Name, Is.EqualTo("invalid"), "Name should be parsed correctly");
-                Assert.That(invalidEmote.Modifier, Is.EqualTo(ICMessage.EmoteModifiers.PlayPreanimation), "Invalid modifier should default to PlayPreanimation");
-                Assert.That(invalidEmote.DeskMod, Is.EqualTo(ICMessage.DeskMods.Chat), "Invalid deskMod should default to Chat");
+                Assert.That(invalidEmote.Modifier, Is.EqualTo(ICMessage.EmoteModifiers.NoPreanimation), "Invalid modifier should default to AO2 idle/no-preanimation");
+                Assert.That(invalidEmote.DeskMod, Is.EqualTo(ICMessage.DeskMods.Unspecified), "Invalid deskMod should default to AO2 unspecified");
             });
         }
     }

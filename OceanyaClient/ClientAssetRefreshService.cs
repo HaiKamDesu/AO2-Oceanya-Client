@@ -39,6 +39,33 @@ namespace OceanyaClient
         }
 
         /// <summary>
+        /// Refreshes a single character while showing progress in <see cref="WaitForm"/>.
+        /// </summary>
+        public static async Task RefreshCharacterAsync(Window owner, string characterName)
+        {
+            if (string.IsNullOrWhiteSpace(characterName))
+            {
+                return;
+            }
+
+            TargetedAssetRefreshPlan plan = new TargetedAssetRefreshPlan();
+            plan.CharacterNames.Add(characterName.Trim());
+            await RefreshTargetedAssetsAsync(owner, plan);
+        }
+
+        /// <summary>
+        /// Refreshes all character caches while showing progress in <see cref="WaitForm"/>.
+        /// </summary>
+        public static async Task RefreshAllCharactersAsync(Window owner)
+        {
+            TargetedAssetRefreshPlan plan = new TargetedAssetRefreshPlan
+            {
+                RequiresFullCharacterRefresh = true
+            };
+            await RefreshTargetedAssetsAsync(owner, plan);
+        }
+
+        /// <summary>
         /// Refreshes only the supplied asset scope while showing progress in <see cref="WaitForm"/>.
         /// </summary>
         internal static async Task RefreshTargetedAssetsAsync(Window owner, TargetedAssetRefreshPlan plan)

@@ -133,6 +133,29 @@ namespace UnitTests
         }
 
         [Test]
+        public void IsEligibleConnection_ReturnsFalseWhenAutoSyncIsDisabled()
+        {
+            FileHivemindConnectionProfile connection = new FileHivemindConnectionProfile
+            {
+                AutoSyncEnabled = false,
+                ProviderId = FileHivemindProviderIds.GoogleDrive,
+                GoogleDrive = new GoogleDriveSyncSettings
+                {
+                    OAuthClientId = "desktop-client-id.apps.googleusercontent.com",
+                    OAuthClientSecret = "desktop-client-secret",
+                    RemoteFolderId = "folder-id",
+                    LocalFolderPath = @"C:\sync",
+                    TokenStoreKey = "token-key",
+                    LastSignedInEmail = "tester@example.com"
+                }
+            };
+
+            bool eligible = FileHivemindBackgroundAgentLauncher.IsEligibleConnection(connection);
+
+            Assert.That(eligible, Is.False);
+        }
+
+        [Test]
         public void EnsureRunningForCurrentSession_DoesNotLaunchWhenAgentAlreadyRunning()
         {
             FakeAutoStartRegistrar registrar = new FakeAutoStartRegistrar();
@@ -1025,6 +1048,62 @@ namespace UnitTests
                 Assert.That(loaded.RemoteMirrorState.Files[0].ContentHash, Is.EqualTo("hash-1"));
                 Assert.That(loaded.HasRemoteMirrorState, Is.True);
                 Assert.That(loaded.LastSuccessfulSyncUtc, Is.EqualTo(state.LastSuccessfulSyncUtc));
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        [Test]
+        public void SaveAndLoad_CanOverlapAcrossThreadsWithoutFileLockErrors()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "google_drive_runtime_state_" + Guid.NewGuid().ToString("N"));
+
+            try
+            {
+                GoogleDriveConnectionRuntimeStateStore store = new GoogleDriveConnectionRuntimeStateStore(root);
+                GoogleDriveConnectionRuntimeState state = new GoogleDriveConnectionRuntimeState
+                {
+                    ConnectionId = "connection-1",
+                    RootFolderId = "root-folder",
+                    ChangePageToken = "token-1"
+                };
+                Exception? backgroundFailure = null;
+                using ManualResetEventSlim writerStarted = new ManualResetEventSlim(false);
+
+                Task writer = Task.Run(() =>
+                {
+                    try
+                    {
+                        writerStarted.Set();
+                        for (int index = 0; index < 50; index++)
+                        {
+                            state.ChangePageToken = "token-" + index;
+                            store.Save(state);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        backgroundFailure = ex;
+                    }
+                });
+
+                writerStarted.Wait();
+                for (int index = 0; index < 50; index++)
+                {
+                    GoogleDriveConnectionRuntimeState? loaded = store.Load("connection-1");
+                    if (loaded != null)
+                    {
+                        Assert.That(loaded.ConnectionId, Is.EqualTo("connection-1"));
+                    }
+                }
+
+                writer.Wait();
+                Assert.That(backgroundFailure, Is.Null);
             }
             finally
             {

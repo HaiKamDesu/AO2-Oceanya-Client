@@ -40,7 +40,8 @@ public class ICMessageTests
             FramesSfx = "happy^(b)normal^(a)normal^",
             Additive = false,
             Effect = Effects.None,
-            Blips = ""
+            Blips = "",
+            Slide = false
         };
     }
 
@@ -49,15 +50,16 @@ public class ICMessageTests
     {
         ICMessage message = CreateSampleMessage();
         string command = ICMessage.GetCommand(message);
+        string[] parts = command.Split('#');
 
         Assert.Multiple(() =>
         {
             Assert.That(command, Does.StartWith("MS#"));
-            Assert.That(command, Does.EndWith("%"));
-            Assert.That(command, Does.Contain("#Franziska#"));
-            Assert.That(command, Does.Contain("#normal#"));
-            Assert.That(command, Does.Contain("#This is a test message#"));
-            Assert.That(command.Split('#').Length, Is.GreaterThanOrEqualTo(34));
+            Assert.That(command, Does.EndWith("#%"));
+            Assert.That(parts[3], Is.EqualTo("Franziska"));
+            Assert.That(parts[4], Is.EqualTo("normal"));
+            Assert.That(parts[5], Is.EqualTo("This is a test message"));
+            Assert.That(parts.Length, Is.EqualTo(17));
         });
     }
 
@@ -65,42 +67,97 @@ public class ICMessageTests
     public void GetCommand_UsesAo2ExtendedFieldLayout()
     {
         ICMessage message = CreateSampleMessage();
+        ICMessage.SerializationOptions options = new ICMessage.SerializationOptions
+        {
+            IncludeCcccIcSupport = true,
+            IncludeLoopingSfx = true,
+            IncludeAdditive = true,
+            IncludeEffects = true,
+            IncludeCustomBlips = true
+        };
+        message.Message = "Encoded #message&%$";
+        message.ShowName = "Miles #Edgeworth";
+        message.OtherCharId = 7;
+        message.OtherName = "ShouldNotSend";
+        message.OtherEmote = "also_ignored";
+        message.SelfOffset = (12, -5);
+        message.NonInterruptingPreAnim = true;
+        message.SfxLooping = true;
         message.ScreenShake = true;
-        message.FramesShake = string.Empty;
-        message.FramesRealization = string.Empty;
-        message.FramesSfx = string.Empty;
+        message.FramesShake = "pre^";
+        message.FramesRealization = "real^";
+        message.FramesSfx = "sfx^";
+        message.Additive = true;
         message.Blips = "male";
         message.EffectString = "realization||custom-realization";
+        message.Slide = true;
 
-        string[] parts = ICMessage.GetCommand(message).Split('#');
+        string[] parts = ICMessage.GetCommand(message, options).Split('#');
 
         Assert.Multiple(() =>
         {
-            Assert.That(parts[17], Is.EqualTo("-1"));
-            Assert.That(parts[18], Is.EqualTo(string.Empty));
-            Assert.That(parts[19], Is.EqualTo(string.Empty));
-            Assert.That(parts[20], Is.EqualTo("0<and>0"));
-            Assert.That(parts[21], Is.EqualTo("0"));
-            Assert.That(parts[22], Is.EqualTo("0"));
-            Assert.That(parts[23], Is.EqualTo("0"));
-            Assert.That(parts[24], Is.EqualTo("0"));
+            Assert.That(parts[5], Is.EqualTo("Encoded <num>message<and><percent><dollar>"));
+            Assert.That(parts[16], Is.EqualTo("Miles <num>Edgeworth"));
+            Assert.That(parts[17], Is.EqualTo("7"));
+            Assert.That(parts[18], Is.EqualTo("12<and>-5"));
+            Assert.That(parts[19], Is.EqualTo("1"));
+            Assert.That(parts[20], Is.EqualTo("1"));
+            Assert.That(parts[21], Is.EqualTo("1"));
+            Assert.That(parts[22], Is.EqualTo("pre^"));
+            Assert.That(parts[23], Is.EqualTo("real^"));
+            Assert.That(parts[24], Is.EqualTo("sfx^"));
             Assert.That(parts[25], Is.EqualTo("1"));
-            Assert.That(parts[26], Is.EqualTo(string.Empty));
-            Assert.That(parts[27], Is.EqualTo(string.Empty));
-            Assert.That(parts[28], Is.EqualTo(string.Empty));
-            Assert.That(parts[29], Is.EqualTo("0"));
-            Assert.That(parts[30], Is.EqualTo("realization||custom-realization"));
-            Assert.That(parts[31], Is.EqualTo("male"));
-            Assert.That(parts[32], Is.EqualTo(string.Empty));
-            Assert.That(parts[33], Is.EqualTo("%"));
+            Assert.That(parts[26], Is.EqualTo("realization||custom-realization"));
+            Assert.That(parts[27], Is.EqualTo("male"));
+            Assert.That(parts[28], Is.EqualTo("1"));
+            Assert.That(parts[29], Is.EqualTo("%"));
         });
     }
 
     [Test]
-    public void FromConsoleLine_RoundTripsCompactPacket()
+    public void GetCommand_OmitsVerticalOffsetWhenYOffsetExtensionIsDisabled()
+    {
+        ICMessage message = CreateSampleMessage();
+        message.ShowName = "Von Karma";
+        message.SelfOffset = (12, -5);
+
+        ICMessage.SerializationOptions options = new ICMessage.SerializationOptions
+        {
+            IncludeCcccIcSupport = true,
+            IncludeVerticalOffset = false
+        };
+
+        string[] parts = ICMessage.GetCommand(message, options).Split('#');
+
+        Assert.That(parts[18], Is.EqualTo("12"));
+    }
+
+    [Test]
+    public void FromConsoleLine_RoundTripsAo2PacketCoreFields()
     {
         ICMessage originalMessage = CreateSampleMessage();
-        string command = ICMessage.GetCommand(originalMessage);
+        ICMessage.SerializationOptions options = new ICMessage.SerializationOptions
+        {
+            IncludeCcccIcSupport = true,
+            IncludeLoopingSfx = true,
+            IncludeAdditive = true,
+            IncludeEffects = true,
+            IncludeCustomBlips = true
+        };
+        originalMessage.ShowName = "Von Karma";
+        originalMessage.OtherCharId = 12;
+        originalMessage.SelfOffset = (9, -4);
+        originalMessage.NonInterruptingPreAnim = true;
+        originalMessage.SfxLooping = true;
+        originalMessage.ScreenShake = true;
+        originalMessage.FramesShake = "shake^";
+        originalMessage.FramesRealization = "real^";
+        originalMessage.FramesSfx = "sfx^";
+        originalMessage.Additive = true;
+        originalMessage.EffectString = "reaction|fx-folder|ding";
+        originalMessage.Blips = "male";
+        originalMessage.Slide = true;
+        string command = ICMessage.GetCommand(originalMessage, options);
 
         ICMessage? parsedMessage = ICMessage.FromConsoleLine(command);
 
@@ -113,9 +170,45 @@ public class ICMessageTests
             Assert.That(parsedMessage.DeskMod, Is.EqualTo(originalMessage.DeskMod));
             Assert.That(parsedMessage.EmoteModifier, Is.EqualTo(originalMessage.EmoteModifier));
             Assert.That(parsedMessage.ShoutModifier, Is.EqualTo(originalMessage.ShoutModifier));
-            Assert.That(parsedMessage.SelfOffset.Horizontal, Is.EqualTo(originalMessage.SelfOffset.Horizontal));
-            Assert.That(parsedMessage.SelfOffset.Vertical, Is.EqualTo(originalMessage.SelfOffset.Vertical));
-            Assert.That(parsedMessage.Effect, Is.EqualTo(originalMessage.Effect));
+            Assert.That(parsedMessage.ShowName, Is.EqualTo(originalMessage.ShowName));
+            Assert.That(parsedMessage.OtherCharId, Is.EqualTo(originalMessage.OtherCharId));
+            Assert.That(parsedMessage.SelfOffset.Horizontal, Is.EqualTo(1));
+            Assert.That(parsedMessage.SelfOffset.Vertical, Is.EqualTo(0));
+            Assert.That(parsedMessage.OtherName, Is.EqualTo("9&-4"));
+            Assert.That(parsedMessage.OtherEmote, Is.EqualTo("1"));
+            Assert.That(parsedMessage.EffectString, Is.EqualTo(string.Empty));
+            Assert.That(parsedMessage.Blips, Is.EqualTo(string.Empty));
+        });
+    }
+
+    [Test]
+    public void FromConsoleLine_ParsesIncomingAo2ReceiveLayoutFields()
+    {
+        string packet = "MS#chat#pre#Phoenix#normal#Hello<num>world#def#sfx#1#5#3#2#1#0#0#4#Nick#9^2#Maya#bench#15<and>-7#3#1#1#1#0#shake^#real^#sfx^#1#impact|folder|fan#male#1#%";
+
+        ICMessage? message = ICMessage.FromConsoleLine(packet);
+
+        Assert.That(message, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(message!.DeskMod, Is.EqualTo(DeskMods.Chat));
+            Assert.That(message.Message, Is.EqualTo("Hello#world"));
+            Assert.That(message.ShowName, Is.EqualTo("Nick"));
+            Assert.That(message.OtherCharId, Is.EqualTo(9));
+            Assert.That(message.OtherName, Is.EqualTo("Maya"));
+            Assert.That(message.OtherEmote, Is.EqualTo("bench"));
+            Assert.That(message.SelfOffset.Horizontal, Is.EqualTo(15));
+            Assert.That(message.SelfOffset.Vertical, Is.EqualTo(-7));
+            Assert.That(message.OtherOffset, Is.EqualTo(3));
+            Assert.That(message.OtherFlip, Is.True);
+            Assert.That(message.NonInterruptingPreAnim, Is.True);
+            Assert.That(message.SfxLooping, Is.True);
+            Assert.That(message.ScreenShake, Is.False);
+            Assert.That(message.Additive, Is.True);
+            Assert.That(message.EffectString, Is.EqualTo("impact|folder|fan"));
+            Assert.That(message.Blips, Is.EqualTo("male"));
+            Assert.That(message.Slide, Is.True);
+            Assert.That(message.Effect, Is.EqualTo(Effects.Impact));
         });
     }
 
