@@ -206,14 +206,6 @@ namespace OceanyaClient
                     "Auto-sync disabled");
             }
 
-            if (activeConnectionIds.Contains(connection.Id))
-            {
-                return (
-                    new SolidColorBrush(Color.FromRgb(255, 226, 155)),
-                    new SolidColorBrush(Color.FromRgb(240, 210, 142)),
-                    "Currently updating");
-            }
-
             GoogleDriveConnectionRuntimeState? runtimeState = runtimeStateStore.Load(connection.Id);
             if (!string.IsNullOrWhiteSpace(runtimeState?.LastErrorMessage))
             {
@@ -221,6 +213,29 @@ namespace OceanyaClient
                     new SolidColorBrush(Color.FromRgb(255, 198, 198)),
                     new SolidColorBrush(Color.FromRgb(236, 178, 178)),
                     runtimeState.LastErrorMessage);
+            }
+
+            if (!string.IsNullOrWhiteSpace(runtimeState?.LastStatusMessage))
+            {
+                return (runtimeState.LastStatusLevel?.Trim() ?? string.Empty).ToUpperInvariant() switch
+                {
+                    "ACTION" => (
+                        new SolidColorBrush(Color.FromRgb(255, 226, 155)),
+                        new SolidColorBrush(Color.FromRgb(240, 210, 142)),
+                        runtimeState.LastStatusMessage),
+                    "WARNING" => (
+                        new SolidColorBrush(Color.FromRgb(255, 218, 156)),
+                        new SolidColorBrush(Color.FromRgb(245, 198, 134)),
+                        runtimeState.LastStatusMessage),
+                    "SUCCESS" => (
+                        new SolidColorBrush(Color.FromRgb(176, 240, 188)),
+                        new SolidColorBrush(Color.FromRgb(154, 224, 170)),
+                        runtimeState.LastStatusMessage),
+                    _ => (
+                        new SolidColorBrush(Color.FromRgb(232, 232, 232)),
+                        new SolidColorBrush(Color.FromRgb(214, 214, 214)),
+                        runtimeState.LastStatusMessage)
+                };
             }
 
             DateTimeOffset? lastSuccessfulSyncUtc = runtimeState?.LastSuccessfulSyncUtc ?? connection.GoogleDrive.LastSyncUtc;
@@ -1374,16 +1389,6 @@ namespace OceanyaClient
             if (string.IsNullOrWhiteSpace(connectionId))
             {
                 return;
-            }
-
-            string normalizedLevel = entry.Level?.Trim() ?? string.Empty;
-            if (string.Equals(normalizedLevel, "ACTION", StringComparison.OrdinalIgnoreCase))
-            {
-                activeConnectionIds.Add(connectionId);
-            }
-            else
-            {
-                activeConnectionIds.Remove(connectionId);
             }
 
             FileHivemindConnectionProfile? selectedConnection = GetSelectedConnection();

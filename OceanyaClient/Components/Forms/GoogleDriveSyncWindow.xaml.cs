@@ -413,7 +413,7 @@ namespace OceanyaClient
             try
             {
                 ApplyEditorStateToDraft();
-                EnsureDraftTokenStoreKey();
+                Settings.TokenStoreKey = Guid.NewGuid().ToString("N");
                 EnsureGoogleAuthConfigured();
                 AppendStatus("Opening browser for Google Drive sign-in...", StatusLogLevel.Action);
                 GoogleDriveUserInfo user = await syncService.SignInAsync(Settings, forceAccountSelection: true, CancellationToken.None);

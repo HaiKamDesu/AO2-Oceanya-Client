@@ -21,6 +21,9 @@ namespace OceanyaClient.Features.GoogleDriveSync
         public bool HasRemoteMirrorState { get; set; }
         public DateTimeOffset? LastSuccessfulSyncUtc { get; set; }
         public string LastErrorMessage { get; set; } = string.Empty;
+        public string LastStatusLevel { get; set; } = string.Empty;
+        public string LastStatusMessage { get; set; } = string.Empty;
+        public DateTimeOffset? LastStatusUtc { get; set; }
     }
 
     public sealed class GoogleDriveRemoteChangeCheckResult
@@ -143,6 +146,8 @@ namespace OceanyaClient.Features.GoogleDriveSync
                 state.HasRemoteMirrorState = true;
             }
             state.LastErrorMessage = state.LastErrorMessage?.Trim() ?? string.Empty;
+            state.LastStatusLevel = state.LastStatusLevel?.Trim() ?? string.Empty;
+            state.LastStatusMessage = state.LastStatusMessage?.Trim() ?? string.Empty;
             state.KnownRemoteItemIds = (state.KnownRemoteItemIds ?? new List<string>())
                 .Where(itemId => !string.IsNullOrWhiteSpace(itemId))
                 .Select(itemId => itemId.Trim())

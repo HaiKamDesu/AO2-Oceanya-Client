@@ -429,6 +429,64 @@ namespace UnitTests
             }
         }
 
+        [Test]
+        public void RegisterSignedInAccount_AllowsMultipleSavedAccountsWithoutOverwritingThePreviousTokenKey()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "drive_account_register_" + Guid.NewGuid().ToString("N"));
+
+            try
+            {
+                GoogleDriveSecureClientCredentialStore credentialStore =
+                    new GoogleDriveSecureClientCredentialStore(root, new ObfuscatingProtector());
+                GoogleDriveSecureTokenStore tokenStore =
+                    new GoogleDriveSecureTokenStore(root, new ObfuscatingProtector());
+                FileHivemindSettings fileHivemind = new FileHivemindSettings();
+                GoogleDriveSyncSettings settings = new GoogleDriveSyncSettings
+                {
+                    OAuthClientId = "desktop-client-id.apps.googleusercontent.com",
+                    OAuthClientSecret = "desktop-client-secret",
+                    OAuthClientSecretStoreKey = "oauth-key",
+                    TokenStoreKey = "token-a"
+                };
+
+                GoogleDriveConnectionCredentialSupport.SaveSecretIfPresent(settings, credentialStore);
+                GoogleDriveSignedInAccountManager.RegisterSignedInAccount(
+                    fileHivemind,
+                    settings,
+                    new GoogleDriveUserInfo
+                    {
+                        DisplayName = "Alpha",
+                        EmailAddress = "alpha@example.com"
+                    },
+                    credentialStore,
+                    tokenStore);
+
+                settings.TokenStoreKey = "token-b";
+                GoogleDriveSignedInAccountManager.RegisterSignedInAccount(
+                    fileHivemind,
+                    settings,
+                    new GoogleDriveUserInfo
+                    {
+                        DisplayName = "Beta",
+                        EmailAddress = "beta@example.com"
+                    },
+                    credentialStore,
+                    tokenStore);
+
+                Assert.That(fileHivemind.GoogleDriveAccounts.Count, Is.EqualTo(2));
+                Assert.That(
+                    fileHivemind.GoogleDriveAccounts.Select(account => account.TokenStoreKey),
+                    Is.EquivalentTo(new[] { "token-a", "token-b" }));
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
         private sealed class ObfuscatingProtector : ISecretProtector
         {
             public byte[] Protect(byte[] value)
@@ -1932,6 +1990,51 @@ namespace UnitTests
             }
         }
 
+        [Test]
+        public async Task PushLocalFolderAsync_UploadsMultipleFilesInParallel()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "drive_push_parallel_test_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                Directory.CreateDirectory(Path.Combine(root, "characters", "phoenix"));
+                for (int i = 0; i < 6; i++)
+                {
+                    File.WriteAllText(Path.Combine(root, "characters", "phoenix", $"file{i}.txt"), "content-" + i);
+                }
+
+                FakeGoogleDriveRemoteClient client = new FakeGoogleDriveRemoteClient
+                {
+                    UploadDelay = TimeSpan.FromMilliseconds(60)
+                };
+                client.AddFolder("characters", "folder-characters");
+                client.AddFolder("characters/phoenix", "folder-phoenix");
+
+                GoogleDriveSyncSettings settings = new GoogleDriveSyncSettings
+                {
+                    LocalFolderPath = root,
+                    RemoteFolderId = client.RootFolderId,
+                    MirrorDeletes = true
+                };
+
+                GoogleDriveSyncService service = new GoogleDriveSyncService();
+                GoogleDriveSyncSummary summary = await service.PushLocalFolderAsync(
+                    client,
+                    settings,
+                    _ => { },
+                    CancellationToken.None);
+
+                Assert.That(summary.FilesUploaded, Is.EqualTo(6));
+                Assert.That(client.MaxConcurrentUploads, Is.GreaterThan(1));
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
         private sealed class FakeGoogleDriveRemoteClient : IGoogleDriveRemoteClient
         {
             private readonly Dictionary<string, string> fileContents = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -1939,6 +2042,7 @@ namespace UnitTests
             private readonly Queue<GoogleDriveChangePage> changePages = new Queue<GoogleDriveChangePage>();
             private int nextId = 1;
             private int currentConcurrentDownloads;
+            private int currentConcurrentUploads;
 
             public FakeGoogleDriveRemoteClient()
             {
@@ -1949,7 +2053,9 @@ namespace UnitTests
             public string RootFolderId { get; }
             public string StartPageToken { get; set; } = "token-0";
             public TimeSpan DownloadDelay { get; set; } = TimeSpan.Zero;
+            public TimeSpan UploadDelay { get; set; } = TimeSpan.Zero;
             public int MaxConcurrentDownloads { get; private set; }
+            public int MaxConcurrentUploads { get; private set; }
             public int GetSnapshotCallCount { get; private set; }
             public int GetStartPageTokenCallCount { get; private set; }
 
@@ -2100,22 +2206,7 @@ namespace UnitTests
 
             public Task<string> UploadFileAsync(string parentFolderId, string fileName, string localFilePath, string? existingFileId, CancellationToken cancellationToken)
             {
-                string parentRelativePath = folderIdsToRelativePaths[parentFolderId];
-                string relativePath = string.IsNullOrWhiteSpace(parentRelativePath)
-                    ? fileName
-                    : parentRelativePath + "/" + fileName;
-                string itemId = string.IsNullOrWhiteSpace(existingFileId) ? "file-" + nextId++ : existingFileId;
-                string content = File.ReadAllText(localFilePath);
-                fileContents[relativePath] = content;
-                Snapshot.Files[relativePath] = new GoogleDriveSyncFileEntry
-                {
-                    RelativePath = relativePath,
-                    ItemId = itemId,
-                    ParentId = parentFolderId,
-                    Size = new FileInfo(localFilePath).Length,
-                    Hash = GoogleDriveLocalSnapshotBuilder.ComputeMd5(localFilePath)
-                };
-                return Task.FromResult(itemId);
+                return UploadFileCoreAsync(parentFolderId, fileName, localFilePath, existingFileId, cancellationToken);
             }
 
             public Task DownloadFileAsync(string fileId, string destinationPath, CancellationToken cancellationToken)
@@ -2173,6 +2264,50 @@ namespace UnitTests
                 finally
                 {
                     Interlocked.Decrement(ref currentConcurrentDownloads);
+                }
+            }
+
+            private async Task<string> UploadFileCoreAsync(
+                string parentFolderId,
+                string fileName,
+                string localFilePath,
+                string? existingFileId,
+                CancellationToken cancellationToken)
+            {
+                int concurrentUploads = Interlocked.Increment(ref currentConcurrentUploads);
+                if (concurrentUploads > MaxConcurrentUploads)
+                {
+                    MaxConcurrentUploads = concurrentUploads;
+                }
+
+                try
+                {
+                    if (UploadDelay > TimeSpan.Zero)
+                    {
+                        await Task.Delay(UploadDelay, cancellationToken);
+                    }
+
+                    string parentRelativePath = folderIdsToRelativePaths[parentFolderId];
+                    string relativePath = string.IsNullOrWhiteSpace(parentRelativePath)
+                        ? fileName
+                        : parentRelativePath + "/" + fileName;
+                    string itemId = string.IsNullOrWhiteSpace(existingFileId) ? "file-" + nextId++ : existingFileId;
+                    string content = await File.ReadAllTextAsync(localFilePath, cancellationToken);
+                    fileContents[relativePath] = content;
+                    Snapshot.Files[relativePath] = new GoogleDriveSyncFileEntry
+                    {
+                        RelativePath = relativePath,
+                        ItemId = itemId,
+                        ParentId = parentFolderId,
+                        Size = new FileInfo(localFilePath).Length,
+                        Hash = GoogleDriveLocalSnapshotBuilder.ComputeMd5(localFilePath)
+                    };
+
+                    return itemId;
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref currentConcurrentUploads);
                 }
             }
         }

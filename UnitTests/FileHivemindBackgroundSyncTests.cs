@@ -793,6 +793,21 @@ namespace UnitTests
         }
 
         [Test]
+        public void RuntimeStateStore_Normalize_PreservesLastStatusMessageFields()
+        {
+            GoogleDriveConnectionRuntimeState state = GoogleDriveConnectionRuntimeStateStore.Normalize(
+                new GoogleDriveConnectionRuntimeState
+                {
+                    ConnectionId = "connection-1",
+                    LastStatusLevel = " Action ",
+                    LastStatusMessage = " Pull started (remote Google Drive changes). "
+                });
+
+            Assert.That(state.LastStatusLevel, Is.EqualTo("Action"));
+            Assert.That(state.LastStatusMessage, Is.EqualTo("Pull started (remote Google Drive changes)."));
+        }
+
+        [Test]
         public void BackgroundLogStore_AppendAndRead_RoundTripsEntries()
         {
             string root = Path.Combine(Path.GetTempPath(), "file_hivemind_log_" + Guid.NewGuid().ToString("N"));

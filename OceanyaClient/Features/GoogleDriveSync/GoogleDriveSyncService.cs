@@ -8,6 +8,7 @@ namespace OceanyaClient.Features.GoogleDriveSync
     public sealed class GoogleDriveSyncService
     {
         private const int MaxParallelDownloads = 6;
+        private const int MaxParallelUploads = 4;
         private readonly GoogleDriveSessionFactory sessionFactory;
         private readonly GoogleDriveOAuthService oauthService;
 
@@ -141,39 +142,7 @@ namespace OceanyaClient.Features.GoogleDriveSync
                 summary.DirectoriesCreated++;
             }
 
-            if (downloadOperations.Count > 0)
-            {
-                int totalDownloads = downloadOperations.Count;
-                int completedDownloads = 0;
-                int maxConcurrency = Math.Min(MaxParallelDownloads, Math.Max(1, totalDownloads));
-                using SemaphoreSlim throttler = new SemaphoreSlim(maxConcurrency, maxConcurrency);
-
-                async Task DownloadOperationAsync(GoogleDriveSyncOperation operation)
-                {
-                    await throttler.WaitAsync(cancellationToken);
-                    try
-                    {
-                        string localPath = ResolveLocalPath(settings.LocalFolderPath, operation.RelativePath);
-                        int startingIndex = Math.Min(totalDownloads, Volatile.Read(ref completedDownloads) + 1);
-                        progress?.Invoke($"Downloading {startingIndex}/{totalDownloads}: {operation.RelativePath}");
-                        Directory.CreateDirectory(Path.GetDirectoryName(localPath) ?? settings.LocalFolderPath);
-                        await client.DownloadFileAsync(operation.RemoteItemId, localPath, cancellationToken);
-                        int finishedCount = Interlocked.Increment(ref completedDownloads);
-                        progress?.Invoke($"Downloaded {finishedCount}/{totalDownloads}: {operation.RelativePath}");
-                    }
-                    finally
-                    {
-                        throttler.Release();
-                    }
-                }
-
-                await Task.WhenAll(downloadOperations.Select(DownloadOperationAsync));
-                summary.FilesDownloaded += downloadOperations.Count;
-                foreach (GoogleDriveSyncOperation operation in downloadOperations)
-                {
-                    summary.LocalChanges.RecordAddedOrUpdated(operation.RelativePath);
-                }
-            }
+            await ExecuteDownloadOperationsAsync(client, settings, summary, downloadOperations, progress, cancellationToken);
 
             foreach (GoogleDriveSyncOperation operation in deleteOperations)
             {
@@ -237,12 +206,6 @@ namespace OceanyaClient.Features.GoogleDriveSync
             summary.FinalRemoteSnapshot = finalRemoteSnapshot;
 
             Dictionary<string, GoogleDriveSyncFolderEntry> remoteFolders = finalRemoteSnapshot.Folders;
-            List<GoogleDriveSyncOperation> uploadOperations = plan.Operations
-                .Where(operation => operation.Kind == GoogleDriveSyncOperationKind.UploadFile)
-                .ToList();
-            int totalUploads = uploadOperations.Count;
-            int completedUploads = 0;
-
             foreach (GoogleDriveSyncOperation operation in plan.Operations)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -271,34 +234,6 @@ namespace OceanyaClient.Features.GoogleDriveSync
                         }
                         break;
                     }
-                    case GoogleDriveSyncOperationKind.UploadFile:
-                    {
-                        string localPath = ResolveLocalPath(settings.LocalFolderPath, operation.RelativePath);
-                        string fileName = Path.GetFileName(localPath);
-                        string? parentFolderId = ResolveParentFolderId(settings.RemoteFolderId, remoteFolders, operation.ParentRelativePath);
-                        progress?.Invoke($"Uploading {completedUploads + 1}/{Math.Max(1, totalUploads)}: {operation.RelativePath}");
-                        string uploadedItemId = await client.UploadFileAsync(
-                            parentFolderId ?? settings.RemoteFolderId,
-                            fileName,
-                            localPath,
-                            string.IsNullOrWhiteSpace(operation.RemoteItemId) ? null : operation.RemoteItemId,
-                            cancellationToken);
-                        UpsertRemoteFile(
-                            finalRemoteSnapshot,
-                            operation.RelativePath,
-                            uploadedItemId,
-                            parentFolderId ?? settings.RemoteFolderId,
-                            localPath);
-                        completedUploads++;
-                        progress?.Invoke($"Uploaded {completedUploads}/{Math.Max(1, totalUploads)}: {operation.RelativePath}");
-                        summary.FilesUploaded++;
-                        summary.LocalChanges.RecordAddedOrUpdated(operation.RelativePath);
-                        if (!string.IsNullOrWhiteSpace(uploadedItemId))
-                        {
-                            summary.KnownRemoteItemIds.Add(uploadedItemId.Trim());
-                        }
-                        break;
-                    }
                     case GoogleDriveSyncOperationKind.DeleteRemoteFile:
                         progress?.Invoke("Deleting Drive file: " + operation.RelativePath);
                         await client.DeleteItemAsync(operation.RemoteItemId, cancellationToken);
@@ -315,6 +250,16 @@ namespace OceanyaClient.Features.GoogleDriveSync
                         break;
                 }
             }
+
+            await ExecuteUploadOperationsAsync(
+                client,
+                settings,
+                finalRemoteSnapshot,
+                summary,
+                remoteFolders,
+                plan.Operations.Where(operation => operation.Kind == GoogleDriveSyncOperationKind.UploadFile).ToList(),
+                progress,
+                cancellationToken);
 
             settings.LastSyncUtc = DateTimeOffset.UtcNow;
             return summary;
@@ -456,51 +401,16 @@ namespace OceanyaClient.Features.GoogleDriveSync
                 }
             }
 
-            int totalDownloads = downloadOperations.Count;
-            int completedDownloads = 0;
-            foreach (GoogleDriveSyncOperation operation in downloadOperations)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                string localPath = ResolveLocalPath(settings.LocalFolderPath, operation.RelativePath);
-                progress?.Invoke($"Downloading {completedDownloads + 1}/{Math.Max(1, totalDownloads)}: {operation.RelativePath}");
-                Directory.CreateDirectory(Path.GetDirectoryName(localPath) ?? settings.LocalFolderPath);
-                await client.DownloadFileAsync(operation.RemoteItemId, localPath, cancellationToken);
-                completedDownloads++;
-                progress?.Invoke($"Downloaded {completedDownloads}/{Math.Max(1, totalDownloads)}: {operation.RelativePath}");
-                summary.FilesDownloaded++;
-                summary.LocalChanges.RecordAddedOrUpdated(operation.RelativePath);
-            }
-
-            int totalUploads = uploadOperations.Count;
-            int completedUploads = 0;
-            foreach (GoogleDriveSyncOperation operation in uploadOperations)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                string localPath = ResolveLocalPath(settings.LocalFolderPath, operation.RelativePath);
-                string fileName = Path.GetFileName(localPath);
-                string? parentFolderId = ResolveParentFolderId(settings.RemoteFolderId, remoteFolders, operation.ParentRelativePath);
-                progress?.Invoke($"Uploading {completedUploads + 1}/{Math.Max(1, totalUploads)}: {operation.RelativePath}");
-                string uploadedItemId = await client.UploadFileAsync(
-                    parentFolderId ?? settings.RemoteFolderId,
-                    fileName,
-                    localPath,
-                    string.IsNullOrWhiteSpace(operation.RemoteItemId) ? null : operation.RemoteItemId,
-                    cancellationToken);
-                UpsertRemoteFile(
-                    finalRemoteSnapshot,
-                    operation.RelativePath,
-                    uploadedItemId,
-                    parentFolderId ?? settings.RemoteFolderId,
-                    localPath);
-                completedUploads++;
-                progress?.Invoke($"Uploaded {completedUploads}/{Math.Max(1, totalUploads)}: {operation.RelativePath}");
-                summary.FilesUploaded++;
-                summary.LocalChanges.RecordAddedOrUpdated(operation.RelativePath);
-                if (!string.IsNullOrWhiteSpace(uploadedItemId))
-                {
-                    summary.KnownRemoteItemIds.Add(uploadedItemId.Trim());
-                }
-            }
+            await ExecuteDownloadOperationsAsync(client, settings, summary, downloadOperations, progress, cancellationToken);
+            await ExecuteUploadOperationsAsync(
+                client,
+                settings,
+                finalRemoteSnapshot,
+                summary,
+                remoteFolders,
+                uploadOperations,
+                progress,
+                cancellationToken);
 
             settings.LastSyncUtc = DateTimeOffset.UtcNow;
             return summary;
@@ -549,6 +459,116 @@ namespace OceanyaClient.Features.GoogleDriveSync
             runtimeState.LastSuccessfulSyncUtc = DateTimeOffset.UtcNow;
             runtimeState.LastErrorMessage = string.Empty;
             return GoogleDriveConnectionRuntimeStateStore.Normalize(runtimeState);
+        }
+
+        private static async Task ExecuteDownloadOperationsAsync(
+            IGoogleDriveRemoteClient client,
+            GoogleDriveSyncSettings settings,
+            GoogleDriveSyncSummary summary,
+            List<GoogleDriveSyncOperation> downloadOperations,
+            Action<string>? progress,
+            CancellationToken cancellationToken)
+        {
+            if (downloadOperations.Count == 0)
+            {
+                return;
+            }
+
+            int totalDownloads = downloadOperations.Count;
+            int completedDownloads = 0;
+            int maxConcurrency = Math.Min(MaxParallelDownloads, Math.Max(1, totalDownloads));
+            using SemaphoreSlim throttler = new SemaphoreSlim(maxConcurrency, maxConcurrency);
+
+            async Task DownloadOperationAsync(GoogleDriveSyncOperation operation)
+            {
+                await throttler.WaitAsync(cancellationToken);
+                try
+                {
+                    string localPath = ResolveLocalPath(settings.LocalFolderPath, operation.RelativePath);
+                    int startingIndex = Math.Min(totalDownloads, Volatile.Read(ref completedDownloads) + 1);
+                    progress?.Invoke($"Downloading {startingIndex}/{totalDownloads}: {operation.RelativePath}");
+                    Directory.CreateDirectory(Path.GetDirectoryName(localPath) ?? settings.LocalFolderPath);
+                    await client.DownloadFileAsync(operation.RemoteItemId, localPath, cancellationToken);
+                    int finishedCount = Interlocked.Increment(ref completedDownloads);
+                    progress?.Invoke($"Downloaded {finishedCount}/{totalDownloads}: {operation.RelativePath}");
+                }
+                finally
+                {
+                    throttler.Release();
+                }
+            }
+
+            await Task.WhenAll(downloadOperations.Select(DownloadOperationAsync));
+            summary.FilesDownloaded += downloadOperations.Count;
+            foreach (GoogleDriveSyncOperation operation in downloadOperations)
+            {
+                summary.LocalChanges.RecordAddedOrUpdated(operation.RelativePath);
+            }
+        }
+
+        private static async Task ExecuteUploadOperationsAsync(
+            IGoogleDriveRemoteClient client,
+            GoogleDriveSyncSettings settings,
+            GoogleDriveSyncSnapshot finalRemoteSnapshot,
+            GoogleDriveSyncSummary summary,
+            IReadOnlyDictionary<string, GoogleDriveSyncFolderEntry> remoteFolders,
+            List<GoogleDriveSyncOperation> uploadOperations,
+            Action<string>? progress,
+            CancellationToken cancellationToken)
+        {
+            if (uploadOperations.Count == 0)
+            {
+                return;
+            }
+
+            int totalUploads = uploadOperations.Count;
+            int completedUploads = 0;
+            int maxConcurrency = Math.Min(MaxParallelUploads, Math.Max(1, totalUploads));
+            object syncRoot = new object();
+            using SemaphoreSlim throttler = new SemaphoreSlim(maxConcurrency, maxConcurrency);
+
+            async Task UploadOperationAsync(GoogleDriveSyncOperation operation)
+            {
+                await throttler.WaitAsync(cancellationToken);
+                try
+                {
+                    string localPath = ResolveLocalPath(settings.LocalFolderPath, operation.RelativePath);
+                    string fileName = Path.GetFileName(localPath);
+                    string? parentFolderId = ResolveParentFolderId(settings.RemoteFolderId, remoteFolders, operation.ParentRelativePath);
+                    int startingIndex = Math.Min(totalUploads, Volatile.Read(ref completedUploads) + 1);
+                    progress?.Invoke($"Uploading {startingIndex}/{totalUploads}: {operation.RelativePath}");
+                    string uploadedItemId = await client.UploadFileAsync(
+                        parentFolderId ?? settings.RemoteFolderId,
+                        fileName,
+                        localPath,
+                        string.IsNullOrWhiteSpace(operation.RemoteItemId) ? null : operation.RemoteItemId,
+                        cancellationToken);
+                    lock (syncRoot)
+                    {
+                        UpsertRemoteFile(
+                            finalRemoteSnapshot,
+                            operation.RelativePath,
+                            uploadedItemId,
+                            parentFolderId ?? settings.RemoteFolderId,
+                            localPath);
+                        summary.LocalChanges.RecordAddedOrUpdated(operation.RelativePath);
+                        if (!string.IsNullOrWhiteSpace(uploadedItemId))
+                        {
+                            summary.KnownRemoteItemIds.Add(uploadedItemId.Trim());
+                        }
+                    }
+
+                    int finishedCount = Interlocked.Increment(ref completedUploads);
+                    progress?.Invoke($"Uploaded {finishedCount}/{totalUploads}: {operation.RelativePath}");
+                }
+                finally
+                {
+                    throttler.Release();
+                }
+            }
+
+            await Task.WhenAll(uploadOperations.Select(UploadOperationAsync));
+            summary.FilesUploaded += uploadOperations.Count;
         }
 
         private static void ValidateSyncSettings(GoogleDriveSyncSettings settings)

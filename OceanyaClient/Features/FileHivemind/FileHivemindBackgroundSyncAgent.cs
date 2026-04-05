@@ -14,6 +14,7 @@ namespace OceanyaClient.Features.FileHivemind
         private static readonly TimeSpan LocalChangeDebounce = TimeSpan.FromSeconds(2);
         private static readonly TimeSpan ErrorBackoff = TimeSpan.FromSeconds(45);
         private static readonly TimeSpan PullWatcherIgnoreDuration = TimeSpan.FromSeconds(3);
+        private static readonly TimeSpan RemoteChangeEchoIgnoreDuration = TimeSpan.FromSeconds(12);
         private const int DefaultRemotePollIntervalSeconds = 20;
         private const int DestructiveDeletionProtectionMinimumBaselineFiles = 5;
         private const int DestructiveDeletionProtectionMinimumBaselineItems = 12;
@@ -302,6 +303,17 @@ namespace OceanyaClient.Features.FileHivemind
                     hasUnsyncedLocalChanges,
                     result,
                     canMergeBidirectionally: CanRunBidirectionalMerge(runtimeState));
+                if (handling != AutomaticRemoteChangeHandling.SaveStateOnly
+                    && state.IgnoreRemoteChangesUntilUtc > DateTimeOffset.UtcNow)
+                {
+                    runtimeStateStore.Save(result.UpdatedState);
+                    LogAgentMessage(
+                        "Info",
+                        state.Connection,
+                        "Ignored a remote change echo immediately after this client updated Drive.");
+                    return;
+                }
+
                 switch (handling)
                 {
                     case AutomaticRemoteChangeHandling.SaveStateOnly:
@@ -476,6 +488,7 @@ namespace OceanyaClient.Features.FileHivemind
                 await CaptureRuntimeStateAsync(state, summary, cancellationToken);
                 state.RequiresInitialPull = false;
                 state.NextRemotePollUtc = DateTimeOffset.UtcNow + remotePollInterval;
+                state.IgnoreRemoteChangesUntilUtc = DateTimeOffset.UtcNow + RemoteChangeEchoIgnoreDuration;
                 state.IgnoreLocalChangesUntilUtc = DateTimeOffset.UtcNow + PullWatcherIgnoreDuration;
                 if (showProgressToast)
                 {
@@ -546,6 +559,7 @@ namespace OceanyaClient.Features.FileHivemind
                 await CaptureRuntimeStateAsync(state, summary, cancellationToken);
                 state.RequiresInitialPull = false;
                 state.NextRemotePollUtc = DateTimeOffset.UtcNow + remotePollInterval;
+                state.IgnoreRemoteChangesUntilUtc = DateTimeOffset.UtcNow + RemoteChangeEchoIgnoreDuration;
                 if (showProgressToast)
                 {
                     backgroundNotifier.CloseProgressNotification(state.Connection.Id);
@@ -627,6 +641,7 @@ namespace OceanyaClient.Features.FileHivemind
                 await CaptureRuntimeStateAsync(state, summary, cancellationToken);
                 state.RequiresInitialPull = false;
                 state.NextRemotePollUtc = DateTimeOffset.UtcNow + remotePollInterval;
+                state.IgnoreRemoteChangesUntilUtc = DateTimeOffset.UtcNow + RemoteChangeEchoIgnoreDuration;
                 state.IgnoreLocalChangesUntilUtc = DateTimeOffset.UtcNow + PullWatcherIgnoreDuration;
                 if (showProgressToast)
                 {
@@ -853,6 +868,37 @@ namespace OceanyaClient.Features.FileHivemind
             runtimeStateStore.Save(state);
         }
 
+        private void PersistRuntimeStatus(
+            string connectionId,
+            string level,
+            string message,
+            bool clearError)
+        {
+            string trimmedConnectionId = connectionId?.Trim() ?? string.Empty;
+            string trimmedMessage = message?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(trimmedConnectionId) || string.IsNullOrWhiteSpace(trimmedMessage))
+            {
+                return;
+            }
+
+            GoogleDriveConnectionRuntimeState state = GoogleDriveConnectionRuntimeStateStore.Normalize(
+                runtimeStateStore.Load(trimmedConnectionId)
+                ?? new GoogleDriveConnectionRuntimeState
+                {
+                    ConnectionId = trimmedConnectionId
+                });
+            state.ConnectionId = trimmedConnectionId;
+            state.LastStatusLevel = level?.Trim() ?? string.Empty;
+            state.LastStatusMessage = trimmedMessage;
+            state.LastStatusUtc = DateTimeOffset.UtcNow;
+            if (clearError)
+            {
+                state.LastErrorMessage = string.Empty;
+            }
+
+            runtimeStateStore.Save(state);
+        }
+
         private void EnsureMountedIfPossible(string configIniPath, FileHivemindConnectionProfile connection)
         {
             if (!connection.GoogleDrive.AutoAddMountPath)
@@ -1019,6 +1065,15 @@ namespace OceanyaClient.Features.FileHivemind
 
         private void LogAgentMessage(string level, FileHivemindConnectionProfile connection, string message)
         {
+            if (ShouldPersistConnectionStatus(level, message))
+            {
+                PersistRuntimeStatus(
+                    connection.Id,
+                    level,
+                    message,
+                    clearError: !string.Equals(level, "Error", StringComparison.OrdinalIgnoreCase));
+            }
+
             backgroundLogStore.Append(new FileHivemindBackgroundLogEntry
             {
                 TimestampUtc = DateTimeOffset.UtcNow,
@@ -1027,6 +1082,34 @@ namespace OceanyaClient.Features.FileHivemind
                 ConnectionName = connection.EffectiveDisplayName,
                 Message = message
             });
+        }
+
+        private static bool ShouldPersistConnectionStatus(string? level, string? message)
+        {
+            string normalizedLevel = level?.Trim() ?? string.Empty;
+            string normalizedMessage = message?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(normalizedLevel) || string.IsNullOrWhiteSpace(normalizedMessage))
+            {
+                return false;
+            }
+
+            if (string.Equals(normalizedLevel, "Success", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(normalizedLevel, "Warning", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(normalizedLevel, "Error", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (!string.Equals(normalizedLevel, "Action", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return !normalizedMessage.StartsWith("Polling Google Drive for remote changes.", StringComparison.OrdinalIgnoreCase)
+                && !normalizedMessage.StartsWith("Remote poll found no relevant Google Drive changes.", StringComparison.OrdinalIgnoreCase)
+                && !normalizedMessage.StartsWith("Detected local mirror change.", StringComparison.OrdinalIgnoreCase)
+                && !normalizedMessage.StartsWith("Scheduled local push was cleared", StringComparison.OrdinalIgnoreCase)
+                && !normalizedMessage.StartsWith("No background runtime state exists yet.", StringComparison.OrdinalIgnoreCase);
         }
 
         private void ReportOperationProgress(ConnectionMonitorState state, string? message, bool showProgressToast)
@@ -1336,6 +1419,7 @@ namespace OceanyaClient.Features.FileHivemind
             public string LastAutomaticSyncConflictMessage { get; set; } = string.Empty;
             public DateTimeOffset NextRemotePollUtc { get; set; } = DateTimeOffset.UtcNow;
             public DateTimeOffset IgnoreLocalChangesUntilUtc { get; set; }
+            public DateTimeOffset IgnoreRemoteChangesUntilUtc { get; set; }
 
             public void ScheduleLocalPush(TimeSpan delay)
             {

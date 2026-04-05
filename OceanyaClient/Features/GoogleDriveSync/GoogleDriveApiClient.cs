@@ -274,7 +274,6 @@ namespace OceanyaClient.Features.GoogleDriveSync
         {
             ValidateDriveItemName(fileName);
 
-            byte[] fileBytes = await File.ReadAllBytesAsync(localFilePath, cancellationToken);
             Dictionary<string, object> metadata = new Dictionary<string, object>
             {
                 ["name"] = fileName
@@ -287,7 +286,14 @@ namespace OceanyaClient.Features.GoogleDriveSync
             string boundary = "oceanya_" + Guid.NewGuid().ToString("N");
             MultipartContent content = new MultipartContent("related", boundary);
             StringContent metadataContent = new StringContent(JsonSerializer.Serialize(metadata), Encoding.UTF8, "application/json");
-            ByteArrayContent fileContent = new ByteArrayContent(fileBytes);
+            StreamContent fileContent = new StreamContent(
+                new FileStream(
+                    localFilePath,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.Read,
+                    bufferSize: 131072,
+                    useAsync: true));
             fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
             content.Add(metadataContent);
             content.Add(fileContent);
