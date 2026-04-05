@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:www.amazon.science)",
+      "WebFetch(domain:blog.danielclayton.co.uk)",
+      "WebFetch(domain:medium.com)",
+      "WebFetch(domain:arxiv.org)"
+    ]
+  },
+  "enableAllProjectMcpServers": false
+}

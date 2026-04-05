@@ -61,6 +61,19 @@ namespace OceanyaClient
         public List<DreddOverlayMutationRecord> MutationCache { get; set; } = new List<DreddOverlayMutationRecord>();
     }
 
+    public class AO2AiBotSettings
+    {
+        public string Provider { get; set; } = "Ollama";
+        public string OllamaEndpoint { get; set; } = "http://127.0.0.1:11434";
+        public string OllamaModel { get; set; } = "llama3.1:8b";
+        public string OpenAIModel { get; set; } = "gpt-4o-mini";
+        public string OpenAIApiKeyEnvironmentVariable { get; set; } = "OPENAI_API_KEY";
+        public double Temperature { get; set; } = 0.2;
+        public int MaxTokens { get; set; } = 450;
+        public int MaxPromptMessages { get; set; }
+        public string PersonalityPrompt { get; set; } = string.Empty;
+    }
+
     public class CustomServerEntry
     {
         public string Name { get; set; } = "";
@@ -211,6 +224,7 @@ namespace OceanyaClient
         // Advanced feature flags and configs.
         public AdvancedFeatureFlagStore AdvancedFeatures { get; set; } = new AdvancedFeatureFlagStore();
         public DreddBackgroundOverlayOverrideConfig DreddBackgroundOverlayOverride { get; set; } = new DreddBackgroundOverlayOverrideConfig();
+        public AO2AiBotSettings AO2AiBot { get; set; } = new AO2AiBotSettings();
         public FileHivemindSettings FileHivemind { get; set; } = new FileHivemindSettings();
         public GoogleDriveSyncSettings GoogleDriveSync { get; set; } = new GoogleDriveSyncSettings();
 
@@ -351,6 +365,7 @@ namespace OceanyaClient
             }
 
             if (!string.Equals(data.StartupFunctionalityId, "gm_multi_client", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(data.StartupFunctionalityId, "ao2_ai_bot", StringComparison.OrdinalIgnoreCase)
                 && !string.Equals(data.StartupFunctionalityId, "character_database_viewer", StringComparison.OrdinalIgnoreCase)
                 && !string.Equals(data.StartupFunctionalityId, "character_file_creator", StringComparison.OrdinalIgnoreCase)
                 && !string.Equals(data.StartupFunctionalityId, "oceanyan_file_hivemind", StringComparison.OrdinalIgnoreCase))
@@ -365,11 +380,13 @@ namespace OceanyaClient
                 ? new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
                 : new Dictionary<string, bool>(data.AdvancedFeatures.EnabledFeatures, StringComparer.OrdinalIgnoreCase);
             data.DreddBackgroundOverlayOverride ??= new DreddBackgroundOverlayOverrideConfig();
+            data.AO2AiBot ??= new AO2AiBotSettings();
             data.FileHivemind ??= new FileHivemindSettings();
             data.GoogleDriveSync ??= new GoogleDriveSyncSettings();
             data.DreddBackgroundOverlayOverride.OverlayDatabase ??= new List<DreddOverlayEntry>();
             data.DreddBackgroundOverlayOverride.MutationCache ??= new List<DreddOverlayMutationRecord>();
             data.DreddBackgroundOverlayOverride.SelectedOverlayName ??= string.Empty;
+            NormalizeAO2AiBotSettings(data.AO2AiBot);
             NormalizeGoogleDriveSettings(data.GoogleDriveSync);
             NormalizeFileHivemindSettings(data);
 
@@ -562,6 +579,29 @@ namespace OceanyaClient
                     string.Equals(p.Id, data.EmoteVisualizer.SelectedPresetId, StringComparison.OrdinalIgnoreCase));
                 data.EmoteVisualizer.SelectedPresetName = selected.Name;
             }
+        }
+
+        private static void NormalizeAO2AiBotSettings(AO2AiBotSettings settings)
+        {
+            settings.Provider = string.Equals(settings.Provider?.Trim(), "OpenAI", StringComparison.OrdinalIgnoreCase)
+                ? "OpenAI"
+                : "Ollama";
+            settings.OllamaEndpoint = string.IsNullOrWhiteSpace(settings.OllamaEndpoint)
+                ? "http://127.0.0.1:11434"
+                : settings.OllamaEndpoint.Trim();
+            settings.OllamaModel = string.IsNullOrWhiteSpace(settings.OllamaModel)
+                ? "llama3.1:8b"
+                : settings.OllamaModel.Trim();
+            settings.OpenAIModel = string.IsNullOrWhiteSpace(settings.OpenAIModel)
+                ? "gpt-4o-mini"
+                : settings.OpenAIModel.Trim();
+            settings.OpenAIApiKeyEnvironmentVariable = string.IsNullOrWhiteSpace(settings.OpenAIApiKeyEnvironmentVariable)
+                ? "OPENAI_API_KEY"
+                : settings.OpenAIApiKeyEnvironmentVariable.Trim();
+            settings.Temperature = Math.Clamp(settings.Temperature, 0.0, 2.0);
+            settings.MaxTokens = Math.Clamp(settings.MaxTokens, 64, 4096);
+            settings.MaxPromptMessages = Math.Clamp(settings.MaxPromptMessages, 0, 1000);
+            settings.PersonalityPrompt ??= string.Empty;
         }
 
         private static void ClampPresetValues(FolderVisualizerViewPreset preset)

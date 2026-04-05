@@ -13,6 +13,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OceanyaClient", "OceanyaCli
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OceanyaHivemindAgent", "OceanyaHivemindAgent\OceanyaHivemindAgent.csproj", "{59A5A1A5-1B93-4706-8D2E-15BC1B08D8D4}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AO2 AI Bot", "AO2AIBot\AO2AIBot.csproj", "{0E596BD8-9D0B-40E6-B0A0-6C86D2A6588A}"
+EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{6F313B9C-030C-4ABC-86D0-457D68A84AEA}"
 	ProjectSection(SolutionItems) = preProject
 		Directory.Build.props = Directory.Build.props
@@ -44,6 +46,10 @@ Global
 		{59A5A1A5-1B93-4706-8D2E-15BC1B08D8D4}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{59A5A1A5-1B93-4706-8D2E-15BC1B08D8D4}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{59A5A1A5-1B93-4706-8D2E-15BC1B08D8D4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0E596BD8-9D0B-40E6-B0A0-6C86D2A6588A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0E596BD8-9D0B-40E6-B0A0-6C86D2A6588A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0E596BD8-9D0B-40E6-B0A0-6C86D2A6588A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0E596BD8-9D0B-40E6-B0A0-6C86D2A6588A}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

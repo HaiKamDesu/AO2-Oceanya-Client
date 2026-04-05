@@ -17,6 +17,7 @@ namespace OceanyaClient.Components
         {
             public FlowDocument Document { get; }
             public Border BottomSpacer { get; }
+            public Dictionary<Guid, Paragraph> TransientEntries { get; } = new Dictionary<Guid, Paragraph>();
 
             public LogState()
             {
@@ -158,7 +159,104 @@ namespace OceanyaClient.Components
             lblStream.Content = $"[{client.playerID}] {characterName} (\"{client.clientName}\")";
         }
 
-        public void AddMessage(AOClient? client, string showName, string message, bool isSentFromServer = false)
+        public void AddMessage(
+            AOClient? client,
+            string showName,
+            string message,
+            bool isSentFromServer = false,
+            IReadOnlyList<LogMessageActionLink>? nameLinks = null,
+            IReadOnlyList<LogMessageActionLink>? messageLinks = null)
+        {
+            AddMessageCore(client, showName, message, isSentFromServer, nameLinks, messageLinks, transientHandle: null);
+        }
+
+        public LogMessageHandle AddTransientMessage(
+            AOClient? client,
+            string showName,
+            string message,
+            bool isSentFromServer = false,
+            IReadOnlyList<LogMessageActionLink>? nameLinks = null,
+            IReadOnlyList<LogMessageActionLink>? messageLinks = null)
+        {
+            LogMessageHandle handle = new LogMessageHandle();
+            AddMessageCore(client, showName, message, isSentFromServer, nameLinks, messageLinks, handle);
+            return handle;
+        }
+
+        public void UpdateTransientMessage(
+            AOClient? client,
+            LogMessageHandle handle,
+            string showName,
+            string message,
+            bool isSentFromServer = false,
+            IReadOnlyList<LogMessageActionLink>? nameLinks = null,
+            IReadOnlyList<LogMessageActionLink>? messageLinks = null)
+        {
+            if (handle == null)
+            {
+                throw new ArgumentNullException(nameof(handle));
+            }
+
+            AOClient? logClient = ResolveLogClient(client);
+            if (logClient == null)
+            {
+                return;
+            }
+
+            LogState state = EnsureLogState(logClient);
+            if (!state.TransientEntries.TryGetValue(handle.Id, out Paragraph? paragraph))
+            {
+                AddMessageCore(client, showName, message, isSentFromServer, nameLinks, messageLinks, handle);
+                return;
+            }
+
+            PopulateParagraph(paragraph, showName, message, isSentFromServer, nameLinks, messageLinks);
+            RefreshBottomAnchor(state);
+
+            if (IsCurrentLogStream(client))
+            {
+                LogBox.Document = state.Document;
+                ScrollToBottom();
+            }
+        }
+
+        public void RemoveTransientMessage(AOClient? client, LogMessageHandle? handle)
+        {
+            if (handle == null)
+            {
+                return;
+            }
+
+            AOClient? logClient = ResolveLogClient(client);
+            if (logClient == null || !clientLogs.TryGetValue(logClient, out LogState? state))
+            {
+                return;
+            }
+
+            if (!state.TransientEntries.TryGetValue(handle.Id, out Paragraph? paragraph))
+            {
+                return;
+            }
+
+            state.TransientEntries.Remove(handle.Id);
+            state.Document.Blocks.Remove(paragraph);
+            RefreshBottomAnchor(state);
+
+            if (IsCurrentLogStream(client))
+            {
+                LogBox.Document = state.Document;
+                ScrollToBottom();
+            }
+        }
+
+        private void AddMessageCore(
+            AOClient? client,
+            string showName,
+            string message,
+            bool isSentFromServer,
+            IReadOnlyList<LogMessageActionLink>? nameLinks,
+            IReadOnlyList<LogMessageActionLink>? messageLinks,
+            LogMessageHandle? transientHandle)
         {
             AOClient? logClient = ResolveLogClient(client);
             if (logClient == null)
@@ -168,36 +266,70 @@ namespace OceanyaClient.Components
             }
 
             LogState state = EnsureLogState(logClient);
-
             bool shouldScroll = IsScrolledToBottom();
+            Paragraph paragraph = CreateParagraph(showName, message, isSentFromServer, nameLinks, messageLinks);
 
-            FlowDocument clientDoc = state.Document;
+            state.Document.Blocks.InsertBefore(state.Document.Blocks.LastBlock, paragraph);
+            if (transientHandle != null)
+            {
+                state.TransientEntries[transientHandle.Id] = paragraph;
+            }
 
+            RefreshBottomAnchor(state);
+
+            if (IsCurrentLogStream(client))
+            {
+                LogBox.Document = state.Document;
+                if (shouldScroll)
+                {
+                    ScrollToBottom();
+                }
+            }
+        }
+
+        private Paragraph CreateParagraph(
+            string showName,
+            string message,
+            bool isSentFromServer,
+            IReadOnlyList<LogMessageActionLink>? nameLinks,
+            IReadOnlyList<LogMessageActionLink>? messageLinks)
+        {
             Paragraph paragraph = new Paragraph
             {
                 Margin = new Thickness(0, 2, 0, 2),
                 LineHeight = 2
             };
+            PopulateParagraph(paragraph, showName, message, isSentFromServer, nameLinks, messageLinks);
+            return paragraph;
+        }
 
-            Run nameRun = new Run($"{showName}: ") { FontWeight = FontWeights.Bold };
-            nameRun.Foreground = isSentFromServer
+        private void PopulateParagraph(
+            Paragraph paragraph,
+            string showName,
+            string message,
+            bool isSentFromServer,
+            IReadOnlyList<LogMessageActionLink>? nameLinks,
+            IReadOnlyList<LogMessageActionLink>? messageLinks)
+        {
+            paragraph.Inlines.Clear();
+
+            Brush nameBrush = isSentFromServer
                 ? new SolidColorBrush(Color.FromArgb(0xFF, 0x5F, 0x5F, 0x00))
                 : Brushes.DarkBlue;
-
-            paragraph.Inlines.Add(nameRun);
-
-            // Process the message to detect and convert URLs to hyperlinks
-            AddTextWithHyperlinks(paragraph, message);
-
-            clientDoc.Blocks.Add(paragraph);
-            RefreshBottomAnchor(state);
-
-            if (IsCurrentLogStream(client))
+            Run nameRun = new Run(showName ?? string.Empty)
             {
-                LogBox.Document = clientDoc;
-                if (shouldScroll)
-                    ScrollToBottom();
-            }
+                FontWeight = FontWeights.Bold,
+                Foreground = nameBrush
+            };
+            paragraph.Inlines.Add(nameRun);
+            AppendActionLinks(paragraph, nameLinks);
+            paragraph.Inlines.Add(new Run(": ")
+            {
+                FontWeight = FontWeights.Bold,
+                Foreground = nameBrush
+            });
+            AddTextWithHyperlinks(paragraph, message ?? string.Empty);
+            AppendActionLinks(paragraph, messageLinks);
         }
 
         private void AddTextWithHyperlinks(Paragraph paragraph, string text)
@@ -239,6 +371,27 @@ namespace OceanyaClient.Components
             {
                 string afterText = text.Substring(lastIndex);
                 paragraph.Inlines.Add(new Run(afterText));
+            }
+        }
+
+        private void AppendActionLinks(Paragraph paragraph, IReadOnlyList<LogMessageActionLink>? links)
+        {
+            if (links == null || links.Count == 0)
+            {
+                return;
+            }
+
+            foreach (LogMessageActionLink link in links)
+            {
+                paragraph.Inlines.Add(new Run(" "));
+                Hyperlink hyperlink = new Hyperlink(new Run(link.Text))
+                {
+                    Foreground = new SolidColorBrush(Color.FromRgb(46, 124, 191)),
+                    TextDecorations = TextDecorations.Underline,
+                    ToolTip = string.IsNullOrWhiteSpace(link.ToolTip) ? null : link.ToolTip
+                };
+                hyperlink.Click += (_, _) => link.OnClick();
+                paragraph.Inlines.Add(hyperlink);
             }
         }
 
@@ -298,7 +451,7 @@ namespace OceanyaClient.Components
         public void ClearAllLogs()
         {
             clientLogs.Clear();
-            LogBox.Document = new FlowDocument();
+            LogBox.Document = new LogState().Document;
         }
 
         public void ScrollToBottom()

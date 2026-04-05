@@ -13,36 +13,216 @@ namespace OceanyaClient.Components
 {
     public partial class ICLog : UserControl
     {
+        private sealed class LogState
+        {
+            public FlowDocument Document { get; } = new FlowDocument();
+
+            public bool Inverted { get; set; }
+
+            public Dictionary<Guid, Paragraph> TransientEntries { get; } = new Dictionary<Guid, Paragraph>();
+        }
+
         private static int LogMaxMessages => Globals.LogMaxMessages;
         public Func<AOClient, AOClient?>? LogKeyResolver { get; set; }
 
-        private Dictionary<AOClient, (FlowDocument log, bool inverted)> clientLogs = new();
-        private AOClient? currentClient = null;
-        static bool InvertICLog { get; set; } = false;
+        private readonly Dictionary<AOClient, LogState> clientLogs = new Dictionary<AOClient, LogState>();
+        private AOClient? currentClient;
+        private static bool InvertICLog { get; set; }
 
         private readonly List<FormatRule> formatRules = new()
         {
-            new FormatRule { Name = ICMessage.TextColors.Green,    Start = '`', End = '`', ColorBrush = new SolidColorBrush(Color.FromRgb(0, 247, 0)), Remove = true },
-            new FormatRule { Name = ICMessage.TextColors.Red,      Start = '~', End = '~', ColorBrush = new SolidColorBrush(Color.FromRgb(247, 0, 57)), Remove = true },
-            new FormatRule { Name = ICMessage.TextColors.Orange,   Start = '|', End = '|', ColorBrush = new SolidColorBrush(Color.FromRgb(247, 115, 57)), Remove = true },
-            new FormatRule { Name = ICMessage.TextColors.Blue,     Start = '(', End = ')', ColorBrush = new SolidColorBrush(Color.FromRgb(107, 198, 247)), Remove = false },
-            new FormatRule { Name = ICMessage.TextColors.Yellow,   Start = 'º', End = 'º', ColorBrush = new SolidColorBrush(Color.FromRgb(247, 247, 0)), Remove = true },
-            new FormatRule { Name = ICMessage.TextColors.Magenta,  Start = '№', End = '№', ColorBrush = new SolidColorBrush(Color.FromRgb(247, 115, 247)), Remove = true },
-            new FormatRule { Name = ICMessage.TextColors.Cyan,     Start = '√', End = '√', ColorBrush = new SolidColorBrush(Color.FromRgb(128, 247, 247)), Remove = true },
-            new FormatRule { Name = ICMessage.TextColors.Gray,     Start = '[', End = ']', ColorBrush = new SolidColorBrush(Color.FromRgb(160, 181, 205)), Remove = false }
+            new FormatRule { Name = ICMessage.TextColors.Green, Start = '`', End = '`', ColorBrush = new SolidColorBrush(Color.FromRgb(0, 247, 0)), Remove = true },
+            new FormatRule { Name = ICMessage.TextColors.Red, Start = '~', End = '~', ColorBrush = new SolidColorBrush(Color.FromRgb(247, 0, 57)), Remove = true },
+            new FormatRule { Name = ICMessage.TextColors.Orange, Start = '|', End = '|', ColorBrush = new SolidColorBrush(Color.FromRgb(247, 115, 57)), Remove = true },
+            new FormatRule { Name = ICMessage.TextColors.Blue, Start = '(', End = ')', ColorBrush = new SolidColorBrush(Color.FromRgb(107, 198, 247)), Remove = false },
+            new FormatRule { Name = ICMessage.TextColors.Yellow, Start = 'º', End = 'º', ColorBrush = new SolidColorBrush(Color.FromRgb(247, 247, 0)), Remove = true },
+            new FormatRule { Name = ICMessage.TextColors.Magenta, Start = '№', End = '№', ColorBrush = new SolidColorBrush(Color.FromRgb(247, 115, 247)), Remove = true },
+            new FormatRule { Name = ICMessage.TextColors.Cyan, Start = '√', End = '√', ColorBrush = new SolidColorBrush(Color.FromRgb(128, 247, 247)), Remove = true },
+            new FormatRule { Name = ICMessage.TextColors.Gray, Start = '[', End = ']', ColorBrush = new SolidColorBrush(Color.FromRgb(160, 181, 205)), Remove = false }
         };
-        private class FormatRule
+
+        private sealed class FormatRule
         {
             public ICMessage.TextColors Name { get; set; }
+
             public char Start { get; set; }
+
             public char End { get; set; }
+
             public SolidColorBrush ColorBrush { get; set; } = new SolidColorBrush(Colors.White);
+
             public bool Remove { get; set; }
         }
+
         public ICLog()
         {
             InitializeComponent();
             LogBox.Document.Blocks.Clear();
+        }
+
+        public void SetCurrentClient(AOClient? client)
+        {
+            currentClient = client;
+            AOClient? logClient = ResolveLogClient(client);
+            if (logClient == null)
+            {
+                LogBox.Document = new FlowDocument();
+                return;
+            }
+
+            LogBox.Document = EnsureLogState(logClient).Document;
+            LogBox.ScrollToEnd();
+        }
+
+        public void AddMessage(
+            AOClient? client,
+            string showName,
+            string message,
+            bool isSentFromSelf = false,
+            ICMessage.TextColors textColor = ICMessage.TextColors.White,
+            IReadOnlyList<LogMessageActionLink>? nameLinks = null,
+            IReadOnlyList<LogMessageActionLink>? messageLinks = null)
+        {
+            AddMessageCore(client, showName, message, isSentFromSelf, textColor, nameLinks, messageLinks, transientHandle: null);
+        }
+
+        public LogMessageHandle AddTransientMessage(
+            AOClient? client,
+            string showName,
+            string message,
+            bool isSentFromSelf = false,
+            ICMessage.TextColors textColor = ICMessage.TextColors.White,
+            IReadOnlyList<LogMessageActionLink>? nameLinks = null,
+            IReadOnlyList<LogMessageActionLink>? messageLinks = null)
+        {
+            LogMessageHandle handle = new LogMessageHandle();
+            AddMessageCore(client, showName, message, isSentFromSelf, textColor, nameLinks, messageLinks, handle);
+            return handle;
+        }
+
+        public void UpdateTransientMessage(
+            AOClient? client,
+            LogMessageHandle handle,
+            string showName,
+            string message,
+            bool isSentFromSelf = false,
+            ICMessage.TextColors textColor = ICMessage.TextColors.White,
+            IReadOnlyList<LogMessageActionLink>? nameLinks = null,
+            IReadOnlyList<LogMessageActionLink>? messageLinks = null)
+        {
+            if (handle == null)
+            {
+                throw new ArgumentNullException(nameof(handle));
+            }
+
+            AOClient? logClient = ResolveLogClient(client);
+            if (logClient == null)
+            {
+                return;
+            }
+
+            LogState state = EnsureLogState(logClient);
+            if (!state.TransientEntries.TryGetValue(handle.Id, out Paragraph? paragraph))
+            {
+                AddMessageCore(client, showName, message, isSentFromSelf, textColor, nameLinks, messageLinks, handle);
+                return;
+            }
+
+            PopulateParagraph(paragraph, showName, message, isSentFromSelf, textColor, nameLinks, messageLinks);
+
+            if (IsCurrentLogStream(client))
+            {
+                LogBox.Document = state.Document;
+                ScrollToEndRespectingInversion();
+            }
+        }
+
+        public void RemoveTransientMessage(AOClient? client, LogMessageHandle? handle)
+        {
+            if (handle == null)
+            {
+                return;
+            }
+
+            AOClient? logClient = ResolveLogClient(client);
+            if (logClient == null || !clientLogs.TryGetValue(logClient, out LogState? state))
+            {
+                return;
+            }
+
+            if (!state.TransientEntries.TryGetValue(handle.Id, out Paragraph? paragraph))
+            {
+                return;
+            }
+
+            state.TransientEntries.Remove(handle.Id);
+            state.Document.Blocks.Remove(paragraph);
+
+            if (IsCurrentLogStream(client))
+            {
+                LogBox.Document = state.Document;
+                ScrollToEndRespectingInversion();
+            }
+        }
+
+        public void ClearClientLog(AOClient? client)
+        {
+            AOClient? logClient = ResolveLogClient(client);
+            if (logClient == null)
+            {
+                return;
+            }
+
+            clientLogs[logClient] = new LogState
+            {
+                Inverted = InvertICLog
+            };
+
+            if (IsCurrentLogStream(client))
+            {
+                LogBox.Document = clientLogs[logClient].Document;
+            }
+        }
+
+        public void ClearAllLogs()
+        {
+            clientLogs.Clear();
+            LogBox.Document.Blocks.Clear();
+        }
+
+        public AOClient? GetCurrentClient()
+        {
+            return currentClient;
+        }
+
+        public void SetInvertOnClientLogs(bool isInverted)
+        {
+            InvertICLog = isInverted;
+            foreach (AOClient client in clientLogs.Keys.ToList())
+            {
+                LogState state = clientLogs[client];
+                if (state.Inverted == isInverted)
+                {
+                    continue;
+                }
+
+                FlowDocument log = state.Document;
+                List<Block> blocks = log.Blocks.ToList();
+                log.Blocks.Clear();
+
+                for (int index = blocks.Count - 1; index >= 0; index--)
+                {
+                    log.Blocks.Add(blocks[index]);
+                }
+
+                state.Inverted = isInverted;
+
+                if (IsCurrentLogStream(client))
+                {
+                    LogBox.Document = log;
+                    ScrollToEndRespectingInversion();
+                }
+            }
         }
 
         private AOClient? ResolveLogClient(AOClient? client)
@@ -61,6 +241,20 @@ namespace OceanyaClient.Components
             return resolvedClient ?? client;
         }
 
+        private LogState EnsureLogState(AOClient client)
+        {
+            if (!clientLogs.TryGetValue(client, out LogState? state))
+            {
+                state = new LogState
+                {
+                    Inverted = InvertICLog
+                };
+                clientLogs[client] = state;
+            }
+
+            return state;
+        }
+
         private bool IsCurrentLogStream(AOClient? client)
         {
             AOClient? currentLogClient = ResolveLogClient(currentClient);
@@ -68,206 +262,261 @@ namespace OceanyaClient.Components
             return ReferenceEquals(currentLogClient, messageLogClient);
         }
 
-        public void SetCurrentClient(AOClient? client)
+        private void AddMessageCore(
+            AOClient? client,
+            string showName,
+            string message,
+            bool isSentFromSelf,
+            ICMessage.TextColors textColor,
+            IReadOnlyList<LogMessageActionLink>? nameLinks,
+            IReadOnlyList<LogMessageActionLink>? messageLinks,
+            LogMessageHandle? transientHandle)
         {
-            currentClient = client;
             AOClient? logClient = ResolveLogClient(client);
-
             if (logClient == null)
             {
-                LogBox.Document = new FlowDocument();
                 return;
             }
 
-            if (!clientLogs.ContainsKey(logClient))
+            LogState state = EnsureLogState(logClient);
+            bool shouldScroll = IsScrolledToBottom();
+            Paragraph paragraph = CreateParagraph(showName, message, isSentFromSelf, textColor, nameLinks, messageLinks);
+
+            if (state.Inverted)
             {
-                clientLogs[logClient] = (new FlowDocument(), InvertICLog);
+                if (state.Document.Blocks.Count == 0)
+                {
+                    state.Document.Blocks.Add(paragraph);
+                }
+                else
+                {
+                    state.Document.Blocks.InsertBefore(state.Document.Blocks.FirstBlock, paragraph);
+                }
+            }
+            else
+            {
+                state.Document.Blocks.Add(paragraph);
             }
 
-            LogBox.Document = clientLogs[logClient].log;
-            LogBox.ScrollToEnd();
+            if (transientHandle != null)
+            {
+                state.TransientEntries[transientHandle.Id] = paragraph;
+            }
+
+            TrimLog(state);
+
+            if (IsCurrentLogStream(client) && shouldScroll)
+            {
+                LogBox.Document = state.Document;
+                ScrollToEndRespectingInversion();
+            }
         }
 
-        public void AddMessage(AOClient? client, string showName, string message, bool isSentFromSelf = false, ICMessage.TextColors textColor = ICMessage.TextColors.White)
+        private Paragraph CreateParagraph(
+            string showName,
+            string message,
+            bool isSentFromSelf,
+            ICMessage.TextColors textColor,
+            IReadOnlyList<LogMessageActionLink>? nameLinks,
+            IReadOnlyList<LogMessageActionLink>? messageLinks)
         {
-            AOClient? logClient = ResolveLogClient(client);
-            if (logClient == null)
-            {
-                return;
-            }
-
-            if (!clientLogs.ContainsKey(logClient))
-            {
-                clientLogs[logClient] = (new FlowDocument(), InvertICLog);
-            }
-
-            bool shouldScroll = IsScrolledToBottom();
-
-            FlowDocument log = clientLogs[logClient].log;
-
             Paragraph paragraph = new Paragraph
             {
                 Margin = new Thickness(0, 2, 0, 2),
                 LineHeight = 2
             };
+            PopulateParagraph(paragraph, showName, message, isSentFromSelf, textColor, nameLinks, messageLinks);
+            return paragraph;
+        }
 
+        private void PopulateParagraph(
+            Paragraph paragraph,
+            string showName,
+            string message,
+            bool isSentFromSelf,
+            ICMessage.TextColors textColor,
+            IReadOnlyList<LogMessageActionLink>? nameLinks,
+            IReadOnlyList<LogMessageActionLink>? messageLinks)
+        {
+            paragraph.Inlines.Clear();
+
+            Brush nameBrush;
             if (isSentFromSelf)
             {
-                Run gmTag = new Run("[GM] ") { FontWeight = FontWeights.Bold };
-                gmTag.Foreground = formatRules.First(x => x.Name == ICMessage.TextColors.Gray).ColorBrush;
+                Run gmTag = new Run("[GM] ")
+                {
+                    FontWeight = FontWeights.Bold,
+                    Foreground = formatRules.First(rule => rule.Name == ICMessage.TextColors.Gray).ColorBrush
+                };
                 paragraph.Inlines.Add(gmTag);
-
-                Run nameRun = new Run($"{showName}: ") { FontWeight = FontWeights.Bold };
-                nameRun.Foreground = new SolidColorBrush(Color.FromArgb(255, 154, 220, 225));
-                paragraph.Inlines.Add(nameRun);
+                nameBrush = new SolidColorBrush(Color.FromArgb(255, 154, 220, 225));
             }
             else
             {
-                Run nameRun = new Run($"{showName}: ") { FontWeight = FontWeights.Bold };
-                nameRun.Foreground = Brushes.White;
-                paragraph.Inlines.Add(nameRun);
+                nameBrush = Brushes.White;
             }
 
-            paragraph.Inlines.AddRange(FormatMessageText(message, textColor));
-
-            // Add the new paragraph based on whether the log is inverted.
-            if (clientLogs[logClient].inverted)
+            Run nameRun = new Run(showName ?? string.Empty)
             {
-                if (log.Blocks.Count == 0)
-                    log.Blocks.Add(paragraph);
-                else
-                    log.Blocks.InsertBefore(log.Blocks.FirstBlock, paragraph);
+                FontWeight = FontWeights.Bold,
+                Foreground = nameBrush
+            };
+            paragraph.Inlines.Add(nameRun);
+            AppendActionLinks(paragraph, nameLinks);
 
-                // For inverted logs, remove the oldest block (at the bottom) if limit is exceeded.
-                if (LogMaxMessages != 0 && log.Blocks.Count > LogMaxMessages)
+            Run suffixRun = new Run(": ")
+            {
+                FontWeight = FontWeights.Bold,
+                Foreground = nameBrush
+            };
+            paragraph.Inlines.Add(suffixRun);
+
+            foreach (Inline inline in FormatMessageText(message ?? string.Empty, textColor))
+            {
+                paragraph.Inlines.Add(inline);
+            }
+
+            AppendActionLinks(paragraph, messageLinks);
+        }
+
+        private void AppendActionLinks(Paragraph paragraph, IReadOnlyList<LogMessageActionLink>? links)
+        {
+            if (links == null || links.Count == 0)
+            {
+                return;
+            }
+
+            foreach (LogMessageActionLink link in links)
+            {
+                paragraph.Inlines.Add(new Run(" "));
+                Hyperlink hyperlink = new Hyperlink(new Run(link.Text))
                 {
-                    while (log.Blocks.Count > LogMaxMessages)
-                    {
-                        log.Blocks.Remove(log.Blocks.LastBlock);
-                    }
+                    Foreground = new SolidColorBrush(Color.FromRgb(139, 206, 255)),
+                    TextDecorations = TextDecorations.Underline,
+                    ToolTip = string.IsNullOrWhiteSpace(link.ToolTip) ? null : link.ToolTip
+                };
+                hyperlink.Click += (_, _) => link.OnClick();
+                paragraph.Inlines.Add(hyperlink);
+            }
+        }
+
+        private void TrimLog(LogState state)
+        {
+            if (LogMaxMessages == 0 || state.Document.Blocks.Count <= LogMaxMessages)
+            {
+                return;
+            }
+
+            while (state.Document.Blocks.Count > LogMaxMessages)
+            {
+                Block? blockToRemove = state.Inverted
+                    ? state.Document.Blocks.LastBlock
+                    : state.Document.Blocks.FirstBlock;
+                if (blockToRemove == null)
+                {
+                    return;
+                }
+
+                RemoveTrackedBlock(state, blockToRemove);
+            }
+        }
+
+        private void RemoveTrackedBlock(LogState state, Block block)
+        {
+            if (block is Paragraph paragraph)
+            {
+                Guid? trackedId = state.TransientEntries
+                    .FirstOrDefault(pair => ReferenceEquals(pair.Value, paragraph))
+                    .Key;
+                if (trackedId.HasValue && trackedId.Value != Guid.Empty)
+                {
+                    state.TransientEntries.Remove(trackedId.Value);
                 }
             }
-            else
-            {
-                log.Blocks.Add(paragraph);
 
-                // For non-inverted logs, remove the oldest block (at the top) if limit is exceeded.
-                if (LogMaxMessages != 0 && log.Blocks.Count > LogMaxMessages)
-                {
-                    while (log.Blocks.Count > LogMaxMessages)
-                    {
-                        log.Blocks.Remove(log.Blocks.FirstBlock);
-                    }
-                }
-            }
-
-            if (IsCurrentLogStream(client) && shouldScroll)
-            {
-                ScrollToEndRespectingInversion();
-            }
+            state.Document.Blocks.Remove(block);
         }
 
         private bool IsScrolledToBottom()
         {
-            if (ScrollViewer == null) return true;
+            if (ScrollViewer == null)
+            {
+                return true;
+            }
 
-            if (InvertICLog)
-                return ScrollViewer.VerticalOffset == 0; // Top for inverted
-            else
-                return ScrollViewer.VerticalOffset >= ScrollViewer.ScrollableHeight - 10; // Bottom for normal
+            return InvertICLog
+                ? ScrollViewer.VerticalOffset == 0
+                : ScrollViewer.VerticalOffset >= ScrollViewer.ScrollableHeight - 10;
         }
 
         private void ScrollToEndRespectingInversion()
         {
-            if (ScrollViewer == null) return;
+            if (ScrollViewer == null)
+            {
+                return;
+            }
 
             ScrollViewer.Dispatcher.InvokeAsync(() =>
             {
                 if (InvertICLog)
+                {
                     ScrollViewer.ScrollToTop();
+                }
                 else
+                {
                     ScrollViewer.ScrollToEnd();
+                }
             }, System.Windows.Threading.DispatcherPriority.Background);
-        }
-
-        private class MessageSection
-        {
-            public string content;
-            public ICMessage.TextColors color;
-            public bool finished;
-
-            public MessageSection(string content, ICMessage.TextColors color, bool finished)
-            {
-                this.content = content;
-                this.color = color;
-                this.finished = finished;
-            }
         }
 
         private List<Inline> FormatMessageText(string message, ICMessage.TextColors defaultColor)
         {
-            var formattedRuns = new List<Inline>();
+            List<Inline> formattedRuns = new List<Inline>();
+            List<(string Text, ICMessage.TextColors Color)> segments = new List<(string Text, ICMessage.TextColors Color)>();
+            Stack<(ICMessage.TextColors Color, char EndMarker)> colorStack = new Stack<(ICMessage.TextColors Color, char EndMarker)>();
+            colorStack.Push((defaultColor, '\0'));
 
-            // Final output
-            List<(string Text, ICMessage.TextColors Color)> segments = new();
+            StringBuilder currentText = new StringBuilder();
 
-            // Stack to track nested colors and their end markers
-            Stack<(ICMessage.TextColors Color, char EndMarker)> colorStack = new();
-            colorStack.Push((defaultColor, '\0')); // Default color has no end marker
-
-            StringBuilder currentText = new();
-
-            int i = 0;
-            while (i < message.Length)
+            int index = 0;
+            while (index < message.Length)
             {
-                char c = message[i];
+                char current = message[index];
                 bool isProcessed = false;
-
-                // Determine if this character is a format marker
-                var markerRule = formatRules.FirstOrDefault(r => r.Start == c || r.End == c);
+                FormatRule? markerRule = formatRules.FirstOrDefault(rule => rule.Start == current || rule.End == current);
 
                 if (markerRule != null)
                 {
-                    // Check if this is an END marker for the CURRENT top color
-                    if (colorStack.Count > 1 && c == colorStack.Peek().EndMarker)
+                    if (colorStack.Count > 1 && current == colorStack.Peek().EndMarker)
                     {
-                        // Complete current segment with current color
                         if (currentText.Length > 0)
                         {
                             segments.Add((currentText.ToString(), colorStack.Peek().Color));
                             currentText.Clear();
                         }
 
-                        // Include the marker in output if not removed
                         if (!markerRule.Remove)
                         {
-                            currentText.Append(c);
+                            currentText.Append(current);
                             segments.Add((currentText.ToString(), colorStack.Peek().Color));
                             currentText.Clear();
                         }
 
-                        // Pop the color stack
                         colorStack.Pop();
-
                         isProcessed = true;
                     }
-                    // Check if this is a START marker for a new color
-                    else if (c == markerRule.Start)
+                    else if (current == markerRule.Start)
                     {
-                        // Complete current segment with current color
                         if (currentText.Length > 0)
                         {
                             segments.Add((currentText.ToString(), colorStack.Peek().Color));
                             currentText.Clear();
                         }
 
-                        // Push new color onto stack
                         colorStack.Push((markerRule.Name, markerRule.End));
-
-                        // Include the marker in output if not removed
                         if (!markerRule.Remove)
                         {
-                            currentText.Append(c);
+                            currentText.Append(current);
                             segments.Add((currentText.ToString(), colorStack.Peek().Color));
                             currentText.Clear();
                         }
@@ -276,91 +525,33 @@ namespace OceanyaClient.Components
                     }
                 }
 
-                // If not processed as a marker, add as regular text
                 if (!isProcessed)
                 {
-                    currentText.Append(c);
+                    currentText.Append(current);
                 }
 
-                i++;
+                index++;
             }
 
-            // Add any remaining text
             if (currentText.Length > 0)
             {
                 segments.Add((currentText.ToString(), colorStack.Peek().Color));
             }
 
-            // Convert segments to runs
-            foreach (var segment in segments)
+            foreach ((string Text, ICMessage.TextColors Color) segment in segments)
             {
-                if (!string.IsNullOrEmpty(segment.Text))
+                if (string.IsNullOrEmpty(segment.Text))
                 {
-                    Brush brush;
-                    if (segment.Color == ICMessage.TextColors.White)
-                    {
-                        brush = Brushes.White;
-                    }
-                    else
-                    {
-                        brush = formatRules.First(r => r.Name == segment.Color).ColorBrush;
-                    }
-
-                    formattedRuns.Add(new Run(segment.Text) { Foreground = brush });
+                    continue;
                 }
+
+                Brush brush = segment.Color == ICMessage.TextColors.White
+                    ? Brushes.White
+                    : formatRules.First(rule => rule.Name == segment.Color).ColorBrush;
+                formattedRuns.Add(new Run(segment.Text) { Foreground = brush });
             }
 
             return formattedRuns;
         }
-
-        public void ClearClientLog(AOClient? client)
-        {
-            AOClient? logClient = ResolveLogClient(client);
-            if (logClient != null && clientLogs.ContainsKey(logClient))
-            {
-                clientLogs[logClient] = (new FlowDocument(), InvertICLog);
-
-                if (IsCurrentLogStream(client))
-                    LogBox.Document = clientLogs[logClient].log;
-            }
-        }
-
-        public void ClearAllLogs()
-        {
-            clientLogs.Clear();
-            LogBox.Document.Blocks.Clear();
-        }
-
-        public AOClient? GetCurrentClient()
-        {
-            return currentClient;
-        }
-
-        public void SetInvertOnClientLogs(bool isInverted)
-        {
-            InvertICLog = isInverted;
-            foreach (var client in clientLogs.Keys.ToList())
-            {
-                if (clientLogs[client].inverted != isInverted)
-                {
-                    FlowDocument log = clientLogs[client].log;
-                    var blocks = log.Blocks.ToList();
-                    log.Blocks.Clear();
-
-                    for (int i = blocks.Count - 1; i >= 0; i--)
-                        log.Blocks.Add(blocks[i]);
-
-                    clientLogs[client] = (log, isInverted);
-
-                    if (IsCurrentLogStream(client))
-                    {
-                        LogBox.Document = log;
-                        ScrollToEndRespectingInversion();
-                    }
-                }
-            }
-        }
     }
-
-    
 }

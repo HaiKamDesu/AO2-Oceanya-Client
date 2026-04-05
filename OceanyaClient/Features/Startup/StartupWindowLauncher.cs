@@ -37,7 +37,11 @@ namespace OceanyaClient.Features.Startup
             }
             else
             {
-                MainWindow content = new MainWindow();
+                MainWindow content = new MainWindow(
+                    aiModeEnabled: string.Equals(
+                        selected.Id,
+                        StartupFunctionalityIds.Ao2AiBot,
+                        StringComparison.OrdinalIgnoreCase));
                 startupFunctionalityWindow = content;
                 startupWindow = OceanyaWindowManager.CreateWindow(content);
             }

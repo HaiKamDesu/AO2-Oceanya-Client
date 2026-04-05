@@ -22,7 +22,7 @@ namespace OceanyaClient
         public override string HeaderText => "DEBUG CONSOLE";
 
         /// <inheritdoc/>
-        public override bool IsUserResizeEnabled => false;
+        public override bool IsUserResizeEnabled => true;
 
         // Use a concurrent queue to buffer messages during initialization
         private ConcurrentQueue<string> _pendingMessages = new ConcurrentQueue<string>();
@@ -191,40 +191,99 @@ namespace OceanyaClient
             }
         }
 
+        // Segment brushes
+        private static readonly Brush TimestampBrush = new SolidColorBrush(Color.FromRgb(0x66, 0x66, 0x66));
+        private static readonly Brush InfoBrush = new SolidColorBrush(Color.FromRgb(0xCC, 0xCC, 0xCC));
+        private static readonly Brush ErrorBrush = new SolidColorBrush(Color.FromRgb(0xFF, 0x66, 0x66));
+        private static readonly Brush WarningBrush = new SolidColorBrush(Color.FromRgb(0xFF, 0xCC, 0x44));
+        private static readonly Brush DebugBrush = new SolidColorBrush(Color.FromRgb(0xFF, 0xAA, 0x33));
+        private static readonly Brush AiPrefixBrush = new SolidColorBrush(Color.FromRgb(0x4D, 0xD9, 0xE8));
+        private static readonly Brush LevelIndicatorBrush = new SolidColorBrush(Color.FromRgb(0x55, 0x55, 0x55));
+        private static readonly Brush ContinuationBrush = new SolidColorBrush(Color.FromRgb(0x88, 0x77, 0x77));
+
         private void AddMessageToDocument(string text)
         {
             if (text == null) return;
 
-            // Limit document size by removing old lines if needed
             if (_lineCount >= MAX_DOCUMENT_LINES)
             {
                 TrimDocument();
             }
 
-            // Create a new Run with the text and transparent background
-            Run run = new Run(text + Environment.NewLine);
-            run.Background = Brushes.Transparent; // Critical: ensure run has transparent background
-
-            // Apply color based on message content
-            if (text.Contains("ERROR") || text.Contains("EXCEPTION"))
-            {
-                run.Foreground = Brushes.Red;
-            }
-            else if (text.Contains("WARNING"))
-            {
-                run.Foreground = Brushes.Yellow;
-            }
-            else if (text.Contains("SUCCESS"))
-            {
-                run.Foreground = Brushes.LightGreen;
-            }
-            else if (text.StartsWith("[") && text.Contains("]")) // Timestamped messages
-            {
-                run.Foreground = Brushes.LightCyan;
-            }
-
-            _currentParagraph.Inlines.Add(run);
+            AppendColorizedLine(text);
             _lineCount++;
+        }
+
+        private void AppendColorizedLine(string text)
+        {
+            string remaining = text;
+
+            // Extract timestamp prefix "[YYYY-MM-DD HH:mm:ss]"
+            if (remaining.Length > 2 && remaining[0] == '[')
+            {
+                int closeBracket = remaining.IndexOf(']', 1);
+                if (closeBracket > 0 && closeBracket <= 22)
+                {
+                    AppendRun(remaining.Substring(0, closeBracket + 1), TimestampBrush);
+                    remaining = remaining.Substring(closeBracket + 1);
+                }
+            }
+
+            // Detect log level from leading emoji pattern " ❌", " ⚠️", " 🔍", " ℹ️"
+            Brush bodyBrush;
+            string emojiPrefix;
+
+            if (remaining.StartsWith(" ❌"))
+            {
+                emojiPrefix = " ❌";
+                bodyBrush = ErrorBrush;
+            }
+            else if (remaining.StartsWith(" ⚠️"))
+            {
+                emojiPrefix = " ⚠️";
+                bodyBrush = WarningBrush;
+            }
+            else if (remaining.StartsWith(" 🔍"))
+            {
+                emojiPrefix = " 🔍";
+                bodyBrush = DebugBrush;
+            }
+            else if (remaining.StartsWith(" ℹ️"))
+            {
+                emojiPrefix = " ℹ️";
+                bodyBrush = InfoBrush;
+            }
+            else
+            {
+                // Exception detail lines ("   Exception:", "   Message:", etc.) or plain lines
+                AppendRun(remaining + Environment.NewLine, ContinuationBrush);
+                return;
+            }
+
+            AppendRun(emojiPrefix, LevelIndicatorBrush);
+            remaining = remaining.Substring(emojiPrefix.Length);
+
+            // Check for [AI:name] prefix after the emoji
+            if (remaining.StartsWith(" [AI:"))
+            {
+                int aiClose = remaining.IndexOf(']', 5);
+                if (aiClose > 0)
+                {
+                    AppendRun(" ", bodyBrush);
+                    AppendRun(remaining.Substring(1, aiClose), AiPrefixBrush);
+                    remaining = remaining.Substring(aiClose + 1);
+                }
+            }
+
+            AppendRun(remaining + Environment.NewLine, bodyBrush);
+        }
+
+        private void AppendRun(string text, Brush foreground)
+        {
+            Run run = new Run(text);
+            run.Foreground = foreground;
+            run.Background = Brushes.Transparent;
+            _currentParagraph.Inlines.Add(run);
         }
 
         private void TrimDocument()

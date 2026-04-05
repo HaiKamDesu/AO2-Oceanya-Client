@@ -129,6 +129,30 @@ namespace AOBot_Testing.Agents
             }
         }
 
+        public IReadOnlyDictionary<string, bool> ServerCharacterAvailability
+        {
+            get
+            {
+                return new Dictionary<string, bool>(serverCharacterList, StringComparer.OrdinalIgnoreCase);
+            }
+        }
+
+        public IReadOnlyCollection<string> ServerFeatures
+        {
+            get
+            {
+                return serverFeatures.ToList().AsReadOnly();
+            }
+        }
+
+        public bool IsConnected
+        {
+            get
+            {
+                return ws != null && ws.State == WebSocketState.Open;
+            }
+        }
+
         private List<string> pendingMessages = new List<string>();
         #region Send Message Methods
         public async Task SendICMessage(string showname, string message, bool queueMessage = false)

@@ -1,7 +1,5 @@
 ﻿using System;
 using System.IO;
-using System.Security.Policy;
-using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -10,6 +8,9 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Resources;
+using AO2AIBot.Chat;
+using AO2AIBot.Clients;
+using AO2AIBot.Controller;
 using AOBot_Testing.Agents;
 using AOBot_Testing.Structures;
 using Common;
@@ -27,10 +28,15 @@ namespace OceanyaClient
         public event Action? FinishedLoading;
 
         private readonly Dictionary<ToggleButton, AOClient> clients = new Dictionary<ToggleButton, AOClient>();
+        private readonly Dictionary<AOClient, AOClientAgentController> aiControllers = new Dictionary<AOClient, AOClientAgentController>();
+        private readonly Dictionary<AOClient, List<PendingAiOriginResponse>> pendingAiOriginResponses = new Dictionary<AOClient, List<PendingAiOriginResponse>>();
+        private readonly Dictionary<AOClient, bool> aiOriginResponseVisibility = new Dictionary<AOClient, bool>();
+        private readonly IAiChatCompletionService aiCompletionService = new AiChatCompletionService();
         private AOClient? currentClient;
         private AOClient? singleInternalClient;
         private AOClient? boundSingleClientProfile;
         private readonly bool useSingleInternalClient = SaveFile.Data.UseSingleInternalClient;
+        private readonly bool aiModeEnabled;
         private bool debug = false;
         private readonly HashSet<AOClient> areaListBootstrapCompletedClients = new HashSet<AOClient>();
         private readonly Brush areaFreeBrush = new SolidColorBrush(Color.FromRgb(77, 77, 77));
@@ -60,6 +66,7 @@ namespace OceanyaClient
         private string lastDreddOverlayContextKey = string.Empty;
         private string lastUnknownOverlayPromptKey = string.Empty;
         private bool hasRaisedFinishedLoading;
+        private static readonly TimeSpan PendingAiOriginRetention = TimeSpan.FromMinutes(2);
 
         private sealed class DreddOverlaySelectionItem
         {
@@ -70,11 +77,25 @@ namespace OceanyaClient
             public bool IsTransient { get; set; }
         }
 
-        List<ToggleButton> objectionModifiers;
-        public MainWindow()
+        private sealed class PendingAiOriginResponse
         {
+            public string Channel { get; set; } = string.Empty;
+
+            public string ShowName { get; set; } = string.Empty;
+
+            public string Message { get; set; } = string.Empty;
+
+            public string RawResponse { get; set; } = string.Empty;
+
+            public DateTime CreatedUtc { get; set; }
+        }
+
+        List<ToggleButton> objectionModifiers;
+        public MainWindow(bool aiModeEnabled = false)
+        {
+            this.aiModeEnabled = aiModeEnabled;
             InitializeComponent();
-            Title = "Oceanya Online";
+            Title = aiModeEnabled ? "Oceanya Online - AO2 AI Bot" : "Oceanya Online";
             Icon = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/OceanyaO.ico"));
             Loaded += MainWindow_Loaded;
 
@@ -290,7 +311,8 @@ namespace OceanyaClient
                 ? bot.currentINI?.Name ?? "Unknown"
                 : bot.iniPuppetName;
 
-            button.ToolTip = $"[{bot.playerID}] {characterName} (\"{bot.clientName}\")";
+            string aiSuffix = IsAiEnabled(bot) ? " | AI: ON" : string.Empty;
+            button.ToolTip = $"[{bot.playerID}] {characterName} (\"{bot.clientName}\"){aiSuffix}";
         }
 
         private AOClient? GetTargetClientForNetwork(AOClient? profileClient)
@@ -336,6 +358,823 @@ namespace OceanyaClient
                 ?? singleInternalClient
                 ?? networkClient
                 ?? profileClient;
+        }
+
+        private AOClientAgentController EnsureAiController(AOClient profileClient)
+        {
+            if (aiControllers.TryGetValue(profileClient, out AOClientAgentController? existingController))
+            {
+                return existingController;
+            }
+
+            AOClientAgentController controller = new AOClientAgentController(
+                aiCompletionService,
+                BuildAiSettings,
+                () => BuildAiSnapshot(profileClient),
+                (decision, cancellationToken) => ExecuteAiDecisionAsync(profileClient, decision, cancellationToken));
+            controller.StatusChanged += update =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    HandleAiControllerStatusChanged(profileClient, update);
+                });
+            };
+
+            aiControllers[profileClient] = controller;
+            return controller;
+        }
+
+        private AiChatProviderSettings BuildAiSettings()
+        {
+            string provider = SaveFile.Data.AO2AiBot.Provider?.Trim() ?? string.Empty;
+            return new AiChatProviderSettings
+            {
+                Provider = string.Equals(provider, "OpenAI", StringComparison.OrdinalIgnoreCase)
+                    ? AiProviderKind.OpenAI
+                    : AiProviderKind.Ollama,
+                OllamaEndpoint = SaveFile.Data.AO2AiBot.OllamaEndpoint,
+                OllamaModel = SaveFile.Data.AO2AiBot.OllamaModel,
+                OpenAIModel = SaveFile.Data.AO2AiBot.OpenAIModel,
+                OpenAIApiKeyEnvironmentVariable = SaveFile.Data.AO2AiBot.OpenAIApiKeyEnvironmentVariable,
+                Temperature = SaveFile.Data.AO2AiBot.Temperature,
+                MaxTokens = SaveFile.Data.AO2AiBot.MaxTokens,
+                MaxPromptMessages = SaveFile.Data.AO2AiBot.MaxPromptMessages,
+                PersonalityPrompt = SaveFile.Data.AO2AiBot.PersonalityPrompt
+            };
+        }
+
+        private AOClientControlSnapshot BuildAiSnapshot(AOClient profileClient)
+        {
+            AOClient? networkClient = GetTargetClientForNetwork(profileClient);
+            return AOClientControlSnapshotBuilder.Build(profileClient, networkClient);
+        }
+
+        private async Task<string> ExecuteAiDecisionAsync(
+            AOClient profileClient,
+            AOClientAgentDecision decision,
+            CancellationToken cancellationToken)
+        {
+            if (profileClient == null)
+            {
+                return "AI action skipped because no profile client was provided.";
+            }
+
+            AOClient? networkClient = GetTargetClientForNetwork(profileClient);
+            if (networkClient == null)
+            {
+                return "AI action skipped because no network client is available.";
+            }
+
+            List<string> appliedChanges = new List<string>();
+            AOClientControlSnapshot snapshot = BuildAiSnapshot(profileClient);
+
+            if (!string.IsNullOrWhiteSpace(decision.IcShowname))
+            {
+                profileClient.SetICShowname(decision.IcShowname.Trim());
+                appliedChanges.Add("updated IC showname");
+            }
+
+            if (!string.IsNullOrWhiteSpace(decision.OocShowname))
+            {
+                profileClient.OOCShowname = decision.OocShowname.Trim();
+                appliedChanges.Add("updated OOC showname");
+            }
+
+            if (!string.IsNullOrWhiteSpace(decision.Character)
+                && TryResolveStringChoice(snapshot.AvailableCharacters, decision.Character, out string resolvedCharacter))
+            {
+                if (!string.Equals(profileClient.currentINI?.Name, resolvedCharacter, StringComparison.OrdinalIgnoreCase))
+                {
+                    profileClient.SetCharacter(resolvedCharacter);
+                    appliedChanges.Add("switched character to " + resolvedCharacter);
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(decision.Emote))
+            {
+                List<string> availableEmotes = profileClient.currentINI?.configINI?.Emotions?.Values
+                    .Select(emote => emote.DisplayID)
+                    .Where(displayId => !string.IsNullOrWhiteSpace(displayId))
+                    .ToList()
+                    ?? new List<string>();
+                if (TryResolveStringChoice(availableEmotes, decision.Emote, out string resolvedEmote))
+                {
+                    profileClient.SetEmote(resolvedEmote);
+                    appliedChanges.Add("set emote to " + resolvedEmote);
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(decision.Position))
+            {
+                List<string> availablePositions = BuildAiSnapshot(profileClient).AvailablePositions.ToList();
+                if (TryResolveStringChoice(availablePositions, decision.Position, out string resolvedPosition))
+                {
+                    profileClient.SetPos(resolvedPosition);
+                    appliedChanges.Add("set position to " + resolvedPosition);
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(decision.Sfx))
+            {
+                profileClient.curSFX = decision.Sfx.Trim();
+                appliedChanges.Add("set SFX to " + profileClient.curSFX);
+            }
+
+            if (decision.DeskMod.HasValue)
+            {
+                profileClient.deskMod = decision.DeskMod.Value;
+                appliedChanges.Add("set desk modifier to " + decision.DeskMod.Value);
+            }
+
+            if (decision.EmoteModifier.HasValue)
+            {
+                profileClient.emoteMod = decision.EmoteModifier.Value;
+                appliedChanges.Add("set emote modifier to " + decision.EmoteModifier.Value);
+            }
+
+            if (decision.ShoutModifier.HasValue)
+            {
+                profileClient.shoutModifiers = decision.ShoutModifier.Value;
+                appliedChanges.Add("set shout modifier to " + decision.ShoutModifier.Value);
+            }
+
+            if (decision.TextColor.HasValue)
+            {
+                profileClient.textColor = decision.TextColor.Value;
+                appliedChanges.Add("set text color to " + decision.TextColor.Value);
+            }
+
+            if (decision.Effect.HasValue)
+            {
+                profileClient.effect = decision.Effect.Value;
+                appliedChanges.Add("set effect to " + decision.Effect.Value);
+            }
+
+            if (decision.PreanimEnabled.HasValue)
+            {
+                profileClient.PreanimEnabled = decision.PreanimEnabled.Value;
+                appliedChanges.Add("set preanimation to " + decision.PreanimEnabled.Value);
+            }
+
+            if (decision.Flip.HasValue)
+            {
+                profileClient.flip = decision.Flip.Value;
+                appliedChanges.Add("set flip to " + decision.Flip.Value);
+            }
+
+            if (decision.Additive.HasValue)
+            {
+                profileClient.Additive = decision.Additive.Value;
+                appliedChanges.Add("set additive to " + decision.Additive.Value);
+            }
+
+            if (decision.Immediate.HasValue)
+            {
+                profileClient.Immediate = decision.Immediate.Value;
+                appliedChanges.Add("set immediate to " + decision.Immediate.Value);
+            }
+
+            if (decision.Screenshake.HasValue)
+            {
+                profileClient.screenshake = decision.Screenshake.Value;
+                appliedChanges.Add("set screenshake to " + decision.Screenshake.Value);
+            }
+
+            if (decision.SelfOffsetHorizontal.HasValue || decision.SelfOffsetVertical.HasValue)
+            {
+                profileClient.SelfOffset = (
+                    decision.SelfOffsetHorizontal ?? profileClient.SelfOffset.Horizontal,
+                    decision.SelfOffsetVertical ?? profileClient.SelfOffset.Vertical);
+                appliedChanges.Add(
+                    "set self offset to "
+                    + profileClient.SelfOffset.Horizontal
+                    + ","
+                    + profileClient.SelfOffset.Vertical);
+            }
+
+            if (useSingleInternalClient)
+            {
+                ApplyProfileToSingleInternalClient(profileClient);
+                networkClient = singleInternalClient ?? profileClient;
+            }
+
+            if (!string.IsNullOrWhiteSpace(decision.IniPuppetName)
+                && TryResolveStringChoice(snapshot.AvailableIniPuppets.Keys, decision.IniPuppetName, out string resolvedIniPuppet))
+            {
+                await networkClient.SelectIniPuppet(resolvedIniPuppet, false);
+                if (useSingleInternalClient)
+                {
+                    SyncSingleClientStatusToProfile(profileClient);
+                }
+                appliedChanges.Add("selected INI puppet " + resolvedIniPuppet);
+            }
+
+            if (!string.IsNullOrWhiteSpace(decision.Area)
+                && TryResolveStringChoice(snapshot.AvailableAreas, decision.Area, out string resolvedArea))
+            {
+                await networkClient.SetArea(resolvedArea);
+                appliedChanges.Add("moved to area " + resolvedArea);
+            }
+
+            string outgoingMessage = decision.Message?.TrimEnd('\r', '\n') ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(outgoingMessage))
+            {
+                string channel = string.IsNullOrWhiteSpace(decision.Channel) ? "IC" : decision.Channel.Trim();
+                if (string.Equals(channel, "OOC", StringComparison.OrdinalIgnoreCase))
+                {
+                    string oocShowname = string.IsNullOrWhiteSpace(profileClient.OOCShowname)
+                        ? profileClient.clientName
+                        : profileClient.OOCShowname;
+                    await networkClient.SendOOCMessage(oocShowname, outgoingMessage);
+                    appliedChanges.Add("sent OOC message");
+                }
+                else
+                {
+                    await networkClient.SendICMessage(outgoingMessage);
+                    appliedChanges.Add("sent IC message");
+                }
+            }
+
+            RefreshUiAfterAiStateChanged(profileClient);
+            return appliedChanges.Count == 0
+                ? "AI action completed with no visible changes."
+                : "AI action completed: " + string.Join(", ", appliedChanges) + ".";
+        }
+
+        private void HandleAiControllerStatusChanged(AOClient profileClient, AOClientAgentStatusUpdate update)
+        {
+            if (profileClient == null || update == null)
+            {
+                return;
+            }
+
+            string prefix = $"[AI:{GetAiClientDisplayName(profileClient)}]";
+
+            switch (update.Kind)
+            {
+                case AOClientAgentStatusKind.TransientPrimary:
+                    // Log evaluation start / retry to debug console only — not the IC log
+                    CustomConsole.Info($"{prefix} {update.Message}");
+                    break;
+
+                case AOClientAgentStatusKind.TransientPreview:
+                    // Streaming preview is too frequent to log usefully — skip
+                    break;
+
+                case AOClientAgentStatusKind.ClearTransient:
+                    // Nothing to clear from IC log since we never add transient entries there
+                    break;
+
+                case AOClientAgentStatusKind.WaitDecision:
+                    CustomConsole.Info($"{prefix} SYSTEM_WAIT — decided to stay silent.");
+                    break;
+
+                case AOClientAgentStatusKind.FinalMessage:
+                    HandleAiFinalMessage(profileClient, update, prefix);
+                    break;
+
+                default:
+                    break;
+            }
+
+            UpdateClientTooltip(profileClient);
+        }
+
+        private void HandleAiFinalMessage(AOClient profileClient, AOClientAgentStatusUpdate update, string consolePrefix)
+        {
+            if (update.IsError)
+            {
+                // Log full details to debug console
+                CustomConsole.Error($"{consolePrefix} {update.Message}");
+                if (!string.IsNullOrWhiteSpace(update.RawResponse))
+                {
+                    CustomConsole.Info($"{consolePrefix} Raw response:\n{update.RawResponse}");
+                }
+
+                // Show a minimal error entry in the IC log so the user sees something went wrong
+                IReadOnlyList<LogMessageActionLink>? errorLinks = BuildRawResponseLinks(
+                    profileClient,
+                    string.IsNullOrWhiteSpace(update.RawResponse) ? null : update.RawResponse,
+                    "AI Error",
+                    "(see details)");
+                ICLogControl.AddMessage(
+                    profileClient,
+                    GetAiClientDisplayName(profileClient),
+                    "[AI Error] Could not generate a valid response.",
+                    true,
+                    ICMessage.TextColors.Red,
+                    messageLinks: errorLinks);
+            }
+            else
+            {
+                // Success — log to debug console only; the actual AO2 echo will appear in the IC log
+                // with an (AI) hyperlink via QueuePendingAiOriginResponse below.
+                CustomConsole.Info($"{consolePrefix} {update.Message}");
+                if (!string.IsNullOrWhiteSpace(update.RawResponse))
+                {
+                    CustomConsole.Info($"{consolePrefix} Raw response:\n{update.RawResponse}");
+                }
+            }
+
+            // Queue the pending origin record so the echoed AO2 message gets an (AI) hyperlink
+            if (!update.IsError && update.Decision != null && !string.IsNullOrWhiteSpace(update.RawResponse))
+            {
+                QueuePendingAiOriginResponse(profileClient, update.Decision, update.RawResponse);
+            }
+        }
+
+        /// <summary>
+        /// Returns the display name to use for this AI client in logs and IC entries.
+        /// </summary>
+        private static string GetAiClientDisplayName(AOClient profileClient)
+        {
+            return string.IsNullOrWhiteSpace(profileClient?.ICShowname)
+                ? (profileClient?.clientName ?? "AI")
+                : profileClient.ICShowname;
+        }
+
+        private IReadOnlyList<LogMessageActionLink>? BuildRawResponseLinks(
+            AOClient profileClient,
+            string? rawResponse,
+            string titleSuffix,
+            string linkText = "(See AI response)")
+        {
+            if (string.IsNullOrWhiteSpace(rawResponse))
+            {
+                return null;
+            }
+
+            return new[]
+            {
+                new LogMessageActionLink(
+                    linkText,
+                    () => ShowAiResponseDialog(profileClient, titleSuffix, rawResponse),
+                    "Open the raw AI response")
+            };
+        }
+
+        private void ShowAiResponseDialog(AOClient profileClient, string titleSuffix, string rawResponse)
+        {
+            string clientName = profileClient?.clientName?.Trim() ?? "Unknown Client";
+            Window? owner = HostWindow ?? Window.GetWindow(this) ?? Application.Current?.MainWindow;
+            string dialogTitle = "AI Response - " + titleSuffix + " (" + clientName + ")";
+            TextDocumentViewerWindow.ShowViewer(owner, dialogTitle, rawResponse ?? string.Empty);
+        }
+
+        private void QueuePendingAiOriginResponse(
+            AOClient profileClient,
+            AOClientAgentDecision decision,
+            string rawResponse)
+        {
+            string message = decision.Message?.TrimEnd('\r', '\n') ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                return;
+            }
+
+            string channel = string.IsNullOrWhiteSpace(decision.Channel) ? "IC" : decision.Channel.Trim();
+            string expectedShowName = string.Equals(channel, "OOC", StringComparison.OrdinalIgnoreCase)
+                ? (string.IsNullOrWhiteSpace(decision.OocShowname) ? profileClient.OOCShowname : decision.OocShowname)
+                : (string.IsNullOrWhiteSpace(decision.IcShowname) ? profileClient.ICShowname : decision.IcShowname);
+
+            List<PendingAiOriginResponse> pendingResponses = GetPendingAiOriginResponses(profileClient);
+            PrunePendingAiOriginResponses(pendingResponses);
+            pendingResponses.Add(new PendingAiOriginResponse
+            {
+                Channel = channel,
+                ShowName = expectedShowName?.Trim() ?? string.Empty,
+                Message = message,
+                RawResponse = rawResponse,
+                CreatedUtc = DateTime.UtcNow
+            });
+        }
+
+        private List<PendingAiOriginResponse> GetPendingAiOriginResponses(AOClient profileClient)
+        {
+            if (!pendingAiOriginResponses.TryGetValue(profileClient, out List<PendingAiOriginResponse>? pendingResponses))
+            {
+                pendingResponses = new List<PendingAiOriginResponse>();
+                pendingAiOriginResponses[profileClient] = pendingResponses;
+            }
+
+            return pendingResponses;
+        }
+
+        private static void PrunePendingAiOriginResponses(List<PendingAiOriginResponse> pendingResponses)
+        {
+            DateTime cutoffUtc = DateTime.UtcNow - PendingAiOriginRetention;
+            pendingResponses.RemoveAll(response => response.CreatedUtc < cutoffUtc);
+        }
+
+        private bool TryTakePendingAiOriginResponse(
+            AOClient profileClient,
+            string channel,
+            string showName,
+            string message,
+            out PendingAiOriginResponse? pendingResponse)
+        {
+            pendingResponse = null;
+            if (!pendingAiOriginResponses.TryGetValue(profileClient, out List<PendingAiOriginResponse>? pendingResponses))
+            {
+                return false;
+            }
+
+            PrunePendingAiOriginResponses(pendingResponses);
+            string normalizedChannel = channel?.Trim() ?? string.Empty;
+            string normalizedShowName = showName?.Trim() ?? string.Empty;
+            string normalizedMessage = message?.TrimEnd('\r', '\n') ?? string.Empty;
+
+            for (int index = 0; index < pendingResponses.Count; index++)
+            {
+                PendingAiOriginResponse candidate = pendingResponses[index];
+                if (!string.Equals(candidate.Channel, normalizedChannel, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (!string.Equals(candidate.Message, normalizedMessage, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (!string.IsNullOrWhiteSpace(candidate.ShowName)
+                    && !string.Equals(candidate.ShowName, normalizedShowName, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                pendingResponses.RemoveAt(index);
+                pendingResponse = candidate;
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool IsAiOriginResponseVisible(AOClient profileClient)
+        {
+            return aiOriginResponseVisibility.TryGetValue(profileClient, out bool isVisible) && isVisible;
+        }
+
+        private void SetAiOriginResponseVisibility(AOClient profileClient, bool isVisible)
+        {
+            aiOriginResponseVisibility[profileClient] = isVisible;
+        }
+
+        private void ClearAiClientState(AOClient profileClient)
+        {
+            pendingAiOriginResponses.Remove(profileClient);
+            aiOriginResponseVisibility.Remove(profileClient);
+        }
+
+        private void AddLoggedIcMessage(
+            AOClient profileClient,
+            string showName,
+            string message,
+            bool isSentFromSelf,
+            ICMessage.TextColors textColor)
+        {
+            IReadOnlyList<LogMessageActionLink>? nameLinks = null;
+            if (isSentFromSelf
+                && TryTakePendingAiOriginResponse(profileClient, "IC", showName, message, out PendingAiOriginResponse? pendingResponse)
+                && pendingResponse != null)
+            {
+                nameLinks = BuildRawResponseLinks(profileClient, pendingResponse.RawResponse, "AI Response", "(AI)");
+            }
+
+            ICLogControl.AddMessage(
+                profileClient,
+                showName,
+                message,
+                isSentFromSelf,
+                textColor,
+                nameLinks: nameLinks);
+        }
+
+        private void AddLoggedOocMessage(
+            AOClient profileClient,
+            string showName,
+            string message,
+            bool isFromServer)
+        {
+            bool isSentFromSelf = !isFromServer
+                && !string.IsNullOrWhiteSpace(profileClient.OOCShowname)
+                && string.Equals(showName, profileClient.OOCShowname, StringComparison.OrdinalIgnoreCase);
+
+            IReadOnlyList<LogMessageActionLink>? nameLinks = null;
+            if (isSentFromSelf
+                && TryTakePendingAiOriginResponse(profileClient, "OOC", showName, message, out PendingAiOriginResponse? pendingResponse)
+                && pendingResponse != null)
+            {
+                nameLinks = BuildRawResponseLinks(profileClient, pendingResponse.RawResponse, "AI Response", "(AI)");
+            }
+
+            OOCLogControl.AddMessage(
+                profileClient,
+                showName,
+                message,
+                isFromServer,
+                nameLinks: nameLinks);
+        }
+
+        private void RecordAiMessageForClient(
+            AOClient profileClient,
+            AOClient networkClient,
+            string chatLogType,
+            string characterName,
+            string showName,
+            string message,
+            int iniPuppetId)
+        {
+            if (!aiModeEnabled)
+            {
+                return;
+            }
+
+            AOClientAgentController controller = EnsureAiController(profileClient);
+            ChatLogEntry entry = new ChatLogEntry
+            {
+                TimestampUtc = DateTime.UtcNow,
+                ChatLogType = chatLogType,
+                CharacterName = characterName,
+                ShowName = showName,
+                Message = message,
+                IniPuppetId = iniPuppetId,
+                IsFromSelf = IsMessageFromSelf(profileClient, networkClient, chatLogType, characterName, showName, iniPuppetId)
+            };
+            controller.RecordMessage(entry);
+        }
+
+        private void BroadcastAiMessageFromSingleClient(
+            string chatLogType,
+            string characterName,
+            string showName,
+            string message,
+            int iniPuppetId)
+        {
+            if (!aiModeEnabled || singleInternalClient == null)
+            {
+                return;
+            }
+
+            foreach (AOClient profileClient in aiControllers.Keys.ToList())
+            {
+                RecordAiMessageForClient(
+                    profileClient,
+                    singleInternalClient,
+                    chatLogType,
+                    characterName,
+                    showName,
+                    message,
+                    iniPuppetId);
+            }
+        }
+
+        private static bool IsMessageFromSelf(
+            AOClient profileClient,
+            AOClient networkClient,
+            string chatLogType,
+            string characterName,
+            string showName,
+            int iniPuppetId)
+        {
+            if (string.Equals(chatLogType, "OOC", StringComparison.OrdinalIgnoreCase))
+            {
+                return !string.IsNullOrWhiteSpace(profileClient.OOCShowname)
+                    && string.Equals(showName, profileClient.OOCShowname, StringComparison.OrdinalIgnoreCase);
+            }
+
+            bool sameCharacter = string.Equals(
+                characterName?.Trim(),
+                profileClient.currentINI?.Name?.Trim(),
+                StringComparison.OrdinalIgnoreCase);
+            bool sameShowname = string.Equals(
+                showName?.Trim(),
+                profileClient.ICShowname?.Trim(),
+                StringComparison.OrdinalIgnoreCase);
+            return iniPuppetId == networkClient.iniPuppetID || (sameCharacter && sameShowname);
+        }
+
+        private void RefreshUiAfterAiStateChanged(AOClient profileClient)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                UpdateClientTooltip(profileClient);
+
+                if (currentClient == profileClient)
+                {
+                    ICMessageSettingsControl.SetClient(profileClient);
+                    OOCLogControl.SetCurrentClient(profileClient);
+                    OOCLogControl.txtOOCShowname.Text = profileClient.OOCShowname;
+                    RefreshAreaNavigatorForCurrentClient();
+                    RefreshDreddOverlayForCurrentContext(promptForUnknownOverlay: false);
+                    UpdateDreddFeatureEnabledState();
+                }
+            });
+        }
+
+        private static bool TryResolveStringChoice(
+            IEnumerable<string> availableValues,
+            string requestedValue,
+            out string resolvedValue)
+        {
+            resolvedValue = string.Empty;
+            string normalizedRequestedValue = requestedValue?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(normalizedRequestedValue))
+            {
+                return false;
+            }
+
+            foreach (string? availableValue in availableValues ?? Array.Empty<string>())
+            {
+                if (string.Equals(availableValue?.Trim(), normalizedRequestedValue, StringComparison.OrdinalIgnoreCase))
+                {
+                    resolvedValue = availableValue ?? string.Empty;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool IsAiEnabled(AOClient profileClient)
+        {
+            return aiModeEnabled
+                && aiControllers.TryGetValue(profileClient, out AOClientAgentController? controller)
+                && controller.IsEnabled;
+        }
+
+        private void ToggleAiAutopilot(AOClient profileClient)
+        {
+            AOClientAgentController controller = EnsureAiController(profileClient);
+            controller.SetEnabled(!controller.IsEnabled);
+            RefreshUiAfterAiStateChanged(profileClient);
+        }
+
+        private async Task TriggerAiThinkingAsync(AOClient profileClient)
+        {
+            AOClientAgentController controller = EnsureAiController(profileClient);
+            await controller.TriggerManualEvaluationAsync();
+        }
+
+        private void ToggleAiOriginResponseTags(AOClient profileClient)
+        {
+            SetAiOriginResponseVisibility(profileClient, !IsAiOriginResponseVisible(profileClient));
+        }
+
+        private void SetAiProvider(AiProviderKind provider)
+        {
+            SaveFile.Data.AO2AiBot.Provider = provider == AiProviderKind.OpenAI ? "OpenAI" : "Ollama";
+            SaveFile.Save();
+        }
+
+        private void ConfigureAiModel()
+        {
+            Window? owner = HostWindow ?? Window.GetWindow(this) ?? Application.Current?.MainWindow;
+            AiChatProviderSettings settings = BuildAiSettings();
+            bool useOpenAi = settings.Provider == AiProviderKind.OpenAI;
+            string currentValue = useOpenAi ? SaveFile.Data.AO2AiBot.OpenAIModel : SaveFile.Data.AO2AiBot.OllamaModel;
+            string prompt = useOpenAi ? "Enter the OpenAI model name:" : "Enter the Ollama model name:";
+            string value = InputDialog.Show(owner, prompt, "AI Model", currentValue);
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return;
+            }
+
+            if (useOpenAi)
+            {
+                SaveFile.Data.AO2AiBot.OpenAIModel = value.Trim();
+            }
+            else
+            {
+                SaveFile.Data.AO2AiBot.OllamaModel = value.Trim();
+            }
+
+            SaveFile.Save();
+        }
+
+        private void ConfigureAiOllamaEndpoint()
+        {
+            Window? owner = HostWindow ?? Window.GetWindow(this) ?? Application.Current?.MainWindow;
+            string value = InputDialog.Show(
+                owner,
+                "Enter the Ollama base URL:",
+                "Ollama Endpoint",
+                SaveFile.Data.AO2AiBot.OllamaEndpoint);
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return;
+            }
+
+            SaveFile.Data.AO2AiBot.OllamaEndpoint = value.Trim();
+            SaveFile.Save();
+        }
+
+        private void ConfigureAiPersonality()
+        {
+            Window? owner = HostWindow ?? Window.GetWindow(this) ?? Application.Current?.MainWindow;
+            string currentValue = SaveFile.Data.AO2AiBot.PersonalityPrompt;
+            string? value = MultilineInputDialog.Show(
+                owner,
+                "Enter a personality or role description for the AI.\nThis is appended to the system prompt and lets you define who the AI is and how it should behave.\n\nLeave blank to use default behavior.",
+                "AI Personality",
+                currentValue);
+
+            if (value == null)
+            {
+                return;
+            }
+
+            SaveFile.Data.AO2AiBot.PersonalityPrompt = value.Trim();
+            SaveFile.Save();
+        }
+
+        private void AttachAiContextMenuItems(ContextMenu contextMenu, AOClient profileClient)
+        {
+            if (!aiModeEnabled)
+            {
+                return;
+            }
+
+            contextMenu.Items.Add(new Separator());
+
+            MenuItem aiRootMenu = new MenuItem
+            {
+                Header = "AO2 AI Bot"
+            };
+
+            MenuItem toggleAutopilotItem = new MenuItem();
+            toggleAutopilotItem.Click += (_, _) => ToggleAiAutopilot(profileClient);
+            aiRootMenu.Items.Add(toggleAutopilotItem);
+
+            MenuItem thinkNowItem = new MenuItem
+            {
+                Header = "Think Now"
+            };
+            thinkNowItem.Click += async (_, _) => await TriggerAiThinkingAsync(profileClient);
+            aiRootMenu.Items.Add(thinkNowItem);
+
+            MenuItem showAiOriginTagsItem = new MenuItem
+            {
+                Header = "Show (AI) Response Tags",
+                IsCheckable = true
+            };
+            showAiOriginTagsItem.Click += (_, _) => ToggleAiOriginResponseTags(profileClient);
+            aiRootMenu.Items.Add(showAiOriginTagsItem);
+
+            aiRootMenu.Items.Add(new Separator());
+
+            MenuItem useOllamaItem = new MenuItem
+            {
+                Header = "Use Ollama"
+            };
+            useOllamaItem.Click += (_, _) => SetAiProvider(AiProviderKind.Ollama);
+            aiRootMenu.Items.Add(useOllamaItem);
+
+            MenuItem useOpenAiItem = new MenuItem
+            {
+                Header = "Use OpenAI"
+            };
+            useOpenAiItem.Click += (_, _) => SetAiProvider(AiProviderKind.OpenAI);
+            aiRootMenu.Items.Add(useOpenAiItem);
+
+            MenuItem setModelItem = new MenuItem
+            {
+                Header = "Set Active Model..."
+            };
+            setModelItem.Click += (_, _) => ConfigureAiModel();
+            aiRootMenu.Items.Add(setModelItem);
+
+            MenuItem setOllamaEndpointItem = new MenuItem
+            {
+                Header = "Set Ollama Endpoint..."
+            };
+            setOllamaEndpointItem.Click += (_, _) => ConfigureAiOllamaEndpoint();
+            aiRootMenu.Items.Add(setOllamaEndpointItem);
+
+            aiRootMenu.Items.Add(new Separator());
+
+            MenuItem setPersonalityItem = new MenuItem
+            {
+                Header = "Set AI Personality..."
+            };
+            setPersonalityItem.Click += (_, _) => ConfigureAiPersonality();
+            aiRootMenu.Items.Add(setPersonalityItem);
+
+            aiRootMenu.SubmenuOpened += (_, _) =>
+            {
+                bool enabled = IsAiEnabled(profileClient);
+                toggleAutopilotItem.Header = enabled ? "Disable Autopilot" : "Enable Autopilot";
+
+                AiChatProviderSettings settings = BuildAiSettings();
+                useOllamaItem.IsCheckable = true;
+                useOpenAiItem.IsCheckable = true;
+                useOllamaItem.IsChecked = settings.Provider == AiProviderKind.Ollama;
+                useOpenAiItem.IsChecked = settings.Provider == AiProviderKind.OpenAI;
+                showAiOriginTagsItem.IsChecked = IsAiOriginResponseVisible(profileClient);
+            };
+
+            contextMenu.Items.Add(aiRootMenu);
         }
 
         private void RefreshAreaNavigatorForCurrentClient()
@@ -1012,7 +1851,7 @@ namespace OceanyaClient
                     }
 
                     bool isSentFromSelf = icMessage.CharId == singleInternalClient.iniPuppetID;
-                    ICLogControl.AddMessage(targetClient, icMessage.ShowName, icMessage.Message, isSentFromSelf, icMessage.TextColor);
+                    AddLoggedIcMessage(targetClient, icMessage.ShowName, icMessage.Message, isSentFromSelf, icMessage.TextColor);
 
                     targetClient.curBG = singleInternalClient.curBG;
                     targetClient.iniPuppetID = singleInternalClient.iniPuppetID;
@@ -1029,8 +1868,13 @@ namespace OceanyaClient
                         return;
                     }
 
-                    OOCLogControl.AddMessage(targetClient, showName, message, isFromServer);
+                    AddLoggedOocMessage(targetClient, showName, message, isFromServer);
                 });
+            };
+
+            singleInternalClient.OnMessageReceived += (string chatLogType, string characterName, string showName, string message, int iniPuppetId) =>
+            {
+                BroadcastAiMessageFromSingleClient(chatLogType, characterName, showName, message, iniPuppetId);
             };
 
             singleInternalClient.OnBGChange += (string newBg) =>
@@ -1086,6 +1930,11 @@ namespace OceanyaClient
                 AOClient bot = new AOClient(Globals.GetSelectedServerEndpoint());
                 bot.clientName = clientName;
                 HookClientForDreddOverlay(bot);
+                if (aiModeEnabled)
+                {
+                    EnsureAiController(bot);
+                    aiOriginResponseVisibility[bot] = true;
+                }
 
                 if (useSingleInternalClient)
                 {
@@ -1104,9 +1953,7 @@ namespace OceanyaClient
                         {
                             bool isSentFromSelf = clients.Select(x => x.Value.iniPuppetID).Contains(icMessage.CharId);
 
-                            ICLogControl.AddMessage(bot, icMessage.ShowName,
-                                icMessage.Message,
-                                isSentFromSelf, icMessage.TextColor);
+                            AddLoggedIcMessage(bot, icMessage.ShowName, icMessage.Message, isSentFromSelf, icMessage.TextColor);
                         });
                     };
 
@@ -1114,8 +1961,13 @@ namespace OceanyaClient
                     {
                         Dispatcher.Invoke(() =>
                         {
-                            OOCLogControl.AddMessage(bot, showName, message, isFromServer);
+                            AddLoggedOocMessage(bot, showName, message, isFromServer);
                         });
+                    };
+
+                    bot.OnMessageReceived += (string chatLogType, string characterName, string showName, string message, int iniPuppetId) =>
+                    {
+                        RecordAiMessageForClient(bot, bot, chatLogType, characterName, showName, message, iniPuppetId);
                     };
                 }
 
@@ -1215,6 +2067,7 @@ namespace OceanyaClient
                     await targetNetworkClient.DisconnectWebsocket();
                 };
                 contextMenu.Items.Add(reconnectMenuItem);
+                AttachAiContextMenuItems(contextMenu, bot);
 
 
                 toggleBtn.ContextMenu = contextMenu;
@@ -1332,6 +2185,11 @@ namespace OceanyaClient
                     {
                         var button = clients.FirstOrDefault(x => x.Value == bot).Key;
                         areaListBootstrapCompletedClients.Remove(bot);
+                        ClearAiClientState(bot);
+                        if (aiControllers.Remove(bot, out AOClientAgentController? controller))
+                        {
+                            controller.Dispose();
+                        }
 
                         clients.Remove(button);
                         EmoteGrid.DeleteElement(button);
@@ -1432,233 +2290,6 @@ namespace OceanyaClient
             UpdateDreddFeatureEnabledState();
         }
 
-        private async void ConnectButton_Click(object sender, RoutedEventArgs e)
-        {
-            #region Create the bot and connect to the server
-            AOClient bot = new AOClient(Globals.GetSelectedServerEndpoint());
-            await bot.Connect();
-            #endregion
-
-            #region Start the GPT Client
-            string? apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY", EnvironmentVariableTarget.User);
-            if (string.IsNullOrEmpty(apiKey))
-            {
-                throw new Exception("OpenAI API key is not set in the environment variables.");
-            }
-            GPTClient gptClient = new GPTClient(apiKey);
-            gptClient.SetSystemInstructions(new List<string> { Globals.AI_SYSTEM_PROMPT });
-            gptClient.systemVariables = new Dictionary<string, string>()
-            {
-                { "[[[current_character]]]", bot.currentINI?.Name ?? string.Empty },
-                { "[[[current_emote]]]", bot.currentEmote?.DisplayID ?? string.Empty }
-            };
-            #endregion
-
-            ChatLogManager chatLog = new ChatLogManager(MaxChatHistory: 20);
-
-            bot.OnMessageReceived += async (string chatLogType, string characterName, string showName, string message, int iniPuppetID) =>
-            {
-                chatLog.AddMessage(chatLogType, characterName, showName, message);
-
-                if (!Globals.UseOpenAIAPI) return;
-
-                switch (chatLogType)
-                {
-                    case "IC":
-                        if (showName == bot.ICShowname && characterName == bot.currentINI?.Name && iniPuppetID == bot.iniPuppetID)
-                        {
-                            return;
-                        }
-                        break;
-                    case "OOC":
-                        if (showName == bot.ICShowname)
-                        {
-                            return;
-                        }
-                        break;
-                }
-
-
-                int maxRetries = 3; // Prevent infinite loops
-                int attempt = 0;
-                bool success = false;
-
-                while (attempt < maxRetries && !success)
-                {
-                    attempt++;
-                    if (Globals.DebugMode) CustomConsole.WriteLine($"Prompting AI..." + (attempt > 0 ? " (Attempt {attempt})" : ""));
-                    string response = await gptClient.GetResponseAsync(chatLog.GetFormattedChatHistory());
-                    if (Globals.DebugMode) CustomConsole.WriteLine("Received AI response: " + response);
-
-                    success = await ValidateJsonResponse(bot, response);
-                }
-
-                if (!success)
-                {
-                    CustomConsole.WriteLine("ERROR: AI failed to return a valid response after multiple attempts.");
-                }
-            };
-
-            await Task.Delay(-1);
-        }
-
-        private static async Task<bool> ValidateJsonResponse(AOClient bot, string response)
-        {
-            bool success = false;
-
-            // Ensure response is not empty and not SYSTEM_WAIT()
-            if (string.IsNullOrWhiteSpace(response) || response == "SYSTEM_WAIT()")
-                return success;
-
-            try
-            {
-                var responseJson = JsonSerializer.Deserialize<Dictionary<string, object>>(response);
-                if (responseJson == null)
-                {
-                    CustomConsole.WriteLine("ERROR: AI response is not valid JSON. Retrying...");
-                    return success;
-                }
-
-                // Validate required fields
-                if (!responseJson.ContainsKey("message") || !responseJson.ContainsKey("chatlog") ||
-                    !responseJson.ContainsKey("showname") || !responseJson.ContainsKey("current_character") ||
-                    !responseJson.ContainsKey("modifiers"))
-                {
-                    CustomConsole.WriteLine("ERROR: AI response is missing required fields. Retrying...");
-                    return success;
-                }
-
-                string botMessage = responseJson["message"].ToString() ?? string.Empty;
-                string chatlogType = responseJson["chatlog"].ToString() ?? string.Empty;
-                string newShowname = responseJson["showname"].ToString() ?? string.Empty;
-                string newCharacter = responseJson["current_character"].ToString() ?? string.Empty;
-
-                // Ensure chatlogType is either "IC" or "OOC"
-                if (chatlogType != "IC" && chatlogType != "OOC")
-                {
-                    CustomConsole.WriteLine($"ERROR: Invalid chatlog type '{chatlogType}', retrying...");
-                    return success;
-                }
-
-                // Apply showname change if valid
-                if (!string.IsNullOrEmpty(newShowname))
-                {
-                    bot.SetICShowname(newShowname);
-                }
-
-                // Apply character switch if valid
-                if (!string.IsNullOrEmpty(newCharacter))
-                {
-                    bot.SetCharacter(newCharacter);
-                }
-
-                // Apply modifiers with strict validation
-                if (responseJson["modifiers"] is JsonElement modifiersElement)
-                {
-                    var modifiers = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(modifiersElement.GetRawText());
-
-                    if (modifiers != null)
-                    {
-                        if (modifiers.ContainsKey("deskMod") && modifiers["deskMod"].TryGetInt32(out int deskModValue))
-                            bot.deskMod = (ICMessage.DeskMods)deskModValue;
-                        else
-                        {
-                            CustomConsole.WriteLine("ERROR: Invalid deskMod value. Retrying...");
-                            return success;
-                        }
-
-                        if (modifiers.ContainsKey("emoteMod") && modifiers["emoteMod"].TryGetInt32(out int emoteModValue))
-                            bot.emoteMod = (ICMessage.EmoteModifiers)emoteModValue;
-                        else
-                        {
-                            CustomConsole.WriteLine("ERROR: Invalid emoteMod value. Retrying...");
-                            return success;
-                        }
-
-                        if (modifiers.ContainsKey("shoutModifiers") && modifiers["shoutModifiers"].TryGetInt32(out int shoutModValue))
-                            bot.shoutModifiers = (ICMessage.ShoutModifiers)shoutModValue;
-                        else
-                        {
-                            CustomConsole.WriteLine("ERROR: Invalid shoutModifiers value. Retrying...");
-                            return success;
-                        }
-
-                        if (modifiers.ContainsKey("flip") && modifiers["flip"].TryGetInt32(out int flipValue))
-                            bot.flip = flipValue == 1;
-                        else
-                        {
-                            CustomConsole.WriteLine("ERROR: Invalid flip value. Retrying...");
-                            return success;
-                        }
-
-                        //if (modifiers.ContainsKey("realization") && modifiers["realization"].TryGetInt32(out int realizationValue))
-                        //    bot.effect = realizationValue == 1;
-                        //else
-                        //{
-                        //    CustomConsole.WriteLine("ERROR: Invalid realization value. Retrying...");
-                        //    return success;
-                        //}
-
-                        if (modifiers.ContainsKey("textColor") && modifiers["textColor"].TryGetInt32(out int textColorValue))
-                            bot.textColor = (ICMessage.TextColors)textColorValue;
-                        else
-                        {
-                            CustomConsole.WriteLine("ERROR: Invalid textColor value. Retrying...");
-                            return success;
-                        }
-
-                        if (modifiers.ContainsKey("immediate") && modifiers["immediate"].TryGetInt32(out int immediateValue))
-                            bot.Immediate = immediateValue == 1;
-                        else
-                        {
-                            CustomConsole.WriteLine("ERROR: Invalid immediate value. Retrying...");
-                            return success;
-                        }
-
-                        if (modifiers.ContainsKey("additive") && modifiers["additive"].TryGetInt32(out int additiveValue))
-                            bot.Additive = additiveValue == 1;
-                        else
-                        {
-                            CustomConsole.WriteLine("ERROR: Invalid additive value. Retrying...");
-                            return success;
-                        }
-                    }
-                    else
-                    {
-                        CustomConsole.WriteLine("ERROR: AI response modifiers section is invalid. Retrying...");
-                        return success;
-                    }
-                }
-
-                // Send response based on chatlog type
-                if (!string.IsNullOrEmpty(botMessage))
-                {
-                    switch (chatlogType)
-                    {
-                        case "IC":
-                            await bot.SendICMessage(botMessage);
-                            break;
-                        case "OOC":
-                            await bot.SendOOCMessage(bot.ICShowname, botMessage);
-                            break;
-                    }
-                }
-                else
-                {
-                    CustomConsole.WriteLine("ERROR: AI response message is empty. Retrying...");
-                    return success;
-                }
-
-                success = true; // If we reach here, response was valid and handled successfully
-            }
-            catch (Exception ex)
-            {
-                CustomConsole.WriteLine($"ERROR: Exception while processing AI response - {ex.Message}. Retrying...");
-            }
-
-            return success;
-        }
-
         private void btnAddClient_Click(object sender, RoutedEventArgs e)
         {
             // Show an input dialog to the user
@@ -1690,6 +2321,11 @@ namespace OceanyaClient
             var button = clients.FirstOrDefault(x => x.Value == clientToRemove).Key;
             if (button != null)
             {
+                ClearAiClientState(clientToRemove);
+                if (aiControllers.Remove(clientToRemove, out AOClientAgentController? controller))
+                {
+                    controller.Dispose();
+                }
                 clients.Remove(button);
                 EmoteGrid.DeleteElement(button);
             }
@@ -1992,6 +2628,17 @@ namespace OceanyaClient
 
         private async void CloseButton_Click(object sender, RoutedEventArgs e)
         {
+            foreach (AOClient client in aiControllers.Keys.ToList())
+            {
+                ClearAiClientState(client);
+            }
+
+            foreach (AOClientAgentController controller in aiControllers.Values.ToList())
+            {
+                controller.Dispose();
+            }
+            aiControllers.Clear();
+
             if (useSingleInternalClient)
             {
                 if (singleInternalClient != null)
