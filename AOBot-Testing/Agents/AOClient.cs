@@ -1,8 +1,6 @@
 ﻿using AOBot_Testing.Structures;
 using System;
 using System.Diagnostics;
-using System.Net.WebSockets;
-using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,7 +12,7 @@ namespace AOBot_Testing.Agents
     {
         private const int textCrawlSpeed = 35;
         private readonly Uri serverUri = new Uri(serverAddress);
-        private ClientWebSocket? ws; // WebSocket instance
+        private IAOClientTransport? transport;
         public Stopwatch aliveTime = new Stopwatch();
         private CountdownTimer? speakTimer;
         bool AbleToSpeak { get; set; } = true;
@@ -129,6 +127,20 @@ namespace AOBot_Testing.Agents
             }
         }
 
+        private bool IsTransportConnected => transport != null && transport.IsConnected;
+
+        private string TransportName => transport?.TransportName ?? ResolveTransportName(serverUri);
+
+        private static string ResolveTransportName(Uri uri)
+        {
+            if (string.Equals(uri.Scheme, "tcp", StringComparison.OrdinalIgnoreCase))
+            {
+                return "TCP";
+            }
+
+            return "WebSocket";
+        }
+
         private List<string> pendingMessages = new List<string>();
         #region Send Message Methods
         public async Task SendICMessage(string showname, string message, bool queueMessage = false)
@@ -140,7 +152,7 @@ namespace AOBot_Testing.Agents
 
         public async Task SendICMessage(string message, bool queueMessage = false)
         {
-            if (ws != null && ws.State == WebSocketState.Open)
+            if (IsTransportConnected)
             {
                 if (CurrentINI == null || currentEmote == null)
                 {
@@ -248,7 +260,7 @@ namespace AOBot_Testing.Agents
             }
             else
             {
-                CustomConsole.Error("WebSocket is not connected. Cannot send message.");
+                CustomConsole.Error("Server connection is not active. Cannot send message.");
             }
         }
 
@@ -304,7 +316,7 @@ namespace AOBot_Testing.Agents
         }
         public async Task SendOOCMessage(string showname, string message)
         {
-            if (ws != null && ws.State == WebSocketState.Open)
+            if (IsTransportConnected)
             {
                 OOCShowname = showname;
                 string oocMessage = $"CT#{Globals.ReplaceSymbolsForText(showname)}#{Globals.ReplaceSymbolsForText(message)}#%";
@@ -313,7 +325,7 @@ namespace AOBot_Testing.Agents
             }
             else
             {
-                CustomConsole.Error("WebSocket is not connected. Cannot send message.");
+                CustomConsole.Error("Server connection is not active. Cannot send message.");
             }
         }
         #endregion
@@ -321,7 +333,7 @@ namespace AOBot_Testing.Agents
         #region Set Methods
         public async Task SetArea(string areaName, int delayBetweenAreas = 500)
         {
-            if (ws != null && ws.State == WebSocketState.Open)
+            if (IsTransportConnected)
             {
                 string[] areas = areaName.Split('/');
                 foreach (var area in areas)
@@ -337,7 +349,7 @@ namespace AOBot_Testing.Agents
             }
             else
             {
-                CustomConsole.Error("WebSocket is not connected. Cannot switch rooms.");
+                CustomConsole.Error("Server connection is not active. Cannot switch rooms.");
             }
         }
         public void SetCharacter(string characterName)
@@ -418,6 +430,7 @@ namespace AOBot_Testing.Agents
             }
             else if (message.StartsWith("SC#"))
             {
+                serverCharacterList.Clear();
                 var characters = message.Substring(3).TrimEnd('#', '%').Split('#', StringSplitOptions.RemoveEmptyEntries);
                 foreach (var characterEntry in characters)
                 {
@@ -553,21 +566,22 @@ namespace AOBot_Testing.Agents
         public async Task Connect(int betweenHandshakeAndSetArea = 0, int betweenSetAreas = 0, int betweenAreasAndIniPuppet = 1000, int finalDelay = 1000)
         {
             aliveTime.Reset();
+            dead = false;
             lastCharsCheck = string.Empty;
             serverFeatures.Clear();
-            ws = new ClientWebSocket();
-            // Add required headers (modify as needed)
-            ws.Options.SetRequestHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
-            ws.Options.SetRequestHeader("Origin", "http://example.com");
+            serverCharacterList.Clear();
+            availableAreas.Clear();
+            availableAreaInfos.Clear();
+
+            transport = AOClientTransportFactory.Create(serverUri);
             try
             {
-                await ws.ConnectAsync(serverUri, CancellationToken.None);
+                await transport.ConnectAsync(serverUri, CancellationToken.None);
                 aliveTime.Start();
                 CustomConsole.Info("===========================");
-                CustomConsole.Info("Connected to AO2's Server WebSocket!");
+                CustomConsole.Info($"Connected to AO server via {TransportName}.");
                 CustomConsole.Info("===========================");
 
-                // Start the handshake process
                 await PerformHandshake();
                 CustomConsole.Info("===========================");
 
@@ -578,22 +592,24 @@ namespace AOBot_Testing.Agents
                     CustomConsole.Info("===========================");
                 }
 
-                //Allow some time for server to update area info
-
                 await Task.Delay(betweenAreasAndIniPuppet);
 
                 await SelectFirstAvailableINIPuppet();
                 CustomConsole.Info("===========================");
 
-                // Start listening for messages
                 _ = Task.Run(() => ListenForMessages());
                 _ = Task.Run(() => KeepAlive());
 
-                // Allow some time for connection
                 await Task.Delay(finalDelay);
             }
             catch (Exception ex)
             {
+                if (transport != null)
+                {
+                    await transport.CloseAsync(CancellationToken.None);
+                    transport = null;
+                }
+
                 CustomConsole.Error($"Connection Error", ex);
                 throw;
             }
@@ -936,60 +952,107 @@ namespace AOBot_Testing.Agents
                 || value.EndsWith(".ogg", StringComparison.OrdinalIgnoreCase)
                 || value.EndsWith(".opus", StringComparison.OrdinalIgnoreCase);
         }
+
         private async Task PerformHandshake()
         {
-            if (ws == null || ws.State != WebSocketState.Open)
+            if (!IsTransportConnected)
             {
-                CustomConsole.Error("WebSocket is not connected. Cannot perform handshake.");
+                CustomConsole.Error("Server connection is not active. Cannot perform handshake.");
                 return;
             }
 
-            // Step 1: Send Hard Drive ID (HDID) - Can be anything unique
-            hdid = Guid.NewGuid().ToString(); // Generate a unique HDID
-            await SendPacket($"HI#{hdid}#%");
+            hdid = Guid.NewGuid().ToString();
+            bool hiSent = false;
 
-            // Step 2: Receive Server Version and Player Number
-            string response = await WaitForPacketAsync(packet => packet.StartsWith("ID#"), "ID");
-
-            var parts = response.Split('#');
-            if (parts.Length >= 3)
+            // Some legacy TCP servers wait for HI immediately instead of leading with decryptor/ID.
+            if (string.Equals(serverUri.Scheme, "tcp", StringComparison.OrdinalIgnoreCase))
             {
-                playerID = int.Parse(parts[1]);
+                await SendPacket($"HI#{hdid}#%");
+                hiSent = true;
+            }
+
+            string response = await WaitForPacketAsync(
+                packet => packet.StartsWith("decryptor#", StringComparison.OrdinalIgnoreCase)
+                    || packet.StartsWith("ID#", StringComparison.OrdinalIgnoreCase),
+                "decryptor/ID",
+                timeoutMs: 5000,
+                throwOnTimeout: false);
+
+            if (response.StartsWith("decryptor#", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!hiSent)
+                {
+                    await SendPacket($"HI#{hdid}#%");
+                    hiSent = true;
+                }
+
+                response = await WaitForPacketAsync(
+                    packet => packet.StartsWith("ID#", StringComparison.OrdinalIgnoreCase),
+                    "ID");
+            }
+            else if (string.IsNullOrWhiteSpace(response))
+            {
+                if (!hiSent)
+                {
+                    await SendPacket($"HI#{hdid}#%");
+                    hiSent = true;
+                }
+
+                response = await WaitForPacketAsync(
+                    packet => packet.StartsWith("ID#", StringComparison.OrdinalIgnoreCase),
+                    "ID");
+            }
+
+            string[] parts = response.Split('#');
+            if (parts.Length >= 3 && int.TryParse(parts[1], out int parsedPlayerId))
+            {
+                playerID = parsedPlayerId;
                 string serverVersion = parts[2];
                 CustomConsole.Info($"Assigned Player ID: {playerID} | Server Version: {serverVersion}");
             }
 
-            // Step 3: Send Client Version Info (Server doesn't really care)
-            await SendPacket($"ID#MyBotClient#1.0#%");
+            await SendPacket($"ID#{AOClientProtocolConstants.ClientName}#{AOClientProtocolConstants.ClientVersion}#%");
+            await SendPacket("askchaa#%");
 
-            // Step 4: Request Character List (Important for selection)
-            await SendPacket("RC#%");
+            response = await WaitForPacketAsync(
+                packet => packet.StartsWith("SI#", StringComparison.OrdinalIgnoreCase)
+                    || packet.StartsWith("SC#", StringComparison.OrdinalIgnoreCase),
+                "SI/SC",
+                timeoutMs: 5000,
+                throwOnTimeout: false);
 
-            // Step 5: Receive Character List
-            response = await WaitForPacketAsync(packet => packet.StartsWith("SC#"), "SC");
+            if (response.StartsWith("SI#", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(response))
+            {
+                await SendPacket("RC#%");
+                response = await WaitForPacketAsync(
+                    packet => packet.StartsWith("SC#", StringComparison.OrdinalIgnoreCase),
+                    "SC");
+            }
 
-            // Step 6: Mirror AO2's courtroom bootstrap: request area/music data after SC.
             await SendPacket("RM#%");
 
-            // Step 7: Wait for area/music bootstrap before declaring ready.
-            response = await WaitForPacketAsync(
-                packet => packet.StartsWith("SM#") || packet.StartsWith("FA#"),
+            await WaitForPacketAsync(
+                packet => packet.StartsWith("SM#", StringComparison.OrdinalIgnoreCase)
+                    || packet.StartsWith("FA#", StringComparison.OrdinalIgnoreCase),
                 "SM/FA");
 
-            // Step 8: Send Ready Signal
             await SendPacket("RD#%");
 
-            // AO2 immediately emits an empty OOC packet after RD during courtroom load.
             string encodedShowname = Globals.ReplaceSymbolsForText(OOCShowname ?? string.Empty);
             await SendPacket($"CT#{encodedShowname}##%");
 
-            // Step 9: Wait for final confirmation
-            response = await WaitForPacketAsync(packet => packet.StartsWith("DONE#"), "DONE");
+            await WaitForPacketAsync(
+                packet => packet.StartsWith("DONE#", StringComparison.OrdinalIgnoreCase),
+                "DONE");
 
             CustomConsole.Info("Handshake completed successfully!");
         }
 
-        private async Task<string> WaitForPacketAsync(Func<string, bool> predicate, string expectedPacketHeader, int timeoutMs = 10000)
+        private async Task<string> WaitForPacketAsync(
+            Func<string, bool> predicate,
+            string expectedPacketHeader,
+            int timeoutMs = 10000,
+            bool throwOnTimeout = true)
         {
             var timeoutAt = DateTime.UtcNow.AddMilliseconds(timeoutMs);
             while (DateTime.UtcNow < timeoutAt)
@@ -1000,21 +1063,29 @@ namespace AOBot_Testing.Agents
                     break;
                 }
 
-                var receiveTask = ReceiveMessageAsync();
-                var completedTask = await Task.WhenAny(receiveTask, Task.Delay(remainingMs));
-                if (completedTask != receiveTask)
+                using CancellationTokenSource receiveTimeout = new CancellationTokenSource(remainingMs);
+                string response;
+                try
+                {
+                    response = await ReceiveMessageAsync(receiveTimeout.Token);
+                }
+                catch (OperationCanceledException) when (receiveTimeout.IsCancellationRequested)
                 {
                     break;
                 }
 
-                string response = await receiveTask;
                 if (!string.IsNullOrEmpty(response) && predicate(response))
                 {
                     return response;
                 }
             }
 
-            throw new TimeoutException($"Timed out waiting for handshake packet: {expectedPacketHeader}");
+            if (throwOnTimeout)
+            {
+                throw new TimeoutException($"Timed out waiting for handshake packet: {expectedPacketHeader}");
+            }
+
+            return string.Empty;
         }
 
 
@@ -1022,7 +1093,6 @@ namespace AOBot_Testing.Agents
 
         private async Task Reconnect()
         {
-            // Wait for our turn in the reconnection queue.
             await _reconnectQueue.WaitAsync();
             try
             {
@@ -1033,54 +1103,57 @@ namespace AOBot_Testing.Agents
                     {
                         OnReconnectionAttempt?.Invoke(retryCount + 1);
                         await Connect(0, 0, 5000, 2000);
-                        if (ws != null && ws.State == WebSocketState.Open)
+                        if (IsTransportConnected)
                         {
-                            CustomConsole.Info("Reconnected to WebSocket!");
+                            CustomConsole.Info($"Reconnected via {TransportName}.");
                             return;
                         }
                     }
                     catch (Exception ex)
                     {
-                        
                         CustomConsole.Error($"Reconnection attempt {retryCount + 1} failed", ex);
                     }
+
                     OnReconnectionAttemptFailed?.Invoke(retryCount + 1);
                     retryCount++;
-                    await Task.Delay(2000); // Delay before retrying this client
+                    await Task.Delay(2000);
                 }
+
                 CustomConsole.Error("Failed to reconnect after multiple attempts.");
                 await Disconnect();
             }
             finally
             {
-                // Ensure a gap between different clients' reconnection attempts.
                 await Task.Delay(200);
                 _reconnectQueue.Release();
             }
         }
+
         private async Task KeepAlive()
         {
-            while (ws != null && ws.State == WebSocketState.Open)
+            while (IsTransportConnected)
             {
                 await SendPacket($"CH#{playerID}#%");
-                await Task.Delay(10000); // Enviar un ping cada 10 segundos
+                await Task.Delay(10000);
             }
         }
+
         bool dead = false;
 
         public async Task Disconnect()
         {
             dead = true;
-            if (ws != null && ws.State == WebSocketState.Open)
+            aliveTime.Stop();
+
+            if (transport != null)
             {
-                await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Disconnecting", CancellationToken.None);
-                ws.Dispose();
-                ws = null;
-                CustomConsole.Info("Disconnected from WebSocket.");
+                await transport.CloseAsync(CancellationToken.None);
+                transport = null;
+                CustomConsole.Info($"Disconnected from {ResolveTransportName(serverUri)}.");
             }
             else
             {
-                CustomConsole.Info("WebSocket is not connected.");
+                CustomConsole.Info("Server connection is not active.");
             }
 
             serverFeatures.Clear();
@@ -1089,13 +1162,14 @@ namespace AOBot_Testing.Agents
 
         public async Task DisconnectWebsocket()
         {
-            if (ws != null && ws.State == WebSocketState.Open)
+            if (transport != null)
             {
-                await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Disconnecting", CancellationToken.None);
+                await transport.CloseAsync(CancellationToken.None);
+                transport = null;
             }
             else
             {
-                CustomConsole.Info("WebSocket is not connected.");
+                CustomConsole.Info("Server connection is not active.");
             }
 
             serverFeatures.Clear();
@@ -1106,9 +1180,9 @@ namespace AOBot_Testing.Agents
 
         public async Task SelectFirstAvailableINIPuppet(bool iniswapToSelected = true)
         {
-            if (ws == null || ws.State != WebSocketState.Open)
+            if (!IsTransportConnected)
             {
-                CustomConsole.Error("WebSocket is not connected. Cannot select INI Puppet.");
+                CustomConsole.Error("Server connection is not active. Cannot select INI Puppet.");
                 return;
             }
 
@@ -1210,14 +1284,13 @@ namespace AOBot_Testing.Agents
 
         public async Task SendPacket(string packet)
         {
-            if (ws != null && ws.State == WebSocketState.Open)
+            if (transport != null && transport.IsConnected)
             {
-                byte[] messageBytes = Encoding.UTF8.GetBytes(packet);
-                await ws.SendAsync(new ArraySegment<byte>(messageBytes), WebSocketMessageType.Text, true, CancellationToken.None);
+                await transport.SendPacketAsync(packet, CancellationToken.None);
             }
             else
             {
-                CustomConsole.Error("WebSocket is not connected. Cannot send message.");
+                CustomConsole.Error("Server connection is not active. Cannot send message.");
             }
         }
 
@@ -1226,21 +1299,18 @@ namespace AOBot_Testing.Agents
             await SendPacket("RM#%");
         }
 
-        private async Task<string> ReceiveMessageAsync()
+        private async Task<string> ReceiveMessageAsync(CancellationToken cancellationToken = default)
         {
-            if (ws != null && ws.State == WebSocketState.Open)
+            if (transport != null && transport.IsConnected)
             {
-                byte[] buffer = new byte[4096];
-                WebSocketReceiveResult result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
-                if (result.Count > 0)
+                string? message = await transport.ReceivePacketAsync(cancellationToken);
+                if (!string.IsNullOrEmpty(message))
                 {
-                    string message = Encoding.UTF8.GetString(buffer, 0, result.Count);
-
                     await HandleMessage(message);
-
                     return message;
                 }
             }
+
             return string.Empty;
         }
 
@@ -1248,12 +1318,12 @@ namespace AOBot_Testing.Agents
         {
             try
             {
-                while (ws != null && ws.State == WebSocketState.Open)
+                while (IsTransportConnected)
                 {
-                    string message = await ReceiveMessageAsync();
-                    if (!string.IsNullOrEmpty(message))
+                    await ReceiveMessageAsync(CancellationToken.None);
+                    if (!IsTransportConnected)
                     {
-                        // Handle incoming messages here
+                        break;
                     }
                 }
             }
@@ -1265,14 +1335,14 @@ namespace AOBot_Testing.Agents
             }
             finally
             {
-                if (ws == null || ws.State != WebSocketState.Open)
+                if (!IsTransportConnected)
                 {
                     aliveTime.Stop();
                     OnWebsocketDisconnect?.Invoke();
 
                     if (!dead)
                     {
-                        CustomConsole.Warning("WebSocket connection lost. Attempting to reconnect...");
+                        CustomConsole.Warning($"{TransportName} connection lost. Attempting to reconnect...");
                         CustomConsole.Info("===========================");
 
                         #region Save the state before reconnecting

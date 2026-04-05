@@ -153,10 +153,15 @@ namespace OceanyaClient
                     return;
                 }
 
-                if (!TryParseWebsocketEndpoint(selectedServer.Endpoint, out string selectedAddress, out int selectedPort, out bool selectedSecure))
+                if (!TryParseDirectConnectionEndpoint(
+                        selectedServer.Endpoint,
+                        out string selectedAddress,
+                        out int selectedPort,
+                        out bool selectedLegacy,
+                        out bool selectedSecure))
                 {
                     OceanyaMessageBox.Show(
-                        "Only WebSocket servers can be added to favorites.",
+                        "Only direct-connect TCP or WebSocket servers can be added to favorites.",
                         "Invalid Favorite",
                         MessageBoxButton.OK,
                         MessageBoxImage.Warning);
@@ -182,29 +187,31 @@ namespace OceanyaClient
                         Address = selectedAddress,
                         Port = selectedPort,
                         Description = selectedServer.Description,
-                        Legacy = false,
+                        Legacy = selectedLegacy,
                         Secure = selectedSecure
                     });
 
-                await RefreshFavoritesOnlyAsync(selectedServer.Endpoint, switchToFavoritesTab: true);
+                await RefreshFavoritesOnlyAsync(
+                    selectEndpoint: selectedServer.Endpoint,
+                    switchToFavoritesTab: true,
+                    affectedEndpoints: new[] { selectedServer.Endpoint });
                 return;
             }
 
-            if (!FavoriteServerEditorDialog.ShowDialog(
-                    this,
+            if (!TryShowFavoriteEditor(
+                    "Add Favorite Server",
+                    "ADD FAVORITE",
                     out string name,
                     out string endpoint,
-                    out string description,
-                    windowTitle: "Add Favorite Server",
-                    actionText: "ADD FAVORITE"))
+                    out string description))
             {
                 return;
             }
 
-            if (!TryParseWebsocketEndpoint(endpoint, out string address, out int port, out bool secure))
+            if (!TryParseDirectConnectionEndpoint(endpoint, out string address, out int port, out bool legacy, out bool secure))
             {
                 OceanyaMessageBox.Show(
-                    "Invalid endpoint format. Use ws:// or wss:// and include host/port.",
+                    "Invalid endpoint format. Use tcp://, ws://, or wss:// and include host/port.",
                     "Invalid Endpoint",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
@@ -229,11 +236,14 @@ namespace OceanyaClient
                     Address = address,
                     Port = port,
                     Description = description,
-                    Legacy = false,
+                    Legacy = legacy,
                     Secure = secure
                 });
 
-            await RefreshFavoritesOnlyAsync(endpoint.Trim(), switchToFavoritesTab: true);
+            await RefreshFavoritesOnlyAsync(
+                selectEndpoint: endpoint.Trim(),
+                switchToFavoritesTab: true,
+                affectedEndpoints: new[] { endpoint.Trim() });
         }
 
         private async void EditFavoriteButton_Click(object sender, RoutedEventArgs e)
@@ -243,24 +253,23 @@ namespace OceanyaClient
                 return;
             }
 
-            if (!FavoriteServerEditorDialog.ShowDialog(
-                    this,
+            if (!TryShowFavoriteEditor(
+                    "Edit Favorite Server",
+                    "SAVE",
                     out string name,
                     out string endpoint,
                     out string description,
-                    windowTitle: "Edit Favorite Server",
-                    actionText: "SAVE",
-                    defaultName: selected.Name,
-                    defaultEndpoint: selected.Endpoint,
-                    defaultDescription: selected.Description))
+                    selected.Name,
+                    selected.Endpoint,
+                    selected.Description))
             {
                 return;
             }
 
-            if (!TryParseWebsocketEndpoint(endpoint, out string address, out int port, out bool secure))
+            if (!TryParseDirectConnectionEndpoint(endpoint, out string address, out int port, out bool legacy, out bool secure))
             {
                 OceanyaMessageBox.Show(
-                    "Invalid endpoint format. Use ws:// or wss:// and include host/port.",
+                    "Invalid endpoint format. Use tcp://, ws://, or wss:// and include host/port.",
                     "Invalid Endpoint",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
@@ -296,11 +305,72 @@ namespace OceanyaClient
                     Address = address,
                     Port = port,
                     Description = description,
-                    Legacy = false,
+                    Legacy = legacy,
                     Secure = secure
                 });
 
-            await RefreshFavoritesOnlyAsync(endpoint.Trim(), switchToFavoritesTab: true);
+            await RefreshFavoritesOnlyAsync(
+                selectEndpoint: endpoint.Trim(),
+                switchToFavoritesTab: true,
+                affectedEndpoints: new[] { selected.Endpoint, endpoint.Trim() });
+        }
+
+        private async void DuplicateFavoriteMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (GetCurrentSelection() is not ServerEndpointDefinition selected || selected.Source != ServerEndpointSource.Favorites)
+            {
+                return;
+            }
+
+            if (!TryShowFavoriteEditor(
+                    "Duplicate Favorite Server",
+                    "ADD FAVORITE",
+                    out string name,
+                    out string endpoint,
+                    out string description,
+                    $"{selected.Name} Copy",
+                    selected.Endpoint,
+                    selected.Description))
+            {
+                return;
+            }
+
+            if (!TryParseDirectConnectionEndpoint(endpoint, out string address, out int port, out bool legacy, out bool secure))
+            {
+                OceanyaMessageBox.Show(
+                    "Invalid endpoint format. Use tcp://, ws://, or wss:// and include host/port.",
+                    "Invalid Endpoint",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            if (TrySelectExistingFavorite(endpoint.Trim(), excludedFavoriteIndex: null))
+            {
+                OceanyaMessageBox.Show(
+                    "That endpoint is already saved in your favorites.",
+                    "Duplicate Favorite",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            ServerEndpointCatalog.AddFavorite(
+                configIniPath,
+                new FavoriteServerEntry
+                {
+                    Name = name,
+                    Address = address,
+                    Port = port,
+                    Description = description,
+                    Legacy = legacy,
+                    Secure = secure
+                });
+
+            await RefreshFavoritesOnlyAsync(
+                selectEndpoint: endpoint.Trim(),
+                switchToFavoritesTab: true,
+                affectedEndpoints: new[] { endpoint.Trim() });
         }
 
         private async void RemoveFavoriteButton_Click(object sender, RoutedEventArgs e)
@@ -326,7 +396,10 @@ namespace OceanyaClient
             }
 
             ServerEndpointCatalog.RemoveFavorite(configIniPath, favoriteIndex);
-            await RefreshFavoritesOnlyAsync(selectEndpoint: string.Empty, switchToFavoritesTab: true);
+            await RefreshFavoritesOnlyAsync(
+                selectEndpoint: string.Empty,
+                switchToFavoritesTab: true,
+                affectedEndpoints: new[] { selected.Endpoint });
         }
 
         private void SelectButton_Click(object sender, RoutedEventArgs e)
@@ -622,54 +695,137 @@ namespace OceanyaClient
             return true;
         }
 
-        private async Task RefreshFavoritesOnlyAsync(string selectEndpoint, bool switchToFavoritesTab)
+        private async Task RefreshFavoritesOnlyAsync(
+            string selectEndpoint,
+            bool switchToFavoritesTab,
+            IEnumerable<string>? affectedEndpoints = null)
         {
-            List<ServerEndpointDefinition> favorites = ServerEndpointCatalog.LoadFavorites(configIniPath);
-
-            foreach (ServerEndpointDefinition favorite in favorites)
+            await WaitForm.ShowFormAsync("Updating favorites...", this);
+            try
             {
-                ServerEndpointDefinition? known = allEntries.FirstOrDefault(server =>
-                    server.Source != ServerEndpointSource.Favorites
-                    && string.Equals(server.Endpoint, favorite.Endpoint, StringComparison.OrdinalIgnoreCase));
+                List<ServerEndpointDefinition> favorites = ServerEndpointCatalog.LoadFavorites(configIniPath);
+                List<ServerEndpointDefinition> existingFavorites = allEntries
+                    .Where(server => server.Source == ServerEndpointSource.Favorites)
+                    .ToList();
 
-                if (known == null)
+                foreach (ServerEndpointDefinition favorite in favorites)
                 {
-                    continue;
+                    ServerEndpointDefinition? known = allEntries.FirstOrDefault(server =>
+                        server.Source != ServerEndpointSource.Favorites
+                        && string.Equals(server.Endpoint, favorite.Endpoint, StringComparison.OrdinalIgnoreCase));
+
+                    known ??= existingFavorites.FirstOrDefault(server =>
+                        string.Equals(server.Endpoint, favorite.Endpoint, StringComparison.OrdinalIgnoreCase));
+
+                    if (known == null)
+                    {
+                        continue;
+                    }
+
+                    favorite.IsOnline = known.IsOnline;
+                    favorite.OnlinePlayers = known.OnlinePlayers;
+                    favorite.MaxPlayers = known.MaxPlayers;
+                    favorite.IsAoClientCompatible = known.IsAoClientCompatible;
                 }
 
-                favorite.IsOnline = known.IsOnline;
-                favorite.OnlinePlayers = known.OnlinePlayers;
-                favorite.MaxPlayers = known.MaxPlayers;
-                favorite.IsAoClientCompatible = known.IsAoClientCompatible;
-            }
+                HashSet<string> affectedEndpointSet = new HashSet<string>(
+                    affectedEndpoints?.Where(endpoint => !string.IsNullOrWhiteSpace(endpoint))
+                        ?? Enumerable.Empty<string>(),
+                    StringComparer.OrdinalIgnoreCase);
 
-            if (!string.IsNullOrWhiteSpace(selectEndpoint))
+                if (affectedEndpointSet.Count > 0)
+                {
+                    List<ServerEndpointDefinition> probeTargets = favorites
+                        .Where(favorite => affectedEndpointSet.Contains(favorite.Endpoint))
+                        .ToList();
+                    await ServerEndpointCatalog.PopulateSupplementalStatusAsync(probeTargets, CancellationToken.None);
+                }
+
+                allEntries.RemoveAll(server => server.Source == ServerEndpointSource.Favorites);
+                allEntries.AddRange(favorites);
+
+                ApplyCurrentFilter();
+                FavoritesListView.Items.Refresh();
+
+                if (switchToFavoritesTab)
+                {
+                    ServerTabs.SelectedIndex = 2;
+                }
+
+                if (!string.IsNullOrWhiteSpace(selectEndpoint))
+                {
+                    SelectByEndpoint(selectEndpoint, ServerEndpointSource.Favorites, switchToMatchedTab: false);
+                }
+
+                int favoriteCount = allEntries.Count(item => item.Source == ServerEndpointSource.Favorites);
+                StatusTextBlock.Text = $"Favorites updated. Total favorites: {favoriteCount}.";
+                UpdateSelectionState();
+            }
+            finally
             {
-                List<ServerEndpointDefinition> targets = favorites
-                    .Where(favorite => string.Equals(favorite.Endpoint, selectEndpoint, StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-                await ServerEndpointCatalog.PopulateSupplementalStatusAsync(targets, CancellationToken.None);
+                await WaitForm.CloseFormAsync();
             }
+        }
 
-            allEntries.RemoveAll(server => server.Source == ServerEndpointSource.Favorites);
-            allEntries.AddRange(favorites);
+        private bool TryShowFavoriteEditor(
+            string windowTitle,
+            string actionText,
+            out string name,
+            out string endpoint,
+            out string description,
+            string defaultName = "My Favorite",
+            string defaultEndpoint = "ws://127.0.0.1:27016",
+            string defaultDescription = "")
+        {
+            return FavoriteServerEditorDialog.ShowDialog(
+                this,
+                out name,
+                out endpoint,
+                out description,
+                windowTitle,
+                actionText,
+                defaultName,
+                defaultEndpoint,
+                defaultDescription);
+        }
 
-            ApplyCurrentFilter();
-
-            if (switchToFavoritesTab)
+        private void ServerListView_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (sender is not ListView listView)
             {
-                ServerTabs.SelectedIndex = 2;
+                return;
             }
 
-            if (!string.IsNullOrWhiteSpace(selectEndpoint))
+            DependencyObject? source = e.OriginalSource as DependencyObject;
+            while (source != null && source is not ListViewItem)
             {
-                SelectByEndpoint(selectEndpoint, ServerEndpointSource.Favorites, switchToMatchedTab: false);
+                source = System.Windows.Media.VisualTreeHelper.GetParent(source);
             }
 
-            int favoriteCount = allEntries.Count(item => item.Source == ServerEndpointSource.Favorites);
-            StatusTextBlock.Text = $"Favorites updated. Total favorites: {favoriteCount}.";
-            UpdateSelectionState();
-            await Task.CompletedTask;
+            if (source is ListViewItem item)
+            {
+                item.IsSelected = true;
+                listView.Focus();
+            }
+        }
+
+        private void CopyIpMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (GetCurrentSelection() is not ServerEndpointDefinition selected)
+            {
+                return;
+            }
+
+            string textToCopy = selected.Endpoint;
+            if (Uri.TryCreate(selected.Endpoint, UriKind.Absolute, out Uri? uri) && uri != null)
+            {
+                textToCopy = uri.IsDefaultPort
+                    ? uri.Host
+                    : $"{uri.Host}:{uri.Port}";
+            }
+
+            Clipboard.SetText(textToCopy);
+            StatusTextBlock.Text = $"Copied '{textToCopy}' to clipboard.";
         }
 
         private IEnumerable<ListView> GetAllListViews()
@@ -819,33 +975,14 @@ namespace OceanyaClient
             return true;
         }
 
-        private static bool TryParseWebsocketEndpoint(string endpoint, out string address, out int port, out bool secure)
+        private static bool TryParseDirectConnectionEndpoint(
+            string endpoint,
+            out string address,
+            out int port,
+            out bool legacy,
+            out bool secure)
         {
-            address = string.Empty;
-            port = 0;
-            secure = false;
-
-            if (!Uri.TryCreate(endpoint?.Trim(), UriKind.Absolute, out Uri? uri) || uri == null)
-            {
-                return false;
-            }
-
-            bool validScheme = string.Equals(uri.Scheme, "ws", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(uri.Scheme, "wss", StringComparison.OrdinalIgnoreCase);
-            if (!validScheme)
-            {
-                return false;
-            }
-
-            if (string.IsNullOrWhiteSpace(uri.Host) || uri.Port <= 0)
-            {
-                return false;
-            }
-
-            address = uri.Host;
-            port = uri.Port;
-            secure = string.Equals(uri.Scheme, "wss", StringComparison.OrdinalIgnoreCase);
-            return true;
+            return ServerEndpointCatalog.TryParseDirectEndpoint(endpoint, out address, out port, out legacy, out secure);
         }
 
         private static bool Contains(string source, string value)

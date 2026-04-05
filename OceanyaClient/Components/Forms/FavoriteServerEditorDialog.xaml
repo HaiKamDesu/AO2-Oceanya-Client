@@ -94,7 +94,7 @@
                            Foreground="#FFF5F7FA"
                            FontSize="18"
                            FontWeight="SemiBold"/>
-                <TextBlock Text="Save a reusable direct-connect endpoint for the multiclient launch flow. WebSocket and secure WebSocket endpoints are both supported."
+                <TextBlock Text="Save a reusable direct-connect endpoint for the multiclient launch flow. TCP, WebSocket, and secure WebSocket endpoints are supported."
                            Margin="0,6,0,0"
                            Foreground="#FFAFBCC8"
                            FontSize="12"
@@ -116,7 +116,7 @@
             <TextBox x:Name="ServerEndpointTextBox"
                      Style="{StaticResource ModernTextBox}"
                      Background="#FF262626"/>
-            <TextBlock Text="Examples: ws://127.0.0.1:27016 or wss://example.com:443"
+            <TextBlock Text="Examples: tcp://127.0.0.1:27016, ws://127.0.0.1:27016, or wss://example.com:443"
                        Style="{StaticResource HelperTextStyle}"/>
         </StackPanel>
 

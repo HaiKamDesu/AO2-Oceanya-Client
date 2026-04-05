@@ -890,11 +890,11 @@ namespace OceanyaClient
                     ICLogControl.AddMessage(
                         targetClient,
                         "Oceanya Client",
-                        "Websocket Disconnected.",
+                        "Connection disconnected.",
                         true,
                         ICMessage.TextColors.Red
                     );
-                    OOCLogControl.AddMessage(targetClient, "Oceanya Client", "Websocket Disconnected.", true);
+                    OOCLogControl.AddMessage(targetClient, "Oceanya Client", "Connection disconnected.", true);
                 });
             };
 

@@ -349,7 +349,7 @@ namespace OceanyaClient
                     Endpoint = selectedServerEndpoint,
                     Description = "Previously selected endpoint.",
                     Source = ServerEndpointSource.Defaults,
-                    IsLegacy = false
+                    IsLegacy = ServerEndpointCatalog.IsLegacyEndpoint(selectedServerEndpoint)
                 };
 
             await ServerEndpointCatalog.PopulateSupplementalStatusAsync(
@@ -466,7 +466,7 @@ namespace OceanyaClient
                     Endpoint = savedEndpoint,
                     Description = "Previously selected endpoint.",
                     Source = ServerEndpointSource.Defaults,
-                    IsLegacy = false
+                    IsLegacy = ServerEndpointCatalog.IsLegacyEndpoint(savedEndpoint)
                 };
             }
 
@@ -531,10 +531,13 @@ namespace OceanyaClient
                 return false;
             }
 
-            bool validScheme = string.Equals(uri.Scheme, "ws", StringComparison.OrdinalIgnoreCase)
+            bool validScheme = string.Equals(uri.Scheme, "tcp", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(uri.Scheme, "ws", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(uri.Scheme, "wss", StringComparison.OrdinalIgnoreCase);
 
-            return validScheme && !string.IsNullOrWhiteSpace(uri.Host);
+            return validScheme
+                && !string.IsNullOrWhiteSpace(uri.Host)
+                && uri.Port > 0;
         }
 
         private void DragWindow(object sender, MouseButtonEventArgs e)

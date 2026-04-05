@@ -38,8 +38,7 @@ namespace OceanyaClient
 
         public bool HasKnownPlayerCounts => OnlinePlayers.HasValue && MaxPlayers.HasValue;
 
-        public bool SupportsDirectConnection => !IsLegacy
-            && InitialConfigurationWindow.IsValidServerEndpoint(Endpoint);
+        public bool SupportsDirectConnection => InitialConfigurationWindow.IsValidServerEndpoint(Endpoint);
 
         public bool IsSelectable => IsOnline && SupportsDirectConnection;
 
@@ -149,7 +148,7 @@ namespace OceanyaClient
         {
             List<ServerEndpointDefinition> pollServers = await LoadAoServerPollAsync(configIniPath, cancellationToken);
             await PopulateAoPlayerCountsAsync(
-                pollServers.Where(server => !server.IsLegacy),
+                pollServers,
                 cancellationToken);
             List<ServerEndpointDefinition> defaultServers = LoadDefaultServers();
             List<ServerEndpointDefinition> favoriteServers = LoadFavorites(configIniPath);
@@ -263,6 +262,48 @@ namespace OceanyaClient
             return favorites.FindIndex(favorite => string.Equals(favorite.Endpoint, endpoint, StringComparison.OrdinalIgnoreCase));
         }
 
+        internal static bool TryParseDirectEndpoint(
+            string endpoint,
+            out string address,
+            out int port,
+            out bool legacy,
+            out bool secure)
+        {
+            address = string.Empty;
+            port = 0;
+            legacy = false;
+            secure = false;
+
+            if (!Uri.TryCreate(endpoint?.Trim(), UriKind.Absolute, out Uri? uri) || uri == null)
+            {
+                return false;
+            }
+
+            bool validScheme = string.Equals(uri.Scheme, "tcp", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(uri.Scheme, "ws", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(uri.Scheme, "wss", StringComparison.OrdinalIgnoreCase);
+            if (!validScheme)
+            {
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(uri.Host) || uri.Port <= 0)
+            {
+                return false;
+            }
+
+            address = uri.Host;
+            port = uri.Port;
+            legacy = string.Equals(uri.Scheme, "tcp", StringComparison.OrdinalIgnoreCase);
+            secure = string.Equals(uri.Scheme, "wss", StringComparison.OrdinalIgnoreCase);
+            return true;
+        }
+
+        internal static bool IsLegacyEndpoint(string endpoint)
+        {
+            return TryParseDirectEndpoint(endpoint, out _, out _, out bool legacy, out _) && legacy;
+        }
+
         internal static string GetNotSelectableReason(ServerEndpointDefinition server)
         {
             List<string> reasons = new List<string>();
@@ -272,14 +313,9 @@ namespace OceanyaClient
                 reasons.Add("Server appears offline.");
             }
 
-            if (server.IsLegacy)
-            {
-                reasons.Add("Legacy TCP server (no WebSocket support).");
-            }
-
             if (!InitialConfigurationWindow.IsValidServerEndpoint(server.Endpoint))
             {
-                reasons.Add("Invalid WebSocket endpoint.");
+                reasons.Add("Invalid server endpoint.");
             }
 
             if (reasons.Count == 0)
@@ -696,13 +732,31 @@ namespace OceanyaClient
                 return new AoPlayerCountProbeResult();
             }
 
-            bool validScheme = string.Equals(uri.Scheme, "ws", StringComparison.OrdinalIgnoreCase)
+            bool isWebSocket = string.Equals(uri.Scheme, "ws", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(uri.Scheme, "wss", StringComparison.OrdinalIgnoreCase);
-            if (!validScheme)
+            bool isTcp = string.Equals(uri.Scheme, "tcp", StringComparison.OrdinalIgnoreCase);
+            if (!isWebSocket && !isTcp)
             {
                 return new AoPlayerCountProbeResult();
             }
 
+            using CancellationTokenSource timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(AoProbeTimeoutMs);
+            CancellationToken timeoutToken = timeoutCts.Token;
+
+            if (isWebSocket)
+            {
+                return await ProbeAoPlayerCountOverWebSocketAsync(uri, timeoutToken, captureTranscript);
+            }
+
+            return await ProbeAoPlayerCountOverTcpAsync(uri, timeoutToken, captureTranscript);
+        }
+
+        private static async Task<AoPlayerCountProbeResult> ProbeAoPlayerCountOverWebSocketAsync(
+            Uri uri,
+            CancellationToken cancellationToken,
+            bool captureTranscript)
+        {
             AoPlayerCountProbeResult result = new AoPlayerCountProbeResult();
             try
             {
@@ -711,19 +765,15 @@ namespace OceanyaClient
                     "User-Agent",
                     $"AttorneyOnline/{AoProbeClientVersion} (Desktop)");
 
-                using CancellationTokenSource timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                timeoutCts.CancelAfter(AoProbeTimeoutMs);
-                CancellationToken timeoutToken = timeoutCts.Token;
-
-                await webSocket.ConnectAsync(uri, timeoutToken);
+                await webSocket.ConnectAsync(uri, cancellationToken);
 
                 string hdid = Guid.NewGuid().ToString();
                 StringBuilder packetBuffer = new StringBuilder();
                 ArraySegment<byte> buffer = new ArraySegment<byte>(new byte[8192]);
 
-                while (webSocket.State == WebSocketState.Open && !timeoutToken.IsCancellationRequested)
+                while (webSocket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
                 {
-                    WebSocketReceiveResult receiveResult = await webSocket.ReceiveAsync(buffer, timeoutToken);
+                    WebSocketReceiveResult receiveResult = await webSocket.ReceiveAsync(buffer, cancellationToken);
                     if (receiveResult.MessageType == WebSocketMessageType.Close)
                     {
                         break;
@@ -737,19 +787,8 @@ namespace OceanyaClient
                     string text = Encoding.UTF8.GetString(buffer.Array!, 0, receiveResult.Count);
                     packetBuffer.Append(text);
 
-                    bool keepParsing = true;
-                    while (keepParsing)
+                    while (TryTakeBufferedProbePacket(packetBuffer, out string packet))
                     {
-                        string current = packetBuffer.ToString();
-                        int packetEnd = current.IndexOf("#%", StringComparison.Ordinal);
-                        if (packetEnd < 0)
-                        {
-                            keepParsing = false;
-                            continue;
-                        }
-
-                        string packet = current.Substring(0, packetEnd + 1); // include trailing '#'
-                        packetBuffer.Remove(0, packetEnd + 2);
                         if (captureTranscript)
                         {
                             result.ReceivedPackets.Add(packet);
@@ -763,19 +802,11 @@ namespace OceanyaClient
                                 result.SentPackets.Add(outgoingPacket);
                             }
 
-                            await SendWsPacketAsync(webSocket, outgoingPacket, timeoutToken);
+                            await SendWsPacketAsync(webSocket, outgoingPacket, cancellationToken);
                         }
 
                         if (TryParseProbePlayerCountPacket(packet, out int players, out int maxPlayers))
                         {
-                            if (webSocket.State == WebSocketState.Open)
-                            {
-                                await webSocket.CloseAsync(
-                                    WebSocketCloseStatus.NormalClosure,
-                                    "Probe complete",
-                                    CancellationToken.None);
-                            }
-
                             result.Success = true;
                             result.Players = players;
                             result.MaxPlayers = maxPlayers;
@@ -784,14 +815,76 @@ namespace OceanyaClient
 
                         if (packet.StartsWith("BD#", StringComparison.OrdinalIgnoreCase))
                         {
-                            if (webSocket.State == WebSocketState.Open)
+                            TryParseProbeRejectionPacket(packet, out string rejectionReason);
+                            result.RejectionReason = rejectionReason;
+                            result.IncompatibleClient = LooksLikeIncompatibleClientRejection(rejectionReason);
+                            return result;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                return result;
+            }
+
+            return result;
+        }
+
+        private static async Task<AoPlayerCountProbeResult> ProbeAoPlayerCountOverTcpAsync(
+            Uri uri,
+            CancellationToken cancellationToken,
+            bool captureTranscript)
+        {
+            AoPlayerCountProbeResult result = new AoPlayerCountProbeResult();
+            try
+            {
+                using TcpClient client = new TcpClient();
+                await client.ConnectAsync(uri.Host, uri.Port, cancellationToken);
+                using NetworkStream stream = client.GetStream();
+
+                string hdid = Guid.NewGuid().ToString();
+                StringBuilder packetBuffer = new StringBuilder();
+                byte[] buffer = new byte[8192];
+
+                while (client.Connected && !cancellationToken.IsCancellationRequested)
+                {
+                    int bytesRead = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
+                    if (bytesRead <= 0)
+                    {
+                        break;
+                    }
+
+                    packetBuffer.Append(Encoding.UTF8.GetString(buffer, 0, bytesRead));
+
+                    while (TryTakeBufferedProbePacket(packetBuffer, out string packet))
+                    {
+                        if (captureTranscript)
+                        {
+                            result.ReceivedPackets.Add(packet);
+                        }
+
+                        List<string> outgoingPackets = GetProbeFollowUpPackets(packet, hdid);
+                        foreach (string outgoingPacket in outgoingPackets)
+                        {
+                            if (captureTranscript)
                             {
-                                await webSocket.CloseAsync(
-                                    WebSocketCloseStatus.NormalClosure,
-                                    "Probe rejected by server",
-                                    CancellationToken.None);
+                                result.SentPackets.Add(outgoingPacket);
                             }
 
+                            await SendTcpPacketAsync(stream, outgoingPacket, cancellationToken);
+                        }
+
+                        if (TryParseProbePlayerCountPacket(packet, out int players, out int maxPlayers))
+                        {
+                            result.Success = true;
+                            result.Players = players;
+                            result.MaxPlayers = maxPlayers;
+                            return result;
+                        }
+
+                        if (packet.StartsWith("BD#", StringComparison.OrdinalIgnoreCase))
+                        {
                             TryParseProbeRejectionPacket(packet, out string rejectionReason);
                             result.RejectionReason = rejectionReason;
                             result.IncompatibleClient = LooksLikeIncompatibleClientRejection(rejectionReason);
@@ -909,6 +1002,29 @@ namespace OceanyaClient
                 WebSocketMessageType.Text,
                 endOfMessage: true,
                 cancellationToken);
+        }
+
+        private static async Task SendTcpPacketAsync(NetworkStream stream, string packet, CancellationToken cancellationToken)
+        {
+            byte[] bytes = Encoding.UTF8.GetBytes(packet);
+            await stream.WriteAsync(bytes.AsMemory(0, bytes.Length), cancellationToken);
+            await stream.FlushAsync(cancellationToken);
+        }
+
+        private static bool TryTakeBufferedProbePacket(StringBuilder packetBuffer, out string packet)
+        {
+            packet = string.Empty;
+
+            string current = packetBuffer.ToString();
+            int packetEnd = current.IndexOf("#%", StringComparison.Ordinal);
+            if (packetEnd < 0)
+            {
+                return false;
+            }
+
+            packet = current.Substring(0, packetEnd + 1);
+            packetBuffer.Remove(0, packetEnd + 2);
+            return true;
         }
 
         private static int? GetCountValue(JsonElement source, params string[] keys)

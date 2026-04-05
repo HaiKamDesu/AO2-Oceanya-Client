@@ -252,7 +252,15 @@
                                           Style="{StaticResource ServerListViewStyle}"
                                           ItemContainerStyle="{StaticResource ServerListItemStyle}"
                                           SelectionChanged="ServerListView_SelectionChanged"
+                                          PreviewMouseRightButtonDown="ServerListView_PreviewMouseRightButtonDown"
                                           MouseDoubleClick="ServerListView_MouseDoubleClick">
+                                    <ListView.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="Add To Favorites" Click="AddFavoriteButton_Click"/>
+                                            <Separator/>
+                                            <MenuItem Header="Copy IP" Click="CopyIpMenuItem_Click"/>
+                                        </ContextMenu>
+                                    </ListView.ContextMenu>
                                     <ListView.View>
                                         <GridView ColumnHeaderContainerStyle="{StaticResource ServerGridHeaderStyle}">
                                             <GridViewColumn Header="ID" Width="44" DisplayMemberBinding="{Binding DisplayId}"/>
@@ -270,7 +278,15 @@
                                           Style="{StaticResource ServerListViewStyle}"
                                           ItemContainerStyle="{StaticResource ServerListItemStyle}"
                                           SelectionChanged="ServerListView_SelectionChanged"
+                                          PreviewMouseRightButtonDown="ServerListView_PreviewMouseRightButtonDown"
                                           MouseDoubleClick="ServerListView_MouseDoubleClick">
+                                    <ListView.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="Add To Favorites" Click="AddFavoriteButton_Click"/>
+                                            <Separator/>
+                                            <MenuItem Header="Copy IP" Click="CopyIpMenuItem_Click"/>
+                                        </ContextMenu>
+                                    </ListView.ContextMenu>
                                     <ListView.View>
                                         <GridView ColumnHeaderContainerStyle="{StaticResource ServerGridHeaderStyle}">
                                             <GridViewColumn Header="ID" Width="44" DisplayMemberBinding="{Binding DisplayId}"/>
@@ -288,7 +304,19 @@
                                           Style="{StaticResource ServerListViewStyle}"
                                           ItemContainerStyle="{StaticResource ServerListItemStyle}"
                                           SelectionChanged="ServerListView_SelectionChanged"
+                                          PreviewMouseRightButtonDown="ServerListView_PreviewMouseRightButtonDown"
                                           MouseDoubleClick="ServerListView_MouseDoubleClick">
+                                    <ListView.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="Add Favorite" Click="AddFavoriteButton_Click"/>
+                                            <MenuItem Header="Edit Favorite" Click="EditFavoriteButton_Click"/>
+                                            <MenuItem Header="Duplicate Favorite" Click="DuplicateFavoriteMenuItem_Click"/>
+                                            <Separator/>
+                                            <MenuItem Header="Copy IP" Click="CopyIpMenuItem_Click"/>
+                                            <Separator/>
+                                            <MenuItem Header="Remove Favorite" Click="RemoveFavoriteButton_Click"/>
+                                        </ContextMenu>
+                                    </ListView.ContextMenu>
                                     <ListView.View>
                                         <GridView ColumnHeaderContainerStyle="{StaticResource ServerGridHeaderStyle}">
                                             <GridViewColumn Header="ID" Width="44" DisplayMemberBinding="{Binding DisplayId}"/>
