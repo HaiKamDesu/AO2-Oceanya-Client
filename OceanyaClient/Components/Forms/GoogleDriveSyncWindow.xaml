@@ -71,6 +71,117 @@
             <Setter Property="VerticalAlignment" Value="Center"/>
         </Style>
 
+        <Style x:Key="DarkComboBoxItemStyle" TargetType="ComboBoxItem">
+            <Setter Property="Foreground" Value="#FFECECEC"/>
+            <Setter Property="Background" Value="#FF1F1F1F"/>
+            <Setter Property="Padding" Value="10,4"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="ItemBorder" Background="{TemplateBinding Background}">
+                            <ContentPresenter VerticalAlignment="Center"
+                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#FF36506A"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#FF3D5E7F"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="DarkComboBoxStyle" TargetType="ComboBox">
+            <Setter Property="Foreground" Value="#FFF0F0F0"/>
+            <Setter Property="Background" Value="#FF262626"/>
+            <Setter Property="BorderBrush" Value="#FF444444"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="10,0,28,0"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="ItemContainerStyle" Value="{StaticResource DarkComboBoxItemStyle}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid SnapsToDevicePixels="True">
+                            <Border x:Name="MainBorder"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="3"/>
+
+                            <ToggleButton x:Name="DropdownToggle"
+                                          Focusable="False"
+                                          ClickMode="Press"
+                                          HorizontalAlignment="Stretch"
+                                          VerticalAlignment="Stretch"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                          Background="Transparent"
+                                          BorderThickness="0">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border Background="Transparent"/>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+
+                            <ContentPresenter Margin="{TemplateBinding Padding}"
+                                              VerticalAlignment="Center"
+                                              HorizontalAlignment="Stretch"
+                                              IsHitTestVisible="False"
+                                              Content="{TemplateBinding SelectionBoxItem}"
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                              TextElement.Foreground="{TemplateBinding Foreground}"/>
+
+                            <Path HorizontalAlignment="Right"
+                                  VerticalAlignment="Center"
+                                  Margin="0,0,10,0"
+                                  IsHitTestVisible="False"
+                                  Fill="#FFDCDCDC"
+                                  Data="M 0 0 L 8 0 L 4 5 Z"/>
+
+                            <Popup x:Name="PART_Popup"
+                                   Placement="Bottom"
+                                   IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   AllowsTransparency="True"
+                                   Focusable="False"
+                                   PopupAnimation="Fade">
+                                <Border Margin="0,2,0,0"
+                                        MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
+                                        Background="#FF1F1F1F"
+                                        BorderBrush="#FF4A4A4A"
+                                        BorderThickness="1"
+                                        CornerRadius="3">
+                                    <ScrollViewer CanContentScroll="True" MaxHeight="320">
+                                        <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="MainBorder" Property="Background" Value="#FF2A2A2A"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                <Setter TargetName="MainBorder" Property="BorderBrush" Value="#FF6E93BB"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="MainBorder" Property="Background" Value="#FF1A1A1A"/>
+                                <Setter Property="Foreground" Value="#FF7A7A7A"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="LabelText" TargetType="TextBlock">
             <Setter Property="Foreground" Value="#FFD4D4D4"/>
             <Setter Property="FontSize" Value="13"/>
@@ -303,22 +414,40 @@
 
                     <TextBlock Margin="0,10,0,0"
                                Style="{StaticResource BodyHintText}"
-                               Text="Once the Google Cloud section is configured and verified, users only need to click Sign In and complete the normal Google browser login."/>
+                               Text="Saved Google accounts stay encrypted in local token storage and can be reused across compatible Drive connections. Add accounts here, choose which one this connection should use, or remove an account to sign it out everywhere on this machine for this Drive app setup."/>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,12,0,5">
+                        <TextBlock Text="ACCOUNT"
+                                   Style="{StaticResource LabelText}"
+                                   Margin="0"
+                                   VerticalAlignment="Center"/>
+                        <Button Content="(?)"
+                                Style="{StaticResource HelpBadgeStyle}"
+                                ToolTip="Only accounts signed into the same Google Cloud Desktop app credentials can be reused by this connection. Sign In always reopens Google's account chooser so you can switch accounts explicitly."/>
+                    </StackPanel>
+                    <ComboBox x:Name="GoogleAccountComboBox"
+                              Style="{StaticResource DarkComboBoxStyle}"
+                              DisplayMemberPath="DisplayLabel"
+                              SelectionChanged="GoogleAccountComboBox_SelectionChanged"/>
+                    <TextBlock x:Name="GoogleAccountEmptyStateTextBlock"
+                               Margin="0,8,0,0"
+                               Style="{StaticResource BodyHintText}"
+                               Text="No compatible Google account is saved for this connection yet. Use Sign In to add one."/>
 
                     <WrapPanel Margin="0,12,0,0">
                         <Button x:Name="SignInButton"
                                 Width="110"
-                                Content="Sign In"
+                                Content="Add Account"
                                 Style="{StaticResource ModernButton}"
                                 Click="SignInButton_Click"
-                                ToolTip="Open Google's normal browser sign-in page with this connection's Google Cloud client and store the returned user tokens securely for this Windows user."/>
+                                ToolTip="Open Google's account chooser in the browser and add or refresh a Google account for this connection's Google Cloud Desktop app."/>
                         <Button x:Name="SignOutButton"
                                 Width="110"
                                 Margin="8,0,0,0"
-                                Content="Sign Out"
+                                Content="Delete Account"
                                 Style="{StaticResource ModernButton}"
                                 Click="SignOutButton_Click"
-                                ToolTip="Delete the locally stored encrypted Google user tokens for this sync connection. This does not delete the Google Cloud client secret."/>
+                                ToolTip="Delete the selected locally stored encrypted Google user tokens. Any saved connections using that account will become signed out."/>
                     </WrapPanel>
 
                     <StackPanel Orientation="Horizontal" Margin="0,12,0,5">

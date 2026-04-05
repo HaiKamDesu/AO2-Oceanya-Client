@@ -24,12 +24,14 @@ namespace OceanyaClient.Features.GoogleDriveSync
 
         public async Task<GoogleDriveUserInfo> SignInAsync(
             GoogleDriveSyncSettings settings,
+            bool forceAccountSelection,
             CancellationToken cancellationToken)
         {
             GoogleDriveOAuthClientConfiguration configuration = BuildConfiguration(settings);
             GoogleDriveTokenSet tokens = await oauthService.SignInInteractiveAsync(
                 configuration,
                 settings.LastSignedInEmail,
+                forceAccountSelection,
                 cancellationToken);
             tokenStore.Save(settings.TokenStoreKey, tokens);
 

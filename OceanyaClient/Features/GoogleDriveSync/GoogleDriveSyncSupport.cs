@@ -494,6 +494,325 @@ namespace OceanyaClient.Features.GoogleDriveSync
         }
     }
 
+    public static class GoogleDriveSignedInAccountManager
+    {
+        public static List<GoogleDriveSignedInAccount> GetCompatibleAccounts(
+            FileHivemindSettings fileHivemind,
+            GoogleDriveSyncSettings settings,
+            GoogleDriveSecureClientCredentialStore? credentialStore = null)
+        {
+            if (fileHivemind == null || settings == null)
+            {
+                return new List<GoogleDriveSignedInAccount>();
+            }
+
+            string credentialFingerprint = GetCredentialFingerprint(settings, credentialStore);
+            if (string.IsNullOrWhiteSpace(credentialFingerprint))
+            {
+                return new List<GoogleDriveSignedInAccount>();
+            }
+
+            return (fileHivemind.GoogleDriveAccounts ?? new List<GoogleDriveSignedInAccount>())
+                .Where(account => string.Equals(
+                    account.CredentialFingerprint?.Trim() ?? string.Empty,
+                    credentialFingerprint,
+                    StringComparison.Ordinal))
+                .OrderByDescending(account => account.LastUsedUtc ?? DateTimeOffset.MinValue)
+                .ThenByDescending(account => account.LastSignedInUtc ?? DateTimeOffset.MinValue)
+                .ThenBy(account => account.Email ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        public static void MigrateLegacyConnectionSelections(
+            FileHivemindSettings fileHivemind,
+            IReadOnlyCollection<FileHivemindConnectionProfile>? connections,
+            GoogleDriveSecureClientCredentialStore? credentialStore = null)
+        {
+            if (fileHivemind == null || connections == null)
+            {
+                return;
+            }
+
+            foreach (FileHivemindConnectionProfile connection in connections)
+            {
+                if (connection?.GoogleDrive == null)
+                {
+                    continue;
+                }
+
+                GoogleDriveSyncSettings settings = connection.GoogleDrive;
+                if (string.IsNullOrWhiteSpace(settings.TokenStoreKey)
+                    || (string.IsNullOrWhiteSpace(settings.LastSignedInEmail)
+                        && string.IsNullOrWhiteSpace(settings.LastSignedInDisplayName)))
+                {
+                    continue;
+                }
+
+                string credentialFingerprint = GetCredentialFingerprint(settings, credentialStore);
+                if (string.IsNullOrWhiteSpace(credentialFingerprint))
+                {
+                    continue;
+                }
+
+                List<GoogleDriveSignedInAccount> accounts = fileHivemind.GoogleDriveAccounts ??= new List<GoogleDriveSignedInAccount>();
+                bool alreadyTracked = accounts.Any(account => string.Equals(
+                    account.TokenStoreKey?.Trim() ?? string.Empty,
+                    settings.TokenStoreKey?.Trim() ?? string.Empty,
+                    StringComparison.OrdinalIgnoreCase));
+                if (alreadyTracked)
+                {
+                    continue;
+                }
+
+                accounts.Add(new GoogleDriveSignedInAccount
+                {
+                    TokenStoreKey = settings.TokenStoreKey?.Trim() ?? string.Empty,
+                    Email = settings.LastSignedInEmail?.Trim() ?? string.Empty,
+                    DisplayName = settings.LastSignedInDisplayName?.Trim() ?? string.Empty,
+                    CredentialFingerprint = credentialFingerprint,
+                    LastUsedUtc = settings.LastSyncUtc,
+                    LastSignedInUtc = settings.LastSyncUtc
+                });
+            }
+        }
+
+        public static GoogleDriveSignedInAccount? ApplyDefaultAccountToConnection(
+            FileHivemindSettings fileHivemind,
+            GoogleDriveSyncSettings settings,
+            GoogleDriveSecureClientCredentialStore? credentialStore = null)
+        {
+            if (fileHivemind == null || settings == null)
+            {
+                return null;
+            }
+
+            List<GoogleDriveSignedInAccount> compatibleAccounts = GetCompatibleAccounts(fileHivemind, settings, credentialStore);
+            if (compatibleAccounts.Count == 0)
+            {
+                return null;
+            }
+
+            string currentTokenStoreKey = settings.TokenStoreKey?.Trim() ?? string.Empty;
+            GoogleDriveSignedInAccount? selectedAccount = compatibleAccounts.FirstOrDefault(account =>
+                string.Equals(account.TokenStoreKey, currentTokenStoreKey, StringComparison.OrdinalIgnoreCase));
+            if (selectedAccount == null)
+            {
+                string lastSelectedKey = fileHivemind.LastSelectedGoogleDriveAccountTokenStoreKey?.Trim() ?? string.Empty;
+                if (compatibleAccounts.Count == 1)
+                {
+                    selectedAccount = compatibleAccounts[0];
+                }
+                else if (!string.IsNullOrWhiteSpace(lastSelectedKey))
+                {
+                    selectedAccount = compatibleAccounts.FirstOrDefault(account =>
+                        string.Equals(account.TokenStoreKey, lastSelectedKey, StringComparison.OrdinalIgnoreCase));
+                }
+
+                selectedAccount ??= compatibleAccounts[0];
+            }
+
+            ApplyAccountToConnection(fileHivemind, settings, selectedAccount);
+            return selectedAccount;
+        }
+
+        public static void ApplyAccountToConnection(
+            FileHivemindSettings fileHivemind,
+            GoogleDriveSyncSettings settings,
+            GoogleDriveSignedInAccount account)
+        {
+            if (fileHivemind == null)
+            {
+                throw new ArgumentNullException(nameof(fileHivemind));
+            }
+
+            if (settings == null)
+            {
+                throw new ArgumentNullException(nameof(settings));
+            }
+
+            if (account == null)
+            {
+                throw new ArgumentNullException(nameof(account));
+            }
+
+            settings.TokenStoreKey = account.TokenStoreKey?.Trim() ?? string.Empty;
+            settings.LastSignedInEmail = account.Email?.Trim() ?? string.Empty;
+            settings.LastSignedInDisplayName = account.DisplayName?.Trim() ?? string.Empty;
+            account.LastUsedUtc = DateTimeOffset.UtcNow;
+            fileHivemind.LastSelectedGoogleDriveAccountTokenStoreKey = settings.TokenStoreKey;
+        }
+
+        public static void ClearConnectionSelection(GoogleDriveSyncSettings settings)
+        {
+            if (settings == null)
+            {
+                return;
+            }
+
+            settings.TokenStoreKey = string.Empty;
+            settings.LastSignedInEmail = string.Empty;
+            settings.LastSignedInDisplayName = string.Empty;
+        }
+
+        public static GoogleDriveSignedInAccount RegisterSignedInAccount(
+            FileHivemindSettings fileHivemind,
+            GoogleDriveSyncSettings settings,
+            GoogleDriveUserInfo user,
+            GoogleDriveSecureClientCredentialStore? credentialStore = null,
+            GoogleDriveSecureTokenStore? tokenStore = null)
+        {
+            if (fileHivemind == null)
+            {
+                throw new ArgumentNullException(nameof(fileHivemind));
+            }
+
+            if (settings == null)
+            {
+                throw new ArgumentNullException(nameof(settings));
+            }
+
+            if (user == null)
+            {
+                throw new ArgumentNullException(nameof(user));
+            }
+
+            string credentialFingerprint = GetCredentialFingerprint(settings, credentialStore);
+            if (string.IsNullOrWhiteSpace(credentialFingerprint))
+            {
+                throw new InvalidOperationException("Google account registration requires configured Google Cloud credentials.");
+            }
+
+            string email = user.EmailAddress?.Trim() ?? string.Empty;
+            string displayName = user.DisplayName?.Trim() ?? string.Empty;
+            string currentTokenStoreKey = settings.TokenStoreKey?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(currentTokenStoreKey))
+            {
+                currentTokenStoreKey = Guid.NewGuid().ToString("N");
+                settings.TokenStoreKey = currentTokenStoreKey;
+            }
+
+            List<GoogleDriveSignedInAccount> accounts = fileHivemind.GoogleDriveAccounts ??= new List<GoogleDriveSignedInAccount>();
+            GoogleDriveSignedInAccount? existingAccount = accounts.FirstOrDefault(account =>
+                string.Equals(account.CredentialFingerprint?.Trim() ?? string.Empty, credentialFingerprint, StringComparison.Ordinal)
+                && string.Equals(account.Email?.Trim() ?? string.Empty, email, StringComparison.OrdinalIgnoreCase));
+
+            if (existingAccount != null
+                && !string.Equals(existingAccount.TokenStoreKey, currentTokenStoreKey, StringComparison.OrdinalIgnoreCase))
+            {
+                GoogleDriveSecureTokenStore effectiveTokenStore = tokenStore ?? new GoogleDriveSecureTokenStore();
+                GoogleDriveTokenSet? currentTokens = effectiveTokenStore.Load(currentTokenStoreKey);
+                if (currentTokens != null)
+                {
+                    effectiveTokenStore.Save(existingAccount.TokenStoreKey, currentTokens);
+                    effectiveTokenStore.Delete(currentTokenStoreKey);
+                }
+
+                settings.TokenStoreKey = existingAccount.TokenStoreKey;
+            }
+
+            GoogleDriveSignedInAccount accountRecord = existingAccount ?? new GoogleDriveSignedInAccount
+            {
+                TokenStoreKey = settings.TokenStoreKey?.Trim() ?? string.Empty,
+                CredentialFingerprint = credentialFingerprint
+            };
+            accountRecord.TokenStoreKey = settings.TokenStoreKey?.Trim() ?? string.Empty;
+            accountRecord.Email = email;
+            accountRecord.DisplayName = displayName;
+            accountRecord.CredentialFingerprint = credentialFingerprint;
+            accountRecord.LastSignedInUtc = DateTimeOffset.UtcNow;
+            accountRecord.LastUsedUtc = DateTimeOffset.UtcNow;
+
+            if (existingAccount == null)
+            {
+                accounts.Add(accountRecord);
+            }
+
+            ApplyAccountToConnection(fileHivemind, settings, accountRecord);
+            return accountRecord;
+        }
+
+        public static int SignOutAccount(
+            FileHivemindSettings fileHivemind,
+            string tokenStoreKey,
+            IReadOnlyCollection<FileHivemindConnectionProfile>? connections = null,
+            GoogleDriveSecureTokenStore? tokenStore = null)
+        {
+            if (fileHivemind == null)
+            {
+                throw new ArgumentNullException(nameof(fileHivemind));
+            }
+
+            string normalizedTokenStoreKey = tokenStoreKey?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(normalizedTokenStoreKey))
+            {
+                return 0;
+            }
+
+            GoogleDriveSecureTokenStore effectiveTokenStore = tokenStore ?? new GoogleDriveSecureTokenStore();
+            effectiveTokenStore.Delete(normalizedTokenStoreKey);
+
+            List<GoogleDriveSignedInAccount> accounts = fileHivemind.GoogleDriveAccounts ??= new List<GoogleDriveSignedInAccount>();
+            accounts.RemoveAll(account => string.Equals(
+                account.TokenStoreKey?.Trim() ?? string.Empty,
+                normalizedTokenStoreKey,
+                StringComparison.OrdinalIgnoreCase));
+
+            if (string.Equals(
+                fileHivemind.LastSelectedGoogleDriveAccountTokenStoreKey?.Trim() ?? string.Empty,
+                normalizedTokenStoreKey,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                fileHivemind.LastSelectedGoogleDriveAccountTokenStoreKey = string.Empty;
+            }
+
+            int clearedConnections = 0;
+            if (connections != null)
+            {
+                foreach (FileHivemindConnectionProfile connection in connections)
+                {
+                    if (connection?.GoogleDrive == null)
+                    {
+                        continue;
+                    }
+
+                    if (!string.Equals(
+                            connection.GoogleDrive.TokenStoreKey?.Trim() ?? string.Empty,
+                            normalizedTokenStoreKey,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    ClearConnectionSelection(connection.GoogleDrive);
+                    clearedConnections++;
+                }
+            }
+
+            return clearedConnections;
+        }
+
+        public static string GetCredentialFingerprint(
+            GoogleDriveSyncSettings settings,
+            GoogleDriveSecureClientCredentialStore? credentialStore = null)
+        {
+            if (!GoogleDriveConnectionCredentialSupport.TryBuildConfiguration(
+                    settings,
+                    out GoogleDriveOAuthClientConfiguration configuration,
+                    out _,
+                    credentialStore,
+                    allowLegacyFallback: false))
+            {
+                return string.Empty;
+            }
+
+            string payload = (configuration.ClientId?.Trim() ?? string.Empty)
+                + "\n"
+                + (configuration.ClientSecret?.Trim() ?? string.Empty);
+            byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(payload));
+            return Convert.ToHexString(hash);
+        }
+    }
+
     public static class GoogleDriveInviteSerializer
     {
         public static string Serialize(GoogleDriveInvite invite)

@@ -12,12 +12,45 @@ namespace OceanyaClient
     public sealed class FileHivemindSettings
     {
         public List<FileHivemindConnectionProfile> Connections { get; set; } = new List<FileHivemindConnectionProfile>();
+        public List<GoogleDriveSignedInAccount> GoogleDriveAccounts { get; set; } = new List<GoogleDriveSignedInAccount>();
+        public string LastSelectedGoogleDriveAccountTokenStoreKey { get; set; } = string.Empty;
         public string SelectedConnectionId { get; set; } = string.Empty;
         public bool RunAgentAtStartup { get; set; }
         public bool ShowDesktopToasts { get; set; }
         public bool DesktopToastPreferenceConfigured { get; set; }
         public bool BackgroundStartupPreferenceConfigured { get; set; }
         public int RemotePollIntervalSeconds { get; set; } = 20;
+    }
+
+    public sealed class GoogleDriveSignedInAccount
+    {
+        public string TokenStoreKey { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
+        public string DisplayName { get; set; } = string.Empty;
+        public string CredentialFingerprint { get; set; } = string.Empty;
+        public DateTimeOffset? LastUsedUtc { get; set; }
+        public DateTimeOffset? LastSignedInUtc { get; set; }
+
+        [JsonIgnore]
+        public string DisplayLabel
+        {
+            get
+            {
+                string email = Email?.Trim() ?? string.Empty;
+                string displayName = DisplayName?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(displayName) && !string.IsNullOrWhiteSpace(email))
+                {
+                    return displayName + " <" + email + ">";
+                }
+
+                return string.IsNullOrWhiteSpace(displayName) ? email : displayName;
+            }
+        }
+
+        public override string ToString()
+        {
+            return DisplayLabel;
+        }
     }
 
     public sealed class FileHivemindConnectionProfile

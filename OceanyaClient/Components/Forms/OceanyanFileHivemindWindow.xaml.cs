@@ -81,6 +81,10 @@ namespace OceanyaClient
             this.syncService = syncService ?? new GoogleDriveSyncService();
             runtimeStateStore = new GoogleDriveConnectionRuntimeStateStore();
             credentialStore = new GoogleDriveSecureClientCredentialStore();
+            GoogleDriveSignedInAccountManager.MigrateLegacyConnectionSelections(
+                SaveFile.Data.FileHivemind,
+                SaveFile.Data.FileHivemind.Connections,
+                credentialStore);
             backgroundAgentLauncher = new FileHivemindBackgroundAgentLauncher();
             backgroundLogStore = new FileHivemindBackgroundLogStore();
             this.manageStartupWaitForm = manageStartupWaitForm;
@@ -683,28 +687,35 @@ namespace OceanyaClient
                 FileHivemindConnectionProfile parsedConnection = FileHivemindConnectionExchangeSerializer.Parse(fileText);
                 FileHivemindConnectionProfile importConnection = BuildImportedConnection(parsedConnection);
 
-                MessageBoxResult signInDecision = OceanyaMessageBox.Show(
-                    owner,
-                    "Oceanya will import this shared connection, open Google sign-in, create the local mirror automatically, and sync it once. Continue?",
-                    "Import Hivemind Connection",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Question);
-                if (signInDecision != MessageBoxResult.Yes)
+                GoogleDriveSignedInAccount? selectedAccount = PromptForImportedConnectionAccount(owner, importConnection);
+                if (selectedAccount == null)
                 {
-                    AppendStatus("Connection import was canceled before Google sign-in.", StatusLogLevel.Warning);
+                    AppendStatus("Connection import was canceled before selecting a Google account.", StatusLogLevel.Warning);
                     return;
                 }
 
-                AppendStatus("Opening browser for Google Drive sign-in to finish the imported connection.", StatusLogLevel.Action);
-                GoogleDriveUserInfo user = await syncService.SignInAsync(importConnection.GoogleDrive, CancellationToken.None);
-                BringHostWindowToFront();
+                if (string.IsNullOrWhiteSpace(importConnection.GoogleDrive.LastSignedInEmail))
+                {
+                    AppendStatus("Opening browser for Google Drive sign-in to finish the imported connection.", StatusLogLevel.Action);
+                    GoogleDriveUserInfo user = await syncService.SignInAsync(
+                        importConnection.GoogleDrive,
+                        forceAccountSelection: true,
+                        CancellationToken.None);
+                    GoogleDriveSignedInAccountManager.RegisterSignedInAccount(
+                        SaveFile.Data.FileHivemind,
+                        importConnection.GoogleDrive,
+                        user,
+                        credentialStore);
+                    BringHostWindowToFront();
+                    AppendStatus(
+                        "Imported connection signed in as "
+                        + (string.IsNullOrWhiteSpace(user.EmailAddress) ? user.DisplayName : user.EmailAddress)
+                        + ".",
+                        StatusLogLevel.Success,
+                        importConnection.EffectiveDisplayName);
+                }
+
                 PersistConnection(importConnection);
-                AppendStatus(
-                    "Imported connection signed in as "
-                    + (string.IsNullOrWhiteSpace(user.EmailAddress) ? user.DisplayName : user.EmailAddress)
-                    + ".",
-                    StatusLogLevel.Success,
-                    importConnection.EffectiveDisplayName);
 
                 bool syncCompleted = await ExecuteConnectionSyncAsync(
                     "Importing and syncing from Google Drive...",
@@ -804,7 +815,8 @@ namespace OceanyaClient
 
             MessageBoxResult result = OceanyaMessageBox.Show(
                 ResolveOwnerWindow(),
-                "Delete the selected hivemind connection and clear its saved Google token?\n\n" + connection.EffectiveDisplayName,
+                "Delete the selected hivemind connection. Its saved Google account will only be removed if no other connections use it.\n\n"
+                    + connection.EffectiveDisplayName,
                 "Delete Connection",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Warning);
@@ -813,15 +825,17 @@ namespace OceanyaClient
                 return;
             }
 
-            syncService.SignOut(connection.GoogleDrive);
+            string tokenStoreKey = connection.GoogleDrive.TokenStoreKey?.Trim() ?? string.Empty;
+            GoogleDriveSignedInAccountManager.ClearConnectionSelection(connection.GoogleDrive);
             GoogleDriveConnectionCredentialSupport.DeleteStoredSecret(connection.GoogleDrive, credentialStore);
             SaveFile.Data.FileHivemind.Connections.Remove(connection);
+            TryDeleteUnusedGoogleAccount(tokenStoreKey);
             SaveFile.Data.FileHivemind.SelectedConnectionId = SaveFile.Data.FileHivemind.Connections.FirstOrDefault()?.Id ?? string.Empty;
             SaveFile.Save();
             runtimeStateStore.Delete(connection.Id);
             RefreshConnections();
             TryApplyBackgroundAgentPreferences(ensureCurrentSessionAgent: true);
-            AppendStatus("Deleted the saved connection and cleared its local token.", StatusLogLevel.Warning, connection.EffectiveDisplayName);
+            AppendStatus("Deleted the saved connection.", StatusLogLevel.Warning, connection.EffectiveDisplayName);
         }
 
         private bool TryOpenSelectedLocalFolder()
@@ -997,6 +1011,68 @@ namespace OceanyaClient
             imported.GoogleDrive.IsOceanyaManagedLocalFolder = existingConnection.GoogleDrive.IsOceanyaManagedLocalFolder;
 
             return imported;
+        }
+
+        private GoogleDriveSignedInAccount? PromptForImportedConnectionAccount(
+            Window owner,
+            FileHivemindConnectionProfile importConnection)
+        {
+            List<GoogleDriveSignedInAccount> compatibleAccounts = GoogleDriveSignedInAccountManager.GetCompatibleAccounts(
+                SaveFile.Data.FileHivemind,
+                importConnection.GoogleDrive,
+                credentialStore);
+            if (compatibleAccounts.Count == 0)
+            {
+                MessageBoxResult signInDecision = OceanyaMessageBox.Show(
+                    owner,
+                    "Oceanya will import this shared connection, open Google sign-in, create the local mirror automatically, and sync it once. Continue?",
+                    "Import Hivemind Connection",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+                return signInDecision == MessageBoxResult.Yes ? new GoogleDriveSignedInAccount() : null;
+            }
+
+            GoogleDriveSignedInAccountManager.ApplyDefaultAccountToConnection(
+                SaveFile.Data.FileHivemind,
+                importConnection.GoogleDrive,
+                credentialStore);
+            GoogleDriveAccountSelectionWindow picker = new GoogleDriveAccountSelectionWindow(
+                compatibleAccounts,
+                importConnection.GoogleDrive.TokenStoreKey)
+            {
+                Owner = owner
+            };
+            if (picker.ShowDialog() != true || picker.SelectedAccount == null)
+            {
+                return null;
+            }
+
+            GoogleDriveSignedInAccountManager.ApplyAccountToConnection(
+                SaveFile.Data.FileHivemind,
+                importConnection.GoogleDrive,
+                picker.SelectedAccount);
+            return picker.SelectedAccount;
+        }
+
+        private void TryDeleteUnusedGoogleAccount(string tokenStoreKey)
+        {
+            string normalizedTokenStoreKey = tokenStoreKey?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(normalizedTokenStoreKey))
+            {
+                return;
+            }
+
+            bool stillUsed = SaveFile.Data.FileHivemind.Connections.Any(existing =>
+                string.Equals(
+                    existing.GoogleDrive.TokenStoreKey?.Trim() ?? string.Empty,
+                    normalizedTokenStoreKey,
+                    StringComparison.OrdinalIgnoreCase));
+            if (!stillUsed)
+            {
+                GoogleDriveSignedInAccountManager.SignOutAccount(
+                    SaveFile.Data.FileHivemind,
+                    normalizedTokenStoreKey);
+            }
         }
 
         private static string BuildExportFileName(FileHivemindConnectionProfile connection)

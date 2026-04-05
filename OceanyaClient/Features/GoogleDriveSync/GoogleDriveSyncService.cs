@@ -19,9 +19,10 @@ namespace OceanyaClient.Features.GoogleDriveSync
 
         public async Task<GoogleDriveUserInfo> SignInAsync(
             GoogleDriveSyncSettings settings,
+            bool forceAccountSelection,
             CancellationToken cancellationToken)
         {
-            return await sessionFactory.SignInAsync(settings, cancellationToken);
+            return await sessionFactory.SignInAsync(settings, forceAccountSelection, cancellationToken);
         }
 
         public void SignOut(GoogleDriveSyncSettings settings)

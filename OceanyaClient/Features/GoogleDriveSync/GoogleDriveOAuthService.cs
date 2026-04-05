@@ -35,6 +35,7 @@ namespace OceanyaClient.Features.GoogleDriveSync
         public async Task<GoogleDriveTokenSet> SignInInteractiveAsync(
             GoogleDriveOAuthClientConfiguration configuration,
             string? loginHint,
+            bool forceAccountSelection,
             CancellationToken cancellationToken)
         {
             ValidateConfiguration(configuration);
@@ -49,7 +50,8 @@ namespace OceanyaClient.Features.GoogleDriveSync
                 receiver.RedirectUri,
                 codeChallenge,
                 state,
-                loginHint);
+                loginHint,
+                forceAccountSelection);
 
             TryLaunchBrowser(authorizationUrl);
             LoopbackAuthorizationResponse callback = await receiver.WaitForCallbackAsync(state, cancellationToken);
@@ -223,7 +225,8 @@ namespace OceanyaClient.Features.GoogleDriveSync
             string redirectUri,
             string codeChallenge,
             string state,
-            string? loginHint)
+            string? loginHint,
+            bool forceAccountSelection)
         {
             Dictionary<string, string> values = new Dictionary<string, string>
             {
@@ -237,8 +240,13 @@ namespace OceanyaClient.Features.GoogleDriveSync
                 ["code_challenge_method"] = "S256",
                 ["state"] = state
             };
+            if (forceAccountSelection)
+            {
+                values["prompt"] = "select_account consent";
+            }
+
             string normalizedLoginHint = loginHint?.Trim() ?? string.Empty;
-            if (!string.IsNullOrWhiteSpace(normalizedLoginHint))
+            if (!forceAccountSelection && !string.IsNullOrWhiteSpace(normalizedLoginHint))
             {
                 values["login_hint"] = normalizedLoginHint;
             }

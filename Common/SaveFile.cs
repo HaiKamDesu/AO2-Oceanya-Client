@@ -1039,6 +1039,9 @@ namespace OceanyaClient
         private static void NormalizeFileHivemindSettings(SaveData data)
         {
             data.FileHivemind.Connections ??= new List<FileHivemindConnectionProfile>();
+            data.FileHivemind.GoogleDriveAccounts ??= new List<GoogleDriveSignedInAccount>();
+            data.FileHivemind.LastSelectedGoogleDriveAccountTokenStoreKey =
+                data.FileHivemind.LastSelectedGoogleDriveAccountTokenStoreKey?.Trim() ?? string.Empty;
             data.FileHivemind.SelectedConnectionId = data.FileHivemind.SelectedConnectionId?.Trim() ?? string.Empty;
             data.FileHivemind.RemotePollIntervalSeconds = Math.Clamp(data.FileHivemind.RemotePollIntervalSeconds <= 0
                 ? 20
@@ -1080,6 +1083,26 @@ namespace OceanyaClient
 
                     return connection;
                 })
+                .ToList();
+
+            data.FileHivemind.GoogleDriveAccounts = data.FileHivemind.GoogleDriveAccounts
+                .Where(account => account != null)
+                .Select(account =>
+                {
+                    account.TokenStoreKey = account.TokenStoreKey?.Trim() ?? string.Empty;
+                    account.Email = account.Email?.Trim() ?? string.Empty;
+                    account.DisplayName = account.DisplayName?.Trim() ?? string.Empty;
+                    account.CredentialFingerprint = account.CredentialFingerprint?.Trim() ?? string.Empty;
+                    return account;
+                })
+                .Where(account => !string.IsNullOrWhiteSpace(account.TokenStoreKey)
+                    && !string.IsNullOrWhiteSpace(account.CredentialFingerprint)
+                    && (!string.IsNullOrWhiteSpace(account.Email) || !string.IsNullOrWhiteSpace(account.DisplayName)))
+                .GroupBy(account => account.TokenStoreKey, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group
+                    .OrderByDescending(account => account.LastUsedUtc ?? DateTimeOffset.MinValue)
+                    .ThenByDescending(account => account.LastSignedInUtc ?? DateTimeOffset.MinValue)
+                    .First())
                 .ToList();
 
             HashSet<string> seenConnectionIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

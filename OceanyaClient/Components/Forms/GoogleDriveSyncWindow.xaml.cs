@@ -2,6 +2,7 @@ using Microsoft.Win32;
 using OceanyaClient.Features.FileHivemind;
 using OceanyaClient.Features.GoogleDriveSync;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -32,10 +33,13 @@ namespace OceanyaClient
         private readonly GoogleDriveConnectionRuntimeStateStore runtimeStateStore;
         private readonly GoogleDriveSecureClientCredentialStore credentialStore;
         private readonly GoogleDriveSecureTokenStore tokenStore;
+        private readonly FileHivemindConnectionProfile targetConnection;
+        private readonly FileHivemindConnectionProfile originalConnectionSnapshot;
         private readonly FileHivemindConnectionProfile connection;
         private readonly Action<FileHivemindConnectionProfile> persistConnection;
         private readonly bool isDraftConnection;
         private bool suppressSecretPasswordEvents;
+        private bool suppressAccountSelectionEvents;
         private bool showingStoredSecretPlaceholder;
         private bool hasRaisedFinishedLoading;
         private bool hasPersistedConnection;
@@ -52,7 +56,13 @@ namespace OceanyaClient
             runtimeStateStore = new GoogleDriveConnectionRuntimeStateStore();
             credentialStore = new GoogleDriveSecureClientCredentialStore();
             tokenStore = new GoogleDriveSecureTokenStore();
-            this.connection = connection ?? FileHivemindConnectionProfile.CreateGoogleDriveProfile();
+            GoogleDriveSignedInAccountManager.MigrateLegacyConnectionSelections(
+                SaveFile.Data.FileHivemind,
+                SaveFile.Data.FileHivemind.Connections,
+                credentialStore);
+            targetConnection = connection ?? FileHivemindConnectionProfile.CreateGoogleDriveProfile();
+            originalConnectionSnapshot = GoogleDriveConnectionEditorSaveSupport.CloneConnectionProfile(targetConnection);
+            this.connection = GoogleDriveConnectionEditorSaveSupport.CloneConnectionProfile(targetConnection);
             this.persistConnection = persistConnection ?? (_ => SaveFile.Save());
             this.isDraftConnection = isDraftConnection;
             Title = "Google Drive Connection";
@@ -81,6 +91,9 @@ namespace OceanyaClient
             UseExistingMountPathCheckBox.IsChecked = Settings.UseExistingMountPath;
             AutoSyncEnabledCheckBox.IsChecked = connection.AutoSyncEnabled;
             UpdateGoogleCloudConfigurationStatus();
+            EnsureCurrentSelectionStillExists();
+            TryAutoSelectCompatibleAccount();
+            RefreshGoogleAccountSelector();
             UpdateAccountStatus();
             UpdateRemoteFolderStatus();
             AppendStatus("Google Drive connection window loaded.", StatusLogLevel.Success);
@@ -95,53 +108,25 @@ namespace OceanyaClient
             }
         }
 
-        private bool PersistSettings(bool forcePersist)
+        private void ApplyEditorStateToDraft()
         {
             string previousClientId = Settings.OAuthClientId?.Trim() ?? string.Empty;
-            bool hadStoredSecret = HasSavedStoredSecretForCurrentClientId(previousClientId);
-            string previousEffectiveSecret = GoogleDriveConnectionCredentialSupport.LoadSecret(Settings, credentialStore);
-            Settings.OAuthClientId = GoogleCloudClientIdTextBox.Text?.Trim() ?? string.Empty;
-            GoogleDriveConnectionCredentialSupport.EnsureSecretStoreKey(Settings);
+            SyncDraftCredentialFieldsFromUi();
 
             string typedClientSecret = GetTypedClientSecret();
             bool clientIdChanged = !string.Equals(previousClientId, Settings.OAuthClientId, StringComparison.Ordinal);
-            bool credentialsChanged = clientIdChanged;
-
-            if (clientIdChanged && hadStoredSecret && string.IsNullOrWhiteSpace(typedClientSecret))
-            {
-                GoogleDriveConnectionCredentialSupport.DeleteStoredSecret(Settings, credentialStore);
-                hadStoredSecret = false;
-            }
-
-            if (string.IsNullOrWhiteSpace(Settings.OAuthClientId) && hadStoredSecret && string.IsNullOrWhiteSpace(typedClientSecret))
-            {
-                GoogleDriveConnectionCredentialSupport.DeleteStoredSecret(Settings, credentialStore);
-                hadStoredSecret = false;
-                credentialsChanged = true;
-            }
+            bool credentialsChanged = clientIdChanged || !string.IsNullOrWhiteSpace(typedClientSecret);
 
             if (!string.IsNullOrWhiteSpace(typedClientSecret))
             {
                 Settings.OAuthClientSecret = typedClientSecret;
-                GoogleDriveConnectionCredentialSupport.SaveSecretIfPresent(Settings, credentialStore);
+            }
+            else
+            {
+                Settings.OAuthClientSecret = string.Empty;
             }
 
             RestoreStoredSecretPlaceholderIfNeeded();
-            bool hasStoredSecret = HasSavedStoredSecretForCurrentClientId(Settings.OAuthClientId?.Trim() ?? string.Empty);
-            string currentEffectiveSecret = GoogleDriveConnectionCredentialSupport.LoadSecret(Settings, credentialStore);
-            if (!string.Equals(previousEffectiveSecret, currentEffectiveSecret, StringComparison.Ordinal))
-            {
-                credentialsChanged = true;
-            }
-
-            if (hadStoredSecret != hasStoredSecret)
-            {
-                credentialsChanged = true;
-            }
-
-            Settings.TokenStoreKey = string.IsNullOrWhiteSpace(Settings.TokenStoreKey)
-                ? Guid.NewGuid().ToString("N")
-                : Settings.TokenStoreKey.Trim();
 
             string previousFolderId = Settings.RemoteFolderId?.Trim() ?? string.Empty;
             string previousLocalFolderPath = Settings.LocalFolderPath?.Trim() ?? string.Empty;
@@ -172,26 +157,21 @@ namespace OceanyaClient
             connection.AutoSyncEnabled = AutoSyncEnabledCheckBox.IsChecked != false;
             connection.DisplayName = ResolveConnectionDisplayName();
             UpdateGoogleCloudConfigurationStatus();
+            EnsureCurrentSelectionStillExists();
             UpdateRemoteFolderStatus();
 
             if (credentialsChanged)
             {
-                syncService.SignOut(Settings);
+                GoogleDriveSignedInAccountManager.ClearConnectionSelection(Settings);
                 runtimeStateStore.Delete(connection.Id);
             }
-            else if (TryAdoptExistingSignInForMatchingCredentials())
+            else if (TryAutoSelectCompatibleAccount())
             {
-                UpdateAccountStatus();
+                AppendStatus("Selected the default saved Google account for this connection.", StatusLogLevel.Info);
             }
 
-            if (!forcePersist && isDraftConnection && !hasPersistedConnection && !HasMeaningfulConfiguration())
-            {
-                return false;
-            }
-
-            persistConnection(connection);
-            hasPersistedConnection = true;
-            return true;
+            RefreshGoogleAccountSelector();
+            UpdateAccountStatus();
         }
 
         private bool HasMeaningfulConfiguration()
@@ -271,11 +251,14 @@ namespace OceanyaClient
 
         private void UpdateAccountStatus()
         {
+            List<GoogleDriveSignedInAccount> compatibleAccounts = GetCompatibleAccounts();
             string email = Settings.LastSignedInEmail?.Trim() ?? string.Empty;
             string displayName = Settings.LastSignedInDisplayName?.Trim() ?? string.Empty;
             if (string.IsNullOrWhiteSpace(email))
             {
-                AccountStatusTextBlock.Text = "Not signed in.";
+                AccountStatusTextBlock.Text = compatibleAccounts.Count == 0
+                    ? "No compatible saved Google account is selected."
+                    : "Choose a saved Google account for this connection.";
                 return;
             }
 
@@ -284,6 +267,99 @@ namespace OceanyaClient
                 ? " | Last sync: " + Settings.LastSyncUtc.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
                 : string.Empty;
             AccountStatusTextBlock.Text = "Signed in as " + label + lastSync;
+        }
+
+        private List<GoogleDriveSignedInAccount> GetCompatibleAccounts()
+        {
+            return GoogleDriveSignedInAccountManager.GetCompatibleAccounts(
+                SaveFile.Data.FileHivemind,
+                Settings,
+                credentialStore);
+        }
+
+        private void RefreshGoogleAccountSelector()
+        {
+            List<GoogleDriveSignedInAccount> accounts = GetCompatibleAccounts();
+            string selectedTokenStoreKey = GetPreferredSelectedTokenStoreKey();
+            GoogleDriveSignedInAccount? selectedAccount = accounts.FirstOrDefault(account =>
+                string.Equals(account.TokenStoreKey, selectedTokenStoreKey, StringComparison.OrdinalIgnoreCase));
+            if (selectedAccount != null)
+            {
+                GoogleDriveSignedInAccountManager.ApplyAccountToConnection(
+                    SaveFile.Data.FileHivemind,
+                    Settings,
+                    selectedAccount);
+            }
+
+            suppressAccountSelectionEvents = true;
+            GoogleAccountComboBox.ItemsSource = accounts;
+            GoogleAccountComboBox.SelectedItem = selectedAccount;
+            suppressAccountSelectionEvents = false;
+            GoogleAccountComboBox.IsEnabled = accounts.Count > 0;
+            SignOutButton.IsEnabled = GoogleAccountComboBox.SelectedItem is GoogleDriveSignedInAccount;
+            GoogleAccountEmptyStateTextBlock.Visibility = accounts.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void EnsureCurrentSelectionStillExists()
+        {
+            string tokenStoreKey = GetPreferredSelectedTokenStoreKey();
+            if (string.IsNullOrWhiteSpace(tokenStoreKey))
+            {
+                return;
+            }
+
+            bool stillExists = GetCompatibleAccounts().Any(account =>
+                string.Equals(account.TokenStoreKey, tokenStoreKey, StringComparison.OrdinalIgnoreCase));
+            if (!stillExists)
+            {
+                GoogleDriveSignedInAccountManager.ClearConnectionSelection(Settings);
+            }
+        }
+
+        private bool TryAutoSelectCompatibleAccount()
+        {
+            if (!string.IsNullOrWhiteSpace(Settings.LastSignedInEmail)
+                && GetCompatibleAccounts().Any(account => string.Equals(
+                    account.TokenStoreKey,
+                    Settings.TokenStoreKey,
+                    StringComparison.OrdinalIgnoreCase)))
+            {
+                return false;
+            }
+
+            GoogleDriveSignedInAccount? selectedAccount = GoogleDriveSignedInAccountManager.ApplyDefaultAccountToConnection(
+                SaveFile.Data.FileHivemind,
+                Settings,
+                credentialStore);
+            return selectedAccount != null;
+        }
+
+        private GoogleDriveSignedInAccount? GetSelectedCompatibleAccount()
+        {
+            return GoogleAccountComboBox.SelectedItem as GoogleDriveSignedInAccount;
+        }
+
+        private string GetPreferredSelectedTokenStoreKey()
+        {
+            string tokenStoreKey = Settings.TokenStoreKey?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(tokenStoreKey))
+            {
+                return tokenStoreKey;
+            }
+
+            return (GoogleAccountComboBox.SelectedItem as GoogleDriveSignedInAccount)?.TokenStoreKey?.Trim() ?? string.Empty;
+        }
+
+        private void EnsureSelectedAccountAppliedToDraft()
+        {
+            GoogleDriveSignedInAccount? selectedAccount = GetSelectedCompatibleAccount();
+            if (selectedAccount != null)
+            {
+                GoogleDriveSignedInAccountManager.ApplyAccountToConnection(
+                    SaveFile.Data.FileHivemind,
+                    Settings,
+                    selectedAccount);
+            }
         }
 
         private void AppendStatus(string message, StatusLogLevel level = StatusLogLevel.Info)
@@ -336,15 +412,25 @@ namespace OceanyaClient
         {
             try
             {
-                PersistSettings(forcePersist: true);
+                ApplyEditorStateToDraft();
+                EnsureDraftTokenStoreKey();
                 EnsureGoogleAuthConfigured();
                 AppendStatus("Opening browser for Google Drive sign-in...", StatusLogLevel.Action);
-                GoogleDriveUserInfo user = await syncService.SignInAsync(Settings, CancellationToken.None);
+                GoogleDriveUserInfo user = await syncService.SignInAsync(Settings, forceAccountSelection: true, CancellationToken.None);
+                GoogleDriveSignedInAccount account = GoogleDriveSignedInAccountManager.RegisterSignedInAccount(
+                    SaveFile.Data.FileHivemind,
+                    Settings,
+                    user,
+                    credentialStore,
+                    tokenStore);
                 BringHostWindowToFront();
-                PersistConnectionAfterSuccessfulSignIn();
+                MarkDraftAsChangedAfterSuccessfulSignIn();
+                RefreshGoogleAccountSelector();
                 UpdateAccountStatus();
                 AppendStatus(
-                    "Signed in as " + (string.IsNullOrWhiteSpace(user.EmailAddress) ? user.DisplayName : user.EmailAddress) + ".",
+                    "Signed in as "
+                    + (string.IsNullOrWhiteSpace(user.EmailAddress) ? user.DisplayName : user.EmailAddress)
+                    + " and added that account to the saved Google account list.",
                     StatusLogLevel.Success);
             }
             catch (Exception ex)
@@ -362,19 +448,34 @@ namespace OceanyaClient
 
         private void SignOutButton_Click(object sender, RoutedEventArgs e)
         {
-            PersistSettings(forcePersist: true);
-            syncService.SignOut(Settings);
+            GoogleDriveSignedInAccount? selectedAccount = GetSelectedCompatibleAccount();
+            if (selectedAccount == null)
+            {
+                AppendStatus("Select a saved Google account before deleting it.", StatusLogLevel.Warning);
+                return;
+            }
+
+            ApplyEditorStateToDraft();
+            int affectedConnections = GoogleDriveSignedInAccountManager.SignOutAccount(
+                SaveFile.Data.FileHivemind,
+                selectedAccount.TokenStoreKey,
+                SaveFile.Data.FileHivemind.Connections,
+                tokenStore);
             runtimeStateStore.Delete(connection.Id);
-            PersistSettings(forcePersist: true);
+            ApplyEditorStateToDraft();
+            RefreshGoogleAccountSelector();
             UpdateAccountStatus();
-            AppendStatus("Signed out from Google Drive token storage.", StatusLogLevel.Warning);
+            AppendStatus(
+                "Deleted the saved Google account"
+                + (affectedConnections > 1 ? $" and signed it out from {affectedConnections} connections." : "."),
+                StatusLogLevel.Warning);
         }
 
         private async void CreateManagedFolderButton_Click(object sender, RoutedEventArgs e)
         {
             try
             {
-                PersistSettings(forcePersist: true);
+                ApplyEditorStateToDraft();
                 await TryPopulateRemoteFolderNameAsync();
 
                 string managedPath = GoogleDriveClientAssetIntegration.BuildManagedLocalFolderPath(
@@ -385,7 +486,7 @@ namespace OceanyaClient
                 Settings.IsOceanyaManagedLocalFolder = true;
                 GoogleDriveManagedLocalFolderMarkerService.EnsureMarker(managedPath);
                 LocalFolderTextBox.Text = managedPath;
-                PersistSettings(forcePersist: true);
+                ApplyEditorStateToDraft();
                 AppendStatus("Selected generated local sync folder: " + managedPath, StatusLogLevel.Action);
             }
             catch (Exception ex)
@@ -404,7 +505,8 @@ namespace OceanyaClient
         {
             try
             {
-                PersistSettings(forcePersist: true);
+                ApplyEditorStateToDraft();
+                EnsureSelectedAccountAppliedToDraft();
                 EnsureGoogleAuthConfigured();
                 if (string.IsNullOrWhiteSpace(Settings.RemoteFolderId))
                 {
@@ -434,7 +536,7 @@ namespace OceanyaClient
         {
             try
             {
-                PersistSettings(forcePersist: true);
+                ApplyEditorStateToDraft();
                 if (!GoogleDriveConnectionCredentialSupport.TryBuildConfiguration(
                         Settings,
                         out GoogleDriveOAuthClientConfiguration configuration,
@@ -474,14 +576,14 @@ namespace OceanyaClient
             {
                 Settings.IsOceanyaManagedLocalFolder = false;
                 LocalFolderTextBox.Text = dialog.FolderName;
-                PersistSettings(forcePersist: true);
+                ApplyEditorStateToDraft();
                 AppendStatus("Selected local sync folder: " + dialog.FolderName, StatusLogLevel.Action);
             }
         }
 
         private void OpenLocalFolderButton_Click(object sender, RoutedEventArgs e)
         {
-            PersistSettings(forcePersist: true);
+            ApplyEditorStateToDraft();
             if (string.IsNullOrWhiteSpace(Settings.LocalFolderPath) || !Directory.Exists(Settings.LocalFolderPath))
             {
                 AppendStatus("No local sync folder is available to open.", StatusLogLevel.Warning);
@@ -500,7 +602,7 @@ namespace OceanyaClient
         {
             try
             {
-                PersistSettings(forcePersist: true);
+                ApplyEditorStateToDraft();
                 string sourcePath = Settings.LocalFolderPath?.Trim() ?? string.Empty;
                 if (string.IsNullOrWhiteSpace(sourcePath))
                 {
@@ -573,7 +675,7 @@ namespace OceanyaClient
                     GoogleDriveManagedLocalFolderMarkerService.EnsureMarker(destinationPath);
                 }
                 LocalFolderTextBox.Text = destinationPath;
-                PersistSettings(forcePersist: true);
+                ApplyEditorStateToDraft();
                 UpdateMountPathAfterLocalFolderMove(normalizedSourcePath, destinationPath);
                 AppendStatus("Moved the local sync folder to " + destinationPath + ".", StatusLogLevel.Success);
             }
@@ -593,7 +695,7 @@ namespace OceanyaClient
         {
             try
             {
-                PersistSettings(forcePersist: true);
+                ApplyEditorStateToDraft();
                 EnsureMounted();
                 AppendStatus("AO mount path configuration is ready.", StatusLogLevel.Success);
             }
@@ -645,7 +747,7 @@ namespace OceanyaClient
         {
             try
             {
-                PersistSettings(forcePersist: true);
+                ApplyEditorStateToDraft();
                 string configIniPath = SaveFile.Data.ConfigIniPath?.Trim() ?? string.Empty;
                 if (string.IsNullOrWhiteSpace(configIniPath))
                 {
@@ -671,8 +773,10 @@ namespace OceanyaClient
 
         private void SaveConnectionButton_Click(object sender, RoutedEventArgs e)
         {
-            PersistSettings(forcePersist: true);
-            AppendStatus("Connection settings saved.", StatusLogLevel.Success);
+            if (SaveDraftConnection())
+            {
+                AppendStatus("Connection settings saved.", StatusLogLevel.Success);
+            }
         }
 
         private async Task ExecuteSyncOperationAsync(string title, Func<Task<GoogleDriveSyncSummary>> action)
@@ -689,7 +793,8 @@ namespace OceanyaClient
 
             try
             {
-                PersistSettings(forcePersist: true);
+                ApplyEditorStateToDraft();
+                EnsureSelectedAccountAppliedToDraft();
                 ValidateSyncInputs();
                 EnsureMounted();
                 AppendStatus(title, StatusLogLevel.Action);
@@ -700,7 +805,7 @@ namespace OceanyaClient
                 {
                     GoogleDriveSyncSummary summary = await action();
                     await TryRefreshRuntimeStateAsync(summary);
-                    PersistSettings(forcePersist: true);
+                    ApplyEditorStateToDraft();
                     UpdateAccountStatus();
                 }
                 finally
@@ -720,81 +825,14 @@ namespace OceanyaClient
             }
         }
 
-        private void PersistConnectionAfterSuccessfulSignIn()
+        private void MarkDraftAsChangedAfterSuccessfulSignIn()
         {
             connection.ProviderId = FileHivemindProviderIds.GoogleDrive;
             connection.AutoSyncEnabled = AutoSyncEnabledCheckBox.IsChecked != false;
             connection.DisplayName = ResolveConnectionDisplayName();
-            persistConnection(connection);
-            hasPersistedConnection = true;
             RestoreStoredSecretPlaceholderIfNeeded();
             UpdateGoogleCloudConfigurationStatus();
             UpdateRemoteFolderStatus();
-        }
-
-        private bool TryAdoptExistingSignInForMatchingCredentials()
-        {
-            if (!isDraftConnection || hasPersistedConnection)
-            {
-                return false;
-            }
-
-            if (!string.IsNullOrWhiteSpace(Settings.LastSignedInEmail))
-            {
-                return false;
-            }
-
-            string currentClientId = Settings.OAuthClientId?.Trim() ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(currentClientId))
-            {
-                return false;
-            }
-
-            string currentSecret = GoogleDriveConnectionCredentialSupport.LoadSecret(Settings, credentialStore);
-            if (string.IsNullOrWhiteSpace(currentSecret))
-            {
-                return false;
-            }
-
-            GoogleDriveConnectionCredentialSupport.EnsureSecretStoreKey(Settings);
-            Settings.TokenStoreKey = string.IsNullOrWhiteSpace(Settings.TokenStoreKey)
-                ? Guid.NewGuid().ToString("N")
-                : Settings.TokenStoreKey.Trim();
-
-            FileHivemindConnectionProfile? sourceConnection = SaveFile.Data.FileHivemind.Connections
-                .Where(existing => !string.Equals(existing.Id, connection.Id, StringComparison.OrdinalIgnoreCase))
-                .Where(existing => string.Equals(
-                    existing.GoogleDrive.OAuthClientId?.Trim() ?? string.Empty,
-                    currentClientId,
-                    StringComparison.Ordinal))
-                .Where(existing => !string.IsNullOrWhiteSpace(existing.GoogleDrive.TokenStoreKey))
-                .Where(existing => !string.IsNullOrWhiteSpace(existing.GoogleDrive.LastSignedInEmail))
-                .OrderByDescending(existing => existing.GoogleDrive.LastSyncUtc ?? DateTimeOffset.MinValue)
-                .FirstOrDefault(existing => string.Equals(
-                    GoogleDriveConnectionCredentialSupport.LoadSecret(existing.GoogleDrive, credentialStore),
-                    currentSecret,
-                    StringComparison.Ordinal));
-            if (sourceConnection == null)
-            {
-                return false;
-            }
-
-            GoogleDriveTokenSet? existingTokens = tokenStore.Load(sourceConnection.GoogleDrive.TokenStoreKey);
-            if (existingTokens == null)
-            {
-                return false;
-            }
-
-            tokenStore.Save(Settings.TokenStoreKey, existingTokens);
-            Settings.LastSignedInEmail = sourceConnection.GoogleDrive.LastSignedInEmail?.Trim() ?? string.Empty;
-            Settings.LastSignedInDisplayName = sourceConnection.GoogleDrive.LastSignedInDisplayName?.Trim() ?? string.Empty;
-            AppendStatus(
-                "Reused the existing Google sign-in from "
-                + (string.IsNullOrWhiteSpace(Settings.LastSignedInEmail)
-                    ? "another connection."
-                    : Settings.LastSignedInEmail + "."),
-                StatusLogLevel.Info);
-            return true;
         }
 
         private async Task TryRefreshRuntimeStateAsync(GoogleDriveSyncSummary summary)
@@ -932,7 +970,7 @@ namespace OceanyaClient
 
             string remoteFolderName = await syncService.GetRemoteFolderNameAsync(Settings, CancellationToken.None);
             Settings.RemoteFolderName = remoteFolderName?.Trim() ?? string.Empty;
-            PersistSettings(forcePersist: true);
+            ApplyEditorStateToDraft();
             UpdateRemoteFolderStatus();
             return Settings.RemoteFolderName;
         }
@@ -949,6 +987,29 @@ namespace OceanyaClient
             UpdateRemoteFolderStatus();
         }
 
+        private void GoogleAccountComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (suppressAccountSelectionEvents)
+            {
+                return;
+            }
+
+            GoogleDriveSignedInAccount? selectedAccount = GetSelectedCompatibleAccount();
+            SignOutButton.IsEnabled = selectedAccount != null;
+            if (selectedAccount == null)
+            {
+                GoogleDriveSignedInAccountManager.ClearConnectionSelection(Settings);
+                UpdateAccountStatus();
+                return;
+            }
+
+            GoogleDriveSignedInAccountManager.ApplyAccountToConnection(
+                SaveFile.Data.FileHivemind,
+                Settings,
+                selectedAccount);
+            UpdateAccountStatus();
+        }
+
         private void GoogleCloudCredentialFields_Changed(object sender, TextChangedEventArgs e)
         {
             if (!IsCurrentClientIdMatchingSaved() && showingStoredSecretPlaceholder)
@@ -960,7 +1021,12 @@ namespace OceanyaClient
                 RestoreStoredSecretPlaceholderIfNeeded();
             }
 
+            SyncDraftCredentialFieldsFromUi();
             UpdateGoogleCloudConfigurationStatus();
+            EnsureCurrentSelectionStillExists();
+            TryAutoSelectCompatibleAccount();
+            RefreshGoogleAccountSelector();
+            UpdateAccountStatus();
         }
 
         private void GoogleCloudClientSecretPasswordBox_PasswordChanged(object sender, RoutedEventArgs e)
@@ -971,7 +1037,12 @@ namespace OceanyaClient
             }
 
             showingStoredSecretPlaceholder = false;
+            SyncDraftCredentialFieldsFromUi();
             UpdateGoogleCloudConfigurationStatus();
+            EnsureCurrentSelectionStillExists();
+            TryAutoSelectCompatibleAccount();
+            RefreshGoogleAccountSelector();
+            UpdateAccountStatus();
         }
 
         private void GoogleCloudClientSecretPasswordBox_GotKeyboardFocus(object sender, RoutedEventArgs e)
@@ -989,6 +1060,24 @@ namespace OceanyaClient
         {
             return !showingStoredSecretPlaceholder
                 && !string.IsNullOrWhiteSpace(GoogleCloudClientSecretPasswordBox.Password?.Trim());
+        }
+
+        private void SyncDraftCredentialFieldsFromUi()
+        {
+            Settings.OAuthClientId = GoogleCloudClientIdTextBox.Text?.Trim() ?? string.Empty;
+            Settings.OAuthClientSecret = GetTypedClientSecret();
+            if (!string.IsNullOrWhiteSpace(Settings.OAuthClientId))
+            {
+                GoogleDriveConnectionCredentialSupport.EnsureSecretStoreKey(Settings);
+            }
+        }
+
+        private void EnsureDraftTokenStoreKey()
+        {
+            if (string.IsNullOrWhiteSpace(Settings.TokenStoreKey))
+            {
+                Settings.TokenStoreKey = Guid.NewGuid().ToString("N");
+            }
         }
 
         private string GetTypedClientSecret()
@@ -1199,8 +1288,140 @@ namespace OceanyaClient
 
         private void CloseButton_Click(object sender, RoutedEventArgs e)
         {
-            PersistSettings(forcePersist: false);
+            ApplyEditorStateToDraft();
+            if (HasUnsavedChanges())
+            {
+                MessageBoxResult result = OceanyaMessageBox.Show(
+                    ResolveOwnerWindow(),
+                    "Close this connection editor without saving your changes?",
+                    "Unsaved Connection Changes",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+                if (result != MessageBoxResult.Yes)
+                {
+                    return;
+                }
+            }
+
             RequestHostClose(false);
+        }
+
+        private bool SaveDraftConnection()
+        {
+            ApplyEditorStateToDraft();
+            if (isDraftConnection && !HasMeaningfulConfiguration() && !hasPersistedConnection)
+            {
+                return false;
+            }
+
+            FileHivemindConnectionProfile previousPersistedConnection =
+                GoogleDriveConnectionEditorSaveSupport.CloneConnectionProfile(targetConnection);
+            GoogleDriveConnectionEditorSaveSupport.PersistStoredSecrets(previousPersistedConnection, connection, credentialStore);
+            GoogleDriveConnectionEditorSaveSupport.CopyConnectionProfile(connection, targetConnection);
+            persistConnection(targetConnection);
+            GoogleDriveConnectionEditorSaveSupport.CopyConnectionProfile(targetConnection, originalConnectionSnapshot);
+            ResetSecretInputAfterSave();
+            UpdateGoogleCloudConfigurationStatus();
+            RefreshGoogleAccountSelector();
+            UpdateAccountStatus();
+            hasPersistedConnection = true;
+            return true;
+        }
+
+        private bool HasUnsavedChanges()
+        {
+            if (!string.Equals(
+                    ConnectionNameTextBox.Text?.Trim() ?? string.Empty,
+                    originalConnectionSnapshot.DisplayName?.Trim() ?? string.Empty,
+                    StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (!string.Equals(
+                    GoogleCloudClientIdTextBox.Text?.Trim() ?? string.Empty,
+                    originalConnectionSnapshot.GoogleDrive.OAuthClientId?.Trim() ?? string.Empty,
+                    StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (HasTypedClientSecretInput())
+            {
+                return true;
+            }
+
+            if (!string.Equals(
+                    GetEnteredRemoteFolderId(),
+                    originalConnectionSnapshot.GoogleDrive.RemoteFolderId?.Trim() ?? string.Empty,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (!string.Equals(
+                    LocalFolderTextBox.Text?.Trim() ?? string.Empty,
+                    originalConnectionSnapshot.GoogleDrive.LocalFolderPath?.Trim() ?? string.Empty,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if ((AutoAddMountPathCheckBox.IsChecked != false) != originalConnectionSnapshot.GoogleDrive.AutoAddMountPath)
+            {
+                return true;
+            }
+
+            if ((MirrorDeletesCheckBox.IsChecked != false) != originalConnectionSnapshot.GoogleDrive.MirrorDeletes)
+            {
+                return true;
+            }
+
+            if ((UseExistingMountPathCheckBox.IsChecked == true) != originalConnectionSnapshot.GoogleDrive.UseExistingMountPath)
+            {
+                return true;
+            }
+
+            if ((AutoSyncEnabledCheckBox.IsChecked != false) != originalConnectionSnapshot.AutoSyncEnabled)
+            {
+                return true;
+            }
+
+            if (!string.Equals(
+                    connection.GoogleDrive.TokenStoreKey?.Trim() ?? string.Empty,
+                    originalConnectionSnapshot.GoogleDrive.TokenStoreKey?.Trim() ?? string.Empty,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (!string.Equals(
+                    connection.GoogleDrive.LastSignedInEmail?.Trim() ?? string.Empty,
+                    originalConnectionSnapshot.GoogleDrive.LastSignedInEmail?.Trim() ?? string.Empty,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (!string.Equals(
+                    connection.GoogleDrive.LastSignedInDisplayName?.Trim() ?? string.Empty,
+                    originalConnectionSnapshot.GoogleDrive.LastSignedInDisplayName?.Trim() ?? string.Empty,
+                    StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private void ResetSecretInputAfterSave()
+        {
+            connection.GoogleDrive.OAuthClientSecret = string.Empty;
+            suppressSecretPasswordEvents = true;
+            GoogleCloudClientSecretPasswordBox.Password = string.Empty;
+            suppressSecretPasswordEvents = false;
+            showingStoredSecretPlaceholder = false;
+            RestoreStoredSecretPlaceholderIfNeeded();
         }
 
         private void GoogleDriveSyncWindow_Loaded(object sender, RoutedEventArgs e)

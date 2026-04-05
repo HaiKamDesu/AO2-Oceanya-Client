@@ -299,6 +299,265 @@ namespace UnitTests
     }
 
     [TestFixture]
+    public class GoogleDriveSignedInAccountManagerTests
+    {
+        [Test]
+        public void ApplyDefaultAccountToConnection_PrefersLastSelectedCompatibleAccount()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "drive_account_select_" + Guid.NewGuid().ToString("N"));
+
+            try
+            {
+                GoogleDriveSecureClientCredentialStore credentialStore =
+                    new GoogleDriveSecureClientCredentialStore(root, new ObfuscatingProtector());
+                FileHivemindSettings fileHivemind = new FileHivemindSettings
+                {
+                    GoogleDriveAccounts = new List<GoogleDriveSignedInAccount>
+                    {
+                        new GoogleDriveSignedInAccount
+                        {
+                            TokenStoreKey = "token-a",
+                            Email = "alpha@example.com",
+                            DisplayName = "Alpha",
+                            CredentialFingerprint = "placeholder",
+                            LastUsedUtc = DateTimeOffset.UtcNow.AddMinutes(-10)
+                        },
+                        new GoogleDriveSignedInAccount
+                        {
+                            TokenStoreKey = "token-b",
+                            Email = "beta@example.com",
+                            DisplayName = "Beta",
+                            CredentialFingerprint = "placeholder",
+                            LastUsedUtc = DateTimeOffset.UtcNow.AddMinutes(-5)
+                        }
+                    },
+                    LastSelectedGoogleDriveAccountTokenStoreKey = "token-a"
+                };
+                GoogleDriveSyncSettings settings = new GoogleDriveSyncSettings
+                {
+                    OAuthClientId = "desktop-client-id.apps.googleusercontent.com",
+                    OAuthClientSecret = "desktop-client-secret",
+                    OAuthClientSecretStoreKey = "oauth-key"
+                };
+
+                GoogleDriveConnectionCredentialSupport.SaveSecretIfPresent(settings, credentialStore);
+                string fingerprint = GoogleDriveSignedInAccountManager.GetCredentialFingerprint(settings, credentialStore);
+                foreach (GoogleDriveSignedInAccount account in fileHivemind.GoogleDriveAccounts)
+                {
+                    account.CredentialFingerprint = fingerprint;
+                }
+
+                GoogleDriveSignedInAccount? selectedAccount = GoogleDriveSignedInAccountManager.ApplyDefaultAccountToConnection(
+                    fileHivemind,
+                    settings,
+                    credentialStore);
+
+                Assert.That(selectedAccount, Is.Not.Null);
+                Assert.That(selectedAccount!.TokenStoreKey, Is.EqualTo("token-a"));
+                Assert.That(settings.TokenStoreKey, Is.EqualTo("token-a"));
+                Assert.That(settings.LastSignedInEmail, Is.EqualTo("alpha@example.com"));
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        [Test]
+        public void SignOutAccount_ClearsEveryConnectionUsingThatAccount()
+        {
+            string tokenRoot = Path.Combine(Path.GetTempPath(), "unused_" + Guid.NewGuid().ToString("N"));
+            FileHivemindSettings fileHivemind = new FileHivemindSettings
+            {
+                GoogleDriveAccounts = new List<GoogleDriveSignedInAccount>
+                {
+                    new GoogleDriveSignedInAccount
+                    {
+                        TokenStoreKey = "shared-token",
+                        Email = "tester@example.com",
+                        DisplayName = "Tester",
+                        CredentialFingerprint = "fingerprint"
+                    }
+                },
+                LastSelectedGoogleDriveAccountTokenStoreKey = "shared-token"
+            };
+            List<FileHivemindConnectionProfile> connections = new List<FileHivemindConnectionProfile>
+            {
+                new FileHivemindConnectionProfile
+                {
+                    GoogleDrive = new GoogleDriveSyncSettings
+                    {
+                        TokenStoreKey = "shared-token",
+                        LastSignedInEmail = "tester@example.com",
+                        LastSignedInDisplayName = "Tester"
+                    }
+                },
+                new FileHivemindConnectionProfile
+                {
+                    GoogleDrive = new GoogleDriveSyncSettings
+                    {
+                        TokenStoreKey = "shared-token",
+                        LastSignedInEmail = "tester@example.com",
+                        LastSignedInDisplayName = "Tester"
+                    }
+                }
+            };
+
+            try
+            {
+                int affectedConnections = GoogleDriveSignedInAccountManager.SignOutAccount(
+                    fileHivemind,
+                    "shared-token",
+                    connections,
+                    new GoogleDriveSecureTokenStore(tokenRoot, new ObfuscatingProtector()));
+
+                Assert.That(affectedConnections, Is.EqualTo(2));
+                Assert.That(fileHivemind.GoogleDriveAccounts, Is.Empty);
+                Assert.That(fileHivemind.LastSelectedGoogleDriveAccountTokenStoreKey, Is.Empty);
+                Assert.That(connections.All(connection => string.IsNullOrWhiteSpace(connection.GoogleDrive.TokenStoreKey)), Is.True);
+                Assert.That(connections.All(connection => string.IsNullOrWhiteSpace(connection.GoogleDrive.LastSignedInEmail)), Is.True);
+            }
+            finally
+            {
+                if (Directory.Exists(tokenRoot))
+                {
+                    Directory.Delete(tokenRoot, true);
+                }
+            }
+        }
+
+        private sealed class ObfuscatingProtector : ISecretProtector
+        {
+            public byte[] Protect(byte[] value)
+            {
+                return value.Select(b => (byte)(b ^ 0x5A)).ToArray();
+            }
+
+            public byte[] Unprotect(byte[] value)
+            {
+                return value.Select(b => (byte)(b ^ 0x5A)).ToArray();
+            }
+        }
+    }
+
+    [TestFixture]
+    public class GoogleDriveConnectionEditorSaveSupportTests
+    {
+        [Test]
+        public void PersistStoredSecrets_SavesTypedSecretWithoutClearingSelectedAccountData()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "drive_editor_save_" + Guid.NewGuid().ToString("N"));
+
+            try
+            {
+                GoogleDriveSecureClientCredentialStore credentialStore =
+                    new GoogleDriveSecureClientCredentialStore(root, new ObfuscatingProtector());
+                FileHivemindConnectionProfile previousPersisted = new FileHivemindConnectionProfile
+                {
+                    GoogleDrive = new GoogleDriveSyncSettings
+                    {
+                        OAuthClientId = string.Empty,
+                        OAuthClientSecretStoreKey = "oauth-key"
+                    }
+                };
+                FileHivemindConnectionProfile draft = new FileHivemindConnectionProfile
+                {
+                    Id = "connection-1",
+                    DisplayName = "Campaign",
+                    ProviderId = FileHivemindProviderIds.GoogleDrive,
+                    AutoSyncEnabled = true,
+                    GoogleDrive = new GoogleDriveSyncSettings
+                    {
+                        OAuthClientId = "desktop-client-id.apps.googleusercontent.com",
+                        OAuthClientSecret = "desktop-client-secret",
+                        OAuthClientSecretStoreKey = "oauth-key",
+                        TokenStoreKey = "token-a",
+                        LastSignedInEmail = "tester@example.com",
+                        LastSignedInDisplayName = "Tester"
+                    }
+                };
+                FileHivemindConnectionProfile target = FileHivemindConnectionProfile.CreateGoogleDriveProfile();
+
+                GoogleDriveConnectionEditorSaveSupport.PersistStoredSecrets(previousPersisted, draft, credentialStore);
+                GoogleDriveConnectionEditorSaveSupport.CopyConnectionProfile(draft, target);
+
+                Assert.That(GoogleDriveConnectionCredentialSupport.LoadSecret(draft.GoogleDrive, credentialStore), Is.EqualTo("desktop-client-secret"));
+                Assert.That(GoogleDriveConnectionCredentialSupport.LoadSecret(target.GoogleDrive, credentialStore), Is.EqualTo("desktop-client-secret"));
+                Assert.That(draft.GoogleDrive.OAuthClientSecret, Is.Empty);
+                Assert.That(target.GoogleDrive.OAuthClientSecret, Is.Empty);
+                Assert.That(target.GoogleDrive.TokenStoreKey, Is.EqualTo("token-a"));
+                Assert.That(target.GoogleDrive.LastSignedInEmail, Is.EqualTo("tester@example.com"));
+                Assert.That(target.GoogleDrive.LastSignedInDisplayName, Is.EqualTo("Tester"));
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        [Test]
+        public void PersistStoredSecrets_DeletesOldStoredSecretWhenClientIdIsCleared()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "drive_editor_delete_" + Guid.NewGuid().ToString("N"));
+
+            try
+            {
+                GoogleDriveSecureClientCredentialStore credentialStore =
+                    new GoogleDriveSecureClientCredentialStore(root, new ObfuscatingProtector());
+                FileHivemindConnectionProfile previousPersisted = new FileHivemindConnectionProfile
+                {
+                    GoogleDrive = new GoogleDriveSyncSettings
+                    {
+                        OAuthClientId = "desktop-client-id.apps.googleusercontent.com",
+                        OAuthClientSecret = "desktop-client-secret",
+                        OAuthClientSecretStoreKey = "oauth-key"
+                    }
+                };
+                GoogleDriveConnectionCredentialSupport.SaveSecretIfPresent(previousPersisted.GoogleDrive, credentialStore);
+
+                FileHivemindConnectionProfile draft = new FileHivemindConnectionProfile
+                {
+                    GoogleDrive = new GoogleDriveSyncSettings
+                    {
+                        OAuthClientId = string.Empty,
+                        OAuthClientSecretStoreKey = "oauth-key"
+                    }
+                };
+
+                GoogleDriveConnectionEditorSaveSupport.PersistStoredSecrets(previousPersisted, draft, credentialStore);
+
+                Assert.That(GoogleDriveConnectionCredentialSupport.HasStoredSecret(previousPersisted.GoogleDrive, credentialStore), Is.False);
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        private sealed class ObfuscatingProtector : ISecretProtector
+        {
+            public byte[] Protect(byte[] value)
+            {
+                return value.Select(b => (byte)(b ^ 0x5A)).ToArray();
+            }
+
+            public byte[] Unprotect(byte[] value)
+            {
+                return value.Select(b => (byte)(b ^ 0x5A)).ToArray();
+            }
+        }
+    }
+
+    [TestFixture]
     public class GoogleDriveMountPathManagerTests
     {
         [Test]
