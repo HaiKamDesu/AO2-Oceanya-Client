@@ -40,18 +40,36 @@ namespace OceanyaClient.Components
             get => cboINISelect.Text;
             set
             {
-                if (editableTextBox == null)
+                // Programmatic updates must not fire OnConfirm — doing so queues stale
+                // async callbacks that cause feedback loops (e.g. rapid pos oscillation
+                // after reconnect when multiple SetPos calls are made in quick succession).
+                var item = FindItemByExactText(value);
+
+                isInternalUpdate = true;
+
+                if (editableTextBox != null)
+                {
+                    var prevFocusable = editableTextBox.Focusable;
+                    editableTextBox.Focusable = false;
+                    cboINISelect.Text = value;
+                    editableTextBox.Focusable = prevFocusable;
+                }
+                else
                 {
                     cboINISelect.Text = value;
-                    ConfirmSelection(FindItemByExactText(value), value);
-                    return;
                 }
 
-                var prevFocusable = editableTextBox.Focusable;
-                editableTextBox.Focusable = false;
-                cboINISelect.Text = value;
-                ConfirmSelection(FindItemByExactText(value), value);
-                editableTextBox.Focusable = prevFocusable;
+                SetSelectedItemImage(item?.ImagePath ?? "");
+                lastConfirmedText = value;
+
+                // Defer ItemsSource and SelectedItem restore to avoid visual artifacts,
+                // but do NOT invoke OnConfirm.
+                cboINISelect.Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    cboINISelect.ItemsSource = allItems;
+                    cboINISelect.SelectedItem = item;
+                    isInternalUpdate = false;
+                }), System.Windows.Threading.DispatcherPriority.Background);
             }
         }
         #endregion

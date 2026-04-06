@@ -638,6 +638,8 @@ namespace OceanyaClient.Components
             var emote = emotes.FirstOrDefault(x => x.Value == clickedButton).Key;
             EmoteDropdown.SelectedText = emote.DisplayID;
             curClient.SetEmote(emote.DisplayID);
+            chkPreanim.IsChecked = emote.Modifier == ICMessage.EmoteModifiers.PlayPreanimation
+                || emote.Modifier == ICMessage.EmoteModifiers.PlayPreanimationAndObjection;
             txtICMessage.Focus();
         }
         private void EmoteToggleBtn_Unchecked(object sender, RoutedEventArgs e)
