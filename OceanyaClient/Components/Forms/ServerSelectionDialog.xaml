@@ -140,14 +140,26 @@
                                                   Content="{TemplateBinding Content}"/>
                         </Border>
                         <ControlTemplate.Triggers>
-                            <DataTrigger Binding="{Binding IsSelectable}" Value="True">
-                                <Setter TargetName="ItemBorder" Property="Background" Value="#264A5E4A"/>
-                                <Setter Property="Foreground" Value="#CFEBCF"/>
-                            </DataTrigger>
-
+                            <!-- Offline / incompatible → red -->
                             <DataTrigger Binding="{Binding IsSelectable}" Value="False">
                                 <Setter TargetName="ItemBorder" Property="Background" Value="#265E4A4A"/>
                                 <Setter Property="Foreground" Value="#F0CACA"/>
+                            </DataTrigger>
+
+                            <!-- Unknown / Pinging → yellow (overrides red for unprobed rows) -->
+                            <DataTrigger Binding="{Binding PingStatus}" Value="{x:Static local:ServerPingStatus.Unknown}">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#265E5A30"/>
+                                <Setter Property="Foreground" Value="#F0E8A0"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding PingStatus}" Value="{x:Static local:ServerPingStatus.Pinging}">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#265E5A30"/>
+                                <Setter Property="Foreground" Value="#F0E8A0"/>
+                            </DataTrigger>
+
+                            <!-- Online / selectable → green (highest priority data trigger) -->
+                            <DataTrigger Binding="{Binding IsSelectable}" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#264A5E4A"/>
+                                <Setter Property="Foreground" Value="#CFEBCF"/>
                             </DataTrigger>
 
                             <Trigger Property="IsMouseOver" Value="True">
@@ -251,11 +263,16 @@
                                 <ListView x:Name="DefaultsListView"
                                           Style="{StaticResource ServerListViewStyle}"
                                           ItemContainerStyle="{StaticResource ServerListItemStyle}"
+                                          SelectionMode="Extended"
                                           SelectionChanged="ServerListView_SelectionChanged"
+                                          ContextMenuOpening="ServerListView_ContextMenuOpening"
                                           PreviewMouseRightButtonDown="ServerListView_PreviewMouseRightButtonDown"
                                           MouseDoubleClick="ServerListView_MouseDoubleClick">
                                     <ListView.ContextMenu>
                                         <ContextMenu>
+                                            <MenuItem Header="Refresh Server" Click="RefreshServerMenuItem_Click"/>
+                                            <MenuItem Header="Refresh Defaults" Click="RefreshCurrentTabMenuItem_Click"/>
+                                            <Separator/>
                                             <MenuItem Header="Add To Favorites" Click="AddFavoriteButton_Click"/>
                                             <Separator/>
                                             <MenuItem Header="Copy IP" Click="CopyIpMenuItem_Click"/>
@@ -277,11 +294,16 @@
                                 <ListView x:Name="AoPollListView"
                                           Style="{StaticResource ServerListViewStyle}"
                                           ItemContainerStyle="{StaticResource ServerListItemStyle}"
+                                          SelectionMode="Extended"
                                           SelectionChanged="ServerListView_SelectionChanged"
+                                          ContextMenuOpening="ServerListView_ContextMenuOpening"
                                           PreviewMouseRightButtonDown="ServerListView_PreviewMouseRightButtonDown"
                                           MouseDoubleClick="ServerListView_MouseDoubleClick">
                                     <ListView.ContextMenu>
                                         <ContextMenu>
+                                            <MenuItem Header="Refresh Server" Click="RefreshServerMenuItem_Click"/>
+                                            <MenuItem Header="Refresh AO Server Poll" Click="RefreshCurrentTabMenuItem_Click"/>
+                                            <Separator/>
                                             <MenuItem Header="Add To Favorites" Click="AddFavoriteButton_Click"/>
                                             <Separator/>
                                             <MenuItem Header="Copy IP" Click="CopyIpMenuItem_Click"/>
@@ -303,11 +325,16 @@
                                 <ListView x:Name="FavoritesListView"
                                           Style="{StaticResource ServerListViewStyle}"
                                           ItemContainerStyle="{StaticResource ServerListItemStyle}"
+                                          SelectionMode="Extended"
                                           SelectionChanged="ServerListView_SelectionChanged"
+                                          ContextMenuOpening="ServerListView_ContextMenuOpening"
                                           PreviewMouseRightButtonDown="ServerListView_PreviewMouseRightButtonDown"
                                           MouseDoubleClick="ServerListView_MouseDoubleClick">
                                     <ListView.ContextMenu>
                                         <ContextMenu>
+                                            <MenuItem Header="Refresh Server" Click="RefreshServerMenuItem_Click"/>
+                                            <MenuItem Header="Refresh Favorites" Click="RefreshCurrentTabMenuItem_Click"/>
+                                            <Separator/>
                                             <MenuItem Header="Add Favorite" Click="AddFavoriteButton_Click"/>
                                             <MenuItem Header="Edit Favorite" Click="EditFavoriteButton_Click"/>
                                             <MenuItem Header="Duplicate Favorite" Click="DuplicateFavoriteMenuItem_Click"/>

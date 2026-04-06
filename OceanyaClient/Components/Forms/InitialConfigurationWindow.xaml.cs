@@ -338,10 +338,10 @@ namespace OceanyaClient
                     Source = selectedServer.Source,
                     IsLegacy = selectedServer.IsLegacy,
                     FavoriteStoreIndex = selectedServer.FavoriteStoreIndex,
-                    IsAoClientCompatible = selectedServer.IsAoClientCompatible,
-                    IsOnline = selectedServer.IsOnline,
+                    PingStatus = selectedServer.PingStatus,
                     OnlinePlayers = selectedServer.OnlinePlayers,
-                    MaxPlayers = selectedServer.MaxPlayers
+                    MaxPlayers = selectedServer.MaxPlayers,
+                    ListIndex = selectedServer.ListIndex
                 }
                 : new ServerEndpointDefinition
                 {
@@ -349,12 +349,28 @@ namespace OceanyaClient
                     Endpoint = selectedServerEndpoint,
                     Description = "Previously selected endpoint.",
                     Source = ServerEndpointSource.Defaults,
-                    IsLegacy = ServerEndpointCatalog.IsLegacyEndpoint(selectedServerEndpoint)
+                    IsLegacy = ServerEndpointCatalog.IsLegacyEndpoint(selectedServerEndpoint),
+                    ListIndex = 0
                 };
 
-            await ServerEndpointCatalog.PopulateSupplementalStatusAsync(
-                new[] { validationTarget },
-                CancellationToken.None);
+            if (!validationTarget.SupportsDirectConnection)
+            {
+                validationTarget.PingStatus = ServerPingStatus.Offline;
+                validationTarget.OnlinePlayers = null;
+                validationTarget.MaxPlayers = null;
+                return validationTarget;
+            }
+
+            (bool success, int? players, int? maxPlayers, bool incompatibleClient) =
+                await ServerEndpointCatalog.ProbeEndpointAsync(validationTarget.Endpoint, CancellationToken.None);
+
+            validationTarget.OnlinePlayers = success ? players : null;
+            validationTarget.MaxPlayers = success ? maxPlayers : null;
+            validationTarget.PingStatus = incompatibleClient
+                ? ServerPingStatus.IncompatibleClient
+                : success
+                    ? ServerPingStatus.Online
+                    : ServerPingStatus.Offline;
 
             return validationTarget;
         }
