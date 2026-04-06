@@ -93,16 +93,16 @@ namespace AO2AIBot.Prompts
             sb.AppendLine("## Your Decision");
             sb.AppendLine("You are a live participant in this AO2 session. Read the conversation above and decide what your character does next.");
             sb.AppendLine();
-            sb.AppendLine("Output ONLY one of these — no other text:");
-            sb.AppendLine("  SYSTEM_WAIT()");
-            sb.AppendLine("  {\"shouldRespond\":true,\"channel\":\"IC\",\"message\":\"your response here\"}");
+            sb.AppendLine("Output ONLY a single JSON object — no other text:");
+            sb.AppendLine("  To respond:     {\"shouldRespond\":true,\"channel\":\"IC\",\"message\":\"your response here\"}");
+            sb.AppendLine("  To stay silent: {\"shouldRespond\":false}");
 
             return sb.ToString();
         }
 
         /// <summary>
         /// Builds a correction prompt for the retry attempt when a previous model response was invalid.
-        /// JSON output mode is enforced on the retry, so SYSTEM_WAIT() is replaced with {"shouldRespond":false}.
+        /// The schema-constrained format is already enforced, so this prompt focuses on clarifying intent.
         /// </summary>
         public static string BuildCorrectionPrompt(string originalPrompt, string failedResponse)
         {
@@ -110,10 +110,9 @@ namespace AO2AIBot.Prompts
             string trimmedOriginal = (originalPrompt ?? string.Empty).Trim();
 
             return
-                "CORRECTION: Your previous response was invalid — you output free text instead of JSON.\n\n"
-                + "You MUST output a single JSON object. Nothing else. No text, no markdown.\n\n"
-                + "To take action:   {\"shouldRespond\":true,\"channel\":\"IC\",\"message\":\"your text\"}\n"
-                + "To stay silent:   {\"shouldRespond\":false}\n\n"
+                "Your previous response could not be parsed. Output ONLY a valid JSON object.\n\n"
+                + "To respond: {\"shouldRespond\":true,\"channel\":\"IC\",\"message\":\"your text\"}\n"
+                + "To stay silent: {\"shouldRespond\":false}\n\n"
                 + "Your previous invalid response:\n"
                 + "---\n"
                 + trimmedFailed
