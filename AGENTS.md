@@ -1,20 +1,24 @@
 ## Repository Structure
 - **AO2-Client/**: Git submodule pointing to the original Attorney Online client (reference code only)
+- **tsuserver3/**: Git submodule pointing to the main Attorney Online server implementation (reference code only)
+- **tsuserverCC/**: Git submodule pointing to a widely used Attorney Online server fork (reference code only)
 - **AOBot-Testing/**: My implementation of an Attorney Online bot client
 - **Common/**: Shared utilities and code for my implementation
 - **OceanyaClient/**: My main WPF client implementation
 - **UnitTests/**: Tests for my implementation
 
 ## Reference Code Usage
-The code in the AO2-Client submodule is from the original Attorney Online project and is checked out at tag `v2.11.0-release`. It should be used for:
+The code in the `AO2-Client`, `tsuserver3`, and `tsuserverCC` submodules exists for reference only. It should be used for:
 - Understanding network protocols and packet structures
 - Referencing game mechanics and logic
+- Understanding server-side packet handling, area management, permissions, and moderation behavior
+- Studying how the most common AO2 servers implement and customize protocol behavior
 - Studying UI workflows and features
 
-Claude should NOT copy this code directly but use it to understand patterns and functionality while helping me implement my own C# WPF version.
+Claude should NOT copy this code directly but use it to understand patterns, protocol details, and functionality while helping me implement my own C# WPF version.
 
 ## Working with Git Submodules
-- The AO2-Client submodule is set to the v2.11.0-release tag
+- The repository includes `AO2-Client`, `tsuserver3`, and `tsuserverCC` as git submodules for client/server reference
 - When cloning this repository for the first time, use: `git clone --recurse-submodules`
 - To update the submodule after cloning without the above flag: `git submodule update --init --recursive`
 
