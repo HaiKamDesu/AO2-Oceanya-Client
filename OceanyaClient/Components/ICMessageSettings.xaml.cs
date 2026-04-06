@@ -40,6 +40,7 @@ namespace OceanyaClient.Components
         public Action<string>? OnRefreshCharacterRequested;
         public Action? OnRefreshAllAssetsRequested;
         public Action? OnRefreshAllCharactersRequested;
+        public Action<string>? OnOpenInCharacterEditorRequested;
 
         public ICMessageSettings()
         {
@@ -161,9 +162,21 @@ namespace OceanyaClient.Components
             };
             refreshAllCharactersItem.Click += (_, _) => OnRefreshAllCharactersRequested?.Invoke();
 
+            MenuItem openInEditorItem = new MenuItem { Header = "Open in Character Editor" };
+            openInEditorItem.Click += (_, _) =>
+            {
+                string characterDirectory = ResolveCurrentCharacterDirectory();
+                if (!string.IsNullOrWhiteSpace(characterDirectory))
+                {
+                    OnOpenInCharacterEditorRequested?.Invoke(characterDirectory);
+                }
+            };
+
             contextMenu.Items.Add(refreshCurrentCharacterItem);
             contextMenu.Items.Add(refreshAllAssetsItem);
             contextMenu.Items.Add(refreshAllCharactersItem);
+            contextMenu.Items.Add(new Separator());
+            contextMenu.Items.Add(openInEditorItem);
             contextMenu.Opened += (_, _) =>
             {
                 string characterName = ResolveCurrentCharacterName();
@@ -173,6 +186,7 @@ namespace OceanyaClient.Components
                 refreshCurrentCharacterItem.IsEnabled = !string.IsNullOrWhiteSpace(characterName);
                 refreshAllAssetsItem.IsEnabled = true;
                 refreshAllCharactersItem.IsEnabled = true;
+                openInEditorItem.IsEnabled = !string.IsNullOrWhiteSpace(ResolveCurrentCharacterDirectory());
             };
 
             return contextMenu;
@@ -192,6 +206,11 @@ namespace OceanyaClient.Components
             }
 
             return string.Empty;
+        }
+
+        private string ResolveCurrentCharacterDirectory()
+        {
+            return curClient?.currentINI?.DirectoryPath?.Trim() ?? string.Empty;
         }
 
         private void EffectDropdown_OnConfirm(object? sender, string newEffect)
