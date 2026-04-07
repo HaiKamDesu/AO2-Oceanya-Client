@@ -1,6 +1,7 @@
 using Common;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -22,24 +23,107 @@ namespace OceanyaClient
         Favorites
     }
 
-    internal sealed class ServerEndpointDefinition
+    internal enum ServerPingStatus
     {
-        public int DisplayId { get; set; }
+        Unknown,            // Not yet probed — shown in yellow
+        Pinging,            // Currently being probed — shown in yellow
+        Online,             // Probe succeeded, server is reachable and speaks AO
+        Offline,            // Probe failed — server unreachable or does not speak AO
+        IncompatibleClient  // Server responded but rejected our client version via BD#
+    }
+
+    internal sealed class ServerEndpointDefinition : INotifyPropertyChanged
+    {
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        private int _displayId;
+        private ServerPingStatus _pingStatus = ServerPingStatus.Unknown;
+        private int? _onlinePlayers;
+        private int? _maxPlayers;
+
         public required string Name { get; init; }
         public required string Endpoint { get; init; }
         public required string Description { get; init; }
         public required ServerEndpointSource Source { get; init; }
         public required bool IsLegacy { get; init; }
         public int? FavoriteStoreIndex { get; init; }
-        public bool IsAoClientCompatible { get; set; } = true;
-        public bool IsOnline { get; set; }
-        public int? OnlinePlayers { get; set; }
-        public int? MaxPlayers { get; set; }
+
+        /// <summary>
+        /// Zero-based position in the original source list (JSON array index, enum order, or favorites INI index).
+        /// Used as the default display ordering to match the AO2 client ordering.
+        /// </summary>
+        public int ListIndex { get; init; }
+
+        public int DisplayId
+        {
+            get => _displayId;
+            set
+            {
+                if (_displayId == value) return;
+                _displayId = value;
+                Notify(nameof(DisplayId));
+            }
+        }
+
+        public ServerPingStatus PingStatus
+        {
+            get => _pingStatus;
+            set
+            {
+                if (_pingStatus == value) return;
+                _pingStatus = value;
+                Notify(nameof(PingStatus));
+                Notify(nameof(IsOnline));
+                Notify(nameof(IsAoClientCompatible));
+                Notify(nameof(IsSelectable));
+                Notify(nameof(PlayersText));
+                Notify(nameof(AvailabilityText));
+            }
+        }
+
+        public int? OnlinePlayers
+        {
+            get => _onlinePlayers;
+            set
+            {
+                if (_onlinePlayers == value) return;
+                _onlinePlayers = value;
+                Notify(nameof(OnlinePlayers));
+                Notify(nameof(HasKnownPlayerCounts));
+                Notify(nameof(PlayersText));
+                Notify(nameof(AvailabilityText));
+            }
+        }
+
+        public int? MaxPlayers
+        {
+            get => _maxPlayers;
+            set
+            {
+                if (_maxPlayers == value) return;
+                _maxPlayers = value;
+                Notify(nameof(MaxPlayers));
+                Notify(nameof(HasKnownPlayerCounts));
+                Notify(nameof(PlayersText));
+                Notify(nameof(AvailabilityText));
+            }
+        }
+
+        /// <summary>
+        /// Server is online. IncompatibleClient servers are still considered online because
+        /// the server itself is up — only the probe client version was rejected.
+        /// </summary>
+        public bool IsOnline => PingStatus == ServerPingStatus.Online || PingStatus == ServerPingStatus.IncompatibleClient;
+
+        /// <summary>
+        /// False only when the server explicitly sent BD# with a client-version rejection reason.
+        /// The server is still connectable via the real AO2 client.
+        /// </summary>
+        public bool IsAoClientCompatible => PingStatus != ServerPingStatus.IncompatibleClient;
 
         public bool HasKnownPlayerCounts => OnlinePlayers.HasValue && MaxPlayers.HasValue;
 
-        public bool SupportsDirectConnection => !IsLegacy
-            && InitialConfigurationWindow.IsValidServerEndpoint(Endpoint);
+        public bool SupportsDirectConnection => InitialConfigurationWindow.IsValidServerEndpoint(Endpoint);
 
         public bool IsSelectable => IsOnline && SupportsDirectConnection;
 
@@ -55,19 +139,16 @@ namespace OceanyaClient
         {
             get
             {
-                if (!IsOnline)
+                return PingStatus switch
                 {
-                    return "Offline";
-                }
-
-                int? onlinePlayers = OnlinePlayers;
-                int? maxPlayers = MaxPlayers;
-                if (onlinePlayers.HasValue && maxPlayers.HasValue)
-                {
-                    return $"Online: {onlinePlayers.Value}/{maxPlayers.Value}";
-                }
-
-                return "Online: ???/???";
+                    ServerPingStatus.Unknown => "Checking...",
+                    ServerPingStatus.Pinging => "Checking...",
+                    ServerPingStatus.Offline => "Offline",
+                    ServerPingStatus.IncompatibleClient => "Online (client rejected)",
+                    ServerPingStatus.Online when HasKnownPlayerCounts => $"Online: {OnlinePlayers}/{MaxPlayers}",
+                    ServerPingStatus.Online => "Online: ???/???",
+                    _ => "Unknown"
+                };
             }
         }
 
@@ -75,6 +156,11 @@ namespace OceanyaClient
         {
             get
             {
+                if (PingStatus == ServerPingStatus.Unknown || PingStatus == ServerPingStatus.Pinging)
+                {
+                    return string.Empty;
+                }
+
                 if (!IsOnline)
                 {
                     return string.Empty;
@@ -85,10 +171,13 @@ namespace OceanyaClient
                     return "???/???";
                 }
 
-                int? onlinePlayers = OnlinePlayers;
-                int? maxPlayers = MaxPlayers;
-                return $"{onlinePlayers.GetValueOrDefault()}/{maxPlayers.GetValueOrDefault()}";
+                return $"{OnlinePlayers.GetValueOrDefault()}/{MaxPlayers.GetValueOrDefault()}";
             }
+        }
+
+        private void Notify(string propertyName)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         }
     }
 
@@ -140,53 +229,52 @@ namespace OceanyaClient
         private static readonly HttpClient httpClient = new HttpClient();
         private const string DefaultMasterServerUrl = "http://servers.aceattorneyonline.com";
         private const int AoProbeConcurrency = 12;
-        private const int ReachabilityProbeConcurrency = 16;
         private const int AoProbeTimeoutMs = 6000;
         private const string AoProbeClientName = "AO2";
         private const string AoProbeClientVersion = "2.11.0";
 
-        public static async Task<List<ServerEndpointDefinition>> LoadAsync(string configIniPath, CancellationToken cancellationToken)
+        /// <summary>
+        /// Loads the full combined server list and probes every server before returning.
+        /// Intended for live tests and diagnostics — in the production UI use <see cref="LoadListAsync"/>
+        /// and then probe asynchronously via <see cref="ProbeEndpointAsync"/>.
+        /// </summary>
+        public static async Task<List<ServerEndpointDefinition>> LoadAndProbeAsync(string configIniPath, CancellationToken cancellationToken)
+        {
+            List<ServerEndpointDefinition> servers = await LoadListAsync(configIniPath, cancellationToken);
+
+            // TCP reachability is intentionally not used as a fallback: an open port does not
+            // imply the server speaks AO protocol.
+            await PopulateAoPlayerCountsAsyncForTesting(
+                servers,
+                ProbeAoPlayerCountAsync,
+                (_, __) => Task.FromResult(false),
+                cancellationToken);
+
+            return servers;
+        }
+
+        /// <summary>
+        /// Loads the full combined server list (defaults + AO poll + favorites) without probing.
+        /// All entries start with <see cref="ServerPingStatus.Unknown"/>.
+        /// Call <see cref="CreateProbeBatches"/> + <see cref="ProbeEndpointAsync"/> in the background to fill in live status.
+        /// </summary>
+        public static async Task<List<ServerEndpointDefinition>> LoadListAsync(string configIniPath, CancellationToken cancellationToken)
         {
             List<ServerEndpointDefinition> pollServers = await LoadAoServerPollAsync(configIniPath, cancellationToken);
-            await PopulateAoPlayerCountsAsync(
-                pollServers.Where(server => !server.IsLegacy),
-                cancellationToken);
             List<ServerEndpointDefinition> defaultServers = LoadDefaultServers();
             List<ServerEndpointDefinition> favoriteServers = LoadFavorites(configIniPath);
 
-            Dictionary<string, ServerEndpointDefinition> pollByEndpointKey = pollServers
-                .Select(server => (Key: GetEndpointKey(server.Endpoint), Server: server))
-                .Where(item => !string.IsNullOrWhiteSpace(item.Key))
-                .GroupBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(group => group.Key, group => group.First().Server, StringComparer.OrdinalIgnoreCase);
-
-            ApplyKnownStatus(defaultServers, pollByEndpointKey);
-            ApplyKnownStatus(favoriteServers, pollByEndpointKey);
-
-            List<ServerEndpointDefinition> supplementalServers = defaultServers
-                .Concat(favoriteServers)
-                .ToList();
-            await PopulateAoPlayerCountsAsync(
-                supplementalServers.Where(NeedsSupplementalAoProbe),
-                cancellationToken);
-            await PopulateReachabilityAsync(
-                supplementalServers.Where(NeedsSupplementalReachabilityProbe),
-                cancellationToken);
-
-            List<ServerEndpointDefinition> servers = new List<ServerEndpointDefinition>();
-            servers.AddRange(defaultServers);
-            servers.AddRange(pollServers);
-            servers.AddRange(favoriteServers);
-
-            return servers
-                .OrderBy(server => server.Source)
-                .ThenBy(server => server.Name, StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            List<ServerEndpointDefinition> all = new List<ServerEndpointDefinition>();
+            all.AddRange(defaultServers);
+            all.AddRange(pollServers);
+            all.AddRange(favoriteServers);
+            return all;
         }
 
         public static List<ServerEndpointDefinition> LoadDefaultServers()
         {
             List<ServerEndpointDefinition> defaults = new List<ServerEndpointDefinition>();
+            int listIndex = 0;
             foreach (KeyValuePair<Globals.Servers, string> entry in Globals.IPs.OrderBy(item => item.Key))
             {
                 string endpoint = (entry.Value ?? string.Empty).Trim();
@@ -201,7 +289,8 @@ namespace OceanyaClient
                     Endpoint = endpoint,
                     Description = "Known-good default endpoint.",
                     Source = ServerEndpointSource.Defaults,
-                    IsLegacy = false
+                    IsLegacy = false,
+                    ListIndex = listIndex++
                 });
             }
 
@@ -221,7 +310,8 @@ namespace OceanyaClient
                     Description = favorite.Description,
                     Source = ServerEndpointSource.Favorites,
                     IsLegacy = favorite.Legacy,
-                    FavoriteStoreIndex = index
+                    FavoriteStoreIndex = index,
+                    ListIndex = index
                 })
                 .ToList();
         }
@@ -263,23 +353,64 @@ namespace OceanyaClient
             return favorites.FindIndex(favorite => string.Equals(favorite.Endpoint, endpoint, StringComparison.OrdinalIgnoreCase));
         }
 
+        internal static bool TryParseDirectEndpoint(
+            string endpoint,
+            out string address,
+            out int port,
+            out bool legacy,
+            out bool secure)
+        {
+            address = string.Empty;
+            port = 0;
+            legacy = false;
+            secure = false;
+
+            if (!Uri.TryCreate(endpoint?.Trim(), UriKind.Absolute, out Uri? uri) || uri == null)
+            {
+                return false;
+            }
+
+            bool validScheme = string.Equals(uri.Scheme, "tcp", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(uri.Scheme, "ws", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(uri.Scheme, "wss", StringComparison.OrdinalIgnoreCase);
+            if (!validScheme)
+            {
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(uri.Host) || uri.Port <= 0)
+            {
+                return false;
+            }
+
+            address = uri.Host;
+            port = uri.Port;
+            legacy = string.Equals(uri.Scheme, "tcp", StringComparison.OrdinalIgnoreCase);
+            secure = string.Equals(uri.Scheme, "wss", StringComparison.OrdinalIgnoreCase);
+            return true;
+        }
+
+        internal static bool IsLegacyEndpoint(string endpoint)
+        {
+            return TryParseDirectEndpoint(endpoint, out _, out _, out bool legacy, out _) && legacy;
+        }
+
         internal static string GetNotSelectableReason(ServerEndpointDefinition server)
         {
             List<string> reasons = new List<string>();
 
-            if (!server.IsOnline)
+            if (server.PingStatus == ServerPingStatus.Unknown || server.PingStatus == ServerPingStatus.Pinging)
+            {
+                reasons.Add("Server status is still being checked.");
+            }
+            else if (!server.IsOnline)
             {
                 reasons.Add("Server appears offline.");
             }
 
-            if (server.IsLegacy)
-            {
-                reasons.Add("Legacy TCP server (no WebSocket support).");
-            }
-
             if (!InitialConfigurationWindow.IsValidServerEndpoint(server.Endpoint))
             {
-                reasons.Add("Invalid WebSocket endpoint.");
+                reasons.Add("Invalid server endpoint.");
             }
 
             if (reasons.Count == 0)
@@ -321,6 +452,26 @@ namespace OceanyaClient
             return DefaultMasterServerUrl;
         }
 
+        /// <summary>
+        /// Groups the given servers into batches by endpoint key so each unique endpoint is probed only once.
+        /// Only servers that support direct connection are included.
+        /// </summary>
+        public static List<EndpointProbeBatch> CreateProbeBatches(IEnumerable<ServerEndpointDefinition> servers)
+        {
+            return CreateEndpointProbeBatches(servers.Where(s => s.SupportsDirectConnection));
+        }
+
+        /// <summary>
+        /// Probes a single endpoint (identified by the first server in the batch) and returns the result.
+        /// Does NOT update server state — the caller is responsible for dispatching state changes to the UI thread.
+        /// </summary>
+        public static async Task<(bool Success, int? Players, int? MaxPlayers, bool IncompatibleClient)> ProbeEndpointAsync(
+            string endpoint,
+            CancellationToken cancellationToken)
+        {
+            return await ProbeAoPlayerCountAsync(endpoint, cancellationToken);
+        }
+
         private static async Task<List<ServerEndpointDefinition>> LoadAoServerPollAsync(string configIniPath, CancellationToken cancellationToken)
         {
             List<ServerEndpointDefinition> result = new List<ServerEndpointDefinition>();
@@ -343,6 +494,7 @@ namespace OceanyaClient
                     return result;
                 }
 
+                int listIndex = 0;
                 foreach (JsonElement entry in json.RootElement.EnumerateArray())
                 {
                     if (entry.ValueKind != JsonValueKind.Object)
@@ -389,8 +541,9 @@ namespace OceanyaClient
                     string scheme = legacy ? "tcp" : "ws";
                     string endpoint = $"{scheme}://{ip}:{port}";
 
-                    (int? onlinePlayers, int? maxPlayers) = ExtractPlayersAndCapacity(entry);
-
+                    // Status starts Unknown — will be filled in by background probing.
+                    // We do NOT mark servers as online based on JSON presence alone,
+                    // because the master server list does not guarantee the server is actually reachable.
                     result.Add(new ServerEndpointDefinition
                     {
                         Name = name,
@@ -398,9 +551,7 @@ namespace OceanyaClient
                         Description = description,
                         Source = ServerEndpointSource.AoServerPoll,
                         IsLegacy = legacy,
-                        IsOnline = true,
-                        OnlinePlayers = onlinePlayers,
-                        MaxPlayers = maxPlayers
+                        ListIndex = listIndex++
                     });
                 }
             }
@@ -410,262 +561,6 @@ namespace OceanyaClient
             }
 
             return result;
-        }
-
-        private static void ApplyKnownStatus(
-            IEnumerable<ServerEndpointDefinition> servers,
-            IReadOnlyDictionary<string, ServerEndpointDefinition> knownStatuses)
-        {
-            foreach (ServerEndpointDefinition server in servers)
-            {
-                string key = GetEndpointKey(server.Endpoint);
-                if (string.IsNullOrWhiteSpace(key))
-                {
-                    continue;
-                }
-
-                if (!knownStatuses.TryGetValue(key, out ServerEndpointDefinition? knownStatus))
-                {
-                    continue;
-                }
-
-                server.IsOnline = knownStatus.IsOnline;
-                server.OnlinePlayers = knownStatus.OnlinePlayers;
-                server.MaxPlayers = knownStatus.MaxPlayers;
-                server.IsAoClientCompatible = knownStatus.IsAoClientCompatible;
-            }
-        }
-
-        private static async Task PopulateReachabilityAsync(IEnumerable<ServerEndpointDefinition> servers, CancellationToken cancellationToken)
-        {
-            await PopulateReachabilityAsyncForTesting(
-                servers,
-                IsEndpointReachableAsync,
-                cancellationToken);
-        }
-
-        internal static async Task PopulateReachabilityAsyncForTesting(
-            IEnumerable<ServerEndpointDefinition> servers,
-            Func<string, CancellationToken, Task<bool>> reachabilityProbeAsync,
-            CancellationToken cancellationToken)
-        {
-            List<EndpointProbeBatch> batches = CreateEndpointProbeBatches(servers);
-            if (batches.Count == 0)
-            {
-                return;
-            }
-
-            List<Task> tasks = new List<Task>();
-            using SemaphoreSlim concurrency = new SemaphoreSlim(ReachabilityProbeConcurrency);
-
-            foreach (EndpointProbeBatch batch in batches)
-            {
-                tasks.Add(Task.Run(async () =>
-                {
-                    await concurrency.WaitAsync(cancellationToken);
-                    try
-                    {
-                        bool isOnline = await reachabilityProbeAsync(batch.Endpoint, cancellationToken);
-                        foreach (ServerEndpointDefinition server in batch.Servers)
-                        {
-                            server.IsOnline = isOnline;
-                        }
-                    }
-                    finally
-                    {
-                        concurrency.Release();
-                    }
-                }, cancellationToken));
-            }
-
-            await Task.WhenAll(tasks);
-        }
-
-        private static async Task PopulateAoPlayerCountsAsync(
-            IEnumerable<ServerEndpointDefinition> servers,
-            CancellationToken cancellationToken)
-        {
-            await PopulateAoPlayerCountsAsyncForTesting(
-                servers,
-                ProbeAoPlayerCountAsync,
-                IsEndpointReachableAsync,
-                cancellationToken);
-        }
-
-        internal static async Task PopulateAoPlayerCountsAsyncForTesting(
-            IEnumerable<ServerEndpointDefinition> servers,
-            Func<string, CancellationToken, Task<(bool Success, int? Players, int? MaxPlayers, bool IncompatibleClient)>> aoProbeAsync,
-            Func<string, CancellationToken, Task<bool>> reachabilityProbeAsync,
-            CancellationToken cancellationToken)
-        {
-            List<EndpointProbeBatch> batches = CreateEndpointProbeBatches(servers);
-            if (batches.Count == 0)
-            {
-                return;
-            }
-
-            List<Task> tasks = new List<Task>();
-            using SemaphoreSlim concurrency = new SemaphoreSlim(AoProbeConcurrency);
-
-            foreach (EndpointProbeBatch batch in batches)
-            {
-                tasks.Add(Task.Run(async () =>
-                {
-                    await concurrency.WaitAsync(cancellationToken);
-                    try
-                    {
-                        (bool success, int? players, int? maxPlayers, bool incompatibleClient) =
-                            await aoProbeAsync(batch.Endpoint, cancellationToken);
-
-                        if (incompatibleClient)
-                        {
-                            foreach (ServerEndpointDefinition server in batch.Servers)
-                            {
-                                server.IsOnline = true;
-                                server.IsAoClientCompatible = false;
-                            }
-                            return;
-                        }
-
-                        if (success)
-                        {
-                            foreach (ServerEndpointDefinition server in batch.Servers)
-                            {
-                                server.IsOnline = true;
-                                server.IsAoClientCompatible = true;
-                                server.OnlinePlayers = players;
-                                server.MaxPlayers = maxPlayers;
-                            }
-                            return;
-                        }
-
-                        // Fallback status check if PN probe fails.
-                        bool isOnline = await reachabilityProbeAsync(batch.Endpoint, cancellationToken);
-                        foreach (ServerEndpointDefinition server in batch.Servers)
-                        {
-                            server.IsOnline = isOnline;
-                            server.IsAoClientCompatible = true;
-                        }
-                    }
-                    finally
-                    {
-                        concurrency.Release();
-                    }
-                }, cancellationToken));
-            }
-
-            await Task.WhenAll(tasks);
-        }
-
-        private static List<EndpointProbeBatch> CreateEndpointProbeBatches(IEnumerable<ServerEndpointDefinition> servers)
-        {
-            return servers
-                .Where(server => server != null)
-                .GroupBy(server => GetEndpointProbeBatchKey(server.Endpoint), StringComparer.OrdinalIgnoreCase)
-                .Select(group => new EndpointProbeBatch(group.First().Endpoint, group.ToList()))
-                .ToList();
-        }
-
-        private static string GetEndpointProbeBatchKey(string endpoint)
-        {
-            string endpointKey = GetEndpointKey(endpoint);
-            if (!string.IsNullOrWhiteSpace(endpointKey))
-            {
-                return endpointKey;
-            }
-
-            return endpoint?.Trim() ?? string.Empty;
-        }
-
-        internal static async Task PopulateSupplementalStatusAsync(
-            IEnumerable<ServerEndpointDefinition> servers,
-            CancellationToken cancellationToken)
-        {
-            List<ServerEndpointDefinition> targets = servers.ToList();
-            if (targets.Count == 0)
-            {
-                return;
-            }
-
-            await PopulateAoPlayerCountsAsync(
-                targets.Where(NeedsSupplementalAoProbe),
-                cancellationToken);
-            await PopulateReachabilityAsync(
-                targets.Where(NeedsSupplementalReachabilityProbe),
-                cancellationToken);
-        }
-
-        internal static bool NeedsSupplementalAoProbe(ServerEndpointDefinition? server)
-        {
-            if (server == null)
-            {
-                return false;
-            }
-
-            return server.SupportsDirectConnection
-                && (!server.IsOnline || !server.OnlinePlayers.HasValue || !server.MaxPlayers.HasValue);
-        }
-
-        internal static bool NeedsSupplementalReachabilityProbe(ServerEndpointDefinition? server)
-        {
-            if (server == null)
-            {
-                return false;
-            }
-
-            return !NeedsSupplementalAoProbe(server)
-                && !server.IsOnline
-                && CanAttemptReachabilityProbe(server.Endpoint);
-        }
-
-        private static async Task<bool> IsEndpointReachableAsync(string endpoint, CancellationToken cancellationToken)
-        {
-            if (!TryParseReachabilityUri(endpoint, out Uri? uri))
-            {
-                return false;
-            }
-
-            try
-            {
-                Uri resolvedUri = uri ?? throw new InvalidOperationException("Reachability URI was not parsed.");
-                using TcpClient client = new TcpClient();
-                Task connectTask = client.ConnectAsync(resolvedUri.Host, resolvedUri.Port);
-                Task timeoutTask = Task.Delay(1200, cancellationToken);
-                Task completed = await Task.WhenAny(connectTask, timeoutTask);
-                if (completed != connectTask)
-                {
-                    return false;
-                }
-
-                await connectTask;
-                return client.Connected;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        private static bool CanAttemptReachabilityProbe(string endpoint)
-        {
-            return TryParseReachabilityUri(endpoint, out _);
-        }
-
-        private static bool TryParseReachabilityUri(string endpoint, out Uri? uri)
-        {
-            uri = null;
-            if (!Uri.TryCreate(endpoint, UriKind.Absolute, out Uri? parsedUri) || parsedUri == null)
-            {
-                return false;
-            }
-
-            if (parsedUri.Port <= 0 || string.IsNullOrWhiteSpace(parsedUri.Host))
-            {
-                return false;
-            }
-
-            uri = parsedUri;
-            return true;
         }
 
         private static async Task<(bool Success, int? Players, int? MaxPlayers, bool IncompatibleClient)> ProbeAoPlayerCountAsync(
@@ -696,13 +591,31 @@ namespace OceanyaClient
                 return new AoPlayerCountProbeResult();
             }
 
-            bool validScheme = string.Equals(uri.Scheme, "ws", StringComparison.OrdinalIgnoreCase)
+            bool isWebSocket = string.Equals(uri.Scheme, "ws", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(uri.Scheme, "wss", StringComparison.OrdinalIgnoreCase);
-            if (!validScheme)
+            bool isTcp = string.Equals(uri.Scheme, "tcp", StringComparison.OrdinalIgnoreCase);
+            if (!isWebSocket && !isTcp)
             {
                 return new AoPlayerCountProbeResult();
             }
 
+            using CancellationTokenSource timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(AoProbeTimeoutMs);
+            CancellationToken timeoutToken = timeoutCts.Token;
+
+            if (isWebSocket)
+            {
+                return await ProbeAoPlayerCountOverWebSocketAsync(uri, timeoutToken, captureTranscript);
+            }
+
+            return await ProbeAoPlayerCountOverTcpAsync(uri, timeoutToken, captureTranscript);
+        }
+
+        private static async Task<AoPlayerCountProbeResult> ProbeAoPlayerCountOverWebSocketAsync(
+            Uri uri,
+            CancellationToken cancellationToken,
+            bool captureTranscript)
+        {
             AoPlayerCountProbeResult result = new AoPlayerCountProbeResult();
             try
             {
@@ -711,19 +624,15 @@ namespace OceanyaClient
                     "User-Agent",
                     $"AttorneyOnline/{AoProbeClientVersion} (Desktop)");
 
-                using CancellationTokenSource timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                timeoutCts.CancelAfter(AoProbeTimeoutMs);
-                CancellationToken timeoutToken = timeoutCts.Token;
-
-                await webSocket.ConnectAsync(uri, timeoutToken);
+                await webSocket.ConnectAsync(uri, cancellationToken);
 
                 string hdid = Guid.NewGuid().ToString();
                 StringBuilder packetBuffer = new StringBuilder();
                 ArraySegment<byte> buffer = new ArraySegment<byte>(new byte[8192]);
 
-                while (webSocket.State == WebSocketState.Open && !timeoutToken.IsCancellationRequested)
+                while (webSocket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
                 {
-                    WebSocketReceiveResult receiveResult = await webSocket.ReceiveAsync(buffer, timeoutToken);
+                    WebSocketReceiveResult receiveResult = await webSocket.ReceiveAsync(buffer, cancellationToken);
                     if (receiveResult.MessageType == WebSocketMessageType.Close)
                     {
                         break;
@@ -737,19 +646,8 @@ namespace OceanyaClient
                     string text = Encoding.UTF8.GetString(buffer.Array!, 0, receiveResult.Count);
                     packetBuffer.Append(text);
 
-                    bool keepParsing = true;
-                    while (keepParsing)
+                    while (TryTakeBufferedProbePacket(packetBuffer, out string packet))
                     {
-                        string current = packetBuffer.ToString();
-                        int packetEnd = current.IndexOf("#%", StringComparison.Ordinal);
-                        if (packetEnd < 0)
-                        {
-                            keepParsing = false;
-                            continue;
-                        }
-
-                        string packet = current.Substring(0, packetEnd + 1); // include trailing '#'
-                        packetBuffer.Remove(0, packetEnd + 2);
                         if (captureTranscript)
                         {
                             result.ReceivedPackets.Add(packet);
@@ -763,19 +661,11 @@ namespace OceanyaClient
                                 result.SentPackets.Add(outgoingPacket);
                             }
 
-                            await SendWsPacketAsync(webSocket, outgoingPacket, timeoutToken);
+                            await SendWsPacketAsync(webSocket, outgoingPacket, cancellationToken);
                         }
 
                         if (TryParseProbePlayerCountPacket(packet, out int players, out int maxPlayers))
                         {
-                            if (webSocket.State == WebSocketState.Open)
-                            {
-                                await webSocket.CloseAsync(
-                                    WebSocketCloseStatus.NormalClosure,
-                                    "Probe complete",
-                                    CancellationToken.None);
-                            }
-
                             result.Success = true;
                             result.Players = players;
                             result.MaxPlayers = maxPlayers;
@@ -784,14 +674,76 @@ namespace OceanyaClient
 
                         if (packet.StartsWith("BD#", StringComparison.OrdinalIgnoreCase))
                         {
-                            if (webSocket.State == WebSocketState.Open)
+                            TryParseProbeRejectionPacket(packet, out string rejectionReason);
+                            result.RejectionReason = rejectionReason;
+                            result.IncompatibleClient = LooksLikeIncompatibleClientRejection(rejectionReason);
+                            return result;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                return result;
+            }
+
+            return result;
+        }
+
+        private static async Task<AoPlayerCountProbeResult> ProbeAoPlayerCountOverTcpAsync(
+            Uri uri,
+            CancellationToken cancellationToken,
+            bool captureTranscript)
+        {
+            AoPlayerCountProbeResult result = new AoPlayerCountProbeResult();
+            try
+            {
+                using TcpClient client = new TcpClient();
+                await client.ConnectAsync(uri.Host, uri.Port, cancellationToken);
+                using NetworkStream stream = client.GetStream();
+
+                string hdid = Guid.NewGuid().ToString();
+                StringBuilder packetBuffer = new StringBuilder();
+                byte[] buffer = new byte[8192];
+
+                while (client.Connected && !cancellationToken.IsCancellationRequested)
+                {
+                    int bytesRead = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
+                    if (bytesRead <= 0)
+                    {
+                        break;
+                    }
+
+                    packetBuffer.Append(Encoding.UTF8.GetString(buffer, 0, bytesRead));
+
+                    while (TryTakeBufferedProbePacket(packetBuffer, out string packet))
+                    {
+                        if (captureTranscript)
+                        {
+                            result.ReceivedPackets.Add(packet);
+                        }
+
+                        List<string> outgoingPackets = GetProbeFollowUpPackets(packet, hdid);
+                        foreach (string outgoingPacket in outgoingPackets)
+                        {
+                            if (captureTranscript)
                             {
-                                await webSocket.CloseAsync(
-                                    WebSocketCloseStatus.NormalClosure,
-                                    "Probe rejected by server",
-                                    CancellationToken.None);
+                                result.SentPackets.Add(outgoingPacket);
                             }
 
+                            await SendTcpPacketAsync(stream, outgoingPacket, cancellationToken);
+                        }
+
+                        if (TryParseProbePlayerCountPacket(packet, out int players, out int maxPlayers))
+                        {
+                            result.Success = true;
+                            result.Players = players;
+                            result.MaxPlayers = maxPlayers;
+                            return result;
+                        }
+
+                        if (packet.StartsWith("BD#", StringComparison.OrdinalIgnoreCase))
+                        {
                             TryParseProbeRejectionPacket(packet, out string rejectionReason);
                             result.RejectionReason = rejectionReason;
                             result.IncompatibleClient = LooksLikeIncompatibleClientRejection(rejectionReason);
@@ -911,164 +863,180 @@ namespace OceanyaClient
                 cancellationToken);
         }
 
-        private static int? GetCountValue(JsonElement source, params string[] keys)
+        private static async Task SendTcpPacketAsync(NetworkStream stream, string packet, CancellationToken cancellationToken)
         {
-            foreach (string key in keys)
-            {
-                if (!source.TryGetProperty(key, out JsonElement valueElement))
-                {
-                    continue;
-                }
-
-                if (valueElement.ValueKind == JsonValueKind.Number && valueElement.TryGetInt32(out int intValue))
-                {
-                    return intValue;
-                }
-
-                if (valueElement.ValueKind == JsonValueKind.String
-                    && int.TryParse(valueElement.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedValue))
-                {
-                    return parsedValue;
-                }
-            }
-
-            return null;
+            byte[] bytes = Encoding.UTF8.GetBytes(packet);
+            await stream.WriteAsync(bytes.AsMemory(0, bytes.Length), cancellationToken);
+            await stream.FlushAsync(cancellationToken);
         }
 
-        private static (int? OnlinePlayers, int? MaxPlayers) ExtractPlayersAndCapacity(JsonElement source)
+        private static bool TryTakeBufferedProbePacket(StringBuilder packetBuffer, out string packet)
         {
-            int? online = GetCountValue(
-                source,
-                "players",
-                "player_count",
-                "playercount",
-                "online",
-                "clients",
-                "users",
-                "current_players");
+            packet = string.Empty;
 
-            int? max = GetCountValue(
-                source,
-                "maxplayers",
-                "max_players",
-                "maxplayer",
-                "capacity",
-                "max",
-                "max_clients",
-                "slots");
-
-            foreach (JsonProperty property in source.EnumerateObject())
+            string current = packetBuffer.ToString();
+            int packetEnd = current.IndexOf("#%", StringComparison.Ordinal);
+            if (packetEnd < 0)
             {
-                string keyLower = property.Name.ToLowerInvariant();
-                if (!LooksLikePlayerCountKey(keyLower))
+                return false;
+            }
+
+            packet = current.Substring(0, packetEnd + 1);
+            packetBuffer.Remove(0, packetEnd + 2);
+            return true;
+        }
+
+        // -----------------------------------------------------------------------
+        // Legacy / testing surface preserved for backward compatibility with tests.
+        // Not used in the live server-list flow anymore.
+        // -----------------------------------------------------------------------
+
+        internal static bool NeedsSupplementalAoProbe(ServerEndpointDefinition? server)
+        {
+            if (server == null)
+            {
+                return false;
+            }
+
+            // A server needs probing if it is a direct-connect endpoint and we don't yet
+            // have confirmed online status with known player counts.
+            return server.SupportsDirectConnection
+                && (server.PingStatus == ServerPingStatus.Unknown
+                    || server.PingStatus == ServerPingStatus.Pinging
+                    || !server.OnlinePlayers.HasValue
+                    || !server.MaxPlayers.HasValue);
+        }
+
+        /// <summary>
+        /// Kept for test backward compatibility. TCP-only reachability is no longer used
+        /// in the production probe flow — the AO probe result is the authoritative signal.
+        /// </summary>
+        internal static async Task PopulateReachabilityAsyncForTesting(
+            IEnumerable<ServerEndpointDefinition> servers,
+            Func<string, CancellationToken, Task<bool>> reachabilityProbeAsync,
+            CancellationToken cancellationToken)
+        {
+            List<EndpointProbeBatch> batches = CreateEndpointProbeBatches(servers);
+            if (batches.Count == 0)
+            {
+                return;
+            }
+
+            List<Task> tasks = new List<Task>();
+            using SemaphoreSlim concurrency = new SemaphoreSlim(16);
+
+            foreach (EndpointProbeBatch batch in batches)
+            {
+                tasks.Add(Task.Run(async () =>
                 {
-                    continue;
-                }
-
-                JsonElement value = property.Value;
-                if (value.ValueKind == JsonValueKind.String)
-                {
-                    TryExtractPlayerPairFromText(value.GetString() ?? string.Empty, ref online, ref max);
-                    continue;
-                }
-
-                if (value.ValueKind != JsonValueKind.Object)
-                {
-                    continue;
-                }
-
-                int? nestedOnline = GetCountValue(
-                    value,
-                    "players",
-                    "player_count",
-                    "online",
-                    "current",
-                    "count",
-                    "users");
-                int? nestedMax = GetCountValue(
-                    value,
-                    "max",
-                    "maxplayers",
-                    "max_players",
-                    "capacity",
-                    "slots");
-
-                online ??= nestedOnline;
-                max ??= nestedMax;
-
-                foreach (JsonProperty nestedProperty in value.EnumerateObject())
-                {
-                    if (nestedProperty.Value.ValueKind != JsonValueKind.String)
+                    await concurrency.WaitAsync(cancellationToken);
+                    try
                     {
-                        continue;
+                        bool isOnline = await reachabilityProbeAsync(batch.Endpoint, cancellationToken);
+                        foreach (ServerEndpointDefinition server in batch.Servers)
+                        {
+                            server.PingStatus = isOnline ? ServerPingStatus.Online : ServerPingStatus.Offline;
+                        }
                     }
-
-                    string nestedKeyLower = nestedProperty.Name.ToLowerInvariant();
-                    if (!LooksLikePlayerCountKey(nestedKeyLower))
+                    finally
                     {
-                        continue;
+                        concurrency.Release();
                     }
-
-                    TryExtractPlayerPairFromText(nestedProperty.Value.GetString() ?? string.Empty, ref online, ref max);
-                }
+                }, cancellationToken));
             }
 
-            return (online, max);
+            await Task.WhenAll(tasks);
         }
 
-        private static bool LooksLikePlayerCountKey(string keyLower)
+        /// <summary>
+        /// Kept for test backward compatibility. In production the dialog drives probing
+        /// via <see cref="CreateProbeBatches"/> + <see cref="ProbeEndpointAsync"/>.
+        /// <para>
+        /// The TCP reachability fallback has been removed: if the AO probe does not return
+        /// a PN# packet the server is marked <see cref="ServerPingStatus.Offline"/>.
+        /// A mere open TCP port is not sufficient to conclude the server is connectable.
+        /// </para>
+        /// </summary>
+        internal static async Task PopulateAoPlayerCountsAsyncForTesting(
+            IEnumerable<ServerEndpointDefinition> servers,
+            Func<string, CancellationToken, Task<(bool Success, int? Players, int? MaxPlayers, bool IncompatibleClient)>> aoProbeAsync,
+            Func<string, CancellationToken, Task<bool>> reachabilityProbeAsync,
+            CancellationToken cancellationToken)
         {
-            return keyLower.Contains("player", StringComparison.Ordinal)
-                || keyLower.Contains("online", StringComparison.Ordinal)
-                || keyLower.Contains("count", StringComparison.Ordinal)
-                || keyLower.Contains("slot", StringComparison.Ordinal)
-                || keyLower.Contains("capacity", StringComparison.Ordinal)
-                || keyLower.Contains("status", StringComparison.Ordinal)
-                || keyLower.Contains("user", StringComparison.Ordinal);
+            List<EndpointProbeBatch> batches = CreateEndpointProbeBatches(servers);
+            if (batches.Count == 0)
+            {
+                return;
+            }
+
+            List<Task> tasks = new List<Task>();
+            using SemaphoreSlim concurrency = new SemaphoreSlim(AoProbeConcurrency);
+
+            foreach (EndpointProbeBatch batch in batches)
+            {
+                tasks.Add(Task.Run(async () =>
+                {
+                    await concurrency.WaitAsync(cancellationToken);
+                    try
+                    {
+                        (bool success, int? players, int? maxPlayers, bool incompatibleClient) =
+                            await aoProbeAsync(batch.Endpoint, cancellationToken);
+
+                        if (incompatibleClient)
+                        {
+                            foreach (ServerEndpointDefinition server in batch.Servers)
+                            {
+                                server.PingStatus = ServerPingStatus.IncompatibleClient;
+                            }
+                            return;
+                        }
+
+                        if (success)
+                        {
+                            foreach (ServerEndpointDefinition server in batch.Servers)
+                            {
+                                server.OnlinePlayers = players;
+                                server.MaxPlayers = maxPlayers;
+                                server.PingStatus = ServerPingStatus.Online;
+                            }
+                            return;
+                        }
+
+                        // AO probe failed → offline. We do NOT fall back to TCP reachability
+                        // because an open TCP port does not mean the server speaks AO protocol.
+                        foreach (ServerEndpointDefinition server in batch.Servers)
+                        {
+                            server.PingStatus = ServerPingStatus.Offline;
+                        }
+                    }
+                    finally
+                    {
+                        concurrency.Release();
+                    }
+                }, cancellationToken));
+            }
+
+            await Task.WhenAll(tasks);
         }
 
-        private static void TryExtractPlayerPairFromText(string text, ref int? online, ref int? max)
+        private static List<EndpointProbeBatch> CreateEndpointProbeBatches(IEnumerable<ServerEndpointDefinition> servers)
         {
-            if (string.IsNullOrWhiteSpace(text))
+            return servers
+                .Where(server => server != null)
+                .GroupBy(server => GetEndpointProbeBatchKey(server.Endpoint), StringComparer.OrdinalIgnoreCase)
+                .Select(group => new EndpointProbeBatch(group.First().Endpoint, group.ToList()))
+                .ToList();
+        }
+
+        private static string GetEndpointProbeBatchKey(string endpoint)
+        {
+            string endpointKey = GetEndpointKey(endpoint);
+            if (!string.IsNullOrWhiteSpace(endpointKey))
             {
-                return;
+                return endpointKey;
             }
 
-            Match slashPattern = Regex.Match(text, @"(?<online>\d+)\s*/\s*(?<max>\d+)", RegexOptions.IgnoreCase);
-            if (slashPattern.Success)
-            {
-                if (!online.HasValue
-                    && int.TryParse(slashPattern.Groups["online"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedOnline))
-                {
-                    online = parsedOnline;
-                }
-
-                if (!max.HasValue
-                    && int.TryParse(slashPattern.Groups["max"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedMax))
-                {
-                    max = parsedMax;
-                }
-
-                return;
-            }
-
-            Match onlinePattern = Regex.Match(text, @"online[^0-9]*(?<online>\d+)[^0-9]+(?<max>\d+)", RegexOptions.IgnoreCase);
-            if (!onlinePattern.Success)
-            {
-                return;
-            }
-
-            if (!online.HasValue
-                && int.TryParse(onlinePattern.Groups["online"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int altOnline))
-            {
-                online = altOnline;
-            }
-
-            if (!max.HasValue
-                && int.TryParse(onlinePattern.Groups["max"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int altMax))
-            {
-                max = altMax;
-            }
+            return endpoint?.Trim() ?? string.Empty;
         }
 
         private static string GetEndpointKey(string endpoint)

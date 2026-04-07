@@ -60,6 +60,7 @@ namespace OceanyaClient
 
         private async Task RefreshServersAsync(string selectEndpoint)
         {
+            // Cancel any in-progress load or background probe from a prior refresh.
             refreshCancellationTokenSource?.Cancel();
             refreshCancellationTokenSource = new CancellationTokenSource();
             CancellationToken cancellationToken = refreshCancellationTokenSource.Token;
@@ -68,36 +69,169 @@ namespace OceanyaClient
             SelectButton.IsEnabled = false;
             StatusTextBlock.Text = "Loading server list...";
 
+            // Phase 1: Load the list (fast — no probing). The wait form is only shown for this.
             try
             {
                 await WaitForm.ShowFormAsync("Loading servers...", this);
-                List<ServerEndpointDefinition> loadedEntries = await ServerEndpointCatalog.LoadAsync(configIniPath, cancellationToken);
+                List<ServerEndpointDefinition> loadedEntries = await ServerEndpointCatalog.LoadListAsync(configIniPath, cancellationToken);
                 allEntries.Clear();
                 allEntries.AddRange(loadedEntries);
 
                 ApplyCurrentFilter();
                 SelectByEndpoint(selectEndpoint);
 
+                int total = allEntries.Count;
                 int pollCount = allEntries.Count(item => item.Source == ServerEndpointSource.AoServerPoll);
                 int favoriteCount = allEntries.Count(item => item.Source == ServerEndpointSource.Favorites);
                 int defaultCount = allEntries.Count(item => item.Source == ServerEndpointSource.Defaults);
-                StatusTextBlock.Text = $"Loaded {allEntries.Count} entries (Defaults: {defaultCount}, AO Poll: {pollCount}, Favorites: {favoriteCount}).";
+                StatusTextBlock.Text = $"Loaded {total} servers (Defaults: {defaultCount}, AO Poll: {pollCount}, Favorites: {favoriteCount}). Checking status...";
             }
             catch (OperationCanceledException)
             {
                 StatusTextBlock.Text = "Server list refresh was canceled.";
+                RefreshPollButton.IsEnabled = true;
+                UpdateSelectionState();
+                await WaitForm.CloseFormAsync();
+                return;
             }
             catch (Exception ex)
             {
                 CustomConsole.Error("Failed to load server entries.", ex);
                 StatusTextBlock.Text = "Failed to load server list.";
+                RefreshPollButton.IsEnabled = true;
+                UpdateSelectionState();
+                await WaitForm.CloseFormAsync();
+                return;
             }
             finally
             {
+                // Always re-enable Refresh and update selection state before probing starts.
                 RefreshPollButton.IsEnabled = true;
                 UpdateSelectionState();
                 await WaitForm.CloseFormAsync();
             }
+
+            // Phase 2: Probe all servers in the background. No wait form — the UI is fully interactive.
+            // Each probe result updates the server's PingStatus on the UI thread via INPC, so rows
+            // change from yellow → green/red as probes complete.
+            _ = ProbeServersAsync(
+                allEntries.ToList(),
+                cancellationToken,
+                "No servers to probe.",
+                probedServers =>
+                {
+                    int onlineCount = probedServers.Count(s => s.PingStatus == ServerPingStatus.Online);
+                    int offlineCount = probedServers.Count(s => s.PingStatus == ServerPingStatus.Offline);
+                    int incompatibleCount = probedServers.Count(s => s.PingStatus == ServerPingStatus.IncompatibleClient);
+                    return $"Status check complete. Online: {onlineCount}, Offline: {offlineCount}, Incompatible: {incompatibleCount}.";
+                });
+        }
+
+        /// <summary>
+        /// Probes all servers in parallel (up to AoProbeConcurrency at a time) on background threads,
+        /// dispatching each result back to the UI thread so the ListView updates live via INPC.
+        /// </summary>
+        private async Task ProbeServersAsync(
+            List<ServerEndpointDefinition> servers,
+            CancellationToken cancellationToken,
+            string noServersStatusText,
+            Func<List<ServerEndpointDefinition>, string> completionStatusTextFactory)
+        {
+            List<EndpointProbeBatch> batches = ServerEndpointCatalog.CreateProbeBatches(servers);
+            if (batches.Count == 0)
+            {
+                Dispatcher.BeginInvoke(() =>
+                {
+                    StatusTextBlock.Text = noServersStatusText;
+                    UpdateSelectionState();
+                });
+                return;
+            }
+
+            int probeConcurrency = 12;
+            List<Task> tasks = new List<Task>();
+            using SemaphoreSlim semaphore = new SemaphoreSlim(probeConcurrency);
+
+            foreach (EndpointProbeBatch batch in batches)
+            {
+                EndpointProbeBatch capturedBatch = batch;
+                tasks.Add(Task.Run(async () =>
+                {
+                    await semaphore.WaitAsync(cancellationToken);
+                    try
+                    {
+                        // Mark batch as pinging on the UI thread before starting the probe.
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            foreach (ServerEndpointDefinition server in capturedBatch.Servers)
+                            {
+                                server.OnlinePlayers = null;
+                                server.MaxPlayers = null;
+                                server.PingStatus = ServerPingStatus.Pinging;
+                            }
+                        });
+
+                        (bool success, int? players, int? maxPlayers, bool incompatibleClient) =
+                            await ServerEndpointCatalog.ProbeEndpointAsync(capturedBatch.Endpoint, cancellationToken);
+
+                        ServerPingStatus newStatus = incompatibleClient
+                            ? ServerPingStatus.IncompatibleClient
+                            : success
+                                ? ServerPingStatus.Online
+                                : ServerPingStatus.Offline;
+                        int? newPlayers = success ? players : null;
+                        int? newMax = success ? maxPlayers : null;
+
+                        // Apply result on the UI thread so INPC updates the ListView rows.
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            foreach (ServerEndpointDefinition server in capturedBatch.Servers)
+                            {
+                                server.OnlinePlayers = newPlayers;
+                                server.MaxPlayers = newMax;
+                                server.PingStatus = newStatus;
+                            }
+
+                            // Refresh selection state so the SELECT button enables as soon as
+                            // the currently selected server's probe completes.
+                            UpdateSelectionState();
+                        });
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Refresh was cancelled — leave remaining servers in Unknown/Pinging state.
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                    }
+                }, cancellationToken));
+            }
+
+            try
+            {
+                await Task.WhenAll(tasks);
+            }
+            catch (OperationCanceledException)
+            {
+                // Normal on refresh cancel.
+                return;
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Warning("Background server probe encountered errors.", ex);
+            }
+
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            await Dispatcher.InvokeAsync(() =>
+            {
+                StatusTextBlock.Text = completionStatusTextFactory(servers);
+                UpdateSelectionState();
+            });
         }
 
         private void SearchTextBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -153,10 +287,15 @@ namespace OceanyaClient
                     return;
                 }
 
-                if (!TryParseWebsocketEndpoint(selectedServer.Endpoint, out string selectedAddress, out int selectedPort, out bool selectedSecure))
+                if (!TryParseDirectConnectionEndpoint(
+                        selectedServer.Endpoint,
+                        out string selectedAddress,
+                        out int selectedPort,
+                        out bool selectedLegacy,
+                        out bool selectedSecure))
                 {
                     OceanyaMessageBox.Show(
-                        "Only WebSocket servers can be added to favorites.",
+                        "Only direct-connect TCP or WebSocket servers can be added to favorites.",
                         "Invalid Favorite",
                         MessageBoxButton.OK,
                         MessageBoxImage.Warning);
@@ -182,29 +321,31 @@ namespace OceanyaClient
                         Address = selectedAddress,
                         Port = selectedPort,
                         Description = selectedServer.Description,
-                        Legacy = false,
+                        Legacy = selectedLegacy,
                         Secure = selectedSecure
                     });
 
-                await RefreshFavoritesOnlyAsync(selectedServer.Endpoint, switchToFavoritesTab: true);
+                await RefreshFavoritesOnlyAsync(
+                    selectEndpoint: selectedServer.Endpoint,
+                    switchToFavoritesTab: true,
+                    affectedEndpoints: new[] { selectedServer.Endpoint });
                 return;
             }
 
-            if (!FavoriteServerEditorDialog.ShowDialog(
-                    this,
+            if (!TryShowFavoriteEditor(
+                    "Add Favorite Server",
+                    "ADD FAVORITE",
                     out string name,
                     out string endpoint,
-                    out string description,
-                    windowTitle: "Add Favorite Server",
-                    actionText: "ADD FAVORITE"))
+                    out string description))
             {
                 return;
             }
 
-            if (!TryParseWebsocketEndpoint(endpoint, out string address, out int port, out bool secure))
+            if (!TryParseDirectConnectionEndpoint(endpoint, out string address, out int port, out bool legacy, out bool secure))
             {
                 OceanyaMessageBox.Show(
-                    "Invalid endpoint format. Use ws:// or wss:// and include host/port.",
+                    "Invalid endpoint format. Use tcp://, ws://, or wss:// and include host/port.",
                     "Invalid Endpoint",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
@@ -229,11 +370,14 @@ namespace OceanyaClient
                     Address = address,
                     Port = port,
                     Description = description,
-                    Legacy = false,
+                    Legacy = legacy,
                     Secure = secure
                 });
 
-            await RefreshFavoritesOnlyAsync(endpoint.Trim(), switchToFavoritesTab: true);
+            await RefreshFavoritesOnlyAsync(
+                selectEndpoint: endpoint.Trim(),
+                switchToFavoritesTab: true,
+                affectedEndpoints: new[] { endpoint.Trim() });
         }
 
         private async void EditFavoriteButton_Click(object sender, RoutedEventArgs e)
@@ -243,24 +387,23 @@ namespace OceanyaClient
                 return;
             }
 
-            if (!FavoriteServerEditorDialog.ShowDialog(
-                    this,
+            if (!TryShowFavoriteEditor(
+                    "Edit Favorite Server",
+                    "SAVE",
                     out string name,
                     out string endpoint,
                     out string description,
-                    windowTitle: "Edit Favorite Server",
-                    actionText: "SAVE",
-                    defaultName: selected.Name,
-                    defaultEndpoint: selected.Endpoint,
-                    defaultDescription: selected.Description))
+                    selected.Name,
+                    selected.Endpoint,
+                    selected.Description))
             {
                 return;
             }
 
-            if (!TryParseWebsocketEndpoint(endpoint, out string address, out int port, out bool secure))
+            if (!TryParseDirectConnectionEndpoint(endpoint, out string address, out int port, out bool legacy, out bool secure))
             {
                 OceanyaMessageBox.Show(
-                    "Invalid endpoint format. Use ws:// or wss:// and include host/port.",
+                    "Invalid endpoint format. Use tcp://, ws://, or wss:// and include host/port.",
                     "Invalid Endpoint",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
@@ -296,11 +439,72 @@ namespace OceanyaClient
                     Address = address,
                     Port = port,
                     Description = description,
-                    Legacy = false,
+                    Legacy = legacy,
                     Secure = secure
                 });
 
-            await RefreshFavoritesOnlyAsync(endpoint.Trim(), switchToFavoritesTab: true);
+            await RefreshFavoritesOnlyAsync(
+                selectEndpoint: endpoint.Trim(),
+                switchToFavoritesTab: true,
+                affectedEndpoints: new[] { selected.Endpoint, endpoint.Trim() });
+        }
+
+        private async void DuplicateFavoriteMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (GetCurrentSelection() is not ServerEndpointDefinition selected || selected.Source != ServerEndpointSource.Favorites)
+            {
+                return;
+            }
+
+            if (!TryShowFavoriteEditor(
+                    "Duplicate Favorite Server",
+                    "ADD FAVORITE",
+                    out string name,
+                    out string endpoint,
+                    out string description,
+                    $"{selected.Name} Copy",
+                    selected.Endpoint,
+                    selected.Description))
+            {
+                return;
+            }
+
+            if (!TryParseDirectConnectionEndpoint(endpoint, out string address, out int port, out bool legacy, out bool secure))
+            {
+                OceanyaMessageBox.Show(
+                    "Invalid endpoint format. Use tcp://, ws://, or wss:// and include host/port.",
+                    "Invalid Endpoint",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            if (TrySelectExistingFavorite(endpoint.Trim(), excludedFavoriteIndex: null))
+            {
+                OceanyaMessageBox.Show(
+                    "That endpoint is already saved in your favorites.",
+                    "Duplicate Favorite",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            ServerEndpointCatalog.AddFavorite(
+                configIniPath,
+                new FavoriteServerEntry
+                {
+                    Name = name,
+                    Address = address,
+                    Port = port,
+                    Description = description,
+                    Legacy = legacy,
+                    Secure = secure
+                });
+
+            await RefreshFavoritesOnlyAsync(
+                selectEndpoint: endpoint.Trim(),
+                switchToFavoritesTab: true,
+                affectedEndpoints: new[] { endpoint.Trim() });
         }
 
         private async void RemoveFavoriteButton_Click(object sender, RoutedEventArgs e)
@@ -326,7 +530,62 @@ namespace OceanyaClient
             }
 
             ServerEndpointCatalog.RemoveFavorite(configIniPath, favoriteIndex);
-            await RefreshFavoritesOnlyAsync(selectEndpoint: string.Empty, switchToFavoritesTab: true);
+            await RefreshFavoritesOnlyAsync(
+                selectEndpoint: string.Empty,
+                switchToFavoritesTab: true,
+                affectedEndpoints: new[] { selected.Endpoint });
+        }
+
+        private async void RefreshServerMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            List<ServerEndpointDefinition> selectedServers = GetCurrentSelections();
+            if (selectedServers.Count == 0)
+            {
+                return;
+            }
+
+            string refreshTargetLabel = selectedServers.Count == 1
+                ? $"'{selectedServers[0].Name}'"
+                : $"{selectedServers.Count} selected servers";
+            StatusTextBlock.Text = $"Refreshing {refreshTargetLabel}...";
+            await ProbeServersAsync(
+                selectedServers,
+                CancellationToken.None,
+                "Selected servers cannot be refreshed.",
+                probedServers =>
+                {
+                    if (probedServers.Count == 1)
+                    {
+                        ServerEndpointDefinition server = probedServers[0];
+                        return $"Refreshed '{server.Name}'. {server.AvailabilityText}.";
+                    }
+
+                    int onlineCount = probedServers.Count(s => s.PingStatus == ServerPingStatus.Online);
+                    int offlineCount = probedServers.Count(s => s.PingStatus == ServerPingStatus.Offline);
+                    int incompatibleCount = probedServers.Count(s => s.PingStatus == ServerPingStatus.IncompatibleClient);
+                    return $"Refreshed {probedServers.Count} selected servers. Online: {onlineCount}, Offline: {offlineCount}, Incompatible: {incompatibleCount}.";
+                });
+        }
+
+        private async void RefreshCurrentTabMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            IEnumerable<ServerEndpointDefinition> currentEntries = GetCurrentListView().ItemsSource as IEnumerable<ServerEndpointDefinition>
+                ?? Enumerable.Empty<ServerEndpointDefinition>();
+            List<ServerEndpointDefinition> targets = currentEntries.ToList();
+            string tabName = GetCurrentTabHeaderText();
+
+            StatusTextBlock.Text = $"Refreshing {tabName}...";
+            await ProbeServersAsync(
+                targets,
+                CancellationToken.None,
+                $"No {tabName} servers to refresh.",
+                probedServers =>
+                {
+                    int onlineCount = probedServers.Count(s => s.PingStatus == ServerPingStatus.Online);
+                    int offlineCount = probedServers.Count(s => s.PingStatus == ServerPingStatus.Offline);
+                    int incompatibleCount = probedServers.Count(s => s.PingStatus == ServerPingStatus.IncompatibleClient);
+                    return $"{tabName} refreshed. Online: {onlineCount}, Offline: {offlineCount}, Incompatible: {incompatibleCount}.";
+                });
         }
 
         private void SelectButton_Click(object sender, RoutedEventArgs e)
@@ -402,9 +661,11 @@ namespace OceanyaClient
                     || Contains(item.Description, filter));
             }
 
+            // Default order: preserve original list order from AO2 (ListIndex).
+            // DisplayId is re-assigned sequentially after ordering so the ID column
+            // always reflects position in the current view.
             List<ServerEndpointDefinition> ordered = entries
-                .OrderByDescending(item => item.IsSelectable)
-                .ThenBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(item => item.ListIndex)
                 .ToList();
 
             for (int index = 0; index < ordered.Count; index++)
@@ -622,54 +883,164 @@ namespace OceanyaClient
             return true;
         }
 
-        private async Task RefreshFavoritesOnlyAsync(string selectEndpoint, bool switchToFavoritesTab)
+        private async Task RefreshFavoritesOnlyAsync(
+            string selectEndpoint,
+            bool switchToFavoritesTab,
+            IEnumerable<string>? affectedEndpoints = null)
         {
-            List<ServerEndpointDefinition> favorites = ServerEndpointCatalog.LoadFavorites(configIniPath);
-
-            foreach (ServerEndpointDefinition favorite in favorites)
+            await WaitForm.ShowFormAsync("Updating favorites...", this);
+            List<ServerEndpointDefinition> newFavorites;
+            try
             {
-                ServerEndpointDefinition? known = allEntries.FirstOrDefault(server =>
-                    server.Source != ServerEndpointSource.Favorites
-                    && string.Equals(server.Endpoint, favorite.Endpoint, StringComparison.OrdinalIgnoreCase));
+                newFavorites = ServerEndpointCatalog.LoadFavorites(configIniPath);
 
-                if (known == null)
+                // Copy any already-known status from currently loaded entries so the
+                // newly loaded favorites don't flash Unknown needlessly when we already
+                // have fresh probe data for that endpoint.
+                Dictionary<string, ServerEndpointDefinition> knownByEndpoint = allEntries
+                    .Where(s => s.PingStatus != ServerPingStatus.Unknown && s.PingStatus != ServerPingStatus.Pinging)
+                    .GroupBy(s => s.Endpoint, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+                foreach (ServerEndpointDefinition favorite in newFavorites)
                 {
-                    continue;
+                    if (!knownByEndpoint.TryGetValue(favorite.Endpoint, out ServerEndpointDefinition? known))
+                    {
+                        continue;
+                    }
+
+                    favorite.PingStatus = known.PingStatus;
+                    favorite.OnlinePlayers = known.OnlinePlayers;
+                    favorite.MaxPlayers = known.MaxPlayers;
                 }
 
-                favorite.IsOnline = known.IsOnline;
-                favorite.OnlinePlayers = known.OnlinePlayers;
-                favorite.MaxPlayers = known.MaxPlayers;
-                favorite.IsAoClientCompatible = known.IsAoClientCompatible;
+                allEntries.RemoveAll(server => server.Source == ServerEndpointSource.Favorites);
+                allEntries.AddRange(newFavorites);
+
+                ApplyCurrentFilter();
+                FavoritesListView.Items.Refresh();
+
+                if (switchToFavoritesTab)
+                {
+                    ServerTabs.SelectedIndex = 2;
+                }
+
+                if (!string.IsNullOrWhiteSpace(selectEndpoint))
+                {
+                    SelectByEndpoint(selectEndpoint, ServerEndpointSource.Favorites, switchToMatchedTab: false);
+                }
+
+                int favoriteCount = allEntries.Count(item => item.Source == ServerEndpointSource.Favorites);
+                StatusTextBlock.Text = $"Favorites updated ({favoriteCount} total). Checking affected servers...";
+                UpdateSelectionState();
+            }
+            finally
+            {
+                await WaitForm.CloseFormAsync();
             }
 
-            if (!string.IsNullOrWhiteSpace(selectEndpoint))
+            // Probe only the affected endpoints in the background so the user immediately
+            // sees status for the server they just added or edited.
+            HashSet<string> affectedSet = new HashSet<string>(
+                affectedEndpoints?.Where(ep => !string.IsNullOrWhiteSpace(ep)) ?? Enumerable.Empty<string>(),
+                StringComparer.OrdinalIgnoreCase);
+
+            if (affectedSet.Count > 0)
             {
-                List<ServerEndpointDefinition> targets = favorites
-                    .Where(favorite => string.Equals(favorite.Endpoint, selectEndpoint, StringComparison.OrdinalIgnoreCase))
+                List<ServerEndpointDefinition> targets = allEntries
+                    .Where(s => affectedSet.Contains(s.Endpoint))
                     .ToList();
-                await ServerEndpointCatalog.PopulateSupplementalStatusAsync(targets, CancellationToken.None);
+
+                CancellationToken probeCancellation = refreshCancellationTokenSource?.Token ?? CancellationToken.None;
+                _ = ProbeServersAsync(
+                    targets,
+                    probeCancellation,
+                    "No affected favorite servers to probe.",
+                    probedServers =>
+                    {
+                        int onlineCount = probedServers.Count(s => s.PingStatus == ServerPingStatus.Online);
+                        int offlineCount = probedServers.Count(s => s.PingStatus == ServerPingStatus.Offline);
+                        int incompatibleCount = probedServers.Count(s => s.PingStatus == ServerPingStatus.IncompatibleClient);
+                        return $"Favorite server refresh complete. Online: {onlineCount}, Offline: {offlineCount}, Incompatible: {incompatibleCount}.";
+                    });
             }
+        }
 
-            allEntries.RemoveAll(server => server.Source == ServerEndpointSource.Favorites);
-            allEntries.AddRange(favorites);
+        private bool TryShowFavoriteEditor(
+            string windowTitle,
+            string actionText,
+            out string name,
+            out string endpoint,
+            out string description,
+            string defaultName = "My Favorite",
+            string defaultEndpoint = "ws://127.0.0.1:27016",
+            string defaultDescription = "")
+        {
+            return FavoriteServerEditorDialog.ShowDialog(
+                this,
+                out name,
+                out endpoint,
+                out description,
+                windowTitle,
+                actionText,
+                defaultName,
+                defaultEndpoint,
+                defaultDescription);
+        }
 
-            ApplyCurrentFilter();
-
-            if (switchToFavoritesTab)
+        private void ServerListView_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (sender is not ListView listView)
             {
-                ServerTabs.SelectedIndex = 2;
+                return;
             }
 
-            if (!string.IsNullOrWhiteSpace(selectEndpoint))
+            ListViewItem? item = FindParentListViewItem(e.OriginalSource as DependencyObject);
+            if (item == null)
             {
-                SelectByEndpoint(selectEndpoint, ServerEndpointSource.Favorites, switchToMatchedTab: false);
+                e.Handled = true;
+                return;
             }
 
-            int favoriteCount = allEntries.Count(item => item.Source == ServerEndpointSource.Favorites);
-            StatusTextBlock.Text = $"Favorites updated. Total favorites: {favoriteCount}.";
-            UpdateSelectionState();
-            await Task.CompletedTask;
+            if (!item.IsSelected)
+            {
+                listView.SelectedItems.Clear();
+                item.IsSelected = true;
+            }
+
+            listView.Focus();
+        }
+
+        private void ServerListView_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+        {
+            if (sender is not ListView)
+            {
+                return;
+            }
+
+            if (FindParentListViewItem(Mouse.DirectlyOver as DependencyObject) == null)
+            {
+                e.Handled = true;
+            }
+        }
+
+        private void CopyIpMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (GetCurrentSelection() is not ServerEndpointDefinition selected)
+            {
+                return;
+            }
+
+            string textToCopy = selected.Endpoint;
+            if (Uri.TryCreate(selected.Endpoint, UriKind.Absolute, out Uri? uri) && uri != null)
+            {
+                textToCopy = uri.IsDefaultPort
+                    ? uri.Host
+                    : $"{uri.Host}:{uri.Port}";
+            }
+
+            Clipboard.SetText(textToCopy);
+            StatusTextBlock.Text = $"Copied '{textToCopy}' to clipboard.";
         }
 
         private IEnumerable<ListView> GetAllListViews()
@@ -677,6 +1048,23 @@ namespace OceanyaClient
             yield return DefaultsListView;
             yield return AoPollListView;
             yield return FavoritesListView;
+        }
+
+        private List<ServerEndpointDefinition> GetCurrentSelections()
+        {
+            return GetCurrentListView().SelectedItems
+                .OfType<ServerEndpointDefinition>()
+                .ToList();
+        }
+
+        private string GetCurrentTabHeaderText()
+        {
+            if (ServerTabs.SelectedItem is TabItem selectedTab && selectedTab.Header is string header)
+            {
+                return header;
+            }
+
+            return GetCurrentSource().ToString();
         }
 
         private void UpdateSelectionState()
@@ -819,38 +1207,29 @@ namespace OceanyaClient
             return true;
         }
 
-        private static bool TryParseWebsocketEndpoint(string endpoint, out string address, out int port, out bool secure)
+        private static bool TryParseDirectConnectionEndpoint(
+            string endpoint,
+            out string address,
+            out int port,
+            out bool legacy,
+            out bool secure)
         {
-            address = string.Empty;
-            port = 0;
-            secure = false;
-
-            if (!Uri.TryCreate(endpoint?.Trim(), UriKind.Absolute, out Uri? uri) || uri == null)
-            {
-                return false;
-            }
-
-            bool validScheme = string.Equals(uri.Scheme, "ws", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(uri.Scheme, "wss", StringComparison.OrdinalIgnoreCase);
-            if (!validScheme)
-            {
-                return false;
-            }
-
-            if (string.IsNullOrWhiteSpace(uri.Host) || uri.Port <= 0)
-            {
-                return false;
-            }
-
-            address = uri.Host;
-            port = uri.Port;
-            secure = string.Equals(uri.Scheme, "wss", StringComparison.OrdinalIgnoreCase);
-            return true;
+            return ServerEndpointCatalog.TryParseDirectEndpoint(endpoint, out address, out port, out legacy, out secure);
         }
 
         private static bool Contains(string source, string value)
         {
             return source?.IndexOf(value, StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static ListViewItem? FindParentListViewItem(DependencyObject? source)
+        {
+            while (source != null && source is not ListViewItem)
+            {
+                source = System.Windows.Media.VisualTreeHelper.GetParent(source);
+            }
+
+            return source as ListViewItem;
         }
     }
 }

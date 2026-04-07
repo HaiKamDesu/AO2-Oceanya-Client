@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -39,6 +40,8 @@ namespace OceanyaClient
         private static readonly object StaticPreviewCacheLock = new object();
         private static readonly Dictionary<(string path, int width), WeakReference<ImageSource>> StaticPreviewCache =
             new Dictionary<(string path, int width), WeakReference<ImageSource>>();
+        private static readonly ConcurrentDictionary<string, bool> ApngDetectionCache =
+            new ConcurrentDictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
 
         public static bool IsPotentialAnimatedPath(string? path)
         {
@@ -48,7 +51,57 @@ namespace OceanyaClient
             }
 
             string extension = Path.GetExtension(path).ToLowerInvariant();
-            return extension == ".gif" || extension == ".apng" || extension == ".webp";
+            if (extension == ".gif" || extension == ".apng" || extension == ".webp")
+            {
+                return true;
+            }
+
+            if (extension == ".png" && File.Exists(path))
+            {
+                return IsApngFile(path);
+            }
+
+            return false;
+        }
+
+        private static bool IsApngFile(string path)
+        {
+            return ApngDetectionCache.GetOrAdd(path, static p =>
+            {
+                try
+                {
+                    using FileStream fs = new FileStream(p, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                    byte[] header = new byte[512];
+                    int bytesRead = fs.Read(header, 0, header.Length);
+
+                    if (bytesRead < 8)
+                    {
+                        return false;
+                    }
+
+                    // Verify PNG signature: 89 50 4E 47 0D 0A 1A 0A
+                    if (header[0] != 0x89 || header[1] != 0x50 || header[2] != 0x4E || header[3] != 0x47 ||
+                        header[4] != 0x0D || header[5] != 0x0A || header[6] != 0x1A || header[7] != 0x0A)
+                    {
+                        return false;
+                    }
+
+                    // Scan for acTL chunk type bytes (61 63 54 4C) which signals APNG
+                    for (int i = 8; i <= bytesRead - 4; i++)
+                    {
+                        if (header[i] == 0x61 && header[i + 1] == 0x63 && header[i + 2] == 0x54 && header[i + 3] == 0x4C)
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+                catch
+                {
+                    return false;
+                }
+            });
         }
 
         public static string? ResolveAo2ImagePath(string? sourcePath)
@@ -148,14 +201,15 @@ namespace OceanyaClient
             }
 
             string extension = Path.GetExtension(resolvedPath).ToLowerInvariant();
-            if (extension != ".gif" && extension != ".webp" && extension != ".apng")
+            bool isApng = IsApngExtensionOrContent(extension, resolvedPath);
+            if (extension != ".gif" && extension != ".webp" && !isApng)
             {
                 return false;
             }
 
-            // Keep WebP/APNG on the frame-decoder path, but keep GIF on the legacy gif-specific player
-            // first so long-running gif previews remain reliable.
-            if (extension == ".webp" || extension == ".apng")
+            // APNG and WebP use the frame-decoder path.
+            // GIF uses the legacy gif-specific player first for reliability.
+            if (extension == ".webp" || isApng)
             {
                 if (BitmapFrameAnimationPlayer.TryCreate(resolvedPath, loop, out BitmapFrameAnimationPlayer? bitmapPlayer)
                     && bitmapPlayer != null)
@@ -241,7 +295,18 @@ namespace OceanyaClient
             try
             {
                 string extension = Path.GetExtension(path).ToLowerInvariant();
-                if (ShouldPreferMagickDecoder(extension)
+
+                // APNG files are decoded by the dedicated ApngFrameDecoder
+                if (IsApngExtensionOrContent(extension, path)
+                    && ApngFrameDecoder.TryDecode(path, out List<BitmapSource>? apngFrames, out List<TimeSpan>? apngDurations)
+                    && apngFrames != null && apngDurations != null && apngFrames.Count > 0)
+                {
+                    frame = apngFrames[0];
+                    estimatedDurationMs = apngDurations.Sum(d => d.TotalMilliseconds);
+                    return true;
+                }
+
+                if (ShouldPreferMagickDecoder(extension, path)
                     && TryDecodeAnimationFramesWithMagick(path, out List<BitmapSource>? magickFrames, out List<TimeSpan>? magickDurations)
                     && magickFrames != null
                     && magickDurations != null
@@ -353,7 +418,19 @@ namespace OceanyaClient
             try
             {
                 string extension = Path.GetExtension(path).ToLowerInvariant();
-                if (ShouldPreferMagickDecoder(extension)
+
+                // APNG files are decoded by the dedicated ApngFrameDecoder
+                if (IsApngExtensionOrContent(extension, path)
+                    && ApngFrameDecoder.TryDecode(path, out List<BitmapSource>? apngFrames, out List<TimeSpan>? apngDurations)
+                    && apngFrames != null && apngDurations != null
+                    && apngFrames.Count > 1 && apngFrames.Count == apngDurations.Count)
+                {
+                    frames = apngFrames;
+                    frameDurations = apngDurations;
+                    return true;
+                }
+
+                if (ShouldPreferMagickDecoder(extension, path)
                     && TryDecodeAnimationFramesWithMagick(path, out List<BitmapSource>? magickFrames, out List<TimeSpan>? magickDurations)
                     && magickFrames != null
                     && magickDurations != null
@@ -440,10 +517,26 @@ namespace OceanyaClient
             }
         }
 
-        private static bool ShouldPreferMagickDecoder(string extension)
+        /// <summary>Returns true when the path is an APNG file (by extension or content).</summary>
+        private static bool IsApngExtensionOrContent(string extension, string path)
         {
-            return string.Equals(extension, ".webp", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(extension, ".apng", StringComparison.OrdinalIgnoreCase);
+            if (string.Equals(extension, ".apng", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (string.Equals(extension, ".png", StringComparison.OrdinalIgnoreCase))
+            {
+                return IsApngFile(path);
+            }
+
+            return false;
+        }
+
+        /// <summary>Returns true when ImageMagick is the preferred decoder (WebP only — APNG is handled by ApngFrameDecoder).</summary>
+        private static bool ShouldPreferMagickDecoder(string extension, string path)
+        {
+            return string.Equals(extension, ".webp", StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool TryDecodeAnimationFramesWithMagick(

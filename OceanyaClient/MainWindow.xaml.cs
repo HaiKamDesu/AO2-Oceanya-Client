@@ -256,6 +256,10 @@ namespace OceanyaClient
             {
                 await RefreshCharacterAssetsAsync(null, refreshAllCharacters: true, refreshAllAssets: false);
             };
+            ICMessageSettingsControl.OnOpenInCharacterEditorRequested += async characterDirectory =>
+            {
+                await OpenCharacterInEditorAsync(characterDirectory);
+            };
 
             OOCLogControl.txtOOCShowname.Text = SaveFile.Data.OOCName;
             chkPosOnIniSwap.IsChecked = SaveFile.Data.SwitchPosOnIniSwap;
@@ -1729,11 +1733,11 @@ namespace OceanyaClient
                     ICLogControl.AddMessage(
                         targetClient,
                         "Oceanya Client",
-                        "Websocket Disconnected.",
+                        "Connection disconnected.",
                         true,
                         ICMessage.TextColors.Red
                     );
-                    OOCLogControl.AddMessage(targetClient, "Oceanya Client", "Websocket Disconnected.", true);
+                    OOCLogControl.AddMessage(targetClient, "Oceanya Client", "Connection disconnected.", true);
                 });
             };
 
@@ -2537,6 +2541,53 @@ namespace OceanyaClient
             RebindClientsToRefreshedCharacters();
             OnAssetsRefreshedFromVisualizer();
         }
+
+        private async Task OpenCharacterInEditorAsync(string characterDirectory)
+        {
+            if (string.IsNullOrWhiteSpace(characterDirectory) || !System.IO.Directory.Exists(characterDirectory))
+            {
+                OceanyaMessageBox.Show(
+                    HostWindow,
+                    "Character folder was not found on disk.",
+                    "Open in Character Editor",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            Window owner = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            await WaitForm.ShowFormAsync("Opening character editor...", owner);
+            AOCharacterFileCreatorWindow creator = new AOCharacterFileCreatorWindow();
+            bool loadedSuccessfully;
+            string errorMessage;
+            try
+            {
+                WaitForm.SetSubtitle("Loading character folder...");
+                await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
+                loadedSuccessfully = creator.TryLoadCharacterFolderForEditing(characterDirectory, out errorMessage);
+            }
+            finally
+            {
+                WaitForm.CloseForm();
+            }
+
+            if (!loadedSuccessfully)
+            {
+                OceanyaMessageBox.Show(
+                    HostWindow,
+                    "Could not open the selected character in the AO Character File Creator.\n"
+                    + (string.IsNullOrWhiteSpace(errorMessage) ? "Unknown error." : errorMessage),
+                    "Open in Character Editor",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            Window editorWindow = OceanyaWindowManager.CreateWindow(creator);
+            editorWindow.Owner = owner;
+            _ = editorWindow.ShowDialog();
+        }
+
 
         private void RebindClientsToRefreshedCharacters()
         {

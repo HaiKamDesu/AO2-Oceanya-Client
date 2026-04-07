@@ -2,6 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using NUnit.Framework;
@@ -114,6 +117,14 @@ public class ServerEndpointCatalogTests
     }
 
     [Test]
+    public void IsValidServerEndpoint_ReturnsTrueForTcpEndpoint()
+    {
+        bool valid = InitialConfigurationWindow.IsValidServerEndpoint("tcp://127.0.0.1:27016");
+
+        Assert.That(valid, Is.True);
+    }
+
+    [Test]
     public void ServerEndpointDefinition_IsSelectable_WhenOnlineWithoutPlayerCounts()
     {
         ServerEndpointDefinition server = new ServerEndpointDefinition
@@ -123,7 +134,27 @@ public class ServerEndpointCatalogTests
             Description = "Direct-connect favorite",
             Source = ServerEndpointSource.Favorites,
             IsLegacy = false,
-            IsOnline = true
+            PingStatus = ServerPingStatus.Online
+        };
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(server.SupportsDirectConnection, Is.True);
+            Assert.That(server.IsSelectable, Is.True);
+        });
+    }
+
+    [Test]
+    public void ServerEndpointDefinition_IsSelectable_WhenOnlineLegacyTcpServer()
+    {
+        ServerEndpointDefinition server = new ServerEndpointDefinition
+        {
+            Name = "Legacy Favorite",
+            Endpoint = "tcp://127.0.0.1:27016",
+            Description = "Legacy favorite",
+            Source = ServerEndpointSource.Favorites,
+            IsLegacy = true,
+            PingStatus = ServerPingStatus.Online
         };
 
         Assert.Multiple(() =>
@@ -143,7 +174,7 @@ public class ServerEndpointCatalogTests
             Description = "Direct-connect favorite",
             Source = ServerEndpointSource.Favorites,
             IsLegacy = false,
-            IsOnline = false
+            PingStatus = ServerPingStatus.Offline
         };
 
         Assert.Multiple(() =>
@@ -156,6 +187,8 @@ public class ServerEndpointCatalogTests
     [Test]
     public void ServerEndpointDefinition_IsSelectable_WhenProbeWasRejectedButServerIsOnline()
     {
+        // IncompatibleClient means the server spoke AO protocol but rejected our probe's client version.
+        // The real AO2 client may still connect, so the server remains selectable.
         ServerEndpointDefinition server = new ServerEndpointDefinition
         {
             Name = "Chill and Dices",
@@ -163,11 +196,15 @@ public class ServerEndpointCatalogTests
             Description = "Direct-connect favorite",
             Source = ServerEndpointSource.Favorites,
             IsLegacy = false,
-            IsOnline = true,
-            IsAoClientCompatible = false
+            PingStatus = ServerPingStatus.IncompatibleClient
         };
 
-        Assert.That(server.IsSelectable, Is.True);
+        Assert.Multiple(() =>
+        {
+            Assert.That(server.IsOnline, Is.True);
+            Assert.That(server.IsAoClientCompatible, Is.False);
+            Assert.That(server.IsSelectable, Is.True);
+        });
     }
 
     [Test]
@@ -180,13 +217,34 @@ public class ServerEndpointCatalogTests
             Description = "Direct-connect favorite",
             Source = ServerEndpointSource.Favorites,
             IsLegacy = false,
-            IsOnline = true
+            PingStatus = ServerPingStatus.Online
         };
 
         Assert.Multiple(() =>
         {
             Assert.That(server.PlayersText, Is.EqualTo("???/???"));
             Assert.That(server.AvailabilityText, Is.EqualTo("Online: ???/???"));
+        });
+    }
+
+    [Test]
+    public void ServerEndpointDefinition_PlayersText_IsEmpty_WhenStatusIsUnknown()
+    {
+        ServerEndpointDefinition server = new ServerEndpointDefinition
+        {
+            Name = "Test Server",
+            Endpoint = "ws://127.0.0.1:27016",
+            Description = "Not yet probed",
+            Source = ServerEndpointSource.AoServerPoll,
+            IsLegacy = false
+            // PingStatus defaults to Unknown
+        };
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(server.PingStatus, Is.EqualTo(ServerPingStatus.Unknown));
+            Assert.That(server.PlayersText, Is.EqualTo(string.Empty));
+            Assert.That(server.IsSelectable, Is.False);
         });
     }
 
@@ -200,7 +258,8 @@ public class ServerEndpointCatalogTests
             Description = "Direct-connect favorite",
             Source = ServerEndpointSource.Favorites,
             IsLegacy = false,
-            IsOnline = true
+            PingStatus = ServerPingStatus.Online
+            // No player counts → still needs probe
         };
 
         bool needsProbe = ServerEndpointCatalog.NeedsSupplementalAoProbe(server);
@@ -218,7 +277,7 @@ public class ServerEndpointCatalogTests
             Description = "Direct-connect favorite",
             Source = ServerEndpointSource.Favorites,
             IsLegacy = false,
-            IsOnline = true,
+            PingStatus = ServerPingStatus.Online,
             OnlinePlayers = 4,
             MaxPlayers = 100
         };
@@ -229,7 +288,7 @@ public class ServerEndpointCatalogTests
     }
 
     [Test]
-    public void NeedsSupplementalReachabilityProbe_ReturnsTrueForLegacyOfflineFavorite()
+    public void NeedsSupplementalAoProbe_ReturnsTrueForLegacyOfflineFavorite()
     {
         ServerEndpointDefinition server = new ServerEndpointDefinition
         {
@@ -238,10 +297,10 @@ public class ServerEndpointCatalogTests
             Description = "Legacy favorite",
             Source = ServerEndpointSource.Favorites,
             IsLegacy = true,
-            IsOnline = false
+            PingStatus = ServerPingStatus.Offline
         };
 
-        bool needsProbe = ServerEndpointCatalog.NeedsSupplementalReachabilityProbe(server);
+        bool needsProbe = ServerEndpointCatalog.NeedsSupplementalAoProbe(server);
 
         Assert.That(needsProbe, Is.True);
     }
@@ -312,6 +371,37 @@ public class ServerEndpointCatalogTests
     }
 
     [Test]
+    public void LoadFavorites_PreservesLegacyTcpFavorites()
+    {
+        string configIniPath = CreateTempConfigIniPath();
+
+        try
+        {
+            ServerEndpointCatalog.AddFavorite(configIniPath, new FavoriteServerEntry
+            {
+                Name = "Legacy Favorite",
+                Address = "127.0.0.1",
+                Port = 27016,
+                Description = "Legacy endpoint",
+                Legacy = true,
+                Secure = false
+            });
+
+            ServerEndpointDefinition favorite = ServerEndpointCatalog.LoadFavorites(configIniPath).Single();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(favorite.Endpoint, Is.EqualTo("tcp://127.0.0.1:27016"));
+                Assert.That(favorite.SupportsDirectConnection, Is.True);
+            });
+        }
+        finally
+        {
+            DeleteTempConfigDirectory(configIniPath);
+        }
+    }
+
+    [Test]
     public async Task PopulateAoPlayerCountsAsyncForTesting_DeduplicatesDuplicateEndpointsAcrossEntries()
     {
         List<ServerEndpointDefinition> servers = new List<ServerEndpointDefinition>
@@ -357,9 +447,48 @@ public class ServerEndpointCatalogTests
         {
             Assert.That(probeCalls, Is.EqualTo(1));
             Assert.That(reachabilityCalls, Is.EqualTo(0));
-            Assert.That(servers.All(server => server.IsOnline), Is.True);
+            Assert.That(servers.All(server => server.PingStatus == ServerPingStatus.Online), Is.True);
             Assert.That(servers.All(server => server.OnlinePlayers == 7), Is.True);
             Assert.That(servers.All(server => server.MaxPlayers == 100), Is.True);
+        });
+    }
+
+    [Test]
+    public async Task PopulateAoPlayerCountsAsyncForTesting_ProbeFails_MarksOfflineWithoutTcpFallback()
+    {
+        // When the AO probe fails, servers must be marked Offline.
+        // The reachability callback should never be called — TCP reachability is not a valid
+        // fallback because an open TCP port does not mean the server speaks AO protocol.
+        ServerEndpointDefinition server = new ServerEndpointDefinition
+        {
+            Name = "Unreachable",
+            Endpoint = "ws://192.0.2.1:27016",
+            Description = "Should be offline",
+            Source = ServerEndpointSource.AoServerPoll,
+            IsLegacy = false
+        };
+
+        int reachabilityCalls = 0;
+
+        await ServerEndpointCatalog.PopulateAoPlayerCountsAsyncForTesting(
+            new[] { server },
+            async (endpoint, cancellationToken) =>
+            {
+                await Task.CompletedTask;
+                return (false, null, null, false); // probe fails
+            },
+            async (endpoint, cancellationToken) =>
+            {
+                reachabilityCalls++;
+                await Task.CompletedTask;
+                return true; // TCP would say "reachable" — but we must not call this
+            },
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(reachabilityCalls, Is.EqualTo(0), "TCP reachability must not be used as a fallback");
+            Assert.That(server.PingStatus, Is.EqualTo(ServerPingStatus.Offline));
         });
     }
 
@@ -401,7 +530,34 @@ public class ServerEndpointCatalogTests
         Assert.Multiple(() =>
         {
             Assert.That(reachabilityCalls, Is.EqualTo(1));
-            Assert.That(servers.All(server => server.IsOnline), Is.True);
+            Assert.That(servers.All(server => server.PingStatus == ServerPingStatus.Online), Is.True);
+        });
+    }
+
+    [Test]
+    [CancelAfter(15000)]
+    public async Task ProbeAoPlayerCountDetailedForTestingAsync_TcpEndpoint_UsesAo2IdentityFlow()
+    {
+        using TcpListener listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        List<string> receivedPackets = new List<string>();
+        Task serverTask = RunProbeCompatibleTcpServerAsync(listener, receivedPackets, CancellationToken.None);
+
+        AoPlayerCountProbeResult result = await ServerEndpointCatalog.ProbeAoPlayerCountDetailedForTestingAsync(
+            $"tcp://127.0.0.1:{port}",
+            CancellationToken.None);
+
+        await serverTask;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Success, Is.True);
+            Assert.That(result.Players, Is.EqualTo(4));
+            Assert.That(result.MaxPlayers, Is.EqualTo(100));
+            Assert.That(receivedPackets.Any(packet => packet.StartsWith("HI#", StringComparison.Ordinal)), Is.True);
+            Assert.That(receivedPackets, Does.Contain("ID#AO2#2.11.0#%"));
         });
     }
 
@@ -422,5 +578,84 @@ public class ServerEndpointCatalogTests
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    private static async Task RunProbeCompatibleTcpServerAsync(
+        TcpListener listener,
+        List<string> receivedPackets,
+        CancellationToken cancellationToken)
+    {
+        using TcpClient serverClient = await listener.AcceptTcpClientAsync(cancellationToken);
+        using NetworkStream stream = serverClient.GetStream();
+        StringBuilder packetBuffer = new StringBuilder();
+
+        await SendTcpPacketAsync(stream, "decryptor#NOENCRYPT#%", cancellationToken);
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            string? packet = await ReadTcpPacketAsync(stream, packetBuffer, cancellationToken);
+            if (string.IsNullOrEmpty(packet))
+            {
+                return;
+            }
+
+            receivedPackets.Add(packet);
+
+            if (packet.StartsWith("HI#", StringComparison.Ordinal))
+            {
+                await SendTcpPacketAsync(stream, "ID#17#tsuserver#7#%", cancellationToken);
+            }
+            else if (string.Equals(packet, "ID#AO2#2.11.0#%", StringComparison.Ordinal))
+            {
+                await SendTcpPacketAsync(stream, "PN#4#100#%", cancellationToken);
+                return;
+            }
+        }
+    }
+
+    private static async Task<string?> ReadTcpPacketAsync(
+        NetworkStream stream,
+        StringBuilder packetBuffer,
+        CancellationToken cancellationToken)
+    {
+        byte[] buffer = new byte[4096];
+        string current = packetBuffer.ToString();
+        int existingPacketEnd = current.IndexOf("#%", StringComparison.Ordinal);
+        if (existingPacketEnd >= 0)
+        {
+            string existingPacket = current.Substring(0, existingPacketEnd + 2);
+            packetBuffer.Remove(0, existingPacketEnd + 2);
+            return existingPacket;
+        }
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            int bytesRead = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
+            if (bytesRead <= 0)
+            {
+                return null;
+            }
+
+            packetBuffer.Append(Encoding.UTF8.GetString(buffer, 0, bytesRead));
+            current = packetBuffer.ToString();
+            int packetEnd = current.IndexOf("#%", StringComparison.Ordinal);
+            if (packetEnd < 0)
+            {
+                continue;
+            }
+
+            string packet = current.Substring(0, packetEnd + 2);
+            packetBuffer.Remove(0, packetEnd + 2);
+            return packet;
+        }
+
+        return null;
+    }
+
+    private static async Task SendTcpPacketAsync(NetworkStream stream, string packet, CancellationToken cancellationToken)
+    {
+        byte[] bytes = Encoding.UTF8.GetBytes(packet);
+        await stream.WriteAsync(bytes.AsMemory(0, bytes.Length), cancellationToken);
+        await stream.FlushAsync(cancellationToken);
     }
 }

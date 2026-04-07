@@ -21,7 +21,7 @@ public class LiveServerPollingTests
     {
         string configIniPath = GetConfiguredIniPathOrIgnore();
 
-        List<ServerEndpointDefinition> servers = await ServerEndpointCatalog.LoadAsync(configIniPath, CancellationToken.None);
+        List<ServerEndpointDefinition> servers = await ServerEndpointCatalog.LoadAndProbeAsync(configIniPath, CancellationToken.None);
         List<ServerEndpointDefinition> pollEntries = servers
             .Where(server => server.Source == ServerEndpointSource.AoServerPoll)
             .ToList();
@@ -36,7 +36,7 @@ public class LiveServerPollingTests
     {
         string configIniPath = GetConfiguredIniPathOrIgnore();
 
-        List<ServerEndpointDefinition> servers = await ServerEndpointCatalog.LoadAsync(configIniPath, CancellationToken.None);
+        List<ServerEndpointDefinition> servers = await ServerEndpointCatalog.LoadAndProbeAsync(configIniPath, CancellationToken.None);
         List<ServerEndpointDefinition> selectableServers = servers
             .Where(server => server.Source == ServerEndpointSource.AoServerPoll)
             .Where(server => server.IsSelectable)
@@ -68,7 +68,7 @@ public class LiveServerPollingTests
     {
         string configIniPath = GetConfiguredIniPathOrIgnore();
 
-        List<ServerEndpointDefinition> servers = await ServerEndpointCatalog.LoadAsync(configIniPath, CancellationToken.None);
+        List<ServerEndpointDefinition> servers = await ServerEndpointCatalog.LoadAndProbeAsync(configIniPath, CancellationToken.None);
         List<ServerEndpointDefinition> missingCountOnly = servers
             .Where(server => server.Source == ServerEndpointSource.AoServerPoll)
             .Where(server => server.IsOnline)
@@ -97,7 +97,7 @@ public class LiveServerPollingTests
     {
         string configIniPath = GetConfiguredIniPathOrIgnore();
 
-        List<ServerEndpointDefinition> servers = await ServerEndpointCatalog.LoadAsync(configIniPath, CancellationToken.None);
+        List<ServerEndpointDefinition> servers = await ServerEndpointCatalog.LoadAndProbeAsync(configIniPath, CancellationToken.None);
         ServerEndpointDefinition? targetServer = servers
             .Where(server => server.Source == ServerEndpointSource.AoServerPoll)
             .FirstOrDefault(server => string.Equals(
@@ -123,7 +123,7 @@ public class LiveServerPollingTests
     {
         string configIniPath = GetConfiguredIniPathOrIgnore();
 
-        List<ServerEndpointDefinition> servers = await ServerEndpointCatalog.LoadAsync(configIniPath, CancellationToken.None);
+        List<ServerEndpointDefinition> servers = await ServerEndpointCatalog.LoadAndProbeAsync(configIniPath, CancellationToken.None);
         ServerEndpointDefinition? targetServer = servers
             .Where(server => server.Source == ServerEndpointSource.AoServerPoll)
             .FirstOrDefault(server => string.Equals(
@@ -157,7 +157,7 @@ public class LiveServerPollingTests
             Assert.Ignore("Chill and Dices endpoint is not configured in Globals.");
         }
 
-        List<ServerEndpointDefinition> servers = await ServerEndpointCatalog.LoadAsync(configIniPath, CancellationToken.None);
+        List<ServerEndpointDefinition> servers = await ServerEndpointCatalog.LoadAndProbeAsync(configIniPath, CancellationToken.None);
         ServerEndpointDefinition? targetServer = servers.FirstOrDefault(server =>
             string.Equals(server.Endpoint, chillEndpoint, StringComparison.OrdinalIgnoreCase)
             && server.Source != ServerEndpointSource.AoServerPoll);
