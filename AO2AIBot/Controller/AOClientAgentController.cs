@@ -23,6 +23,7 @@ namespace AO2AIBot.Controller
         private bool pendingForceEvaluation;
         private string pendingReason = string.Empty;
         private ChatLogEntry? pendingLatestEntry;
+        private CancellationTokenSource? inFlightCts;
         private bool disposed;
 
         /// <summary>
@@ -102,6 +103,9 @@ namespace AO2AIBot.Controller
                 pendingForceEvaluation = pendingForceEvaluation || forceEvaluation;
                 pendingReason = reason ?? string.Empty;
                 pendingLatestEntry = latestEntry;
+
+                // Interrupt any in-progress LLM call so it restarts with the updated transcript.
+                inFlightCts?.Cancel();
             }
 
             _ = RunEvaluationLoopAsync();
@@ -135,7 +139,34 @@ namespace AO2AIBot.Controller
                         latestEntry = pendingLatestEntry;
                     }
 
-                    await EvaluateOnceAsync(reason, latestEntry, forceEvaluation, CancellationToken.None);
+                    CancellationTokenSource cts = new CancellationTokenSource();
+                    lock (evaluationSync)
+                    {
+                        inFlightCts = cts;
+                    }
+
+                    try
+                    {
+                        await EvaluateOnceAsync(reason, latestEntry, forceEvaluation, cts.Token);
+                    }
+                    catch (OperationCanceledException) when (cts.IsCancellationRequested)
+                    {
+                        // A new message arrived and cancelled this evaluation.
+                        // The loop continues and will re-evaluate with the updated transcript.
+                        PublishClearTransient();
+                    }
+                    finally
+                    {
+                        lock (evaluationSync)
+                        {
+                            if (ReferenceEquals(inFlightCts, cts))
+                            {
+                                inFlightCts = null;
+                            }
+                        }
+
+                        cts.Dispose();
+                    }
                 }
             }
             finally
@@ -185,9 +216,13 @@ namespace AO2AIBot.Controller
                         isError: false);
                     PublishTransientPreview("Thinking...");
 
-                    // Always apply grammar-constrained schema so the model cannot produce
-                    // invalid JSON or out-of-range enum values on any attempt.
-                    JsonNode? schema = AOClientResponseSchema.Schema;
+                    // Grammar-constrained schema: only apply when explicitly enabled.
+                    // When enabled, Ollama token-masks to force valid JSON — guarantees structure but
+                    // introduces a shortest-path bias toward {"shouldRespond":false}.
+                    // When disabled (default), the model generates freely and the parser extracts JSON post-hoc.
+                    JsonNode? schema = (settings.Provider == AiProviderKind.Ollama && settings.UseOllamaJsonSchema)
+                        ? AOClientResponseSchema.Schema
+                        : null;
 
                     DateTime lastPreviewUpdateUtc = DateTime.MinValue;
                     string lastPreviewMessage = string.Empty;
@@ -265,6 +300,10 @@ namespace AO2AIBot.Controller
                         rawResponse: response,
                         decision: parseResult.Decision);
                     return;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -387,6 +426,12 @@ namespace AO2AIBot.Controller
             }
 
             disposed = true;
+            lock (evaluationSync)
+            {
+                inFlightCts?.Cancel();
+                inFlightCts = null;
+            }
+
             evaluationGate.Dispose();
         }
     }

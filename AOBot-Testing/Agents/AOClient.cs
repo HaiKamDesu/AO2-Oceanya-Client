@@ -143,15 +143,7 @@ namespace AOBot_Testing.Agents
             }
         }
 
-        public bool IsConnected
-        {
-            get
-            {
-                return ws != null && ws.State == WebSocketState.Open;
-            }
-        }
-
-        private bool IsTransportConnected => transport != null && transport.IsConnected;
+        public bool IsTransportConnected => transport != null && transport.IsConnected;
 
         private string TransportName => transport?.TransportName ?? ResolveTransportName(serverUri);
 

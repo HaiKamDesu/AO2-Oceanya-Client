@@ -72,6 +72,8 @@ namespace OceanyaClient
         public int MaxTokens { get; set; } = 450;
         public int MaxPromptMessages { get; set; }
         public string PersonalityPrompt { get; set; } = string.Empty;
+        public int OllamaContextSize { get; set; } = 16384;
+        public bool UseOllamaJsonSchema { get; set; } = false;
     }
 
     public class CustomServerEntry

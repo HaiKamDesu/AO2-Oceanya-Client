@@ -12,6 +12,7 @@ namespace AO2AIBot.Clients
         private readonly HttpClient httpClient;
         private readonly string endpoint;
         private readonly JsonNode? jsonSchema;
+        private readonly int numCtx;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="OllamaClient"/> class.
@@ -21,13 +22,18 @@ namespace AO2AIBot.Clients
         /// When provided, Ollama uses grammar-constrained decoding to guarantee the model's output
         /// matches the schema structure and enum values exactly.
         /// </param>
-        public OllamaClient(string endpoint, HttpClient? httpClient = null, JsonNode? jsonSchema = null)
+        /// <param name="numCtx">
+        /// Context window size in tokens. Ollama defaults to 2048 which is too small for most
+        /// agent prompts. Gemma 4 natively supports 8192; larger values require more VRAM.
+        /// </param>
+        public OllamaClient(string endpoint, HttpClient? httpClient = null, JsonNode? jsonSchema = null, int numCtx = 8192)
         {
             this.endpoint = string.IsNullOrWhiteSpace(endpoint)
                 ? throw new ArgumentNullException(nameof(endpoint))
                 : endpoint.Trim().TrimEnd('/');
             this.httpClient = httpClient ?? new HttpClient();
             this.jsonSchema = jsonSchema;
+            this.numCtx = numCtx > 0 ? numCtx : 8192;
         }
 
         /// <inheritdoc/>
@@ -49,7 +55,8 @@ namespace AO2AIBot.Clients
                 ["options"] = new
                 {
                     temperature = temperature,
-                    num_predict = maxTokens
+                    num_predict = maxTokens,
+                    num_ctx = numCtx
                 }
             };
 

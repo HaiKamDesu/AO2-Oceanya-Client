@@ -71,7 +71,7 @@ namespace AO2AIBot.Clients
                 return new GPTClient(apiKey);
             }
 
-            return new OllamaClient(settings.OllamaEndpoint, jsonSchema: jsonSchema);
+            return new OllamaClient(settings.OllamaEndpoint, jsonSchema: jsonSchema, numCtx: settings.OllamaContextSize);
         }
     }
 }

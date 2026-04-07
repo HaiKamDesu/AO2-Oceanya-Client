@@ -11,7 +11,10 @@ namespace AO2AIBot.Controller
         /// <summary>
         /// Builds a snapshot for the provided profile and network clients.
         /// </summary>
-        public static AOClientControlSnapshot Build(AOClient profileClient, AOClient? networkClient = null)
+        public static AOClientControlSnapshot Build(
+            AOClient profileClient,
+            AOClient? networkClient = null,
+            string serverName = "")
         {
             if (profileClient == null)
             {
@@ -24,12 +27,13 @@ namespace AO2AIBot.Controller
 
             return new AOClientControlSnapshot
             {
+                ServerName = serverName?.Trim() ?? string.Empty,
                 ClientName = profileClient.clientName?.Trim() ?? string.Empty,
-                IsConnected = effectiveNetworkClient.IsConnected,
+                IsConnected = effectiveNetworkClient.IsTransportConnected,
                 IcShowname = profileClient.ICShowname?.Trim() ?? string.Empty,
                 OocShowname = profileClient.OOCShowname?.Trim() ?? string.Empty,
                 CurrentCharacter = profileClient.currentINI?.Name?.Trim() ?? string.Empty,
-                CurrentEmote = profileClient.currentEmote?.DisplayID?.Trim() ?? string.Empty,
+                CurrentEmote = profileClient.currentEmote?.Name?.Trim() ?? string.Empty,
                 CurrentArea = effectiveNetworkClient.CurrentArea?.Trim() ?? string.Empty,
                 CurrentPosition = profileClient.curPos?.Trim() ?? string.Empty,
                 CurrentBackground = effectiveNetworkClient.curBG?.Trim() ?? string.Empty,
@@ -55,10 +59,10 @@ namespace AO2AIBot.Controller
                     .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
                     .ToList(),
                 AvailableEmotes = profileClient.currentINI?.configINI?.Emotions?.Values
-                    .Select(emote => emote.DisplayID)
-                    .Where(displayId => !string.IsNullOrWhiteSpace(displayId))
+                    .Select(emote => emote.Name)
+                    .Where(name => !string.IsNullOrWhiteSpace(name))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .OrderBy(displayId => displayId, StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
                     .ToList()
                     ?? new List<string>(),
                 AvailablePositions = availablePositions,
@@ -74,7 +78,11 @@ namespace AO2AIBot.Controller
                     .ToList(),
                 AvailableIniPuppets = new Dictionary<string, bool>(
                     effectiveNetworkClient.ServerCharacterAvailability,
-                    StringComparer.OrdinalIgnoreCase)
+                    StringComparer.OrdinalIgnoreCase),
+                AvailableAreaInfos = effectiveNetworkClient.AvailableAreaInfos
+                    .Where(info => info != null)
+                    .ToList()
+                    .AsReadOnly()
             };
         }
 

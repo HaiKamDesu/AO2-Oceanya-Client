@@ -13,6 +13,7 @@ namespace AO2AIBot.Clients
             {
               "type": "object",
               "properties": {
+                "thinking": { "type": "string" },
                 "shouldRespond": { "type": "boolean" },
                 "channel": { "type": "string", "enum": ["IC", "OOC"] },
                 "message": { "type": "string" },
@@ -40,7 +41,7 @@ namespace AO2AIBot.Clients
                   }
                 }
               },
-              "required": ["shouldRespond"]
+              "required": ["thinking", "shouldRespond"]
             }
             """;
 

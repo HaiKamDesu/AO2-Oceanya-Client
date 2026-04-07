@@ -403,14 +403,16 @@ namespace OceanyaClient
                 Temperature = SaveFile.Data.AO2AiBot.Temperature,
                 MaxTokens = SaveFile.Data.AO2AiBot.MaxTokens,
                 MaxPromptMessages = SaveFile.Data.AO2AiBot.MaxPromptMessages,
-                PersonalityPrompt = SaveFile.Data.AO2AiBot.PersonalityPrompt
+                PersonalityPrompt = SaveFile.Data.AO2AiBot.PersonalityPrompt,
+                OllamaContextSize = SaveFile.Data.AO2AiBot.OllamaContextSize,
+                UseOllamaJsonSchema = SaveFile.Data.AO2AiBot.UseOllamaJsonSchema
             };
         }
 
         private AOClientControlSnapshot BuildAiSnapshot(AOClient profileClient)
         {
             AOClient? networkClient = GetTargetClientForNetwork(profileClient);
-            return AOClientControlSnapshotBuilder.Build(profileClient, networkClient);
+            return AOClientControlSnapshotBuilder.Build(profileClient, networkClient, SaveFile.Data.SelectedServerName);
         }
 
         private async Task<string> ExecuteAiDecisionAsync(
@@ -456,15 +458,15 @@ namespace OceanyaClient
 
             if (!string.IsNullOrWhiteSpace(decision.Emote))
             {
-                List<string> availableEmotes = profileClient.currentINI?.configINI?.Emotions?.Values
-                    .Select(emote => emote.DisplayID)
-                    .Where(displayId => !string.IsNullOrWhiteSpace(displayId))
-                    .ToList()
-                    ?? new List<string>();
-                if (TryResolveStringChoice(availableEmotes, decision.Emote, out string resolvedEmote))
+                // Match by emote Name (case-insensitive); fall back to matching by full DisplayID.
+                Emote? resolvedEmote = profileClient.currentINI?.configINI?.Emotions?.Values
+                    .FirstOrDefault(e =>
+                        string.Equals(e.Name, decision.Emote, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(e.DisplayID, decision.Emote, StringComparison.OrdinalIgnoreCase));
+                if (resolvedEmote != null)
                 {
-                    profileClient.SetEmote(resolvedEmote);
-                    appliedChanges.Add("set emote to " + resolvedEmote);
+                    profileClient.SetEmote(resolvedEmote.DisplayID);
+                    appliedChanges.Add("set emote to " + resolvedEmote.Name);
                 }
             }
 
@@ -989,13 +991,32 @@ namespace OceanyaClient
                 return false;
             }
 
-            foreach (string? availableValue in availableValues ?? Array.Empty<string>())
+            List<string> snapshotValues = (availableValues ?? Array.Empty<string>())
+                .Where(v => !string.IsNullOrWhiteSpace(v))
+                .ToList();
+
+            // 1. Exact case-insensitive match.
+            foreach (string availableValue in snapshotValues)
             {
-                if (string.Equals(availableValue?.Trim(), normalizedRequestedValue, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(availableValue.Trim(), normalizedRequestedValue, StringComparison.OrdinalIgnoreCase))
                 {
-                    resolvedValue = availableValue ?? string.Empty;
+                    resolvedValue = availableValue;
                     return true;
                 }
+            }
+
+            // 2. Substring fallback: available value contains request, or request contains available value.
+            //    Only use if exactly one candidate matches to avoid ambiguous results.
+            List<string> candidates = snapshotValues
+                .Where(v =>
+                    v.IndexOf(normalizedRequestedValue, StringComparison.OrdinalIgnoreCase) >= 0
+                    || normalizedRequestedValue.IndexOf(v.Trim(), StringComparison.OrdinalIgnoreCase) >= 0)
+                .ToList();
+
+            if (candidates.Count == 1)
+            {
+                resolvedValue = candidates[0];
+                return true;
             }
 
             return false;

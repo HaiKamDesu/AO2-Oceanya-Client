@@ -1,3 +1,5 @@
+using AOBot_Testing.Structures;
+
 namespace AO2AIBot.Controller
 {
     /// <summary>
@@ -5,6 +7,11 @@ namespace AO2AIBot.Controller
     /// </summary>
     public sealed class AOClientControlSnapshot
     {
+        /// <summary>
+        /// Gets or sets the server name (from the saved server list).
+        /// </summary>
+        public string ServerName { get; set; } = string.Empty;
+
         /// <summary>
         /// Gets or sets the client nickname shown in the multi-client UI.
         /// </summary>
@@ -160,5 +167,10 @@ namespace AO2AIBot.Controller
         /// </summary>
         public IReadOnlyDictionary<string, bool> AvailableIniPuppets { get; set; } =
             new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Gets or sets the detailed area status list (player counts, status, lock state).
+        /// </summary>
+        public IReadOnlyList<AreaInfo> AvailableAreaInfos { get; set; } = Array.Empty<AreaInfo>();
     }
 }
