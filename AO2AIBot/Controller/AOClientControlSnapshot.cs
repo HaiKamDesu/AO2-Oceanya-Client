@@ -172,5 +172,10 @@ namespace AO2AIBot.Controller
         /// Gets or sets the detailed area status list (player counts, status, lock state).
         /// </summary>
         public IReadOnlyList<AreaInfo> AvailableAreaInfos { get; set; } = Array.Empty<AreaInfo>();
+
+        /// <summary>
+        /// Gets or sets the currently known players in the active area from the latest /getarea-style roster.
+        /// </summary>
+        public IReadOnlyList<Player> CurrentAreaPlayers { get; set; } = Array.Empty<Player>();
     }
 }

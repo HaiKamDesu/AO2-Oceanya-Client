@@ -10,6 +10,7 @@ namespace AO2AIBot.Prompts
     public static class AO2AiBotPromptBuilder
     {
         private const int ParticipantWindowSize = 30;
+        private const int MaxAdjacentDuplicateEntries = 0;
 
         /// <summary>
         /// Builds a prompt using the current client snapshot and transcript.
@@ -28,7 +29,6 @@ namespace AO2AIBot.Prompts
 
             StringBuilder sb = new StringBuilder();
 
-            // === WHO YOU ARE + SESSION STATE (single compact block) ===
             sb.AppendLine("## You");
             sb.AppendLine($"Character: {Fallback(snapshot.CurrentCharacter, "none")} | IC name: {Fallback(snapshot.IcShowname, "same")} | OOC name: {Fallback(snapshot.OocShowname, "none")}");
             sb.Append($"Server: {Fallback(snapshot.ServerName, "?")} | ");
@@ -36,31 +36,29 @@ namespace AO2AIBot.Prompts
             sb.AppendLine($" | Pos: {Fallback(snapshot.CurrentPosition, "?")} | BG: {Fallback(snapshot.CurrentBackground, "?")}");
             sb.AppendLine();
 
-            // === ACTIVE MODIFIERS — only show non-default values ===
             AppendActiveModifiers(sb, snapshot);
-
-            // === CHAT CONTEXT — participant count and direct address ===
             AppendChatContext(sb, snapshot, history, latestEntry);
             sb.AppendLine();
 
-            // === AVAILABLE OPTIONS — compact ===
             sb.AppendLine("## Options");
             AppendCompactList(sb, "Emotes", snapshot.AvailableEmotes);
             AppendCompactList(sb, "Positions", snapshot.AvailablePositions);
+            AppendCompactList(sb, "SFX", snapshot.AvailableSfx, maxItems: 60);
             AppendAreaInfoList(sb, snapshot);
+            AppendCurrentAreaRoster(sb, snapshot);
             AppendIniPuppetList(sb, snapshot);
             AppendCharacterList(sb, snapshot);
             sb.AppendLine();
 
-            // === CONVERSATION HISTORY ===
             sb.AppendLine("## Conversation History");
-            if (history.Count == 0)
+            IReadOnlyList<ChatLogEntry> compactHistory = CompactHistory(history);
+            if (compactHistory.Count == 0)
             {
                 sb.AppendLine("(no messages yet — this is the start of the session)");
             }
             else
             {
-                foreach (ChatLogEntry entry in history)
+                foreach (ChatLogEntry entry in compactHistory)
                 {
                     sb.AppendLine(FormatEntryForPrompt(entry));
                 }
@@ -75,7 +73,9 @@ namespace AO2AIBot.Prompts
                 sb.AppendLine("The following message just arrived and triggered this evaluation:");
                 sb.AppendLine($"  {FormatEntryForPrompt(latestEntry)}");
                 sb.AppendLine();
-                sb.AppendLine("This is a real message from another player in your AO2 session. You may respond to it IC or OOC, or stay silent.");
+                sb.AppendLine(latestEntry.IsFromServer
+                    ? "This is server output or a system response. Treat it as context, not as a player you should chat back to."
+                    : "This is the latest message that triggered the evaluation. You may respond to it IC or OOC, or stay silent.");
             }
             else
             {
@@ -85,10 +85,12 @@ namespace AO2AIBot.Prompts
 
             sb.AppendLine();
 
-            // === CLOSING DIRECTIVE — placed last so local models weight it most ===
             sb.AppendLine("## Your Turn");
-            sb.AppendLine("Check Chat Context: how many participants, are you directly addressed?");
-            sb.AppendLine("If in doubt: RESPOND. Only stay silent when the message clearly has nothing to do with you.");
+            sb.AppendLine("Check Chat Context first: was the latest message from a player or the server, and were you directly addressed?");
+            sb.AppendLine("If a player explicitly tells you not to answer, to stay quiet, or to shut up, choose shouldRespond=false.");
+            sb.AppendLine("Do not answer [SERVER] command output unless a real player asks you to comment on it.");
+            sb.AppendLine("When reporting facts about AO state, use only the state and lists shown in this prompt. Never invent missing data.");
+            sb.AppendLine("Keep IC lines short. Prefer staying under 220 characters unless the player explicitly asks for a longer line.");
             sb.AppendLine();
             sb.AppendLine("Output ONLY a single JSON object. Start with your reasoning in \"thinking\", then decide:");
             sb.AppendLine("  To respond:     {\"thinking\":\"reason\",\"shouldRespond\":true,\"channel\":\"IC\",\"message\":\"...\"}");
@@ -125,16 +127,16 @@ namespace AO2AIBot.Prompts
                 return string.Empty;
             }
 
-            string selfMarker = entry.IsFromSelf ? "[SELF] " : "[OTHER] ";
+            string sourceMarker = entry.IsFromServer ? "[SERVER] " : (entry.IsFromSelf ? "[SELF] " : "[OTHER] ");
             if (string.Equals(entry.ChatLogType, "OOC", StringComparison.OrdinalIgnoreCase))
             {
-                return $"[OOC]{selfMarker}{entry.ShowName}: {entry.Message}";
+                return $"[OOC]{sourceMarker}{entry.ShowName}: {entry.Message}";
             }
 
             string characterSuffix = string.IsNullOrWhiteSpace(entry.CharacterName)
                 ? string.Empty
                 : $" ({entry.CharacterName})";
-            return $"[IC]{selfMarker}{entry.ShowName}{characterSuffix}: {entry.Message}";
+            return $"[IC]{sourceMarker}{entry.ShowName}{characterSuffix}: {entry.Message}";
         }
 
         private static void AppendCompactList(
@@ -182,7 +184,7 @@ namespace AO2AIBot.Prompts
             HashSet<string> participants = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (ChatLogEntry entry in window)
             {
-                if (!entry.IsFromSelf && !string.IsNullOrWhiteSpace(entry.ShowName))
+                if (!entry.IsFromSelf && !entry.IsFromServer && !string.IsNullOrWhiteSpace(entry.ShowName))
                 {
                     participants.Add(entry.ShowName);
                 }
@@ -220,14 +222,24 @@ namespace AO2AIBot.Prompts
                 sb.AppendLine("  Direct address: no");
             }
 
-            // Give the model a plain-language hint calibrated to participant count.
-            if (directAddress)
+            if (latestEntry != null)
+            {
+                sb.AppendLine(latestEntry.IsFromServer
+                    ? "  Latest source: SERVER output or command response"
+                    : "  Latest source: player message");
+            }
+
+            if (latestEntry?.IsFromServer == true)
+            {
+                sb.AppendLine("  → Do not roleplay back at server output unless a player explicitly asks for analysis.");
+            }
+            else if (directAddress)
             {
                 sb.AppendLine("  → You were directly addressed. You MUST respond.");
             }
             else if (participants.Count <= 1)
             {
-                sb.AppendLine("  → Only one other person is present. Treat this like a private conversation — respond unless the message is clearly not meant for you.");
+                sb.AppendLine("  → Only one other player is visible. Treat this like a private conversation, but still obey requests for silence.");
             }
             else if (participants.Count <= 3)
             {
@@ -300,6 +312,17 @@ namespace AO2AIBot.Prompts
                 parts.Add("shake=true");
             }
 
+            if (!string.IsNullOrWhiteSpace(snapshot.CurrentSfx)
+                && !string.Equals(snapshot.CurrentSfx, "Default", StringComparison.OrdinalIgnoreCase))
+            {
+                parts.Add($"sfx={snapshot.CurrentSfx}");
+            }
+
+            if (!string.IsNullOrWhiteSpace(snapshot.CurrentIniPuppetName))
+            {
+                parts.Add($"iniPuppet={snapshot.CurrentIniPuppetName}");
+            }
+
             if (snapshot.SelfOffsetHorizontal != 0 || snapshot.SelfOffsetVertical != 0)
             {
                 parts.Add($"offset={snapshot.SelfOffsetHorizontal},{snapshot.SelfOffsetVertical}");
@@ -346,6 +369,17 @@ namespace AO2AIBot.Prompts
             {
                 AppendCompactList(sb, "Areas", snapshot.AvailableAreas, maxItems: 20);
             }
+        }
+
+        private static void AppendCurrentAreaRoster(StringBuilder sb, AOClientControlSnapshot snapshot)
+        {
+            if (snapshot.CurrentAreaPlayers.Count == 0)
+            {
+                return;
+            }
+
+            sb.Append("  Current area roster: ");
+            sb.AppendLine(string.Join(", ", snapshot.CurrentAreaPlayers.Select(FormatPlayer)));
         }
 
         /// <summary>
@@ -409,6 +443,56 @@ namespace AO2AIBot.Prompts
                 : string.Empty;
 
             sb.AppendLine($"  Characters ({snapshot.AvailableCharacters.Count} total, use exact name): {string.Join(", ", display)}{suffix}");
+        }
+
+        private static IReadOnlyList<ChatLogEntry> CompactHistory(IReadOnlyList<ChatLogEntry> history)
+        {
+            if (history.Count <= 1)
+            {
+                return history;
+            }
+
+            List<ChatLogEntry> compacted = new List<ChatLogEntry>(history.Count);
+            ChatLogEntry? previous = null;
+            int duplicateCount = 0;
+
+            foreach (ChatLogEntry entry in history)
+            {
+                if (previous != null && AreEquivalent(previous, entry))
+                {
+                    duplicateCount++;
+                    if (duplicateCount > MaxAdjacentDuplicateEntries)
+                    {
+                        continue;
+                    }
+                }
+                else
+                {
+                    duplicateCount = 0;
+                }
+
+                compacted.Add(entry);
+                previous = entry;
+            }
+
+            return compacted;
+        }
+
+        private static bool AreEquivalent(ChatLogEntry left, ChatLogEntry right)
+        {
+            return string.Equals(left.ChatLogType, right.ChatLogType, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(left.CharacterName, right.CharacterName, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(left.ShowName, right.ShowName, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(left.Message, right.Message, StringComparison.Ordinal)
+                && left.IsFromSelf == right.IsFromSelf
+                && left.IsFromServer == right.IsFromServer;
+        }
+
+        private static string FormatPlayer(AOBot_Testing.Structures.Player player)
+        {
+            string showname = string.IsNullOrWhiteSpace(player.OOCShowname) ? "no OOC name" : player.OOCShowname;
+            string cm = player.IsCM ? " [CM]" : string.Empty;
+            return $"[{player.PlayerID}] {player.ICCharacterName} ({showname}){cm}";
         }
     }
 }

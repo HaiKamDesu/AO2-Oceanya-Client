@@ -433,6 +433,11 @@ namespace OceanyaClient
 
             List<string> appliedChanges = new List<string>();
             AOClientControlSnapshot snapshot = BuildAiSnapshot(profileClient);
+            string previousSfx = profileClient.curSFX;
+            ICMessage.ShoutModifiers previousShoutModifier = profileClient.shoutModifiers;
+            ICMessage.Effects previousEffect = profileClient.effect;
+            bool previousScreenshake = profileClient.screenshake;
+            bool resetTransientStateAfterMessage = false;
 
             if (!string.IsNullOrWhiteSpace(decision.IcShowname))
             {
@@ -484,6 +489,7 @@ namespace OceanyaClient
             {
                 profileClient.curSFX = decision.Sfx.Trim();
                 appliedChanges.Add("set SFX to " + profileClient.curSFX);
+                resetTransientStateAfterMessage = true;
             }
 
             if (decision.DeskMod.HasValue)
@@ -502,6 +508,7 @@ namespace OceanyaClient
             {
                 profileClient.shoutModifiers = decision.ShoutModifier.Value;
                 appliedChanges.Add("set shout modifier to " + decision.ShoutModifier.Value);
+                resetTransientStateAfterMessage = true;
             }
 
             if (decision.TextColor.HasValue)
@@ -514,6 +521,7 @@ namespace OceanyaClient
             {
                 profileClient.effect = decision.Effect.Value;
                 appliedChanges.Add("set effect to " + decision.Effect.Value);
+                resetTransientStateAfterMessage = true;
             }
 
             if (decision.PreanimEnabled.HasValue)
@@ -544,6 +552,7 @@ namespace OceanyaClient
             {
                 profileClient.screenshake = decision.Screenshake.Value;
                 appliedChanges.Add("set screenshake to " + decision.Screenshake.Value);
+                resetTransientStateAfterMessage = true;
             }
 
             if (decision.SelfOffsetHorizontal.HasValue || decision.SelfOffsetVertical.HasValue)
@@ -586,6 +595,12 @@ namespace OceanyaClient
             if (!string.IsNullOrWhiteSpace(outgoingMessage))
             {
                 string channel = string.IsNullOrWhiteSpace(decision.Channel) ? "IC" : decision.Channel.Trim();
+                outgoingMessage = NormalizeAiOutgoingMessage(channel, outgoingMessage, out bool truncated);
+                if (truncated)
+                {
+                    appliedChanges.Add("trimmed message length for AO compatibility");
+                }
+
                 if (string.Equals(channel, "OOC", StringComparison.OrdinalIgnoreCase))
                 {
                     string oocShowname = string.IsNullOrWhiteSpace(profileClient.OOCShowname)
@@ -599,12 +614,40 @@ namespace OceanyaClient
                     await networkClient.SendICMessage(outgoingMessage);
                     appliedChanges.Add("sent IC message");
                 }
+
+                if (resetTransientStateAfterMessage)
+                {
+                    profileClient.curSFX = previousSfx;
+                    profileClient.shoutModifiers = previousShoutModifier;
+                    profileClient.effect = previousEffect;
+                    profileClient.screenshake = previousScreenshake;
+
+                    if (useSingleInternalClient)
+                    {
+                        ApplyProfileToSingleInternalClient(profileClient);
+                    }
+                }
             }
 
             RefreshUiAfterAiStateChanged(profileClient);
             return appliedChanges.Count == 0
                 ? "AI action completed with no visible changes."
                 : "AI action completed: " + string.Join(", ", appliedChanges) + ".";
+        }
+
+        private static string NormalizeAiOutgoingMessage(string channel, string message, out bool truncated)
+        {
+            truncated = false;
+
+            int maxLength = string.Equals(channel, "OOC", StringComparison.OrdinalIgnoreCase) ? 240 : 220;
+            string normalized = (message ?? string.Empty).Trim();
+            if (normalized.Length <= maxLength)
+            {
+                return normalized;
+            }
+
+            truncated = true;
+            return normalized.Substring(0, Math.Max(0, maxLength - 1)).TrimEnd() + "…";
         }
 
         private void HandleAiControllerStatusChanged(AOClient profileClient, AOClientAgentStatusUpdate update)
@@ -890,7 +933,8 @@ namespace OceanyaClient
             string characterName,
             string showName,
             string message,
-            int iniPuppetId)
+            int iniPuppetId,
+            bool isFromServer)
         {
             if (!aiModeEnabled)
             {
@@ -906,7 +950,8 @@ namespace OceanyaClient
                 ShowName = showName,
                 Message = message,
                 IniPuppetId = iniPuppetId,
-                IsFromSelf = IsMessageFromSelf(profileClient, networkClient, chatLogType, characterName, showName, iniPuppetId)
+                IsFromSelf = IsMessageFromSelf(profileClient, networkClient, chatLogType, characterName, showName, iniPuppetId),
+                IsFromServer = isFromServer
             };
             controller.RecordMessage(entry);
         }
@@ -916,7 +961,8 @@ namespace OceanyaClient
             string characterName,
             string showName,
             string message,
-            int iniPuppetId)
+            int iniPuppetId,
+            bool isFromServer)
         {
             if (!aiModeEnabled || singleInternalClient == null)
             {
@@ -932,7 +978,8 @@ namespace OceanyaClient
                     characterName,
                     showName,
                     message,
-                    iniPuppetId);
+                    iniPuppetId,
+                    isFromServer);
             }
         }
 
@@ -1897,9 +1944,9 @@ namespace OceanyaClient
                 });
             };
 
-            singleInternalClient.OnMessageReceived += (string chatLogType, string characterName, string showName, string message, int iniPuppetId) =>
+            singleInternalClient.OnMessageReceived += (string chatLogType, string characterName, string showName, string message, int iniPuppetId, bool isFromServer) =>
             {
-                BroadcastAiMessageFromSingleClient(chatLogType, characterName, showName, message, iniPuppetId);
+                BroadcastAiMessageFromSingleClient(chatLogType, characterName, showName, message, iniPuppetId, isFromServer);
             };
 
             singleInternalClient.OnBGChange += (string newBg) =>
@@ -1990,9 +2037,9 @@ namespace OceanyaClient
                         });
                     };
 
-                    bot.OnMessageReceived += (string chatLogType, string characterName, string showName, string message, int iniPuppetId) =>
+                    bot.OnMessageReceived += (string chatLogType, string characterName, string showName, string message, int iniPuppetId, bool isFromServer) =>
                     {
-                        RecordAiMessageForClient(bot, bot, chatLogType, characterName, showName, message, iniPuppetId);
+                        RecordAiMessageForClient(bot, bot, chatLogType, characterName, showName, message, iniPuppetId, isFromServer);
                     };
                 }
 

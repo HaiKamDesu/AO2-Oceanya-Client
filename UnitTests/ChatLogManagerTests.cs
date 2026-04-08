@@ -94,7 +94,7 @@ namespace UnitTests
             var client = new AOClient("ws://localhost:8080");
             
             // Hook up the message received event
-            client.OnMessageReceived += (chatLogType, characterName, showName, message, iniPuppetID) =>
+            client.OnMessageReceived += (chatLogType, characterName, showName, message, iniPuppetID, isFromServer) =>
             {
                 chatLogManager.AddMessage(chatLogType, characterName, showName, message);
             };
@@ -108,8 +108,8 @@ namespace UnitTests
             };
             
             // Manually invoke the callback (simulating message reception)
-            client.OnMessageReceived?.Invoke("IC", icMsg.Character, icMsg.ShowName, icMsg.Message, 1);
-            client.OnMessageReceived?.Invoke("OOC", "", "Judge", "All rise!", -1);
+            client.OnMessageReceived?.Invoke("IC", icMsg.Character, icMsg.ShowName, icMsg.Message, 1, false);
+            client.OnMessageReceived?.Invoke("OOC", "", "Judge", "All rise!", -1, false);
             
             // Get the formatted chat history
             string history = chatLogManager.GetFormattedChatHistory();

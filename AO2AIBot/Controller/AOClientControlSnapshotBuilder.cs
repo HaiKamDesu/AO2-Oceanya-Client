@@ -82,6 +82,10 @@ namespace AO2AIBot.Controller
                 AvailableAreaInfos = effectiveNetworkClient.AvailableAreaInfos
                     .Where(info => info != null)
                     .ToList()
+                    .AsReadOnly(),
+                CurrentAreaPlayers = effectiveNetworkClient.CurrentAreaPlayers
+                    .Where(player => player != null)
+                    .ToList()
                     .AsReadOnly()
             };
         }

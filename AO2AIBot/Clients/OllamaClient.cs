@@ -56,7 +56,9 @@ namespace AO2AIBot.Clients
                 {
                     temperature = temperature,
                     num_predict = maxTokens,
-                    num_ctx = numCtx
+                    num_ctx = numCtx,
+                    repeat_last_n = 64,
+                    repeat_penalty = 1.1
                 }
             };
 

@@ -41,6 +41,11 @@ namespace AO2AIBot.Chat
         /// Gets or sets a value indicating whether the message originated from the controlled client.
         /// </summary>
         public bool IsFromSelf { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the message came from the server rather than a player.
+        /// </summary>
+        public bool IsFromServer { get; set; }
     }
 
     /// <summary>
@@ -105,7 +110,8 @@ namespace AO2AIBot.Chat
                 ShowName = entry.ShowName?.Trim() ?? string.Empty,
                 Message = entry.Message ?? string.Empty,
                 IniPuppetId = entry.IniPuppetId,
-                IsFromSelf = entry.IsFromSelf
+                IsFromSelf = entry.IsFromSelf,
+                IsFromServer = entry.IsFromServer
             };
 
             chatHistory.Add(normalizedEntry);
@@ -128,7 +134,8 @@ namespace AO2AIBot.Chat
                     ShowName = entry.ShowName,
                     Message = entry.Message,
                     IniPuppetId = entry.IniPuppetId,
-                    IsFromSelf = entry.IsFromSelf
+                    IsFromSelf = entry.IsFromSelf,
+                    IsFromServer = entry.IsFromServer
                 })
                 .ToList()
                 .AsReadOnly();

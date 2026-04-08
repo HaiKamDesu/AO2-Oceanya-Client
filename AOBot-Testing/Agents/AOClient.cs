@@ -45,6 +45,7 @@ namespace AOBot_Testing.Agents
         private string currentArea = string.Empty;
         private readonly List<string> availableAreas = new List<string>();
         private readonly List<AreaInfo> availableAreaInfos = new List<AreaInfo>();
+        private readonly List<Player> currentAreaPlayers = new List<Player>();
         public CharacterFolder? currentINI;
         public Emote? currentEmote;
 
@@ -87,7 +88,7 @@ namespace AOBot_Testing.Agents
             }
         }
 
-        public Action<string, string, string, string, int>? OnMessageReceived;
+        public Action<string, string, string, string, int, bool>? OnMessageReceived;
         public Action<ICMessage>? OnICMessageReceived;
         public Action<string, string, bool>? OnOOCMessageReceived;
         public Action<CharacterFolder>? OnChangedCharacter;
@@ -124,6 +125,14 @@ namespace AOBot_Testing.Agents
             get
             {
                 return availableAreaInfos.AsReadOnly();
+            }
+        }
+
+        public IReadOnlyList<Player> CurrentAreaPlayers
+        {
+            get
+            {
+                return currentAreaPlayers.AsReadOnly();
             }
         }
 
@@ -485,7 +494,7 @@ namespace AOBot_Testing.Agents
                 if (icMessage != null)
                 {
                     // Handle IC message
-                    OnMessageReceived?.Invoke("IC", icMessage.Character, icMessage.ShowName, icMessage.Message, icMessage.CharId);
+                    OnMessageReceived?.Invoke("IC", icMessage.Character, icMessage.ShowName, icMessage.Message, icMessage.CharId, false);
                     OnICMessageReceived?.Invoke(icMessage);
 
                     AbleToSpeak = false;
@@ -537,6 +546,8 @@ namespace AOBot_Testing.Agents
                 if (messageText.ToLower().Contains("people in this area: ") && messageText.ToLower().Contains("===") && messageText.Split("\n").Length > 3)
                 {
                     List<Player> players = AO2Parser.ParseGetArea(messageText);
+                    currentAreaPlayers.Clear();
+                    currentAreaPlayers.AddRange(players);
                     Match areaMatch = Regex.Match(messageText, @"people in this area:\s*(.+?)\s*===", RegexOptions.IgnoreCase);
                     if (areaMatch.Success)
                     {
@@ -555,7 +566,7 @@ namespace AOBot_Testing.Agents
 
                 // Handle OOC message
                 //you cant get the char id from an ooc message, so just send -1
-                OnMessageReceived?.Invoke("OOC", "", showname, messageText, -1);
+                OnMessageReceived?.Invoke("OOC", "", showname, messageText, -1, fromServer);
                 OnOOCMessageReceived?.Invoke(showname, messageText, fromServer);
             }
             else if (message.StartsWith("SP#"))
@@ -819,6 +830,7 @@ namespace AOBot_Testing.Agents
             }
 
             currentArea = newArea;
+            currentAreaPlayers.Clear();
             OnCurrentAreaChanged?.Invoke(currentArea);
         }
 
