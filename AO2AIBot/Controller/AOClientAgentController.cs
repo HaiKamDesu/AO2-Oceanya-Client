@@ -8,15 +8,17 @@ using System.Text.RegularExpressions;
 namespace AO2AIBot.Controller
 {
     /// <summary>
-    /// Coordinates transcript capture, prompting, and action execution for one AO client persona.
+    /// Coordinates transcript capture, prompting, validation, and action execution for one AO client persona.
+    /// Uses the strict action-array response contract with a validator stage between parse and execute.
     /// </summary>
     public sealed class AOClientAgentController : IDisposable
     {
         private readonly IAiChatCompletionService completionService;
         private readonly Func<AiChatProviderSettings> settingsProvider;
         private readonly Func<AOClientControlSnapshot> snapshotProvider;
-        private readonly Func<AOClientAgentDecision, CancellationToken, Task<string>> actionExecutor;
+        private readonly Func<AgentResponse, AOClientControlSnapshot, CancellationToken, Task<string>> actionExecutor;
         private readonly ChatLogManager chatLogManager = new ChatLogManager(-1);
+        private readonly PersistentRuleStore ruleStore = new PersistentRuleStore();
         private readonly SemaphoreSlim evaluationGate = new SemaphoreSlim(1, 1);
         private readonly object evaluationSync = new object();
         private bool pendingEvaluationRequested;
@@ -33,7 +35,7 @@ namespace AO2AIBot.Controller
             IAiChatCompletionService completionService,
             Func<AiChatProviderSettings> settingsProvider,
             Func<AOClientControlSnapshot> snapshotProvider,
-            Func<AOClientAgentDecision, CancellationToken, Task<string>> actionExecutor)
+            Func<AgentResponse, AOClientControlSnapshot, CancellationToken, Task<string>> actionExecutor)
         {
             this.completionService = completionService ?? throw new ArgumentNullException(nameof(completionService));
             this.settingsProvider = settingsProvider ?? throw new ArgumentNullException(nameof(settingsProvider));
@@ -52,6 +54,11 @@ namespace AO2AIBot.Controller
         public bool IsEnabled { get; private set; }
 
         /// <summary>
+        /// Gets the persistent rule store for this controller instance.
+        /// </summary>
+        public PersistentRuleStore RuleStore => ruleStore;
+
+        /// <summary>
         /// Enables or disables autopilot execution.
         /// </summary>
         public void SetEnabled(bool enabled)
@@ -60,7 +67,7 @@ namespace AO2AIBot.Controller
         }
 
         /// <summary>
-        /// Records a transcript entry and schedules evaluation when appropriate.
+        /// Records a transcript entry, detects persistent rules, and schedules evaluation when appropriate.
         /// </summary>
         public void RecordMessage(ChatLogEntry entry)
         {
@@ -70,6 +77,13 @@ namespace AO2AIBot.Controller
             }
 
             chatLogManager.AddMessage(entry);
+
+            // Detect persistent rule instructions from player messages.
+            if (!entry.IsFromSelf && !entry.IsFromServer && !string.IsNullOrWhiteSpace(entry.Message))
+            {
+                ProcessPotentialRuleCommand(entry.Message);
+            }
+
             if (!IsEnabled || entry.IsFromSelf)
             {
                 return;
@@ -95,6 +109,20 @@ namespace AO2AIBot.Controller
             return chatLogManager.GetHistorySnapshot();
         }
 
+        private void ProcessPotentialRuleCommand(string message)
+        {
+            if (PersistentRuleStore.ContainsRevocationCue(message))
+            {
+                ruleStore.TryRevokeLatestRule();
+                CustomConsole.Info("[PersistentRules] Revoked most recent rule due to: " + message);
+            }
+            else if (PersistentRuleStore.ContainsDurableInstructionCue(message))
+            {
+                ruleStore.AddRule(message);
+                CustomConsole.Info("[PersistentRules] Added new persistent rule: " + message);
+            }
+        }
+
         private void QueueEvaluation(string reason, ChatLogEntry? latestEntry, bool forceEvaluation)
         {
             lock (evaluationSync)
@@ -104,7 +132,6 @@ namespace AO2AIBot.Controller
                 pendingReason = reason ?? string.Empty;
                 pendingLatestEntry = latestEntry;
 
-                // Interrupt any in-progress LLM call so it restarts with the updated transcript.
                 inFlightCts?.Cancel();
             }
 
@@ -151,8 +178,6 @@ namespace AO2AIBot.Controller
                     }
                     catch (OperationCanceledException) when (cts.IsCancellationRequested)
                     {
-                        // A new message arrived and cancelled this evaluation.
-                        // The loop continues and will re-evaluate with the updated transcript.
                         PublishClearTransient();
                     }
                     finally
@@ -190,6 +215,7 @@ namespace AO2AIBot.Controller
             AOClientControlSnapshot snapshot = snapshotProvider();
             IReadOnlyList<ChatLogEntry> fullHistory = chatLogManager.GetHistorySnapshot();
             IReadOnlyList<ChatLogEntry> promptHistory = SelectPromptHistory(fullHistory, settings.MaxPromptMessages);
+            IReadOnlyList<string> activeRules = ruleStore.GetActiveRuleTexts();
 
             Dictionary<string, string> systemVariables = new Dictionary<string, string>(StringComparer.Ordinal)
             {
@@ -197,16 +223,18 @@ namespace AO2AIBot.Controller
                 { "[[[current_emote]]]", snapshot.CurrentEmote }
             };
 
-            string originalPrompt = AO2AiBotPromptBuilder.BuildPrompt(snapshot, promptHistory, latestEntry, reason);
+            string originalPrompt = AO2AiBotPromptBuilder.BuildPrompt(
+                snapshot, promptHistory, latestEntry, reason, activeRules);
             IReadOnlyList<string> systemInstructions = AO2AiBotPromptCatalog.GetSystemInstructions(settings);
 
             const int maxAttempts = 2;
             string lastFailedResponse = string.Empty;
+            IReadOnlyList<string>? lastValidationErrors = null;
             for (int attempt = 1; attempt <= maxAttempts; attempt++)
             {
                 string prompt = attempt == 1
                     ? originalPrompt
-                    : AO2AiBotPromptBuilder.BuildCorrectionPrompt(originalPrompt, lastFailedResponse);
+                    : AO2AiBotPromptBuilder.BuildCorrectionPrompt(originalPrompt, lastFailedResponse, lastValidationErrors);
 
                 string response = string.Empty;
                 try
@@ -216,10 +244,6 @@ namespace AO2AIBot.Controller
                         isError: false);
                     PublishTransientPreview("Thinking...");
 
-                    // Grammar-constrained schema: only apply when explicitly enabled.
-                    // When enabled, Ollama token-masks to force valid JSON — guarantees structure but
-                    // introduces a shortest-path bias toward {"shouldRespond":false}.
-                    // When disabled (default), the model generates freely and the parser extracts JSON post-hoc.
                     JsonNode? schema = (settings.Provider == AiProviderKind.Ollama && settings.UseOllamaJsonSchema)
                         ? AOClientResponseSchema.Schema
                         : null;
@@ -233,7 +257,7 @@ namespace AO2AIBot.Controller
                         systemVariables,
                         partialResponse =>
                         {
-                            string previewMessage = BuildThinkingPreviewMessage(partialResponse);
+                            string previewMessage = BuildStreamPreviewMessage(partialResponse);
                             DateTime nowUtc = DateTime.UtcNow;
                             if (string.Equals(previewMessage, lastPreviewMessage, StringComparison.Ordinal))
                             {
@@ -253,52 +277,78 @@ namespace AO2AIBot.Controller
                         cancellationToken,
                         jsonSchema: schema);
 
+                    // === PARSE ===
                     AOClientAgentResponseParser.ParseResult parseResult = AOClientAgentResponseParser.Parse(response);
                     if (!parseResult.Success)
                     {
                         lastFailedResponse = response;
+                        lastValidationErrors = new[] { parseResult.ErrorMessage };
                         CustomConsole.Warning(
-                            "AI response was invalid (attempt "
-                            + attempt
-                            + "). Parse error: "
+                            "AI response parse failed (attempt " + attempt + "): "
                             + parseResult.ErrorMessage
-                            + "\nRaw response:\n"
-                            + response.Trim());
+                            + "\nRaw:\n" + response.Trim());
                         if (attempt < maxAttempts)
                         {
                             PublishTransientPrimary(
-                                "AI response was invalid on attempt " + attempt + ". Retrying with correction prompt...",
+                                "AI response parse failed on attempt " + attempt + ". Retrying...",
                                 isError: true);
                             continue;
                         }
 
                         PublishClearTransient();
                         PublishFinalMessage(
-                            "AI response was invalid after "
-                            + maxAttempts
-                            + " attempts: "
-                            + parseResult.ErrorMessage,
+                            "AI response invalid after " + maxAttempts + " attempts: " + parseResult.ErrorMessage,
                             isError: true,
                             rawResponse: response);
-                        continue;
+                        return;
                     }
 
-                    if (parseResult.ShouldWait || parseResult.Decision == null || !parseResult.Decision.ShouldAct)
+                    if (parseResult.ShouldWait || parseResult.Response == null || !parseResult.Response.ShouldRespond)
                     {
                         PublishClearTransient();
                         PublishWaitDecision();
                         return;
                     }
 
-                    string executionSummary = await actionExecutor(parseResult.Decision, cancellationToken);
+                    // === VALIDATE ===
+                    // Re-fetch snapshot for validation in case state changed during LLM call.
+                    AOClientControlSnapshot validationSnapshot = snapshotProvider();
+                    AgentResponseValidator.ValidationResult validation =
+                        AgentResponseValidator.Validate(parseResult.Response, validationSnapshot);
+
+                    if (!validation.IsValid)
+                    {
+                        lastFailedResponse = response;
+                        lastValidationErrors = validation.Errors;
+                        string errorSummary = string.Join("; ", validation.Errors);
+                        CustomConsole.Warning(
+                            "AI response validation failed (attempt " + attempt + "): " + errorSummary
+                            + "\nRaw:\n" + response.Trim());
+                        if (attempt < maxAttempts)
+                        {
+                            PublishTransientPrimary(
+                                "AI response validation failed on attempt " + attempt + ". Retrying...",
+                                isError: true);
+                            continue;
+                        }
+
+                        PublishClearTransient();
+                        PublishFinalMessage(
+                            "AI response validation failed after " + maxAttempts + " attempts: " + errorSummary,
+                            isError: true,
+                            rawResponse: response);
+                        return;
+                    }
+
+                    // === EXECUTE ===
+                    string executionSummary = await actionExecutor(parseResult.Response, validationSnapshot, cancellationToken);
                     PublishClearTransient();
                     PublishFinalMessage(
                         string.IsNullOrWhiteSpace(executionSummary)
                             ? "AI action applied."
                             : executionSummary,
                         isError: false,
-                        rawResponse: response,
-                        decision: parseResult.Decision);
+                        rawResponse: response);
                     return;
                 }
                 catch (OperationCanceledException)
@@ -368,16 +418,14 @@ namespace AO2AIBot.Controller
         private void PublishFinalMessage(
             string message,
             bool isError,
-            string rawResponse = "",
-            AOClientAgentDecision? decision = null)
+            string rawResponse = "")
         {
             StatusChanged?.Invoke(
                 new AOClientAgentStatusUpdate(
                     AOClientAgentStatusKind.FinalMessage,
                     message,
                     isError,
-                    rawResponse,
-                    decision));
+                    rawResponse));
         }
 
         private static string BuildEvaluationStartMessage(
@@ -397,24 +445,24 @@ namespace AO2AIBot.Controller
                 : baseMessage + " Retry " + attempt + " of " + maxAttempts + ".";
         }
 
-        private static string BuildThinkingPreviewMessage(string partialResponse)
+        private static string BuildStreamPreviewMessage(string partialResponse)
         {
             string normalized = Regex.Replace(partialResponse ?? string.Empty, "\\s+", " ").Trim();
             if (string.IsNullOrWhiteSpace(normalized))
             {
-                return "Thinking...";
+                return "Generating...";
             }
 
             const int prefixLength = 140;
             const int suffixLength = 80;
             if (normalized.Length <= prefixLength + suffixLength + 5)
             {
-                return "Thinking... " + normalized;
+                return normalized;
             }
 
             string prefix = normalized.Substring(0, prefixLength).TrimEnd();
             string suffix = normalized.Substring(normalized.Length - suffixLength).TrimStart();
-            return "Thinking... " + prefix + " ... " + suffix;
+            return prefix + " ... " + suffix;
         }
 
         /// <inheritdoc/>

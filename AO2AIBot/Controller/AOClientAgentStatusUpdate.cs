@@ -26,7 +26,7 @@ namespace AO2AIBot.Controller
         FinalMessage,
 
         /// <summary>
-        /// The AI evaluated the transcript and decided no action was needed (SYSTEM_WAIT).
+        /// The AI evaluated the transcript and decided no action was needed.
         /// </summary>
         WaitDecision
     }
@@ -43,14 +43,12 @@ namespace AO2AIBot.Controller
             AOClientAgentStatusKind kind,
             string message = "",
             bool isError = false,
-            string rawResponse = "",
-            AOClientAgentDecision? decision = null)
+            string rawResponse = "")
         {
             Kind = kind;
             Message = message ?? string.Empty;
             IsError = isError;
             RawResponse = rawResponse ?? string.Empty;
-            Decision = decision;
         }
 
         /// <summary>
@@ -72,10 +70,5 @@ namespace AO2AIBot.Controller
         /// Gets the raw model response associated with the update when available.
         /// </summary>
         public string RawResponse { get; }
-
-        /// <summary>
-        /// Gets the parsed decision associated with the update when available.
-        /// </summary>
-        public AOClientAgentDecision? Decision { get; }
     }
 }

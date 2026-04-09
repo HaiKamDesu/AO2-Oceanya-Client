@@ -44,11 +44,12 @@ namespace UnitTests
                 triggerReason: "manual");
 
             Assert.That(prompt, Does.Contain("SFX: Default, Nothing, dramatic/whoosh"));
-            Assert.That(prompt, Does.Contain("Current area roster: [1] Adrian (Jarvis), [0] Franziska (Kam)"));
+            Assert.That(prompt, Does.Contain("[1] Adrian (OOC: Jarvis)"));
+            Assert.That(prompt, Does.Contain("[0] Franziska (OOC: Kam)"));
         }
 
         [Test]
-        public void BuildPrompt_MarksServerMessagesAndCompactsAdjacentDuplicates()
+        public void BuildPrompt_MarksServerMessages()
         {
             AOClientControlSnapshot snapshot = new AOClientControlSnapshot
             {
@@ -69,7 +70,6 @@ namespace UnitTests
                 new[]
                 {
                     serverEntry,
-                    serverEntry,
                     new ChatLogEntry
                     {
                         ChatLogType = "IC",
@@ -82,8 +82,114 @@ namespace UnitTests
                 triggerReason: "new message");
 
             Assert.That(prompt, Does.Contain("[OOC][SERVER] $H: People in this area: 2"));
-            Assert.That(prompt, Does.Contain("Latest source: SERVER output or command response"));
-            Assert.That(prompt.Split("[OOC][SERVER] $H: People in this area: 2").Length - 1, Is.EqualTo(2));
+            Assert.That(prompt, Does.Contain("Latest source: SERVER output"));
+        }
+
+        [Test]
+        public void BuildPrompt_IncludesStructuredSelfState()
+        {
+            AOClientControlSnapshot snapshot = new AOClientControlSnapshot
+            {
+                CurrentCharacter = "Phoenix",
+                CurrentEmote = "normal",
+                CurrentPosition = "def",
+                IcShowname = "Phoenix Wright",
+                TextColor = "white",
+                Flip = true
+            };
+
+            string prompt = AO2AiBotPromptBuilder.BuildPrompt(
+                snapshot, Array.Empty<ChatLogEntry>(), null, "manual");
+
+            Assert.That(prompt, Does.Contain("## Self State"));
+            Assert.That(prompt, Does.Contain("\"currentCharacter\": \"Phoenix\""));
+            Assert.That(prompt, Does.Contain("\"flip\": true"));
+            Assert.That(prompt, Does.Contain("\"currentEmote\": \"normal\""));
+        }
+
+        [Test]
+        public void BuildPrompt_IncludesKnownLimitsSection()
+        {
+            AOClientControlSnapshot snapshot = new AOClientControlSnapshot
+            {
+                CurrentCharacter = "Phoenix"
+            };
+
+            string prompt = AO2AiBotPromptBuilder.BuildPrompt(
+                snapshot, Array.Empty<ChatLogEntry>(), null, "manual");
+
+            Assert.That(prompt, Does.Contain("## Known Limits About Other Players"));
+            Assert.That(prompt, Does.Contain("do NOT have access to other players' current emote"));
+        }
+
+        [Test]
+        public void BuildPrompt_IncludesPersistentRules()
+        {
+            AOClientControlSnapshot snapshot = new AOClientControlSnapshot
+            {
+                CurrentCharacter = "Phoenix"
+            };
+
+            List<string> rules = new List<string>
+            {
+                "For every IC line, choose an emote by vibe.",
+                "Always respond in red text."
+            };
+
+            string prompt = AO2AiBotPromptBuilder.BuildPrompt(
+                snapshot, Array.Empty<ChatLogEntry>(), null, "manual", rules);
+
+            Assert.That(prompt, Does.Contain("## Persistent Rules"));
+            Assert.That(prompt, Does.Contain("1. For every IC line, choose an emote by vibe."));
+            Assert.That(prompt, Does.Contain("2. Always respond in red text."));
+        }
+
+        [Test]
+        public void BuildPrompt_EmptyPersistentRules_ShowsNoneActive()
+        {
+            AOClientControlSnapshot snapshot = new AOClientControlSnapshot
+            {
+                CurrentCharacter = "Phoenix"
+            };
+
+            string prompt = AO2AiBotPromptBuilder.BuildPrompt(
+                snapshot, Array.Empty<ChatLogEntry>(), null, "manual");
+
+            Assert.That(prompt, Does.Contain("(none active)"));
+        }
+
+        [Test]
+        public void BuildPrompt_IncludesActionArrayContractInstructions()
+        {
+            AOClientControlSnapshot snapshot = new AOClientControlSnapshot
+            {
+                CurrentCharacter = "Phoenix"
+            };
+
+            string prompt = AO2AiBotPromptBuilder.BuildPrompt(
+                snapshot, Array.Empty<ChatLogEntry>(), null, "manual");
+
+            Assert.That(prompt, Does.Contain("action-array contract"));
+            Assert.That(prompt, Does.Contain("\"shouldRespond\""));
+            Assert.That(prompt, Does.Contain("\"actions\""));
+        }
+
+        [Test]
+        public void BuildCorrectionPrompt_IncludesValidationErrors()
+        {
+            List<string> errors = new List<string>
+            {
+                "IC speak requires an explicit 'emote' field.",
+                "Text color 'purple' is not valid."
+            };
+
+            string prompt = AO2AiBotPromptBuilder.BuildCorrectionPrompt(
+                "original context", "bad response", errors);
+
+            Assert.That(prompt, Does.Contain("## Validation Errors"));
+            Assert.That(prompt, Does.Contain("IC speak requires an explicit 'emote' field."));
+            Assert.That(prompt, Does.Contain("Text color 'purple' is not valid."));
+            Assert.That(prompt, Does.Contain("bad response"));
         }
     }
 }

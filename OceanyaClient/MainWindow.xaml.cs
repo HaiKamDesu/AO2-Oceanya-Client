@@ -375,7 +375,7 @@ namespace OceanyaClient
                 aiCompletionService,
                 BuildAiSettings,
                 () => BuildAiSnapshot(profileClient),
-                (decision, cancellationToken) => ExecuteAiDecisionAsync(profileClient, decision, cancellationToken));
+                (agentResponse, snapshot, cancellationToken) => ExecuteAgentResponseAsync(profileClient, agentResponse, snapshot, cancellationToken));
             controller.StatusChanged += update =>
             {
                 Dispatcher.Invoke(() =>
@@ -415,9 +415,10 @@ namespace OceanyaClient
             return AOClientControlSnapshotBuilder.Build(profileClient, networkClient, SaveFile.Data.SelectedServerName);
         }
 
-        private async Task<string> ExecuteAiDecisionAsync(
+        private async Task<string> ExecuteAgentResponseAsync(
             AOClient profileClient,
-            AOClientAgentDecision decision,
+            AgentResponse agentResponse,
+            AOClientControlSnapshot snapshot,
             CancellationToken cancellationToken)
         {
             if (profileClient == null)
@@ -432,139 +433,256 @@ namespace OceanyaClient
             }
 
             List<string> appliedChanges = new List<string>();
-            AOClientControlSnapshot snapshot = BuildAiSnapshot(profileClient);
+
+            // Save transient state for restore after speak actions.
             string previousSfx = profileClient.curSFX;
             ICMessage.ShoutModifiers previousShoutModifier = profileClient.shoutModifiers;
             ICMessage.Effects previousEffect = profileClient.effect;
             bool previousScreenshake = profileClient.screenshake;
-            bool resetTransientStateAfterMessage = false;
 
-            if (!string.IsNullOrWhiteSpace(decision.IcShowname))
+            // Execute actions in order.
+            foreach (AgentAction action in agentResponse.Actions)
             {
-                profileClient.SetICShowname(decision.IcShowname.Trim());
-                appliedChanges.Add("updated IC showname");
+                await ExecuteSingleActionAsync(
+                    profileClient, networkClient, snapshot, action, appliedChanges,
+                    previousSfx, previousShoutModifier, previousEffect, previousScreenshake,
+                    cancellationToken);
             }
 
-            if (!string.IsNullOrWhiteSpace(decision.OocShowname))
+            RefreshUiAfterAiStateChanged(profileClient);
+            return appliedChanges.Count == 0
+                ? "AI action completed with no visible changes."
+                : "AI action completed: " + string.Join(", ", appliedChanges) + ".";
+        }
+
+        private async Task ExecuteSingleActionAsync(
+            AOClient profileClient,
+            AOClient networkClient,
+            AOClientControlSnapshot snapshot,
+            AgentAction action,
+            List<string> appliedChanges,
+            string previousSfx,
+            ICMessage.ShoutModifiers previousShoutModifier,
+            ICMessage.Effects previousEffect,
+            bool previousScreenshake,
+            CancellationToken cancellationToken)
+        {
+            switch (action.Type)
             {
-                profileClient.OOCShowname = decision.OocShowname.Trim();
-                appliedChanges.Add("updated OOC showname");
+                case AgentActionType.SetIcShowname:
+                    profileClient.SetICShowname(action.Value.Trim());
+                    appliedChanges.Add("updated IC showname to " + action.Value);
+                    break;
+
+                case AgentActionType.SetOocShowname:
+                    profileClient.OOCShowname = action.Value.Trim();
+                    appliedChanges.Add("updated OOC showname to " + action.Value);
+                    break;
+
+                case AgentActionType.SetCharacter:
+                    if (!string.Equals(profileClient.currentINI?.Name, action.Value, StringComparison.OrdinalIgnoreCase))
+                    {
+                        profileClient.SetCharacter(action.Value);
+                        appliedChanges.Add("switched character to " + action.Value);
+                    }
+
+                    break;
+
+                case AgentActionType.SetEmote:
+                    ApplyEmote(profileClient, action.Value, appliedChanges);
+                    break;
+
+                case AgentActionType.SetPosition:
+                    profileClient.SetPos(action.Value);
+                    appliedChanges.Add("set position to " + action.Value);
+                    break;
+
+                case AgentActionType.SetTextColor:
+                    if (Enum.TryParse(action.Value, ignoreCase: true, out ICMessage.TextColors textColor))
+                    {
+                        profileClient.textColor = textColor;
+                        appliedChanges.Add("set text color to " + action.Value);
+                    }
+
+                    break;
+
+                case AgentActionType.SetFlip:
+                    if (action.BoolValue.HasValue)
+                    {
+                        profileClient.flip = action.BoolValue.Value;
+                        appliedChanges.Add("set flip to " + action.BoolValue.Value);
+                    }
+
+                    break;
+
+                case AgentActionType.SetAdditive:
+                    if (action.BoolValue.HasValue)
+                    {
+                        profileClient.Additive = action.BoolValue.Value;
+                        appliedChanges.Add("set additive to " + action.BoolValue.Value);
+                    }
+
+                    break;
+
+                case AgentActionType.SetImmediate:
+                    if (action.BoolValue.HasValue)
+                    {
+                        profileClient.Immediate = action.BoolValue.Value;
+                        appliedChanges.Add("set immediate to " + action.BoolValue.Value);
+                    }
+
+                    break;
+
+                case AgentActionType.SetPreanimEnabled:
+                    if (action.BoolValue.HasValue)
+                    {
+                        profileClient.PreanimEnabled = action.BoolValue.Value;
+                        appliedChanges.Add("set preanimation to " + action.BoolValue.Value);
+                    }
+
+                    break;
+
+                case AgentActionType.SetScreenshake:
+                    if (action.BoolValue.HasValue)
+                    {
+                        profileClient.screenshake = action.BoolValue.Value;
+                        appliedChanges.Add("set screenshake to " + action.BoolValue.Value);
+                    }
+
+                    break;
+
+                case AgentActionType.SetSfx:
+                    profileClient.curSFX = action.Value.Trim();
+                    appliedChanges.Add("set SFX to " + action.Value);
+                    break;
+
+                case AgentActionType.SetDeskMod:
+                    if (Enum.TryParse(action.Value, ignoreCase: true, out ICMessage.DeskMods deskMod))
+                    {
+                        profileClient.deskMod = deskMod;
+                        appliedChanges.Add("set desk mod to " + action.Value);
+                    }
+
+                    break;
+
+                case AgentActionType.SetShoutModifier:
+                    if (Enum.TryParse(action.Value, ignoreCase: true, out ICMessage.ShoutModifiers shoutMod))
+                    {
+                        profileClient.shoutModifiers = shoutMod;
+                        appliedChanges.Add("set shout modifier to " + action.Value);
+                    }
+
+                    break;
+
+                case AgentActionType.SetEffect:
+                    if (Enum.TryParse(action.Value, ignoreCase: true, out ICMessage.Effects effect))
+                    {
+                        profileClient.effect = effect;
+                        appliedChanges.Add("set effect to " + action.Value);
+                    }
+
+                    break;
+
+                case AgentActionType.SetEmoteModifier:
+                    if (Enum.TryParse(action.Value, ignoreCase: true, out ICMessage.EmoteModifiers emoteMod))
+                    {
+                        profileClient.emoteMod = emoteMod;
+                        appliedChanges.Add("set emote modifier to " + action.Value);
+                    }
+
+                    break;
+
+                case AgentActionType.SetOffset:
+                    profileClient.SelfOffset = (
+                        action.Horizontal ?? profileClient.SelfOffset.Horizontal,
+                        action.Vertical ?? profileClient.SelfOffset.Vertical);
+                    appliedChanges.Add("set offset to " + profileClient.SelfOffset.Horizontal + "," + profileClient.SelfOffset.Vertical);
+                    break;
+
+                case AgentActionType.SetArea:
+                    if (useSingleInternalClient)
+                    {
+                        ApplyProfileToSingleInternalClient(profileClient);
+                        networkClient = singleInternalClient ?? profileClient;
+                    }
+
+                    await networkClient.SetArea(action.Value);
+                    appliedChanges.Add("moved to area " + action.Value);
+                    break;
+
+                case AgentActionType.SetIniPuppet:
+                    if (useSingleInternalClient)
+                    {
+                        ApplyProfileToSingleInternalClient(profileClient);
+                        networkClient = singleInternalClient ?? profileClient;
+                    }
+
+                    await networkClient.SelectIniPuppet(action.Value, false);
+                    if (useSingleInternalClient)
+                    {
+                        SyncSingleClientStatusToProfile(profileClient);
+                    }
+
+                    appliedChanges.Add("selected INI puppet " + action.Value);
+                    break;
+
+                case AgentActionType.Speak:
+                    await ExecuteSpeakActionAsync(
+                        profileClient, networkClient, action, appliedChanges,
+                        previousSfx, previousShoutModifier, previousEffect, previousScreenshake);
+                    break;
+            }
+        }
+
+        private async Task ExecuteSpeakActionAsync(
+            AOClient profileClient,
+            AOClient networkClient,
+            AgentAction action,
+            List<string> appliedChanges,
+            string previousSfx,
+            ICMessage.ShoutModifiers previousShoutModifier,
+            ICMessage.Effects previousEffect,
+            bool previousScreenshake)
+        {
+            bool resetTransient = false;
+
+            // Apply speak-level emote before sending.
+            if (!string.IsNullOrWhiteSpace(action.Emote))
+            {
+                ApplyEmote(profileClient, action.Emote, appliedChanges);
             }
 
-            if (!string.IsNullOrWhiteSpace(decision.Character)
-                && TryResolveStringChoice(snapshot.AvailableCharacters, decision.Character, out string resolvedCharacter))
+            // Apply transient speak fields.
+            if (!string.IsNullOrWhiteSpace(action.TextColor)
+                && Enum.TryParse(action.TextColor, ignoreCase: true, out ICMessage.TextColors speakColor))
             {
-                if (!string.Equals(profileClient.currentINI?.Name, resolvedCharacter, StringComparison.OrdinalIgnoreCase))
-                {
-                    profileClient.SetCharacter(resolvedCharacter);
-                    appliedChanges.Add("switched character to " + resolvedCharacter);
-                }
+                profileClient.textColor = speakColor;
             }
 
-            if (!string.IsNullOrWhiteSpace(decision.Emote))
+            if (!string.IsNullOrWhiteSpace(action.ShoutModifier)
+                && Enum.TryParse(action.ShoutModifier, ignoreCase: true, out ICMessage.ShoutModifiers speakShout))
             {
-                // Match by emote Name (case-insensitive); fall back to matching by full DisplayID.
-                Emote? resolvedEmote = profileClient.currentINI?.configINI?.Emotions?.Values
-                    .FirstOrDefault(e =>
-                        string.Equals(e.Name, decision.Emote, StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(e.DisplayID, decision.Emote, StringComparison.OrdinalIgnoreCase));
-                if (resolvedEmote != null)
-                {
-                    profileClient.SetEmote(resolvedEmote.DisplayID);
-                    appliedChanges.Add("set emote to " + resolvedEmote.Name);
-                }
+                profileClient.shoutModifiers = speakShout;
+                resetTransient = true;
             }
 
-            if (!string.IsNullOrWhiteSpace(decision.Position))
+            if (!string.IsNullOrWhiteSpace(action.Effect)
+                && Enum.TryParse(action.Effect, ignoreCase: true, out ICMessage.Effects speakEffect))
             {
-                List<string> availablePositions = BuildAiSnapshot(profileClient).AvailablePositions.ToList();
-                if (TryResolveStringChoice(availablePositions, decision.Position, out string resolvedPosition))
-                {
-                    profileClient.SetPos(resolvedPosition);
-                    appliedChanges.Add("set position to " + resolvedPosition);
-                }
+                profileClient.effect = speakEffect;
+                resetTransient = true;
             }
 
-            if (!string.IsNullOrWhiteSpace(decision.Sfx))
+            if (action.Screenshake.HasValue)
             {
-                profileClient.curSFX = decision.Sfx.Trim();
-                appliedChanges.Add("set SFX to " + profileClient.curSFX);
-                resetTransientStateAfterMessage = true;
+                profileClient.screenshake = action.Screenshake.Value;
+                resetTransient = true;
             }
 
-            if (decision.DeskMod.HasValue)
+            if (!string.IsNullOrWhiteSpace(action.Sfx))
             {
-                profileClient.deskMod = decision.DeskMod.Value;
-                appliedChanges.Add("set desk modifier to " + decision.DeskMod.Value);
-            }
-
-            if (decision.EmoteModifier.HasValue)
-            {
-                profileClient.emoteMod = decision.EmoteModifier.Value;
-                appliedChanges.Add("set emote modifier to " + decision.EmoteModifier.Value);
-            }
-
-            if (decision.ShoutModifier.HasValue)
-            {
-                profileClient.shoutModifiers = decision.ShoutModifier.Value;
-                appliedChanges.Add("set shout modifier to " + decision.ShoutModifier.Value);
-                resetTransientStateAfterMessage = true;
-            }
-
-            if (decision.TextColor.HasValue)
-            {
-                profileClient.textColor = decision.TextColor.Value;
-                appliedChanges.Add("set text color to " + decision.TextColor.Value);
-            }
-
-            if (decision.Effect.HasValue)
-            {
-                profileClient.effect = decision.Effect.Value;
-                appliedChanges.Add("set effect to " + decision.Effect.Value);
-                resetTransientStateAfterMessage = true;
-            }
-
-            if (decision.PreanimEnabled.HasValue)
-            {
-                profileClient.PreanimEnabled = decision.PreanimEnabled.Value;
-                appliedChanges.Add("set preanimation to " + decision.PreanimEnabled.Value);
-            }
-
-            if (decision.Flip.HasValue)
-            {
-                profileClient.flip = decision.Flip.Value;
-                appliedChanges.Add("set flip to " + decision.Flip.Value);
-            }
-
-            if (decision.Additive.HasValue)
-            {
-                profileClient.Additive = decision.Additive.Value;
-                appliedChanges.Add("set additive to " + decision.Additive.Value);
-            }
-
-            if (decision.Immediate.HasValue)
-            {
-                profileClient.Immediate = decision.Immediate.Value;
-                appliedChanges.Add("set immediate to " + decision.Immediate.Value);
-            }
-
-            if (decision.Screenshake.HasValue)
-            {
-                profileClient.screenshake = decision.Screenshake.Value;
-                appliedChanges.Add("set screenshake to " + decision.Screenshake.Value);
-                resetTransientStateAfterMessage = true;
-            }
-
-            if (decision.SelfOffsetHorizontal.HasValue || decision.SelfOffsetVertical.HasValue)
-            {
-                profileClient.SelfOffset = (
-                    decision.SelfOffsetHorizontal ?? profileClient.SelfOffset.Horizontal,
-                    decision.SelfOffsetVertical ?? profileClient.SelfOffset.Vertical);
-                appliedChanges.Add(
-                    "set self offset to "
-                    + profileClient.SelfOffset.Horizontal
-                    + ","
-                    + profileClient.SelfOffset.Vertical);
+                profileClient.curSFX = action.Sfx.Trim();
+                resetTransient = true;
             }
 
             if (useSingleInternalClient)
@@ -573,32 +691,14 @@ namespace OceanyaClient
                 networkClient = singleInternalClient ?? profileClient;
             }
 
-            if (!string.IsNullOrWhiteSpace(decision.IniPuppetName)
-                && TryResolveStringChoice(snapshot.AvailableIniPuppets.Keys, decision.IniPuppetName, out string resolvedIniPuppet))
-            {
-                await networkClient.SelectIniPuppet(resolvedIniPuppet, false);
-                if (useSingleInternalClient)
-                {
-                    SyncSingleClientStatusToProfile(profileClient);
-                }
-                appliedChanges.Add("selected INI puppet " + resolvedIniPuppet);
-            }
-
-            if (!string.IsNullOrWhiteSpace(decision.Area)
-                && TryResolveStringChoice(snapshot.AvailableAreas, decision.Area, out string resolvedArea))
-            {
-                await networkClient.SetArea(resolvedArea);
-                appliedChanges.Add("moved to area " + resolvedArea);
-            }
-
-            string outgoingMessage = decision.Message?.TrimEnd('\r', '\n') ?? string.Empty;
+            string outgoingMessage = action.Message?.TrimEnd('\r', '\n') ?? string.Empty;
             if (!string.IsNullOrWhiteSpace(outgoingMessage))
             {
-                string channel = string.IsNullOrWhiteSpace(decision.Channel) ? "IC" : decision.Channel.Trim();
+                string channel = string.IsNullOrWhiteSpace(action.Channel) ? "IC" : action.Channel.Trim();
                 outgoingMessage = NormalizeAiOutgoingMessage(channel, outgoingMessage, out bool truncated);
                 if (truncated)
                 {
-                    appliedChanges.Add("trimmed message length for AO compatibility");
+                    appliedChanges.Add("trimmed message for AO compatibility");
                 }
 
                 if (string.Equals(channel, "OOC", StringComparison.OrdinalIgnoreCase))
@@ -615,7 +715,8 @@ namespace OceanyaClient
                     appliedChanges.Add("sent IC message");
                 }
 
-                if (resetTransientStateAfterMessage)
+                // Reset transient state after message sent.
+                if (resetTransient)
                 {
                     profileClient.curSFX = previousSfx;
                     profileClient.shoutModifiers = previousShoutModifier;
@@ -628,11 +729,19 @@ namespace OceanyaClient
                     }
                 }
             }
+        }
 
-            RefreshUiAfterAiStateChanged(profileClient);
-            return appliedChanges.Count == 0
-                ? "AI action completed with no visible changes."
-                : "AI action completed: " + string.Join(", ", appliedChanges) + ".";
+        private static void ApplyEmote(AOClient profileClient, string emoteName, List<string> appliedChanges)
+        {
+            Emote? resolvedEmote = profileClient.currentINI?.configINI?.Emotions?.Values
+                .FirstOrDefault(e =>
+                    string.Equals(e.Name, emoteName, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(e.DisplayID, emoteName, StringComparison.OrdinalIgnoreCase));
+            if (resolvedEmote != null)
+            {
+                profileClient.SetEmote(resolvedEmote.DisplayID);
+                appliedChanges.Add("set emote to " + resolvedEmote.Name);
+            }
         }
 
         private static string NormalizeAiOutgoingMessage(string channel, string message, out bool truncated)
@@ -726,9 +835,9 @@ namespace OceanyaClient
             }
 
             // Queue the pending origin record so the echoed AO2 message gets an (AI) hyperlink
-            if (!update.IsError && update.Decision != null && !string.IsNullOrWhiteSpace(update.RawResponse))
+            if (!update.IsError && !string.IsNullOrWhiteSpace(update.RawResponse))
             {
-                QueuePendingAiOriginResponse(profileClient, update.Decision, update.RawResponse);
+                QueuePendingAiOriginResponse(profileClient, update.RawResponse);
             }
         }
 
@@ -772,27 +881,31 @@ namespace OceanyaClient
 
         private void QueuePendingAiOriginResponse(
             AOClient profileClient,
-            AOClientAgentDecision decision,
             string rawResponse)
         {
-            string message = decision.Message?.TrimEnd('\r', '\n') ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(message))
-            {
-                return;
-            }
+            // Use current client state to determine expected show name for origin matching.
+            // The executor already applied all actions, so profileClient reflects the final state.
+            string icShowname = profileClient.ICShowname?.Trim() ?? string.Empty;
+            string oocShowname = string.IsNullOrWhiteSpace(profileClient.OOCShowname)
+                ? profileClient.clientName
+                : profileClient.OOCShowname;
 
-            string channel = string.IsNullOrWhiteSpace(decision.Channel) ? "IC" : decision.Channel.Trim();
-            string expectedShowName = string.Equals(channel, "OOC", StringComparison.OrdinalIgnoreCase)
-                ? (string.IsNullOrWhiteSpace(decision.OocShowname) ? profileClient.OOCShowname : decision.OocShowname)
-                : (string.IsNullOrWhiteSpace(decision.IcShowname) ? profileClient.ICShowname : decision.IcShowname);
-
+            // Queue both IC and OOC variants since we don't track which channel was used at this level.
             List<PendingAiOriginResponse> pendingResponses = GetPendingAiOriginResponses(profileClient);
             PrunePendingAiOriginResponses(pendingResponses);
             pendingResponses.Add(new PendingAiOriginResponse
             {
-                Channel = channel,
-                ShowName = expectedShowName?.Trim() ?? string.Empty,
-                Message = message,
+                Channel = "IC",
+                ShowName = icShowname,
+                Message = string.Empty,
+                RawResponse = rawResponse,
+                CreatedUtc = DateTime.UtcNow
+            });
+            pendingResponses.Add(new PendingAiOriginResponse
+            {
+                Channel = "OOC",
+                ShowName = oocShowname?.Trim() ?? string.Empty,
+                Message = string.Empty,
                 RawResponse = rawResponse,
                 CreatedUtc = DateTime.UtcNow
             });
@@ -841,7 +954,9 @@ namespace OceanyaClient
                     continue;
                 }
 
-                if (!string.Equals(candidate.Message, normalizedMessage, StringComparison.Ordinal))
+                // Match by message content if available, otherwise match by showname + channel only.
+                if (!string.IsNullOrWhiteSpace(candidate.Message)
+                    && !string.Equals(candidate.Message, normalizedMessage, StringComparison.Ordinal))
                 {
                     continue;
                 }

@@ -1,10 +1,10 @@
-using AOBot_Testing.Structures;
 using System.Text.Json;
 
 namespace AO2AIBot.Controller
 {
     /// <summary>
-    /// Parses model responses into AO client control decisions.
+    /// Strict parser for the AI agent action-array response contract.
+    /// Rejects malformed, prose-wrapped, or legacy-shaped responses.
     /// </summary>
     public static class AOClientAgentResponseParser
     {
@@ -24,9 +24,9 @@ namespace AO2AIBot.Controller
             public bool ShouldWait { get; set; }
 
             /// <summary>
-            /// Gets or sets the parsed decision when successful.
+            /// Gets or sets the parsed response when successful.
             /// </summary>
-            public AOClientAgentDecision? Decision { get; set; }
+            public AgentResponse? Response { get; set; }
 
             /// <summary>
             /// Gets or sets an error message for invalid responses.
@@ -35,263 +35,307 @@ namespace AO2AIBot.Controller
         }
 
         /// <summary>
-        /// Parses a raw model response into a normalized decision.
+        /// Parses a raw model response into a strict <see cref="AgentResponse"/>.
+        /// Only accepts clean JSON matching the action-array contract.
         /// </summary>
         public static ParseResult Parse(string response)
         {
-            string normalized = NormalizeResponse(response);
-            if (string.IsNullOrWhiteSpace(normalized) || ContainsSystemWaitDirective(normalized))
+            if (string.IsNullOrWhiteSpace(response))
             {
-                return new ParseResult
-                {
-                    Success = true,
-                    ShouldWait = true
-                };
+                return CreateError("Response is empty.");
             }
 
-            ParseResult directParseResult = ParseJsonCandidate(normalized);
-            if (directParseResult.Success)
+            string trimmed = StripMarkdownFence(response.Trim());
+
+            if (string.IsNullOrWhiteSpace(trimmed))
             {
-                return directParseResult;
+                return CreateError("Response is empty after stripping markdown.");
             }
 
-            if (TryExtractFirstJsonObject(normalized, out string extractedJson)
-                && !string.Equals(extractedJson, normalized, StringComparison.Ordinal))
+            // Reject prose-wrapped JSON: the response must start with '{'.
+            if (trimmed[0] != '{')
             {
-                ParseResult extractedParseResult = ParseJsonCandidate(extractedJson);
-                if (extractedParseResult.Success)
-                {
-                    return extractedParseResult;
-                }
-
-                return extractedParseResult;
+                return CreateError("Response must be a JSON object starting with '{'. Prose or text before JSON is not allowed.");
             }
 
-            return directParseResult;
-        }
-
-        private static ParseResult ParseJsonCandidate(string json)
-        {
+            JsonDocument jsonDocument;
             try
             {
-                using JsonDocument jsonDocument = JsonDocument.Parse(json);
+                jsonDocument = JsonDocument.Parse(trimmed);
+            }
+            catch (JsonException ex)
+            {
+                return CreateError("Response is not valid JSON: " + ex.Message);
+            }
+
+            using (jsonDocument)
+            {
                 JsonElement root = jsonDocument.RootElement;
                 if (root.ValueKind != JsonValueKind.Object)
                 {
-                    return CreateError("AI response root must be a JSON object.");
+                    return CreateError("Response root must be a JSON object.");
                 }
 
-                AOClientAgentDecision decision = new AOClientAgentDecision();
-
-                bool? explicitShouldRespond = GetOptionalBoolean(root, "shouldRespond");
-                string channel = GetOptionalString(root, "channel");
-                if (string.IsNullOrWhiteSpace(channel))
+                // Reject legacy shapes: if root has "thinking", "message", "state", "modifiers",
+                // "chatlog", "showname", "current_character", or "currentEmote" — it's the old format.
+                if (HasProperty(root, "thinking"))
                 {
-                    channel = GetOptionalString(root, "chatlog");
+                    return CreateError("Legacy format detected: 'thinking' field is no longer supported. Use the action-array contract.");
                 }
 
-                string message = GetOptionalString(root, "message");
-                string showname = GetOptionalString(root, "showname");
-                string currentCharacter = GetOptionalString(root, "current_character");
-                string currentEmote = GetOptionalString(root, "currentEmote");
-
-                decision.Channel = channel;
-                decision.Message = message;
-                decision.Character = currentCharacter;
-                decision.Emote = currentEmote;
-
-                JsonElement stateElement = root;
-                if (root.TryGetProperty("state", out JsonElement nestedState)
-                    && nestedState.ValueKind == JsonValueKind.Object)
+                if (HasProperty(root, "modifiers"))
                 {
-                    stateElement = nestedState;
+                    return CreateError("Legacy format detected: 'modifiers' field is no longer supported. Use the action-array contract.");
                 }
 
-                decision.IcShowname = GetOptionalString(stateElement, "icShowname");
-                decision.OocShowname = GetOptionalString(stateElement, "oocShowname");
-                if (string.IsNullOrWhiteSpace(decision.IcShowname) && !string.IsNullOrWhiteSpace(showname))
+                if (HasProperty(root, "state"))
                 {
-                    if (string.Equals(decision.Channel, "OOC", StringComparison.OrdinalIgnoreCase))
+                    return CreateError("Legacy format detected: 'state' field is no longer supported. Use the action-array contract.");
+                }
+
+                if (HasProperty(root, "chatlog") || HasProperty(root, "showname")
+                    || HasProperty(root, "current_character") || HasProperty(root, "currentEmote"))
+                {
+                    return CreateError("Legacy format detected: root-level state fields are no longer supported. Use the action-array contract.");
+                }
+
+                // "shouldRespond" is required.
+                if (!root.TryGetProperty("shouldRespond", out JsonElement shouldRespondElement))
+                {
+                    return CreateError("Missing required field 'shouldRespond'.");
+                }
+
+                bool shouldRespond;
+                if (shouldRespondElement.ValueKind == JsonValueKind.True)
+                {
+                    shouldRespond = true;
+                }
+                else if (shouldRespondElement.ValueKind == JsonValueKind.False)
+                {
+                    shouldRespond = false;
+                }
+                else
+                {
+                    return CreateError("Field 'shouldRespond' must be a boolean.");
+                }
+
+                AgentResponse agentResponse = new AgentResponse
+                {
+                    ShouldRespond = shouldRespond
+                };
+
+                // Parse actions array.
+                if (root.TryGetProperty("actions", out JsonElement actionsElement))
+                {
+                    if (actionsElement.ValueKind != JsonValueKind.Array)
                     {
-                        decision.OocShowname = showname;
+                        return CreateError("Field 'actions' must be an array.");
                     }
-                    else
+
+                    int actionIndex = 0;
+                    foreach (JsonElement actionElement in actionsElement.EnumerateArray())
                     {
-                        decision.IcShowname = showname;
-                    }
-                }
+                        if (actionElement.ValueKind != JsonValueKind.Object)
+                        {
+                            return CreateError($"Action at index {actionIndex} must be a JSON object.");
+                        }
 
-                if (string.IsNullOrWhiteSpace(decision.Character))
-                {
-                    decision.Character = GetOptionalString(stateElement, "character");
-                }
+                        ParseResult actionResult = ParseAction(actionElement, actionIndex);
+                        if (!actionResult.Success)
+                        {
+                            return actionResult;
+                        }
 
-                if (string.IsNullOrWhiteSpace(decision.Emote))
-                {
-                    decision.Emote = GetOptionalString(stateElement, "emote");
-                }
+                        if (actionResult.Response?.Actions.Count > 0)
+                        {
+                            agentResponse.Actions.Add(actionResult.Response.Actions[0]);
+                        }
 
-                decision.Area = GetOptionalString(stateElement, "area");
-                decision.Position = GetOptionalString(stateElement, "position");
-                decision.IniPuppetName = GetOptionalString(stateElement, "iniPuppetName");
-                decision.Sfx = GetOptionalString(stateElement, "sfx");
-
-                decision.PreanimEnabled = GetOptionalBoolean(stateElement, "preanimEnabled");
-                decision.Flip = GetOptionalBoolean(stateElement, "flip");
-                decision.Additive = GetOptionalBoolean(stateElement, "additive");
-                decision.Immediate = GetOptionalBoolean(stateElement, "immediate");
-                decision.Screenshake = GetOptionalBoolean(stateElement, "screenshake");
-                decision.SelfOffsetHorizontal = GetOptionalInteger(stateElement, "selfOffsetHorizontal");
-                decision.SelfOffsetVertical = GetOptionalInteger(stateElement, "selfOffsetVertical");
-
-                decision.DeskMod = ParseEnumValue<ICMessage.DeskMods>(stateElement, "deskMod");
-                decision.EmoteModifier = ParseEnumValue<ICMessage.EmoteModifiers>(stateElement, "emoteModifier");
-                decision.ShoutModifier = ParseEnumValue<ICMessage.ShoutModifiers>(stateElement, "shoutModifier");
-                decision.TextColor = ParseEnumValue<ICMessage.TextColors>(stateElement, "textColor");
-                decision.Effect = ParseEnumValue<ICMessage.Effects>(stateElement, "effect");
-
-                if (root.TryGetProperty("modifiers", out JsonElement modifiersElement)
-                    && modifiersElement.ValueKind == JsonValueKind.Object)
-                {
-                    decision.DeskMod ??= ParseEnumValue<ICMessage.DeskMods>(modifiersElement, "deskMod");
-                    decision.EmoteModifier ??= ParseEnumValue<ICMessage.EmoteModifiers>(modifiersElement, "emoteMod");
-                    decision.ShoutModifier ??= ParseEnumValue<ICMessage.ShoutModifiers>(modifiersElement, "shoutModifiers");
-                    decision.TextColor ??= ParseEnumValue<ICMessage.TextColors>(modifiersElement, "textColor");
-                    decision.Flip ??= GetOptionalBoolean(modifiersElement, "flip");
-                    decision.Immediate ??= GetOptionalBoolean(modifiersElement, "immediate");
-                    decision.Additive ??= GetOptionalBoolean(modifiersElement, "additive");
-                    decision.PreanimEnabled ??= GetOptionalBoolean(modifiersElement, "preanimEnabled");
-                    decision.Screenshake ??= GetOptionalBoolean(modifiersElement, "screenshake");
-
-                    int? realizationValue = GetOptionalInteger(modifiersElement, "realization");
-                    if (decision.Effect == null && realizationValue.HasValue)
-                    {
-                        decision.Effect = realizationValue.Value == 1
-                            ? ICMessage.Effects.Realization
-                            : ICMessage.Effects.None;
+                        actionIndex++;
                     }
                 }
 
-                bool shouldAct = explicitShouldRespond
-                    ?? !string.IsNullOrWhiteSpace(decision.Message)
-                    || decision.HasStateChanges;
-                decision.ShouldAct = shouldAct;
+                // Structural consistency: shouldRespond=false must have empty actions.
+                if (!shouldRespond && agentResponse.Actions.Count > 0)
+                {
+                    return CreateError("shouldRespond is false but actions array is non-empty. Set shouldRespond to true or remove actions.");
+                }
+
+                // shouldRespond=true must have non-empty actions.
+                if (shouldRespond && agentResponse.Actions.Count == 0)
+                {
+                    return CreateError("shouldRespond is true but actions array is empty. Add at least one action or set shouldRespond to false.");
+                }
 
                 return new ParseResult
                 {
                     Success = true,
-                    ShouldWait = !decision.ShouldAct,
-                    Decision = decision
+                    ShouldWait = !shouldRespond,
+                    Response = agentResponse
                 };
             }
-            catch (Exception ex)
+        }
+
+        private static ParseResult ParseAction(JsonElement element, int index)
+        {
+            string prefix = $"Action[{index}]: ";
+
+            if (!element.TryGetProperty("type", out JsonElement typeElement)
+                || typeElement.ValueKind != JsonValueKind.String)
             {
-                return CreateError("AI response was not valid JSON: " + ex.Message);
+                return CreateError(prefix + "Missing or non-string 'type' field.");
             }
-        }
 
-        private static bool ContainsSystemWaitDirective(string response)
-        {
-            return response?.IndexOf("SYSTEM_WAIT()", StringComparison.OrdinalIgnoreCase) >= 0;
-        }
+            string type = typeElement.GetString()?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(type))
+            {
+                return CreateError(prefix + "'type' field is empty.");
+            }
 
-        private static ParseResult CreateError(string message)
-        {
+            if (!AgentActionType.All.Contains(type))
+            {
+                return CreateError(prefix + $"Unknown action type '{type}'.");
+            }
+
+            AgentAction action = new AgentAction { Type = type };
+
+            switch (type)
+            {
+                case AgentActionType.Speak:
+                    action.Channel = GetRequiredString(element, "channel", out string? channelErr);
+                    if (channelErr != null)
+                    {
+                        return CreateError(prefix + channelErr);
+                    }
+
+                    action.Message = GetRequiredString(element, "message", out string? msgErr);
+                    if (msgErr != null)
+                    {
+                        return CreateError(prefix + msgErr);
+                    }
+
+                    action.Emote = GetOptionalString(element, "emote");
+                    action.TextColor = GetOptionalString(element, "textColor");
+                    action.ShoutModifier = GetOptionalString(element, "shoutModifier");
+                    action.Effect = GetOptionalString(element, "effect");
+                    action.Screenshake = GetOptionalBoolean(element, "screenshake");
+                    action.Sfx = GetOptionalString(element, "sfx");
+                    break;
+
+                case AgentActionType.SetIcShowname:
+                case AgentActionType.SetOocShowname:
+                case AgentActionType.SetCharacter:
+                case AgentActionType.SetPosition:
+                case AgentActionType.SetTextColor:
+                case AgentActionType.SetArea:
+                case AgentActionType.SetIniPuppet:
+                case AgentActionType.SetEmote:
+                case AgentActionType.SetSfx:
+                case AgentActionType.SetDeskMod:
+                case AgentActionType.SetEffect:
+                case AgentActionType.SetShoutModifier:
+                case AgentActionType.SetEmoteModifier:
+                    action.Value = GetRequiredString(element, "value", out string? valErr);
+                    if (valErr != null)
+                    {
+                        return CreateError(prefix + valErr);
+                    }
+
+                    break;
+
+                case AgentActionType.SetFlip:
+                case AgentActionType.SetAdditive:
+                case AgentActionType.SetImmediate:
+                case AgentActionType.SetPreanimEnabled:
+                case AgentActionType.SetScreenshake:
+                    action.BoolValue = GetRequiredBoolean(element, "value", out string? boolErr);
+                    if (boolErr != null)
+                    {
+                        return CreateError(prefix + boolErr);
+                    }
+
+                    break;
+
+                case AgentActionType.SetOffset:
+                    action.Horizontal = GetOptionalInteger(element, "horizontal");
+                    action.Vertical = GetOptionalInteger(element, "vertical");
+                    if (!action.Horizontal.HasValue && !action.Vertical.HasValue)
+                    {
+                        return CreateError(prefix + "set_offset requires at least one of 'horizontal' or 'vertical'.");
+                    }
+
+                    break;
+            }
+
+            AgentResponse wrapper = new AgentResponse();
+            wrapper.Actions.Add(action);
             return new ParseResult
             {
-                Success = false,
-                ErrorMessage = message ?? string.Empty
+                Success = true,
+                Response = wrapper
             };
         }
 
-        private static string NormalizeResponse(string response)
+        private static string StripMarkdownFence(string input)
         {
-            string normalized = response?.Trim() ?? string.Empty;
-            if (normalized.StartsWith("```", StringComparison.Ordinal))
+            if (!input.StartsWith("```", StringComparison.Ordinal))
             {
-                normalized = normalized.Trim('`').Trim();
-                if (normalized.StartsWith("json", StringComparison.OrdinalIgnoreCase))
-                {
-                    normalized = normalized.Substring(4).Trim();
-                }
+                return input;
             }
 
-            return normalized;
+            // Remove opening fence line.
+            int firstNewline = input.IndexOf('\n');
+            if (firstNewline < 0)
+            {
+                return input;
+            }
+
+            string body = input.Substring(firstNewline + 1);
+
+            // Remove closing fence.
+            int lastFence = body.LastIndexOf("```", StringComparison.Ordinal);
+            if (lastFence >= 0)
+            {
+                body = body.Substring(0, lastFence);
+            }
+
+            return body.Trim();
         }
 
-        private static bool TryExtractFirstJsonObject(string input, out string extractedJson)
+        private static bool HasProperty(JsonElement element, string name)
         {
-            extractedJson = string.Empty;
-            if (string.IsNullOrWhiteSpace(input))
+            return element.TryGetProperty(name, out _);
+        }
+
+        private static string GetRequiredString(JsonElement element, string propertyName, out string? error)
+        {
+            error = null;
+            if (!element.TryGetProperty(propertyName, out JsonElement value))
             {
-                return false;
+                error = $"Missing required field '{propertyName}'.";
+                return string.Empty;
             }
 
-            bool insideString = false;
-            bool escaping = false;
-            int depth = 0;
-            int startIndex = -1;
-
-            for (int index = 0; index < input.Length; index++)
+            if (value.ValueKind == JsonValueKind.String)
             {
-                char current = input[index];
-
-                if (escaping)
+                string result = value.GetString()?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(result))
                 {
-                    escaping = false;
-                    continue;
+                    error = $"Field '{propertyName}' is empty.";
+                    return string.Empty;
                 }
 
-                if (insideString)
-                {
-                    if (current == '\\')
-                    {
-                        escaping = true;
-                    }
-                    else if (current == '"')
-                    {
-                        insideString = false;
-                    }
-
-                    continue;
-                }
-
-                if (current == '"')
-                {
-                    insideString = true;
-                    continue;
-                }
-
-                if (current == '{')
-                {
-                    if (depth == 0)
-                    {
-                        startIndex = index;
-                    }
-
-                    depth++;
-                    continue;
-                }
-
-                if (current != '}')
-                {
-                    continue;
-                }
-
-                if (depth == 0)
-                {
-                    continue;
-                }
-
-                depth--;
-                if (depth == 0 && startIndex >= 0)
-                {
-                    extractedJson = input.Substring(startIndex, index - startIndex + 1);
-                    return true;
-                }
+                return result;
             }
 
-            return false;
+            if (value.ValueKind == JsonValueKind.Null)
+            {
+                error = $"Field '{propertyName}' is null.";
+                return string.Empty;
+            }
+
+            error = $"Field '{propertyName}' must be a string.";
+            return string.Empty;
         }
 
         private static string GetOptionalString(JsonElement element, string propertyName)
@@ -326,26 +370,30 @@ namespace AO2AIBot.Controller
                 return false;
             }
 
-            if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int intValue))
-            {
-                return intValue != 0;
-            }
-
-            if (value.ValueKind == JsonValueKind.String)
-            {
-                string text = value.GetString()?.Trim() ?? string.Empty;
-                if (bool.TryParse(text, out bool boolValue))
-                {
-                    return boolValue;
-                }
-
-                if (int.TryParse(text, out int numericValue))
-                {
-                    return numericValue != 0;
-                }
-            }
-
             return null;
+        }
+
+        private static bool GetRequiredBoolean(JsonElement element, string propertyName, out string? error)
+        {
+            error = null;
+            if (!element.TryGetProperty(propertyName, out JsonElement value))
+            {
+                error = $"Missing required field '{propertyName}'.";
+                return false;
+            }
+
+            if (value.ValueKind == JsonValueKind.True)
+            {
+                return true;
+            }
+
+            if (value.ValueKind == JsonValueKind.False)
+            {
+                return false;
+            }
+
+            error = $"Field '{propertyName}' must be a boolean.";
+            return false;
         }
 
         private static int? GetOptionalInteger(JsonElement element, string propertyName)
@@ -360,43 +408,16 @@ namespace AO2AIBot.Controller
                 return intValue;
             }
 
-            if (value.ValueKind == JsonValueKind.String
-                && int.TryParse(value.GetString()?.Trim(), out int parsed))
-            {
-                return parsed;
-            }
-
             return null;
         }
 
-        private static TEnum? ParseEnumValue<TEnum>(JsonElement element, string propertyName)
-            where TEnum : struct, Enum
+        private static ParseResult CreateError(string message)
         {
-            if (!element.TryGetProperty(propertyName, out JsonElement value))
+            return new ParseResult
             {
-                return null;
-            }
-
-            if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int intValue))
-            {
-                return (TEnum)Enum.ToObject(typeof(TEnum), intValue);
-            }
-
-            if (value.ValueKind == JsonValueKind.String)
-            {
-                string text = value.GetString()?.Trim() ?? string.Empty;
-                if (int.TryParse(text, out int parsedInt))
-                {
-                    return (TEnum)Enum.ToObject(typeof(TEnum), parsedInt);
-                }
-
-                if (Enum.TryParse(text, ignoreCase: true, out TEnum enumValue))
-                {
-                    return enumValue;
-                }
-            }
-
-            return null;
+                Success = false,
+                ErrorMessage = message ?? string.Empty
+            };
         }
     }
 }

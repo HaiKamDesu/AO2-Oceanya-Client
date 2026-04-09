@@ -3,9 +3,8 @@ using System.Text.Json.Nodes;
 namespace AO2AIBot.Clients
 {
     /// <summary>
-    /// Provides the JSON schema used to grammar-constrain Ollama model output to valid AO2 client decisions.
-    /// Passing this schema as the Ollama "format" value ensures the model can never produce malformed JSON
-    /// or use invalid enum values for fields like textColor or shoutModifier.
+    /// Provides the JSON schema for grammar-constraining Ollama model output
+    /// to the strict action-array response contract.
     /// </summary>
     public static class AOClientResponseSchema
     {
@@ -13,35 +12,39 @@ namespace AO2AIBot.Clients
             {
               "type": "object",
               "properties": {
-                "thinking": { "type": "string" },
                 "shouldRespond": { "type": "boolean" },
-                "channel": { "type": "string", "enum": ["IC", "OOC"] },
-                "message": { "type": "string" },
-                "state": {
-                  "type": "object",
-                  "properties": {
-                    "textColor":      { "type": "string", "enum": ["white","green","red","orange","blue","yellow","magenta","cyan","gray"] },
-                    "character":      { "type": "string" },
-                    "emote":          { "type": "string" },
-                    "position":       { "type": "string" },
-                    "icShowname":     { "type": "string" },
-                    "oocShowname":    { "type": "string" },
-                    "area":           { "type": "string" },
-                    "iniPuppetName":  { "type": "string" },
-                    "sfx":            { "type": "string" },
-                    "shoutModifier":  { "type": "string", "enum": ["nothing","holdIt","objection","takeThat","custom"] },
-                    "effect":         { "type": "string", "enum": ["none","realization","hearts","reaction","impact"] },
-                    "flip":                 { "type": "boolean" },
-                    "additive":             { "type": "boolean" },
-                    "immediate":            { "type": "boolean" },
-                    "screenshake":          { "type": "boolean" },
-                    "preanimEnabled":       { "type": "boolean" },
-                    "selfOffsetHorizontal": { "type": "integer" },
-                    "selfOffsetVertical":   { "type": "integer" }
+                "actions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "speak", "set_ic_showname", "set_ooc_showname", "set_character",
+                          "set_position", "set_text_color", "set_flip", "set_additive",
+                          "set_immediate", "set_preanim_enabled", "set_area", "set_ini_puppet",
+                          "set_offset", "set_emote", "set_sfx", "set_desk_mod", "set_effect",
+                          "set_screenshake", "set_shout_modifier", "set_emote_modifier"
+                        ]
+                      },
+                      "value": {},
+                      "channel": { "type": "string", "enum": ["IC", "OOC"] },
+                      "message": { "type": "string" },
+                      "emote": { "type": "string" },
+                      "textColor": { "type": "string", "enum": ["white","green","red","orange","blue","yellow","magenta","cyan","gray"] },
+                      "shoutModifier": { "type": "string", "enum": ["nothing","holdIt","objection","takeThat","custom"] },
+                      "effect": { "type": "string", "enum": ["none","realization","hearts","reaction","impact"] },
+                      "screenshake": { "type": "boolean" },
+                      "sfx": { "type": "string" },
+                      "horizontal": { "type": "integer" },
+                      "vertical": { "type": "integer" }
+                    },
+                    "required": ["type"]
                   }
                 }
               },
-              "required": ["thinking", "shouldRespond"]
+              "required": ["shouldRespond", "actions"]
             }
             """;
 
