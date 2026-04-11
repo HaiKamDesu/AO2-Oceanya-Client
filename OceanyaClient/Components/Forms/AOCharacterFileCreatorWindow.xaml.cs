@@ -166,7 +166,9 @@ namespace OceanyaClient
         };
         private const string ButtonBackgroundNoOptionName = "No BG";
         private const string ButtonBackgroundSolidColorOptionName = "Solid Color";
+        private const string ButtonBackgroundGradientOptionName = "Gradient";
         private const string ButtonBackgroundUploadOptionName = "Upload";
+        private const string ButtonBackgroundSavedCustomCategoryName = "===Saved Custom Presets===";
         private const string DefaultButtonBackgroundPresetName = "Oceanya BG";
         private static readonly IReadOnlyDictionary<string, string> ButtonBackgroundPresetAssetMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -177,16 +179,13 @@ namespace OceanyaClient
             ["Oceanya BG"] =
                 "pack://application:,,,/OceanyaClient;component/Resources/ButtonBackgroundPresets/OceanyanBG.png"
         };
-        private static readonly IReadOnlyList<AutoCompleteDropdownItem> ButtonBackgroundOptionItems = new List<AutoCompleteDropdownItem>
+        private static readonly IReadOnlyList<string> ButtonBackgroundGradientDirectionOptionNames = new List<string>
         {
-            new AutoCompleteDropdownItem("===Presets===", isSelectable: false),
-            new AutoCompleteDropdownItem(ButtonBackgroundNoOptionName),
-            new AutoCompleteDropdownItem("Athena Base"),
-            new AutoCompleteDropdownItem("Juror Base"),
-            new AutoCompleteDropdownItem("Oceanya BG"),
-            new AutoCompleteDropdownItem("===Custom===", isSelectable: false),
-            new AutoCompleteDropdownItem(ButtonBackgroundSolidColorOptionName),
-            new AutoCompleteDropdownItem(ButtonBackgroundUploadOptionName)
+            "Horizontal",
+            "Vertical",
+            "Diagonal (Top left to bottom right)",
+            "Diagonal (Bottom left to top right)",
+            "Radial"
         };
         private const int EmoteModIdle = 0;
         private const int EmoteModPreanim = 1;
@@ -221,16 +220,7 @@ namespace OceanyaClient
         private CharacterCreationEmoteViewModel? contextMenuTargetEmote;
         private string contextMenuTargetZone = string.Empty;
         private readonly Dictionary<Guid, BitmapSource> bulkButtonCutoutByEmoteId = new Dictionary<Guid, BitmapSource>();
-        private ButtonIconGenerationConfig bulkButtonIconConfig = new ButtonIconGenerationConfig
-        {
-            Mode = ButtonIconMode.Automatic,
-            EffectsMode = ButtonEffectsGenerationMode.Darken,
-            DarknessPercent = 50,
-            OpacityPercent = 75,
-            AutomaticBackgroundMode = ButtonAutomaticBackgroundMode.None,
-            AutomaticBackgroundPreset = DefaultButtonBackgroundPresetName
-        };
-        private string bulkButtonBackgroundUploadPath = string.Empty;
+        private ButtonIconGenerationConfig bulkButtonIconConfig = CreateDefaultAutomaticButtonIconConfig();
         private string bulkButtonOverlayUploadPath = string.Empty;
         private string currentFileOrganizationPath = string.Empty;
         private FileOrganizationEntryViewModel? fileOrganizationContextEntry;
@@ -351,23 +341,18 @@ namespace OceanyaClient
             FrameTypeComboBox.IsTextReadOnly = true;
             ButtonIconsApplyScopeDropdown.ItemsSource = ButtonIconsApplyScopeOptionNames;
             ButtonIconsApplyScopeDropdown.IsTextReadOnly = true;
-            ButtonIconsBackgroundDropdown.ItemsSource = GetAutomaticBackgroundOptionItems();
             ButtonIconsEffectsDropdown.ItemsSource = ButtonEffectsGenerationOptionNames;
-            ButtonIconsBackgroundDropdown.IsTextReadOnly = true;
             ButtonIconsEffectsDropdown.IsTextReadOnly = true;
             FrameTargetComboBox.Text = CharacterFrameTarget.PreAnimation.ToString();
             FrameTypeComboBox.Text = CharacterFrameEventType.Sfx.ToString();
             ButtonIconsApplyScopeDropdown.Text = ButtonIconsApplyScopeOptionNames[1];
-            ButtonIconsBackgroundDropdown.Text = ButtonBackgroundNoOptionName;
             ButtonIconsEffectsDropdown.Text = "Darken";
-            ButtonIconsSolidColorPreview.Background = new SolidColorBrush(Colors.Transparent);
-            ButtonIconsSolidColorHexTextBlock.Text = ToHexColor(Colors.Transparent);
             ButtonIconsDarkenSlider.Value = 50;
             ButtonIconsDarkenValueText.Text = "Darkness: 50%";
             ButtonIconsOpacitySlider.Value = 75;
             ButtonIconsOpacityValueText.Text = "Opacity: 75%";
-            ButtonIconsBackgroundDropdown.TextValueChanged += ButtonIconsBackgroundDropdown_TextValueChanged;
             ButtonIconsEffectsDropdown.TextValueChanged += ButtonIconsEffectsDropdown_TextValueChanged;
+            RebuildBulkButtonIconsBackgroundEditor();
             EmoteTileWidth = Math.Clamp(SaveFile.Data.CharacterCreatorEmoteTileWidth, MinTileWidth, MaxTileWidth);
             EmoteTileHeight = Math.Clamp(SaveFile.Data.CharacterCreatorEmoteTileHeight, MinTileHeight, MaxTileHeight);
             ResizePreviewWidth = EmoteTileWidth;
@@ -2319,79 +2304,23 @@ namespace OceanyaClient
 
         private void ResetBulkButtonIconsConfigToDefaults()
         {
-            bulkButtonIconConfig = new ButtonIconGenerationConfig
-            {
-                Mode = ButtonIconMode.Automatic,
-                EffectsMode = ButtonEffectsGenerationMode.Darken,
-                DarknessPercent = 50,
-                OpacityPercent = 75,
-                AutomaticBackgroundMode = ButtonAutomaticBackgroundMode.None,
-                AutomaticBackgroundPreset = ButtonBackgroundPresetAssetMap.Keys.FirstOrDefault() ?? DefaultButtonBackgroundPresetName,
-                AutomaticSolidColor = Colors.Transparent
-            };
-            bulkButtonBackgroundUploadPath = string.Empty;
+            bulkButtonIconConfig = CreateDefaultAutomaticButtonIconConfig();
             bulkButtonOverlayUploadPath = string.Empty;
             bulkButtonCutoutByEmoteId.Clear();
             ButtonIconsApplyScopeDropdown.Text = ButtonIconsApplyScopeOptionNames[1];
-            ButtonIconsBackgroundDropdown.Text = ButtonBackgroundNoOptionName;
             ButtonIconsEffectsDropdown.Text = "Darken";
+            RebuildBulkButtonIconsBackgroundEditor();
             UpdateBulkButtonIconsPanels();
             RenderBulkCutoutPreviewTiles(Array.Empty<CharacterCreationEmoteViewModel>());
         }
 
         private void UpdateBulkButtonIconsPanels()
         {
-            string backgroundSelection = (ButtonIconsBackgroundDropdown.Text ?? string.Empty).Trim();
-            ApplyAutomaticBackgroundSelection(backgroundSelection, bulkButtonIconConfig);
-            bulkButtonIconConfig.AutomaticBackgroundUploadPath = string.IsNullOrWhiteSpace(bulkButtonBackgroundUploadPath)
-                ? null
-                : bulkButtonBackgroundUploadPath;
-
             string effectsSelection = (ButtonIconsEffectsDropdown.Text ?? string.Empty).Trim();
             bulkButtonIconConfig.EffectsMode = ParseButtonEffectsGenerationMode(effectsSelection);
             bulkButtonIconConfig.OverlayImagePath = string.IsNullOrWhiteSpace(bulkButtonOverlayUploadPath)
                 ? null
                 : bulkButtonOverlayUploadPath;
-
-            ButtonIconsPresetPreviewCard.Visibility = bulkButtonIconConfig.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.PresetList
-                ? Visibility.Visible
-                : Visibility.Collapsed;
-            if (ButtonIconsPresetPreviewCard.Visibility == Visibility.Visible)
-            {
-                string path = ResolveBackgroundPresetPath(bulkButtonIconConfig.AutomaticBackgroundPreset);
-                if (TryLoadButtonBitmap(path, out BitmapSource? presetImage, out _) && presetImage != null)
-                {
-                    ButtonIconsPresetPreviewImage.Source = presetImage;
-                }
-            }
-
-            ButtonIconsSolidColorPanel.Visibility = bulkButtonIconConfig.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.SolidColor
-                ? Visibility.Visible
-                : Visibility.Collapsed;
-            bool usesUploadStyleBackgroundControl = bulkButtonIconConfig.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.Upload
-                || bulkButtonIconConfig.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.PresetList;
-            bool presetBackgroundSelected = bulkButtonIconConfig.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.PresetList;
-            ButtonIconsUploadPanel.Visibility = usesUploadStyleBackgroundControl
-                ? Visibility.Visible
-                : Visibility.Collapsed;
-            ButtonIconsBackgroundUploadButton.IsEnabled = !presetBackgroundSelected;
-            ButtonIconsBackgroundUploadButton.Content = presetBackgroundSelected ? "Preset image (locked)" : "Select image...";
-
-            ButtonIconsSolidColorPreview.Background = new SolidColorBrush(bulkButtonIconConfig.AutomaticSolidColor);
-            ButtonIconsSolidColorHexTextBlock.Text = ToHexColor(bulkButtonIconConfig.AutomaticSolidColor);
-            if (presetBackgroundSelected)
-            {
-                string presetPath = ResolveBackgroundPresetPath(bulkButtonIconConfig.AutomaticBackgroundPreset);
-                ButtonIconsBackgroundUploadTextBlock.Text = string.IsNullOrWhiteSpace(presetPath)
-                    ? "Preset missing"
-                    : Path.GetFileName(presetPath);
-            }
-            else
-            {
-                ButtonIconsBackgroundUploadTextBlock.Text = string.IsNullOrWhiteSpace(bulkButtonBackgroundUploadPath)
-                    ? "No file selected"
-                    : Path.GetFileName(bulkButtonBackgroundUploadPath);
-            }
 
             ButtonIconsDarkenPanel.Visibility = bulkButtonIconConfig.EffectsMode == ButtonEffectsGenerationMode.Darken
                 ? Visibility.Visible
@@ -2406,14 +2335,23 @@ namespace OceanyaClient
             ButtonIconsOpacitySlider.Value = Math.Clamp(bulkButtonIconConfig.OpacityPercent, 0, 100);
             ButtonIconsDarkenValueText.Text = $"Darkness: {Math.Clamp(bulkButtonIconConfig.DarknessPercent, 0, 100)}%";
             ButtonIconsOpacityValueText.Text = $"Opacity: {Math.Clamp(bulkButtonIconConfig.OpacityPercent, 0, 100)}%";
-            ButtonIconsOverlayPathTextBlock.Text = string.IsNullOrWhiteSpace(bulkButtonOverlayUploadPath)
+            ButtonIconsOverlayPathTextBlock.Text = string.IsNullOrWhiteSpace(bulkButtonIconConfig.OverlayImagePath)
                 ? "No overlay selected"
-                : Path.GetFileName(bulkButtonOverlayUploadPath);
+                : Path.GetFileName(bulkButtonIconConfig.OverlayImagePath);
         }
 
-        private void ButtonIconsBackgroundDropdown_TextValueChanged(object? sender, EventArgs e)
+        private void RebuildBulkButtonIconsBackgroundEditor()
         {
-            UpdateBulkButtonIconsPanels();
+            if (ButtonIconsBackgroundEditorHost == null)
+            {
+                return;
+            }
+
+            NormalizeAutomaticBackgroundConfig(bulkButtonIconConfig);
+            ButtonIconsBackgroundEditorHost.Content = BuildAutomaticBackgroundEditor(
+                bulkButtonIconConfig,
+                () => { },
+                this);
         }
 
         private void ButtonIconsEffectsDropdown_TextValueChanged(object? sender, EventArgs e)
@@ -2442,7 +2380,8 @@ namespace OceanyaClient
             }
 
             bulkButtonIconConfig.AutomaticSolidColor = picked.Value;
-            UpdateBulkButtonIconsPanels();
+            bulkButtonIconConfig.AutomaticBackgroundCustomPresetId = string.Empty;
+            RebuildBulkButtonIconsBackgroundEditor();
         }
 
         private void ButtonIconsBackgroundUploadButton_Click(object sender, RoutedEventArgs e)
@@ -2457,9 +2396,9 @@ namespace OceanyaClient
                 return;
             }
 
-            bulkButtonBackgroundUploadPath = picker.FileName;
-            bulkButtonIconConfig.AutomaticBackgroundUploadPath = bulkButtonBackgroundUploadPath;
-            UpdateBulkButtonIconsPanels();
+            bulkButtonIconConfig.AutomaticBackgroundUploadPath = picker.FileName;
+            bulkButtonIconConfig.AutomaticBackgroundCustomPresetId = string.Empty;
+            RebuildBulkButtonIconsBackgroundEditor();
         }
 
         private void ButtonIconsOverlayUploadButton_Click(object sender, RoutedEventArgs e)
@@ -2556,6 +2495,7 @@ namespace OceanyaClient
             IReadOnlyList<CharacterCreationEmoteViewModel> targets,
             [NotNullWhen(false)] out string? validationMessage)
         {
+            NormalizeAutomaticBackgroundConfig(bulkButtonIconConfig);
             List<string> issues = new List<string>();
             if (bulkButtonIconConfig.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.Upload)
             {
@@ -2576,6 +2516,11 @@ namespace OceanyaClient
                 {
                     issues.Add("Background: the selected preset image is missing.");
                 }
+            }
+            else if (bulkButtonIconConfig.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.Gradient
+                && bulkButtonIconConfig.AutomaticGradientStops.Count < 2)
+            {
+                issues.Add("Background: the selected gradient needs at least two colors.");
             }
 
             if (bulkButtonIconConfig.EffectsMode == ButtonEffectsGenerationMode.Overlay)
@@ -2752,6 +2697,7 @@ namespace OceanyaClient
                 return;
             }
 
+            NormalizeAutomaticBackgroundConfig(bulkButtonIconConfig);
             int appliedCount = 0;
             foreach (CharacterCreationEmoteViewModel emote in targets)
             {
@@ -2766,6 +2712,13 @@ namespace OceanyaClient
                     AutomaticBackgroundPreset = bulkButtonIconConfig.AutomaticBackgroundPreset,
                     AutomaticSolidColor = bulkButtonIconConfig.AutomaticSolidColor,
                     AutomaticBackgroundUploadPath = bulkButtonIconConfig.AutomaticBackgroundUploadPath,
+                    AutomaticGradientDirection = bulkButtonIconConfig.AutomaticGradientDirection,
+                    AutomaticGradientStops = CloneGradientStops(bulkButtonIconConfig.AutomaticGradientStops),
+                    AutomaticGradientMidpoints = CloneGradientMidpoints(bulkButtonIconConfig.AutomaticGradientMidpoints),
+                    AutomaticAddBorder = bulkButtonIconConfig.AutomaticAddBorder,
+                    AutomaticBorderColor = bulkButtonIconConfig.AutomaticBorderColor,
+                    AutomaticBorderWidth = bulkButtonIconConfig.AutomaticBorderWidth,
+                    AutomaticBackgroundCustomPresetId = bulkButtonIconConfig.AutomaticBackgroundCustomPresetId,
                     AutomaticCutEmoteImage = ResolveEffectiveBulkCutout(emote)
                 };
 
@@ -2781,8 +2734,9 @@ namespace OceanyaClient
             }
 
             UpdateButtonIconsSectionVisibility();
-            StatusTextBlock.Text = $"Applied automatic button config to {appliedCount} emotes.";
             RefreshEmoteTiles(GetSelectedEmote());
+            SetActiveSection("emotes");
+            StatusTextBlock.Text = $"Applied automatic button config to {appliedCount} emotes. Review them in Step 3.";
         }
 
         private void RefreshFileOrganizationEntries()
@@ -8381,88 +8335,7 @@ namespace OceanyaClient
                     }
                     Style? dialogTabItemStyle = TryFindResource("DialogTabItemStyle") as Style;
 
-                    StackPanel backgroundTabContent = new StackPanel { Margin = new Thickness(8, 6, 8, 6) };
-                    AutoCompleteDropdownField backgroundDropdown = CreateDialogAutoCompleteField(
-                        GetAutomaticBackgroundOptionItems(),
-                        GetAutomaticBackgroundSelectionName(config),
-                        "Background for automatic generation.",
-                        isReadOnly: true,
-                        preserveItemOrder: true);
-                    backgroundDropdown.TextValueChanged += (_, _) =>
-                    {
-                        ApplyAutomaticBackgroundSelection(backgroundDropdown.Text, config);
-                        RefreshModeFields();
-                    };
-                    AddSimpleField(backgroundTabContent, "Background config", backgroundDropdown);
-
-                    if (config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.PresetList)
-                    {
-                        string presetPath = ResolveBackgroundPresetPath(config.AutomaticBackgroundPreset);
-                        Border presetPreviewCard = CreateStaticAssetCard(
-                            "Preset background",
-                            () => presetPath,
-                            _ => { },
-                            disallowAnimated: false,
-                            uploadTitle: "Preset",
-                            isReadOnly: true);
-                        presetPreviewCard.Cursor = Cursors.Arrow;
-                        AddSimpleField(backgroundTabContent, "Preset preview", presetPreviewCard);
-                    }
-                    else if (config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.SolidColor)
-                    {
-                        Grid solidGrid = new Grid();
-                        solidGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                        solidGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                        solidGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-                        Button pickColorButton = CreateDialogButton("Pick color...", isPrimary: false);
-                        pickColorButton.Width = 130;
-                        pickColorButton.Click += (_, _) =>
-                        {
-                            Color? picked = ShowAdvancedColorPickerDialog(config.AutomaticSolidColor);
-                            if (!picked.HasValue)
-                            {
-                                return;
-                            }
-
-                            config.AutomaticSolidColor = picked.Value;
-                            RefreshModeFields();
-                        };
-                        Grid.SetColumn(pickColorButton, 0);
-                        solidGrid.Children.Add(pickColorButton);
-
-                        Border colorPreview = new Border
-                        {
-                            Width = 48,
-                            Height = 30,
-                            Margin = new Thickness(8, 0, 8, 0),
-                            BorderBrush = new SolidColorBrush(Color.FromRgb(84, 104, 126)),
-                            BorderThickness = new Thickness(1),
-                            Background = new SolidColorBrush(config.AutomaticSolidColor)
-                        };
-                        Grid.SetColumn(colorPreview, 1);
-                        solidGrid.Children.Add(colorPreview);
-
-                        TextBlock colorValue = new TextBlock
-                        {
-                            VerticalAlignment = VerticalAlignment.Center,
-                            Foreground = new SolidColorBrush(Color.FromRgb(198, 212, 224)),
-                            Text = ToHexColor(config.AutomaticSolidColor)
-                        };
-                        Grid.SetColumn(colorValue, 2);
-                        solidGrid.Children.Add(colorValue);
-                        AddSimpleField(backgroundTabContent, "Solid Color", solidGrid);
-                    }
-                    else if (config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.Upload)
-                    {
-                        Border uploadCard = CreateStaticAssetCard(
-                            "Background upload",
-                            () => config.AutomaticBackgroundUploadPath,
-                            value => config.AutomaticBackgroundUploadPath = value,
-                            disallowAnimated: false,
-                            uploadTitle: "Select automatic background image");
-                        AddSimpleField(backgroundTabContent, "Background image", uploadCard);
-                    }
+                    FrameworkElement backgroundTabContent = BuildAutomaticBackgroundEditor(config, RefreshPreviews, dialog);
 
                     StackPanel emoteTabContent = new StackPanel { Margin = new Thickness(8, 6, 8, 6) };
                     Button cutButton = CreateDialogButton("Open Emote Cutting...", isPrimary: false);
@@ -10716,6 +10589,887 @@ namespace OceanyaClient
             return CurrentColor();
         }
 
+        private static bool SupportsCustomAutomaticBackgroundMode(ButtonAutomaticBackgroundMode mode)
+        {
+            return mode == ButtonAutomaticBackgroundMode.SolidColor
+                || mode == ButtonAutomaticBackgroundMode.Upload
+                || mode == ButtonAutomaticBackgroundMode.Gradient;
+        }
+
+        private static void ResetAutomaticGradientMidpointsToCentered(ButtonIconGenerationConfig config)
+        {
+            NormalizeAutomaticBackgroundConfig(config);
+            config.AutomaticGradientMidpoints = new List<double>();
+            for (int i = 0; i < config.AutomaticGradientStops.Count - 1; i++)
+            {
+                double left = config.AutomaticGradientStops[i].Position;
+                double right = config.AutomaticGradientStops[i + 1].Position;
+                config.AutomaticGradientMidpoints.Add(left + ((right - left) * 0.5));
+            }
+        }
+
+        private bool TryValidateAutomaticBackgroundCustomPresetForSave(
+            ButtonIconGenerationConfig config,
+            [NotNullWhen(false)] out string? error)
+        {
+            NormalizeAutomaticBackgroundConfig(config);
+            if (!SupportsCustomAutomaticBackgroundMode(config.AutomaticBackgroundMode))
+            {
+                error = "Only Solid Color, Gradient, or Upload backgrounds can be saved as custom presets.";
+                return false;
+            }
+
+            if (config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.Upload
+                && string.IsNullOrWhiteSpace(config.AutomaticBackgroundUploadPath))
+            {
+                error = "Choose an uploaded background image before saving this preset.";
+                return false;
+            }
+
+            if (config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.Gradient
+                && config.AutomaticGradientStops.Count < 2)
+            {
+                error = "Gradient presets need at least two colors.";
+                return false;
+            }
+
+            error = null;
+            return true;
+        }
+
+        private bool TrySaveAutomaticBackgroundCustomPreset(
+            ButtonIconGenerationConfig config,
+            string name,
+            string? existingId,
+            [NotNullWhen(true)] out CharacterCreatorButtonBackgroundPreset? savedPreset,
+            [NotNullWhen(false)] out string? error)
+        {
+            savedPreset = null;
+            error = null;
+            string trimmedName = (name ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(trimmedName))
+            {
+                error = "Preset name cannot be empty.";
+                return false;
+            }
+
+            if (!TryValidateAutomaticBackgroundCustomPresetForSave(config, out error))
+            {
+                return false;
+            }
+
+            List<CharacterCreatorButtonBackgroundPreset> presets =
+                SaveFile.Data.CharacterCreatorButtonBackgroundPresets ??= new List<CharacterCreatorButtonBackgroundPreset>();
+            CharacterCreatorButtonBackgroundPresetMode mode = ToSavedBackgroundPresetMode(config.AutomaticBackgroundMode);
+            bool duplicateExists = presets.Any(preset =>
+                !string.Equals(preset.Id, existingId, StringComparison.OrdinalIgnoreCase)
+                && preset.Mode == mode
+                && string.Equals(preset.Name, trimmedName, StringComparison.OrdinalIgnoreCase));
+            if (duplicateExists)
+            {
+                error = "A preset with that name already exists for this background type.";
+                return false;
+            }
+
+            CharacterCreatorButtonBackgroundPreset nextPreset = BuildAutomaticBackgroundCustomPreset(config, trimmedName, existingId);
+            int existingIndex = presets.FindIndex(preset =>
+                string.Equals(preset.Id, nextPreset.Id, StringComparison.OrdinalIgnoreCase));
+            if (existingIndex >= 0)
+            {
+                presets[existingIndex] = nextPreset;
+            }
+            else
+            {
+                presets.Add(nextPreset);
+            }
+
+            savedPreset = nextPreset;
+            SaveFile.Save();
+            return true;
+        }
+
+        private void DeleteAutomaticBackgroundCustomPreset(string presetId)
+        {
+            if (string.IsNullOrWhiteSpace(presetId) || SaveFile.Data.CharacterCreatorButtonBackgroundPresets == null)
+            {
+                return;
+            }
+
+            SaveFile.Data.CharacterCreatorButtonBackgroundPresets = SaveFile.Data.CharacterCreatorButtonBackgroundPresets
+                .Where(preset => !string.Equals(preset.Id, presetId, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            SaveFile.Save();
+        }
+
+        private FrameworkElement BuildAutomaticBackgroundEditor(
+            ButtonIconGenerationConfig config,
+            Action? onPreviewChanged,
+            Window? owner)
+        {
+            NormalizeAutomaticBackgroundConfig(config);
+            Window? effectiveOwner = owner ?? HostWindow;
+            StackPanel root = new StackPanel();
+
+            StackPanel CreateSection(string label, UIElement content)
+            {
+                StackPanel container = new StackPanel
+                {
+                    Margin = new Thickness(0, 0, 0, 8)
+                };
+                container.Children.Add(new TextBlock
+                {
+                    Text = label,
+                    Foreground = new SolidColorBrush(Color.FromRgb(227, 227, 227)),
+                    FontSize = 12,
+                    FontWeight = FontWeights.SemiBold,
+                    Margin = new Thickness(0, 0, 0, 4)
+                });
+                container.Children.Add(content);
+                root.Children.Add(container);
+                return container;
+            }
+
+            AutoCompleteDropdownField backgroundDropdown = CreateDialogAutoCompleteField(
+                GetAutomaticBackgroundOptionItems(),
+                GetAutomaticBackgroundSelectionName(config),
+                "Background for automatic generation.",
+                isReadOnly: true,
+                preserveItemOrder: true);
+            StackPanel backgroundDropdownSection = CreateSection("Background Config", backgroundDropdown);
+
+            TextBlock noBackgroundText = new TextBlock
+            {
+                Foreground = new SolidColorBrush(Color.FromRgb(188, 204, 220)),
+                Text = "No shared background will be generated.",
+                TextWrapping = TextWrapping.Wrap
+            };
+            StackPanel noBackgroundSection = CreateSection("Background", noBackgroundText);
+
+            Image presetPreviewImage = new Image { Stretch = Stretch.Uniform };
+            TextBlock presetPreviewEmptyText = CreatePreviewEmptyText("Preset missing");
+            Border presetPreviewCard = CreateButtonPreviewCard("Preset preview", presetPreviewImage, presetPreviewEmptyText);
+            StackPanel presetPreviewSection = CreateSection("Preset Preview", presetPreviewCard);
+
+            Grid solidGrid = new Grid();
+            solidGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            solidGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            solidGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            Button pickColorButton = CreateDialogButton("Pick color...", isPrimary: false);
+            pickColorButton.Width = 130;
+            Border solidColorPreview = new Border
+            {
+                Width = 48,
+                Height = 30,
+                Margin = new Thickness(8, 0, 8, 0),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(84, 104, 126)),
+                BorderThickness = new Thickness(1)
+            };
+            TextBlock solidColorHexText = new TextBlock
+            {
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = new SolidColorBrush(Color.FromRgb(198, 212, 224))
+            };
+            Grid.SetColumn(pickColorButton, 0);
+            Grid.SetColumn(solidColorPreview, 1);
+            Grid.SetColumn(solidColorHexText, 2);
+            solidGrid.Children.Add(pickColorButton);
+            solidGrid.Children.Add(solidColorPreview);
+            solidGrid.Children.Add(solidColorHexText);
+            StackPanel solidSection = CreateSection("Solid Color", solidGrid);
+
+            Grid uploadGrid = new Grid();
+            uploadGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            uploadGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            Button uploadBackgroundButton = CreateDialogButton("Select image...", isPrimary: false);
+            uploadBackgroundButton.Width = 150;
+            TextBlock uploadPathText = new TextBlock
+            {
+                Margin = new Thickness(10, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = new SolidColorBrush(Color.FromRgb(198, 212, 224)),
+                TextWrapping = TextWrapping.Wrap
+            };
+            Grid.SetColumn(uploadBackgroundButton, 0);
+            Grid.SetColumn(uploadPathText, 1);
+            uploadGrid.Children.Add(uploadBackgroundButton);
+            uploadGrid.Children.Add(uploadPathText);
+            StackPanel uploadSection = CreateSection("Background Image", uploadGrid);
+
+            StackPanel gradientPanel = new StackPanel();
+            AutoCompleteDropdownField gradientDirectionDropdown = CreateDialogAutoCompleteField(
+                ButtonBackgroundGradientDirectionOptionNames,
+                GetButtonBackgroundGradientDirectionName(config.AutomaticGradientDirection),
+                "How the gradient should flow.",
+                isReadOnly: true);
+            gradientPanel.Children.Add(gradientDirectionDropdown);
+
+            const double gradientCanvasWidth = 348;
+            const double gradientStripLeft = 14;
+            const double gradientStripTop = 14;
+            const double gradientStripWidth = 320;
+            const double gradientStripHeight = 28;
+            Canvas gradientCanvas = new Canvas
+            {
+                Width = gradientCanvasWidth,
+                Height = 86,
+                Margin = new Thickness(0, 10, 0, 6),
+                Background = Brushes.Transparent
+            };
+            TextBlock gradientHintText = new TextBlock
+            {
+                Foreground = new SolidColorBrush(Color.FromRgb(188, 204, 220)),
+                TextWrapping = TextWrapping.Wrap,
+                Text = "Double-click the strip to add a color. Drag diamonds to move transitions. Click a color marker, then edit or remove it below."
+            };
+            StackPanel gradientActionRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal
+            };
+            Button editGradientColorButton = CreateDialogButton("Edit selected color...", isPrimary: false);
+            editGradientColorButton.Width = 170;
+            editGradientColorButton.Margin = new Thickness(0, 0, 8, 0);
+            Button removeGradientColorButton = CreateDialogButton("Remove selected color", isPrimary: false);
+            removeGradientColorButton.Width = 170;
+            gradientActionRow.Children.Add(editGradientColorButton);
+            gradientActionRow.Children.Add(removeGradientColorButton);
+            gradientPanel.Children.Add(gradientCanvas);
+            gradientPanel.Children.Add(gradientHintText);
+            gradientPanel.Children.Add(gradientActionRow);
+            StackPanel gradientSection = CreateSection("Gradient", gradientPanel);
+
+            CheckBox addBorderCheckBox = new CheckBox
+            {
+                Content = "Add border",
+                Foreground = new SolidColorBrush(Color.FromRgb(224, 232, 240))
+            };
+            Grid borderGrid = new Grid
+            {
+                Margin = new Thickness(0, 8, 0, 0)
+            };
+            borderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            borderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            borderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            Button pickBorderColorButton = CreateDialogButton("Pick color...", isPrimary: false);
+            pickBorderColorButton.Width = 130;
+            Border borderColorPreview = new Border
+            {
+                Width = 48,
+                Height = 30,
+                Margin = new Thickness(8, 0, 8, 0),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(84, 104, 126)),
+                BorderThickness = new Thickness(1)
+            };
+            TextBlock borderColorHexText = new TextBlock
+            {
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = new SolidColorBrush(Color.FromRgb(198, 212, 224))
+            };
+            Grid.SetColumn(pickBorderColorButton, 0);
+            Grid.SetColumn(borderColorPreview, 1);
+            Grid.SetColumn(borderColorHexText, 2);
+            borderGrid.Children.Add(pickBorderColorButton);
+            borderGrid.Children.Add(borderColorPreview);
+            borderGrid.Children.Add(borderColorHexText);
+            Slider borderWidthSlider = new Slider
+            {
+                Minimum = 1,
+                Maximum = 32,
+                TickFrequency = 1,
+                IsSnapToTickEnabled = true,
+                Margin = new Thickness(0, 8, 0, 0)
+            };
+            TextBlock borderWidthText = new TextBlock
+            {
+                Foreground = new SolidColorBrush(Color.FromRgb(198, 212, 224)),
+                Margin = new Thickness(0, 4, 0, 0)
+            };
+            StackPanel borderPanel = new StackPanel();
+            borderPanel.Children.Add(addBorderCheckBox);
+            borderPanel.Children.Add(borderGrid);
+            borderPanel.Children.Add(borderWidthSlider);
+            borderPanel.Children.Add(borderWidthText);
+            StackPanel borderSection = CreateSection("Border", borderPanel);
+
+            StackPanel presetActionRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            Button saveAsPresetButton = CreateDialogButton("Save as preset", isPrimary: false);
+            saveAsPresetButton.Width = 140;
+            saveAsPresetButton.Margin = new Thickness(0, 0, 8, 0);
+            Button savePresetButton = CreateDialogButton("Save preset", isPrimary: false);
+            savePresetButton.Width = 120;
+            savePresetButton.Margin = new Thickness(0, 0, 8, 0);
+            Button saveDuplicatePresetButton = CreateDialogButton("Save duplicate", isPrimary: false);
+            saveDuplicatePresetButton.Width = 130;
+            saveDuplicatePresetButton.Margin = new Thickness(0, 0, 8, 0);
+            Button deletePresetButton = CreateDialogButton("Delete preset", isPrimary: false);
+            deletePresetButton.Width = 120;
+            presetActionRow.Children.Add(saveAsPresetButton);
+            presetActionRow.Children.Add(savePresetButton);
+            presetActionRow.Children.Add(saveDuplicatePresetButton);
+            presetActionRow.Children.Add(deletePresetButton);
+            TextBlock presetActionHintText = new TextBlock
+            {
+                Foreground = new SolidColorBrush(Color.FromRgb(188, 204, 220)),
+                Margin = new Thickness(0, 6, 0, 0),
+                TextWrapping = TextWrapping.Wrap
+            };
+            StackPanel presetActionsPanel = new StackPanel();
+            presetActionsPanel.Children.Add(presetActionRow);
+            presetActionsPanel.Children.Add(presetActionHintText);
+            StackPanel presetActionsSection = CreateSection("Custom Presets", presetActionsPanel);
+
+            Image customPreviewImage = new Image { Stretch = Stretch.Uniform };
+            TextBlock customPreviewEmptyText = CreatePreviewEmptyText("Preview unavailable");
+            Border customPreviewCard = CreateButtonPreviewCard("Background preview", customPreviewImage, customPreviewEmptyText);
+            StackPanel customPreviewSection = CreateSection("Preview", customPreviewCard);
+
+            int selectedGradientColorIndex = 0;
+            bool suppressDropdownChange = false;
+            bool suppressGradientDirectionChange = false;
+            bool suppressBorderEvents = false;
+
+            CharacterCreatorButtonBackgroundPreset? ResolveCurrentCustomPreset()
+            {
+                if (string.IsNullOrWhiteSpace(config.AutomaticBackgroundCustomPresetId))
+                {
+                    return null;
+                }
+
+                return GetSavedAutomaticBackgroundPresets().FirstOrDefault(preset =>
+                    string.Equals(preset.Id, config.AutomaticBackgroundCustomPresetId, StringComparison.OrdinalIgnoreCase));
+            }
+
+            void RefreshDropdownSelection()
+            {
+                suppressDropdownChange = true;
+                backgroundDropdown.ItemsSource = GetAutomaticBackgroundOptionItems();
+                backgroundDropdown.Text = GetAutomaticBackgroundSelectionName(config);
+                suppressDropdownChange = false;
+            }
+
+            void MarkCustomPresetDirty()
+            {
+                if (!string.IsNullOrWhiteSpace(config.AutomaticBackgroundCustomPresetId))
+                {
+                    config.AutomaticBackgroundCustomPresetId = string.Empty;
+                }
+            }
+
+            void NotifyPreviewChanged()
+            {
+                NormalizeAutomaticBackgroundConfig(config);
+                onPreviewChanged?.Invoke();
+            }
+
+            Thumb CreateGradientThumb(Brush fill, bool selected, bool diamond)
+            {
+                Thumb thumb = new Thumb
+                {
+                    Width = diamond ? 12 : 16,
+                    Height = diamond ? 12 : 16,
+                    Cursor = Cursors.SizeWE
+                };
+                ControlTemplate template = new ControlTemplate(typeof(Thumb));
+                FrameworkElementFactory borderFactory = new FrameworkElementFactory(typeof(Border));
+                borderFactory.SetValue(Border.BackgroundProperty, fill);
+                borderFactory.SetValue(Border.BorderBrushProperty, selected ? Brushes.White : new SolidColorBrush(Color.FromRgb(52, 66, 82)));
+                borderFactory.SetValue(Border.BorderThicknessProperty, selected ? new Thickness(2) : new Thickness(1));
+                borderFactory.SetValue(Border.CornerRadiusProperty, diamond ? new CornerRadius(1) : new CornerRadius(8));
+                if (diamond)
+                {
+                    borderFactory.SetValue(Border.RenderTransformProperty, new RotateTransform(45));
+                    borderFactory.SetValue(Border.RenderTransformOriginProperty, new Point(0.5, 0.5));
+                }
+                template.VisualTree = borderFactory;
+                thumb.Template = template;
+                return thumb;
+            }
+
+            void RefreshPreviewCards()
+            {
+                BitmapSource? previewBitmap = BuildAutomaticBackgroundPreviewBitmap(config);
+                bool hasPreview = previewBitmap != null;
+                presetPreviewImage.Source = config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.PresetList ? previewBitmap : null;
+                presetPreviewEmptyText.Visibility = presetPreviewImage.Source == null ? Visibility.Visible : Visibility.Collapsed;
+                presetPreviewEmptyText.Text = GetAutomaticBackgroundPreviewEmptyText(config);
+
+                customPreviewImage.Source = SupportsCustomAutomaticBackgroundMode(config.AutomaticBackgroundMode) ? previewBitmap : null;
+                customPreviewEmptyText.Visibility = customPreviewImage.Source == null ? Visibility.Visible : Visibility.Collapsed;
+                customPreviewEmptyText.Text = GetAutomaticBackgroundPreviewEmptyText(config);
+                _ = hasPreview;
+            }
+
+            void RefreshGradientCanvas()
+            {
+                NormalizeAutomaticBackgroundConfig(config);
+                if (config.AutomaticGradientStops.Count == 0)
+                {
+                    config.AutomaticGradientStops = CreateDefaultAutomaticGradientStops();
+                    config.AutomaticGradientMidpoints = CreateDefaultAutomaticGradientMidpoints();
+                }
+
+                selectedGradientColorIndex = Math.Clamp(selectedGradientColorIndex, 0, config.AutomaticGradientStops.Count - 1);
+                gradientCanvas.Children.Clear();
+                Border strip = new Border
+                {
+                    Width = gradientStripWidth,
+                    Height = gradientStripHeight,
+                    CornerRadius = new CornerRadius(4),
+                    BorderBrush = new SolidColorBrush(Color.FromRgb(72, 92, 112)),
+                    BorderThickness = new Thickness(1),
+                    Background = CreateAutomaticGradientBrush(config)
+                };
+                Canvas.SetLeft(strip, gradientStripLeft);
+                Canvas.SetTop(strip, gradientStripTop);
+                gradientCanvas.Children.Add(strip);
+
+                for (int i = 0; i < config.AutomaticGradientMidpoints.Count; i++)
+                {
+                    int midpointIndex = i;
+                    Thumb midpointThumb = CreateGradientThumb(
+                        new SolidColorBrush(Color.FromRgb(220, 220, 220)),
+                        false,
+                        diamond: true);
+                    midpointThumb.DragDelta += (_, e) =>
+                    {
+                        double left = config.AutomaticGradientStops[midpointIndex].Position;
+                        double right = config.AutomaticGradientStops[midpointIndex + 1].Position;
+                        double nextPosition = config.AutomaticGradientMidpoints[midpointIndex] + (e.HorizontalChange / gradientStripWidth);
+                        config.AutomaticGradientMidpoints[midpointIndex] = Math.Clamp(nextPosition, left, right);
+                        MarkCustomPresetDirty();
+                        strip.Background = CreateAutomaticGradientBrush(config);
+                        Canvas.SetLeft(
+                            midpointThumb,
+                            gradientStripLeft + (config.AutomaticGradientMidpoints[midpointIndex] * gradientStripWidth) - (midpointThumb.Width / 2.0));
+                        RefreshPreviewCards();
+                        NotifyPreviewChanged();
+                    };
+                    midpointThumb.DragCompleted += (_, _) =>
+                    {
+                        RefreshGradientCanvas();
+                        RefreshDropdownSelection();
+                    };
+                    Canvas.SetLeft(
+                        midpointThumb,
+                        gradientStripLeft + (config.AutomaticGradientMidpoints[i] * gradientStripWidth) - (midpointThumb.Width / 2.0));
+                    Canvas.SetTop(midpointThumb, gradientStripTop + gradientStripHeight + 10);
+                    gradientCanvas.Children.Add(midpointThumb);
+                }
+
+                for (int i = 0; i < config.AutomaticGradientStops.Count; i++)
+                {
+                    int colorIndex = i;
+                    ButtonBackgroundGradientStop stop = config.AutomaticGradientStops[i];
+                    Thumb stopThumb = CreateGradientThumb(
+                        new SolidColorBrush(stop.Color),
+                        colorIndex == selectedGradientColorIndex,
+                        diamond: false);
+                    stopThumb.MouseLeftButtonDown += (_, _) =>
+                    {
+                        selectedGradientColorIndex = colorIndex;
+                        RefreshGradientCanvas();
+                    };
+                    stopThumb.DragDelta += (_, e) =>
+                    {
+                        if (colorIndex == 0 || colorIndex == config.AutomaticGradientStops.Count - 1)
+                        {
+                            return;
+                        }
+
+                        double leftLimit = config.AutomaticGradientStops[colorIndex - 1].Position + 0.03;
+                        double rightLimit = config.AutomaticGradientStops[colorIndex + 1].Position - 0.03;
+                        double nextPosition = config.AutomaticGradientStops[colorIndex].Position + (e.HorizontalChange / gradientStripWidth);
+                        config.AutomaticGradientStops[colorIndex].Position = Math.Clamp(nextPosition, leftLimit, rightLimit);
+                        NormalizeAutomaticBackgroundConfig(config);
+                        MarkCustomPresetDirty();
+                        strip.Background = CreateAutomaticGradientBrush(config);
+                        Canvas.SetLeft(
+                            stopThumb,
+                            gradientStripLeft + (config.AutomaticGradientStops[colorIndex].Position * gradientStripWidth) - (stopThumb.Width / 2.0));
+                        RefreshPreviewCards();
+                        NotifyPreviewChanged();
+                    };
+                    stopThumb.DragCompleted += (_, _) =>
+                    {
+                        RefreshGradientCanvas();
+                        RefreshDropdownSelection();
+                    };
+                    Canvas.SetLeft(stopThumb, gradientStripLeft + (stop.Position * gradientStripWidth) - (stopThumb.Width / 2.0));
+                    Canvas.SetTop(stopThumb, gradientStripTop - (stopThumb.Height / 2.0) + (gradientStripHeight / 2.0));
+                    gradientCanvas.Children.Add(stopThumb);
+                }
+
+                removeGradientColorButton.IsEnabled = config.AutomaticGradientStops.Count > 2
+                    && selectedGradientColorIndex > 0
+                    && selectedGradientColorIndex < config.AutomaticGradientStops.Count - 1;
+            }
+
+            void RefreshUi()
+            {
+                NormalizeAutomaticBackgroundConfig(config);
+                RefreshDropdownSelection();
+
+                CharacterCreatorButtonBackgroundPreset? currentPreset = ResolveCurrentCustomPreset();
+                bool isBuiltInPreset = config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.PresetList;
+                bool isCustomMode = SupportsCustomAutomaticBackgroundMode(config.AutomaticBackgroundMode);
+
+                noBackgroundSection.Visibility = config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.None
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+                presetPreviewSection.Visibility = isBuiltInPreset ? Visibility.Visible : Visibility.Collapsed;
+                solidSection.Visibility = config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.SolidColor
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+                uploadSection.Visibility = config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.Upload
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+                gradientSection.Visibility = config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.Gradient
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+                borderSection.Visibility = isCustomMode ? Visibility.Visible : Visibility.Collapsed;
+                presetActionsSection.Visibility = isCustomMode ? Visibility.Visible : Visibility.Collapsed;
+                customPreviewSection.Visibility = isCustomMode ? Visibility.Visible : Visibility.Collapsed;
+
+                solidColorPreview.Background = new SolidColorBrush(config.AutomaticSolidColor);
+                solidColorHexText.Text = ToHexColor(config.AutomaticSolidColor);
+                uploadPathText.Text = string.IsNullOrWhiteSpace(config.AutomaticBackgroundUploadPath)
+                    ? "No image selected"
+                    : Path.GetFileName(config.AutomaticBackgroundUploadPath);
+
+                suppressGradientDirectionChange = true;
+                gradientDirectionDropdown.Text = GetButtonBackgroundGradientDirectionName(config.AutomaticGradientDirection);
+                suppressGradientDirectionChange = false;
+                RefreshGradientCanvas();
+
+                suppressBorderEvents = true;
+                addBorderCheckBox.IsChecked = config.AutomaticAddBorder;
+                borderGrid.Visibility = config.AutomaticAddBorder ? Visibility.Visible : Visibility.Collapsed;
+                borderWidthSlider.Visibility = config.AutomaticAddBorder ? Visibility.Visible : Visibility.Collapsed;
+                borderWidthText.Visibility = config.AutomaticAddBorder ? Visibility.Visible : Visibility.Collapsed;
+                borderColorPreview.Background = new SolidColorBrush(config.AutomaticBorderColor);
+                borderColorHexText.Text = ToHexColor(config.AutomaticBorderColor);
+                borderWidthSlider.Value = Math.Clamp(config.AutomaticBorderWidth, 1, 32);
+                borderWidthText.Text = $"Border width: {Math.Clamp(config.AutomaticBorderWidth, 1, 32)} px";
+                suppressBorderEvents = false;
+
+                saveAsPresetButton.Visibility = currentPreset == null ? Visibility.Visible : Visibility.Collapsed;
+                savePresetButton.Visibility = currentPreset != null ? Visibility.Visible : Visibility.Collapsed;
+                saveDuplicatePresetButton.Visibility = currentPreset != null ? Visibility.Visible : Visibility.Collapsed;
+                deletePresetButton.Visibility = currentPreset != null ? Visibility.Visible : Visibility.Collapsed;
+                presetActionHintText.Text = currentPreset == null
+                    ? "Save this background setup for reuse later."
+                    : $"Loaded preset: {GetAutomaticBackgroundCustomPresetDisplayName(currentPreset)}";
+
+                RefreshPreviewCards();
+            }
+
+            backgroundDropdown.TextValueChanged += (_, _) =>
+            {
+                if (suppressDropdownChange)
+                {
+                    return;
+                }
+
+                ApplyAutomaticBackgroundSelection(backgroundDropdown.Text, config);
+                RefreshUi();
+                NotifyPreviewChanged();
+            };
+
+            pickColorButton.Click += (_, _) =>
+            {
+                Color? picked = ShowAdvancedColorPickerDialog(config.AutomaticSolidColor);
+                if (!picked.HasValue)
+                {
+                    return;
+                }
+
+                config.AutomaticSolidColor = picked.Value;
+                MarkCustomPresetDirty();
+                RefreshUi();
+                NotifyPreviewChanged();
+            };
+
+            uploadBackgroundButton.Click += (_, _) =>
+            {
+                OpenFileDialog picker = new OpenFileDialog
+                {
+                    Title = "Select automatic background image",
+                    Filter = "Image files (*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp;*.apng)|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp;*.apng|All files (*.*)|*.*"
+                };
+                if (picker.ShowDialog() != true)
+                {
+                    return;
+                }
+
+                config.AutomaticBackgroundUploadPath = picker.FileName;
+                MarkCustomPresetDirty();
+                RefreshUi();
+                NotifyPreviewChanged();
+            };
+
+            gradientDirectionDropdown.TextValueChanged += (_, _) =>
+            {
+                if (suppressGradientDirectionChange)
+                {
+                    return;
+                }
+
+                config.AutomaticGradientDirection = ParseButtonBackgroundGradientDirection(gradientDirectionDropdown.Text);
+                MarkCustomPresetDirty();
+                RefreshPreviewCards();
+                RefreshDropdownSelection();
+                NotifyPreviewChanged();
+            };
+
+            gradientCanvas.MouseLeftButtonDown += (_, e) =>
+            {
+                if (e.ClickCount < 2)
+                {
+                    return;
+                }
+
+                Point point = e.GetPosition(gradientCanvas);
+                double normalized = (point.X - gradientStripLeft) / gradientStripWidth;
+                if (normalized < 0.0 || normalized > 1.0)
+                {
+                    return;
+                }
+
+                Color insertedColor = SampleAutomaticGradientColor(config, normalized);
+                config.AutomaticGradientStops.Add(new ButtonBackgroundGradientStop
+                {
+                    Position = Math.Clamp(normalized, 0.0, 1.0),
+                    Color = insertedColor
+                });
+                config.AutomaticGradientStops = config.AutomaticGradientStops
+                    .OrderBy(stop => stop.Position)
+                    .ToList();
+                selectedGradientColorIndex = config.AutomaticGradientStops.FindIndex(stop =>
+                    Math.Abs(stop.Position - normalized) < 0.0001 && stop.Color == insertedColor);
+                if (selectedGradientColorIndex < 0)
+                {
+                    selectedGradientColorIndex = Math.Clamp(config.AutomaticGradientStops.Count - 2, 0, config.AutomaticGradientStops.Count - 1);
+                }
+
+                ResetAutomaticGradientMidpointsToCentered(config);
+                MarkCustomPresetDirty();
+                RefreshGradientCanvas();
+                RefreshPreviewCards();
+                RefreshDropdownSelection();
+                NotifyPreviewChanged();
+            };
+
+            editGradientColorButton.Click += (_, _) =>
+            {
+                NormalizeAutomaticBackgroundConfig(config);
+                if (selectedGradientColorIndex < 0 || selectedGradientColorIndex >= config.AutomaticGradientStops.Count)
+                {
+                    return;
+                }
+
+                Color? picked = ShowAdvancedColorPickerDialog(config.AutomaticGradientStops[selectedGradientColorIndex].Color);
+                if (!picked.HasValue)
+                {
+                    return;
+                }
+
+                config.AutomaticGradientStops[selectedGradientColorIndex].Color = picked.Value;
+                MarkCustomPresetDirty();
+                RefreshGradientCanvas();
+                RefreshPreviewCards();
+                RefreshDropdownSelection();
+                NotifyPreviewChanged();
+            };
+
+            removeGradientColorButton.Click += (_, _) =>
+            {
+                NormalizeAutomaticBackgroundConfig(config);
+                if (config.AutomaticGradientStops.Count <= 2
+                    || selectedGradientColorIndex <= 0
+                    || selectedGradientColorIndex >= config.AutomaticGradientStops.Count - 1)
+                {
+                    return;
+                }
+
+                config.AutomaticGradientStops.RemoveAt(selectedGradientColorIndex);
+                selectedGradientColorIndex = Math.Clamp(selectedGradientColorIndex - 1, 0, config.AutomaticGradientStops.Count - 1);
+                ResetAutomaticGradientMidpointsToCentered(config);
+                MarkCustomPresetDirty();
+                RefreshGradientCanvas();
+                RefreshPreviewCards();
+                RefreshDropdownSelection();
+                NotifyPreviewChanged();
+            };
+
+            addBorderCheckBox.Checked += (_, _) =>
+            {
+                if (suppressBorderEvents)
+                {
+                    return;
+                }
+
+                config.AutomaticAddBorder = true;
+                MarkCustomPresetDirty();
+                RefreshUi();
+                NotifyPreviewChanged();
+            };
+            addBorderCheckBox.Unchecked += (_, _) =>
+            {
+                if (suppressBorderEvents)
+                {
+                    return;
+                }
+
+                config.AutomaticAddBorder = false;
+                MarkCustomPresetDirty();
+                RefreshUi();
+                NotifyPreviewChanged();
+            };
+
+            pickBorderColorButton.Click += (_, _) =>
+            {
+                Color? picked = ShowAdvancedColorPickerDialog(config.AutomaticBorderColor);
+                if (!picked.HasValue)
+                {
+                    return;
+                }
+
+                config.AutomaticBorderColor = picked.Value;
+                MarkCustomPresetDirty();
+                RefreshUi();
+                NotifyPreviewChanged();
+            };
+
+            borderWidthSlider.ValueChanged += (_, _) =>
+            {
+                if (suppressBorderEvents)
+                {
+                    return;
+                }
+
+                config.AutomaticBorderWidth = (int)Math.Round(borderWidthSlider.Value);
+                borderWidthText.Text = $"Border width: {config.AutomaticBorderWidth} px";
+                MarkCustomPresetDirty();
+                RefreshPreviewCards();
+                RefreshDropdownSelection();
+                NotifyPreviewChanged();
+            };
+
+            saveAsPresetButton.Click += (_, _) =>
+            {
+                string? presetName = InputDialog.Show(
+                    effectiveOwner,
+                    "Preset name:",
+                    "Save Background Preset",
+                    "My Background");
+                if (string.IsNullOrWhiteSpace(presetName))
+                {
+                    return;
+                }
+
+                if (!TrySaveAutomaticBackgroundCustomPreset(config, presetName, null, out CharacterCreatorButtonBackgroundPreset? savedPreset, out string? error))
+                {
+                    OceanyaMessageBox.Show(
+                        effectiveOwner,
+                        error ?? "Could not save preset.",
+                        "Background Preset",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                    return;
+                }
+
+                config.AutomaticBackgroundCustomPresetId = savedPreset.Id;
+                RefreshUi();
+            };
+
+            savePresetButton.Click += (_, _) =>
+            {
+                CharacterCreatorButtonBackgroundPreset? currentPreset = ResolveCurrentCustomPreset();
+                if (currentPreset == null)
+                {
+                    return;
+                }
+
+                if (!TrySaveAutomaticBackgroundCustomPreset(
+                    config,
+                    currentPreset.Name,
+                    currentPreset.Id,
+                    out CharacterCreatorButtonBackgroundPreset? savedPreset,
+                    out string? error))
+                {
+                    OceanyaMessageBox.Show(
+                        effectiveOwner,
+                        error ?? "Could not update preset.",
+                        "Background Preset",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                    return;
+                }
+
+                config.AutomaticBackgroundCustomPresetId = savedPreset.Id;
+                RefreshUi();
+            };
+
+            saveDuplicatePresetButton.Click += (_, _) =>
+            {
+                CharacterCreatorButtonBackgroundPreset? currentPreset = ResolveCurrentCustomPreset();
+                string defaultName = currentPreset == null ? "Background Copy" : currentPreset.Name + " Copy";
+                string? presetName = InputDialog.Show(
+                    effectiveOwner,
+                    "Duplicate preset name:",
+                    "Save Background Preset Duplicate",
+                    defaultName);
+                if (string.IsNullOrWhiteSpace(presetName))
+                {
+                    return;
+                }
+
+                if (!TrySaveAutomaticBackgroundCustomPreset(config, presetName, null, out CharacterCreatorButtonBackgroundPreset? savedPreset, out string? error))
+                {
+                    OceanyaMessageBox.Show(
+                        effectiveOwner,
+                        error ?? "Could not save duplicate preset.",
+                        "Background Preset",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                    return;
+                }
+
+                config.AutomaticBackgroundCustomPresetId = savedPreset.Id;
+                RefreshUi();
+            };
+
+            deletePresetButton.Click += (_, _) =>
+            {
+                CharacterCreatorButtonBackgroundPreset? currentPreset = ResolveCurrentCustomPreset();
+                if (currentPreset == null)
+                {
+                    return;
+                }
+
+                MessageBoxResult deleteResult = OceanyaMessageBox.Show(
+                    effectiveOwner,
+                    $"Delete the preset \"{currentPreset.Name}\"?",
+                    "Delete Background Preset",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+                if (deleteResult != MessageBoxResult.Yes)
+                {
+                    return;
+                }
+
+                DeleteAutomaticBackgroundCustomPreset(currentPreset.Id);
+                config.AutomaticBackgroundCustomPresetId = string.Empty;
+                RefreshUi();
+            };
+
+            RefreshUi();
+            return root;
+        }
+
         private Window CreateEmoteDialog(string title, double width, double height)
         {
             Window? ownerWindow = HostWindow ?? this;
@@ -11286,21 +12040,296 @@ namespace OceanyaClient
             return ButtonEffectsGenerationMode.UseAssetAsBothVersions;
         }
 
-        private static IReadOnlyList<AutoCompleteDropdownItem> GetAutomaticBackgroundOptionItems()
+        private static List<ButtonBackgroundGradientStop> CreateDefaultAutomaticGradientStops()
         {
-            return ButtonBackgroundOptionItems;
+            return new List<ButtonBackgroundGradientStop>
+            {
+                new ButtonBackgroundGradientStop { Position = 0.0, Color = Colors.White },
+                new ButtonBackgroundGradientStop { Position = 1.0, Color = Colors.Black }
+            };
         }
 
-        private static IReadOnlyList<string> GetAutomaticBackgroundOptions()
+        private static List<double> CreateDefaultAutomaticGradientMidpoints()
         {
-            return ButtonBackgroundOptionItems
-                .Where(static item => item.IsSelectable)
-                .Select(static item => item.Text)
+            return new List<double> { 0.5 };
+        }
+
+        private static ButtonIconGenerationConfig CreateDefaultAutomaticButtonIconConfig()
+        {
+            return new ButtonIconGenerationConfig
+            {
+                Mode = ButtonIconMode.Automatic,
+                EffectsMode = ButtonEffectsGenerationMode.Darken,
+                DarknessPercent = 50,
+                OpacityPercent = 75,
+                AutomaticBackgroundMode = ButtonAutomaticBackgroundMode.None,
+                AutomaticBackgroundPreset = DefaultButtonBackgroundPresetName,
+                AutomaticSolidColor = Colors.Transparent,
+                AutomaticGradientDirection = ButtonAutomaticGradientDirection.Horizontal,
+                AutomaticGradientStops = CreateDefaultAutomaticGradientStops(),
+                AutomaticGradientMidpoints = CreateDefaultAutomaticGradientMidpoints(),
+                AutomaticAddBorder = false,
+                AutomaticBorderColor = Colors.Black,
+                AutomaticBorderWidth = 5,
+                AutomaticBackgroundCustomPresetId = string.Empty
+            };
+        }
+
+        private static List<ButtonBackgroundGradientStop> CloneGradientStops(IEnumerable<ButtonBackgroundGradientStop>? stops)
+        {
+            return (stops ?? Array.Empty<ButtonBackgroundGradientStop>())
+                .Where(static stop => stop != null)
+                .Select(stop => new ButtonBackgroundGradientStop
+                {
+                    Position = stop.Position,
+                    Color = stop.Color
+                })
                 .ToList();
+        }
+
+        private static List<double> CloneGradientMidpoints(IEnumerable<double>? midpoints)
+        {
+            return (midpoints ?? Array.Empty<double>()).ToList();
+        }
+
+        private IReadOnlyList<CharacterCreatorButtonBackgroundPreset> GetSavedAutomaticBackgroundPresets()
+        {
+            return (SaveFile.Data.CharacterCreatorButtonBackgroundPresets ?? new List<CharacterCreatorButtonBackgroundPreset>())
+                .Where(static preset => preset != null && !string.IsNullOrWhiteSpace(preset.Name))
+                .OrderBy(preset => preset.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private IReadOnlyList<AutoCompleteDropdownItem> GetAutomaticBackgroundOptionItems()
+        {
+            List<AutoCompleteDropdownItem> items = new List<AutoCompleteDropdownItem>
+            {
+                new AutoCompleteDropdownItem("===Presets===", isSelectable: false),
+                new AutoCompleteDropdownItem(ButtonBackgroundNoOptionName)
+            };
+
+            foreach (string presetName in ButtonBackgroundPresetAssetMap.Keys)
+            {
+                items.Add(new AutoCompleteDropdownItem(presetName));
+            }
+
+            IReadOnlyList<CharacterCreatorButtonBackgroundPreset> customPresets = GetSavedAutomaticBackgroundPresets();
+            if (customPresets.Count > 0)
+            {
+                items.Add(new AutoCompleteDropdownItem(ButtonBackgroundSavedCustomCategoryName, isSelectable: false));
+                foreach (CharacterCreatorButtonBackgroundPreset preset in customPresets)
+                {
+                    items.Add(new AutoCompleteDropdownItem(GetAutomaticBackgroundCustomPresetDisplayName(preset)));
+                }
+            }
+
+            items.Add(new AutoCompleteDropdownItem("===Custom===", isSelectable: false));
+            items.Add(new AutoCompleteDropdownItem(ButtonBackgroundSolidColorOptionName));
+            items.Add(new AutoCompleteDropdownItem(ButtonBackgroundGradientOptionName));
+            items.Add(new AutoCompleteDropdownItem(ButtonBackgroundUploadOptionName));
+            return items;
+        }
+
+        private static string GetAutomaticBackgroundModeDisplayName(ButtonAutomaticBackgroundMode mode)
+        {
+            return mode switch
+            {
+                ButtonAutomaticBackgroundMode.SolidColor => ButtonBackgroundSolidColorOptionName,
+                ButtonAutomaticBackgroundMode.Upload => ButtonBackgroundUploadOptionName,
+                ButtonAutomaticBackgroundMode.Gradient => ButtonBackgroundGradientOptionName,
+                _ => ButtonBackgroundNoOptionName
+            };
+        }
+
+        private static string GetAutomaticBackgroundCustomPresetModeLabel(CharacterCreatorButtonBackgroundPresetMode mode)
+        {
+            return mode switch
+            {
+                CharacterCreatorButtonBackgroundPresetMode.Upload => ButtonBackgroundUploadOptionName,
+                CharacterCreatorButtonBackgroundPresetMode.Gradient => ButtonBackgroundGradientOptionName,
+                _ => ButtonBackgroundSolidColorOptionName
+            };
+        }
+
+        private static string GetAutomaticBackgroundCustomPresetDisplayName(CharacterCreatorButtonBackgroundPreset preset)
+        {
+            return $"{preset.Name} (Custom - {GetAutomaticBackgroundCustomPresetModeLabel(preset.Mode)})";
+        }
+
+        private bool TryResolveAutomaticBackgroundCustomPreset(
+            string selectionText,
+            [NotNullWhen(true)] out CharacterCreatorButtonBackgroundPreset? preset)
+        {
+            string selected = (selectionText ?? string.Empty).Trim();
+            preset = GetSavedAutomaticBackgroundPresets().FirstOrDefault(candidate =>
+                string.Equals(GetAutomaticBackgroundCustomPresetDisplayName(candidate), selected, StringComparison.OrdinalIgnoreCase));
+            return preset != null;
+        }
+
+        private static CharacterCreatorButtonBackgroundPresetMode ToSavedBackgroundPresetMode(ButtonAutomaticBackgroundMode mode)
+        {
+            return mode switch
+            {
+                ButtonAutomaticBackgroundMode.Upload => CharacterCreatorButtonBackgroundPresetMode.Upload,
+                ButtonAutomaticBackgroundMode.Gradient => CharacterCreatorButtonBackgroundPresetMode.Gradient,
+                _ => CharacterCreatorButtonBackgroundPresetMode.SolidColor
+            };
+        }
+
+        private static ButtonAutomaticGradientDirection ToUiGradientDirection(
+            CharacterCreatorButtonBackgroundGradientDirection direction)
+        {
+            return direction switch
+            {
+                CharacterCreatorButtonBackgroundGradientDirection.Vertical => ButtonAutomaticGradientDirection.Vertical,
+                CharacterCreatorButtonBackgroundGradientDirection.DiagonalTopLeftToBottomRight =>
+                    ButtonAutomaticGradientDirection.DiagonalTopLeftToBottomRight,
+                CharacterCreatorButtonBackgroundGradientDirection.DiagonalBottomLeftToTopRight =>
+                    ButtonAutomaticGradientDirection.DiagonalBottomLeftToTopRight,
+                CharacterCreatorButtonBackgroundGradientDirection.Radial => ButtonAutomaticGradientDirection.Radial,
+                _ => ButtonAutomaticGradientDirection.Horizontal
+            };
+        }
+
+        private static CharacterCreatorButtonBackgroundGradientDirection ToSavedGradientDirection(
+            ButtonAutomaticGradientDirection direction)
+        {
+            return direction switch
+            {
+                ButtonAutomaticGradientDirection.Vertical => CharacterCreatorButtonBackgroundGradientDirection.Vertical,
+                ButtonAutomaticGradientDirection.DiagonalTopLeftToBottomRight =>
+                    CharacterCreatorButtonBackgroundGradientDirection.DiagonalTopLeftToBottomRight,
+                ButtonAutomaticGradientDirection.DiagonalBottomLeftToTopRight =>
+                    CharacterCreatorButtonBackgroundGradientDirection.DiagonalBottomLeftToTopRight,
+                ButtonAutomaticGradientDirection.Radial => CharacterCreatorButtonBackgroundGradientDirection.Radial,
+                _ => CharacterCreatorButtonBackgroundGradientDirection.Horizontal
+            };
+        }
+
+        private static void NormalizeAutomaticBackgroundConfig(ButtonIconGenerationConfig config)
+        {
+            config.AutomaticBackgroundPreset = string.IsNullOrWhiteSpace(config.AutomaticBackgroundPreset)
+                ? DefaultButtonBackgroundPresetName
+                : config.AutomaticBackgroundPreset.Trim();
+            config.AutomaticBackgroundCustomPresetId = config.AutomaticBackgroundCustomPresetId?.Trim() ?? string.Empty;
+            config.AutomaticBackgroundUploadPath = string.IsNullOrWhiteSpace(config.AutomaticBackgroundUploadPath)
+                ? null
+                : config.AutomaticBackgroundUploadPath.Trim();
+            config.AutomaticGradientStops = CloneGradientStops(config.AutomaticGradientStops)
+                .OrderBy(stop => stop.Position)
+                .ToList();
+            if (config.AutomaticGradientStops.Count < 2)
+            {
+                config.AutomaticGradientStops = CreateDefaultAutomaticGradientStops();
+            }
+
+            config.AutomaticGradientMidpoints = CloneGradientMidpoints(config.AutomaticGradientMidpoints);
+            List<double> normalizedMidpoints = new List<double>();
+            for (int i = 0; i < config.AutomaticGradientStops.Count - 1; i++)
+            {
+                double left = Math.Clamp(config.AutomaticGradientStops[i].Position, 0.0, 1.0);
+                double right = Math.Clamp(config.AutomaticGradientStops[i + 1].Position, 0.0, 1.0);
+                config.AutomaticGradientStops[i].Position = left;
+                config.AutomaticGradientStops[i + 1].Position = right;
+                double midpoint = i < config.AutomaticGradientMidpoints.Count
+                    ? config.AutomaticGradientMidpoints[i]
+                    : left + ((right - left) * 0.5);
+                normalizedMidpoints.Add(Math.Clamp(midpoint, left, right));
+            }
+            config.AutomaticGradientMidpoints = normalizedMidpoints;
+            config.AutomaticBorderWidth = Math.Clamp(config.AutomaticBorderWidth, 1, 32);
+        }
+
+        private void ApplyAutomaticBackgroundCustomPreset(
+            CharacterCreatorButtonBackgroundPreset preset,
+            ButtonIconGenerationConfig config)
+        {
+            config.AutomaticBackgroundMode = preset.Mode switch
+            {
+                CharacterCreatorButtonBackgroundPresetMode.Upload => ButtonAutomaticBackgroundMode.Upload,
+                CharacterCreatorButtonBackgroundPresetMode.Gradient => ButtonAutomaticBackgroundMode.Gradient,
+                _ => ButtonAutomaticBackgroundMode.SolidColor
+            };
+            config.AutomaticBackgroundCustomPresetId = preset.Id?.Trim() ?? string.Empty;
+            if (TryParseColor(preset.SolidColor, out Color solidColor))
+            {
+                config.AutomaticSolidColor = solidColor;
+            }
+            config.AutomaticBackgroundUploadPath = string.IsNullOrWhiteSpace(preset.UploadPath) ? null : preset.UploadPath.Trim();
+            config.AutomaticGradientDirection = ToUiGradientDirection(preset.GradientDirection);
+            config.AutomaticGradientStops = (preset.GradientStops ?? new List<CharacterCreatorButtonBackgroundGradientStop>())
+                .Select(stop =>
+                {
+                    Color stopColor = Colors.White;
+                    if (!TryParseColor(stop.Color, out stopColor))
+                    {
+                        stopColor = Colors.White;
+                    }
+
+                    return new ButtonBackgroundGradientStop
+                    {
+                        Position = Math.Clamp(stop.Position, 0.0, 1.0),
+                        Color = stopColor
+                    };
+                })
+                .OrderBy(stop => stop.Position)
+                .ToList();
+            config.AutomaticGradientMidpoints = (preset.GradientMidpoints ?? new List<double>())
+                .Select(value => Math.Clamp(value, 0.0, 1.0))
+                .ToList();
+            config.AutomaticAddBorder = preset.AddBorder;
+            if (TryParseColor(preset.BorderColor, out Color borderColor))
+            {
+                config.AutomaticBorderColor = borderColor;
+            }
+            config.AutomaticBorderWidth = Math.Clamp(preset.BorderWidth, 1, 32);
+            NormalizeAutomaticBackgroundConfig(config);
+        }
+
+        private CharacterCreatorButtonBackgroundPreset BuildAutomaticBackgroundCustomPreset(
+            ButtonIconGenerationConfig config,
+            string name,
+            string? existingId = null)
+        {
+            NormalizeAutomaticBackgroundConfig(config);
+            return new CharacterCreatorButtonBackgroundPreset
+            {
+                Id = string.IsNullOrWhiteSpace(existingId) ? Guid.NewGuid().ToString("N") : existingId.Trim(),
+                Name = name.Trim(),
+                Mode = ToSavedBackgroundPresetMode(config.AutomaticBackgroundMode),
+                SolidColor = ToHexColor(config.AutomaticSolidColor),
+                UploadPath = config.AutomaticBackgroundUploadPath?.Trim() ?? string.Empty,
+                GradientDirection = ToSavedGradientDirection(config.AutomaticGradientDirection),
+                GradientStops = config.AutomaticGradientStops
+                    .Select(stop => new CharacterCreatorButtonBackgroundGradientStop
+                    {
+                        Color = ToHexColor(stop.Color),
+                        Position = Math.Clamp(stop.Position, 0.0, 1.0)
+                    })
+                    .ToList(),
+                GradientMidpoints = config.AutomaticGradientMidpoints
+                    .Select(value => Math.Clamp(value, 0.0, 1.0))
+                    .ToList(),
+                AddBorder = config.AutomaticAddBorder,
+                BorderColor = ToHexColor(config.AutomaticBorderColor),
+                BorderWidth = Math.Clamp(config.AutomaticBorderWidth, 1, 32)
+            };
         }
 
         private static string GetAutomaticBackgroundSelectionName(ButtonIconGenerationConfig config)
         {
+            NormalizeAutomaticBackgroundConfig(config);
+            if (!string.IsNullOrWhiteSpace(config.AutomaticBackgroundCustomPresetId)
+                && SaveFile.Data.CharacterCreatorButtonBackgroundPresets != null)
+            {
+                CharacterCreatorButtonBackgroundPreset? customPreset = SaveFile.Data.CharacterCreatorButtonBackgroundPresets
+                    .FirstOrDefault(preset => string.Equals(preset.Id, config.AutomaticBackgroundCustomPresetId, StringComparison.OrdinalIgnoreCase));
+                if (customPreset != null)
+                {
+                    return GetAutomaticBackgroundCustomPresetDisplayName(customPreset);
+                }
+            }
+
             return config.AutomaticBackgroundMode switch
             {
                 ButtonAutomaticBackgroundMode.PresetList => ButtonBackgroundPresetAssetMap.ContainsKey(config.AutomaticBackgroundPreset)
@@ -11308,28 +12337,39 @@ namespace OceanyaClient
                     : ButtonBackgroundPresetAssetMap.Keys.FirstOrDefault() ?? ButtonBackgroundNoOptionName,
                 ButtonAutomaticBackgroundMode.SolidColor => ButtonBackgroundSolidColorOptionName,
                 ButtonAutomaticBackgroundMode.Upload => ButtonBackgroundUploadOptionName,
+                ButtonAutomaticBackgroundMode.Gradient => ButtonBackgroundGradientOptionName,
                 _ => ButtonBackgroundNoOptionName
             };
         }
 
-        private static void ApplyAutomaticBackgroundSelection(string selectionText, ButtonIconGenerationConfig config)
+        private void ApplyAutomaticBackgroundSelection(string selectionText, ButtonIconGenerationConfig config)
         {
             string selected = (selectionText ?? string.Empty).Trim();
             if (string.Equals(selected, ButtonBackgroundSolidColorOptionName, StringComparison.OrdinalIgnoreCase))
             {
                 config.AutomaticBackgroundMode = ButtonAutomaticBackgroundMode.SolidColor;
+                config.AutomaticBackgroundCustomPresetId = string.Empty;
+                return;
+            }
+
+            if (string.Equals(selected, ButtonBackgroundGradientOptionName, StringComparison.OrdinalIgnoreCase))
+            {
+                config.AutomaticBackgroundMode = ButtonAutomaticBackgroundMode.Gradient;
+                config.AutomaticBackgroundCustomPresetId = string.Empty;
                 return;
             }
 
             if (string.Equals(selected, ButtonBackgroundUploadOptionName, StringComparison.OrdinalIgnoreCase))
             {
                 config.AutomaticBackgroundMode = ButtonAutomaticBackgroundMode.Upload;
+                config.AutomaticBackgroundCustomPresetId = string.Empty;
                 return;
             }
 
             if (string.Equals(selected, ButtonBackgroundNoOptionName, StringComparison.OrdinalIgnoreCase))
             {
                 config.AutomaticBackgroundMode = ButtonAutomaticBackgroundMode.None;
+                config.AutomaticBackgroundCustomPresetId = string.Empty;
                 return;
             }
 
@@ -11337,10 +12377,18 @@ namespace OceanyaClient
             {
                 config.AutomaticBackgroundMode = ButtonAutomaticBackgroundMode.PresetList;
                 config.AutomaticBackgroundPreset = selected;
+                config.AutomaticBackgroundCustomPresetId = string.Empty;
+                return;
+            }
+
+            if (TryResolveAutomaticBackgroundCustomPreset(selected, out CharacterCreatorButtonBackgroundPreset? customPreset))
+            {
+                ApplyAutomaticBackgroundCustomPreset(customPreset, config);
                 return;
             }
 
             config.AutomaticBackgroundMode = ButtonAutomaticBackgroundMode.None;
+            config.AutomaticBackgroundCustomPresetId = string.Empty;
         }
 
         private static string ResolveBackgroundPresetPath(string? presetName)
@@ -11352,6 +12400,224 @@ namespace OceanyaClient
             }
 
             return ButtonBackgroundPresetAssetMap.Values.FirstOrDefault() ?? string.Empty;
+        }
+
+        private static string GetButtonBackgroundGradientDirectionName(ButtonAutomaticGradientDirection direction)
+        {
+            return direction switch
+            {
+                ButtonAutomaticGradientDirection.Vertical => "Vertical",
+                ButtonAutomaticGradientDirection.DiagonalTopLeftToBottomRight => "Diagonal (Top left to bottom right)",
+                ButtonAutomaticGradientDirection.DiagonalBottomLeftToTopRight => "Diagonal (Bottom left to top right)",
+                ButtonAutomaticGradientDirection.Radial => "Radial",
+                _ => "Horizontal"
+            };
+        }
+
+        private static ButtonAutomaticGradientDirection ParseButtonBackgroundGradientDirection(string? text)
+        {
+            string selected = (text ?? string.Empty).Trim();
+            if (string.Equals(selected, "Vertical", StringComparison.OrdinalIgnoreCase))
+            {
+                return ButtonAutomaticGradientDirection.Vertical;
+            }
+
+            if (string.Equals(selected, "Diagonal (Top left to bottom right)", StringComparison.OrdinalIgnoreCase))
+            {
+                return ButtonAutomaticGradientDirection.DiagonalTopLeftToBottomRight;
+            }
+
+            if (string.Equals(selected, "Diagonal (Bottom left to top right)", StringComparison.OrdinalIgnoreCase))
+            {
+                return ButtonAutomaticGradientDirection.DiagonalBottomLeftToTopRight;
+            }
+
+            if (string.Equals(selected, "Radial", StringComparison.OrdinalIgnoreCase))
+            {
+                return ButtonAutomaticGradientDirection.Radial;
+            }
+
+            return ButtonAutomaticGradientDirection.Horizontal;
+        }
+
+        private static Color BlendColors(Color left, Color right, double ratio)
+        {
+            double clamped = Math.Clamp(ratio, 0.0, 1.0);
+            return Color.FromArgb(
+                (byte)Math.Round(left.A + ((right.A - left.A) * clamped)),
+                (byte)Math.Round(left.R + ((right.R - left.R) * clamped)),
+                (byte)Math.Round(left.G + ((right.G - left.G) * clamped)),
+                (byte)Math.Round(left.B + ((right.B - left.B) * clamped)));
+        }
+
+        private static Color SampleAutomaticGradientColor(ButtonIconGenerationConfig config, double position)
+        {
+            NormalizeAutomaticBackgroundConfig(config);
+            double clampedPosition = Math.Clamp(position, 0.0, 1.0);
+            if (config.AutomaticGradientStops.Count == 0)
+            {
+                return Colors.Transparent;
+            }
+
+            if (clampedPosition <= config.AutomaticGradientStops[0].Position)
+            {
+                return config.AutomaticGradientStops[0].Color;
+            }
+
+            for (int i = 0; i < config.AutomaticGradientStops.Count - 1; i++)
+            {
+                ButtonBackgroundGradientStop left = config.AutomaticGradientStops[i];
+                ButtonBackgroundGradientStop right = config.AutomaticGradientStops[i + 1];
+                if (clampedPosition <= right.Position || i == config.AutomaticGradientStops.Count - 2)
+                {
+                    double span = Math.Max(0.0001, right.Position - left.Position);
+                    double ratio = (clampedPosition - left.Position) / span;
+                    return BlendColors(left.Color, right.Color, ratio);
+                }
+            }
+
+            return config.AutomaticGradientStops[^1].Color;
+        }
+
+        private static Brush? CreateAutomaticGradientBrush(ButtonIconGenerationConfig config)
+        {
+            NormalizeAutomaticBackgroundConfig(config);
+            GradientStopCollection stops = new GradientStopCollection();
+            for (int i = 0; i < config.AutomaticGradientStops.Count; i++)
+            {
+                ButtonBackgroundGradientStop stop = config.AutomaticGradientStops[i];
+                stops.Add(new GradientStop(stop.Color, Math.Clamp(stop.Position, 0.0, 1.0)));
+                if (i < config.AutomaticGradientStops.Count - 1)
+                {
+                    double midpoint = i < config.AutomaticGradientMidpoints.Count
+                        ? config.AutomaticGradientMidpoints[i]
+                        : stop.Position + ((config.AutomaticGradientStops[i + 1].Position - stop.Position) * 0.5);
+                    stops.Add(new GradientStop(
+                        BlendColors(stop.Color, config.AutomaticGradientStops[i + 1].Color, 0.5),
+                        Math.Clamp(midpoint, stop.Position, config.AutomaticGradientStops[i + 1].Position)));
+                }
+            }
+
+            Brush brush;
+            if (config.AutomaticGradientDirection == ButtonAutomaticGradientDirection.Radial)
+            {
+                brush = new RadialGradientBrush(stops)
+                {
+                    Center = new Point(0.5, 0.5),
+                    GradientOrigin = new Point(0.5, 0.5),
+                    RadiusX = 0.8,
+                    RadiusY = 0.8
+                };
+            }
+            else
+            {
+                (Point startPoint, Point endPoint) = config.AutomaticGradientDirection switch
+                {
+                    ButtonAutomaticGradientDirection.Vertical => (new Point(0.5, 0.0), new Point(0.5, 1.0)),
+                    ButtonAutomaticGradientDirection.DiagonalTopLeftToBottomRight =>
+                        (new Point(0.0, 0.0), new Point(1.0, 1.0)),
+                    ButtonAutomaticGradientDirection.DiagonalBottomLeftToTopRight =>
+                        (new Point(0.0, 1.0), new Point(1.0, 0.0)),
+                    _ => (new Point(0.0, 0.5), new Point(1.0, 0.5))
+                };
+                brush = new LinearGradientBrush(stops, startPoint, endPoint);
+            }
+
+            brush.Freeze();
+            return brush;
+        }
+
+        private static bool DrawAutomaticBackground(DrawingContext drawingContext, ButtonIconGenerationConfig config, Rect bounds)
+        {
+            NormalizeAutomaticBackgroundConfig(config);
+            bool drewAnyBackground = false;
+            if (config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.PresetList)
+            {
+                string presetPath = ResolveBackgroundPresetPath(config.AutomaticBackgroundPreset);
+                if (TryLoadButtonBitmap(presetPath, out BitmapSource? presetBackground, out _) && presetBackground != null)
+                {
+                    DrawImageContain(drawingContext, presetBackground, bounds);
+                    drewAnyBackground = true;
+                }
+            }
+            else if (config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.SolidColor)
+            {
+                drawingContext.DrawRectangle(new SolidColorBrush(config.AutomaticSolidColor), null, bounds);
+                drewAnyBackground = true;
+            }
+            else if (config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.Gradient)
+            {
+                Brush? gradientBrush = CreateAutomaticGradientBrush(config);
+                if (gradientBrush != null)
+                {
+                    drawingContext.DrawRectangle(gradientBrush, null, bounds);
+                    drewAnyBackground = true;
+                }
+            }
+            else if (config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.Upload
+                && TryLoadButtonBitmap(config.AutomaticBackgroundUploadPath ?? string.Empty, out BitmapSource? uploadedBackground, out _)
+                && uploadedBackground != null)
+            {
+                DrawImageContain(drawingContext, uploadedBackground, bounds);
+                drewAnyBackground = true;
+            }
+
+            bool supportsBorder = config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.SolidColor
+                || config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.Upload
+                || config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.Gradient;
+            if (supportsBorder && config.AutomaticAddBorder)
+            {
+                double thickness = Math.Clamp(config.AutomaticBorderWidth, 1, 32);
+                Rect borderRect = new Rect(
+                    bounds.X + (thickness * 0.5),
+                    bounds.Y + (thickness * 0.5),
+                    Math.Max(0, bounds.Width - thickness),
+                    Math.Max(0, bounds.Height - thickness));
+                drawingContext.DrawRectangle(
+                    null,
+                    new Pen(new SolidColorBrush(config.AutomaticBorderColor), thickness),
+                    borderRect);
+                drewAnyBackground = true;
+            }
+
+            return drewAnyBackground;
+        }
+
+        private static BitmapSource? BuildAutomaticBackgroundPreviewBitmap(
+            ButtonIconGenerationConfig config,
+            int pixelWidth = 280,
+            int pixelHeight = 160)
+        {
+            NormalizeAutomaticBackgroundConfig(config);
+            bool hasPreviewableBackground = config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.PresetList
+                || config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.SolidColor
+                || config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.Gradient
+                || config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.Upload;
+            if (!hasPreviewableBackground)
+            {
+                return null;
+            }
+
+            return RenderBitmap(pixelWidth, pixelHeight, drawingContext =>
+            {
+                Rect bounds = new Rect(0, 0, pixelWidth, pixelHeight);
+                drawingContext.DrawRectangle(
+                    new SolidColorBrush(Color.FromArgb(24, 255, 255, 255)),
+                    null,
+                    bounds);
+                _ = DrawAutomaticBackground(drawingContext, config, bounds);
+            });
+        }
+
+        private static string GetAutomaticBackgroundPreviewEmptyText(ButtonIconGenerationConfig config)
+        {
+            return config.AutomaticBackgroundMode switch
+            {
+                ButtonAutomaticBackgroundMode.None => "No background selected",
+                ButtonAutomaticBackgroundMode.Upload => "No image selected",
+                ButtonAutomaticBackgroundMode.PresetList => "Preset missing",
+                _ => "Preview unavailable"
+            };
         }
 
         private static string ToHexColor(Color color)
@@ -11706,6 +12972,11 @@ namespace OceanyaClient
                 width = Math.Max(width, presetImage.PixelWidth);
                 height = Math.Max(height, presetImage.PixelHeight);
             }
+            else if (config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.Gradient)
+            {
+                width = Math.Max(width, 128);
+                height = Math.Max(height, 128);
+            }
             else if (TryLoadButtonBitmap(config.AutomaticBackgroundUploadPath ?? string.Empty, out BitmapSource? bgImage, out _)
                 && bgImage != null)
             {
@@ -11716,24 +12987,7 @@ namespace OceanyaClient
             BitmapSource autoOn = RenderBitmap(width, height, drawingContext =>
             {
                 Rect bounds = new Rect(0, 0, width, height);
-                if (config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.PresetList)
-                {
-                    string presetPath = ResolveBackgroundPresetPath(config.AutomaticBackgroundPreset);
-                    if (TryLoadButtonBitmap(presetPath, out BitmapSource? presetBackground, out _) && presetBackground != null)
-                    {
-                        DrawImageContain(drawingContext, presetBackground, bounds);
-                    }
-                }
-                else if (config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.SolidColor)
-                {
-                    drawingContext.DrawRectangle(new SolidColorBrush(config.AutomaticSolidColor), null, bounds);
-                }
-                else if (config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.Upload
-                    && TryLoadButtonBitmap(config.AutomaticBackgroundUploadPath ?? string.Empty, out BitmapSource? uploadedBackground, out _)
-                    && uploadedBackground != null)
-                {
-                    DrawImageContain(drawingContext, uploadedBackground, bounds);
-                }
+                _ = DrawAutomaticBackground(drawingContext, config, bounds);
 
                 if (config.AutomaticCutEmoteImage != null)
                 {
@@ -11769,6 +13023,13 @@ namespace OceanyaClient
                 AutomaticBackgroundPreset = emote.ButtonAutomaticBackgroundPreset,
                 AutomaticSolidColor = emote.ButtonAutomaticSolidColor,
                 AutomaticBackgroundUploadPath = emote.ButtonAutomaticBackgroundUploadAssetSourcePath,
+                AutomaticGradientDirection = emote.ButtonAutomaticGradientDirection,
+                AutomaticGradientStops = CloneGradientStops(emote.ButtonAutomaticGradientStops),
+                AutomaticGradientMidpoints = CloneGradientMidpoints(emote.ButtonAutomaticGradientMidpoints),
+                AutomaticAddBorder = emote.ButtonAutomaticAddBorder,
+                AutomaticBorderColor = emote.ButtonAutomaticBorderColor,
+                AutomaticBorderWidth = emote.ButtonAutomaticBorderWidth,
+                AutomaticBackgroundCustomPresetId = emote.ButtonAutomaticBackgroundCustomPresetId,
                 AutomaticCutEmoteImage = CloneBitmapSource(emote.ButtonAutomaticCutEmoteImage)
             };
         }
@@ -11787,6 +13048,13 @@ namespace OceanyaClient
             emote.ButtonAutomaticBackgroundPreset = config.AutomaticBackgroundPreset;
             emote.ButtonAutomaticSolidColor = config.AutomaticSolidColor;
             emote.ButtonAutomaticBackgroundUploadAssetSourcePath = config.AutomaticBackgroundUploadPath;
+            emote.ButtonAutomaticGradientDirection = config.AutomaticGradientDirection;
+            emote.ButtonAutomaticGradientStops = CloneGradientStops(config.AutomaticGradientStops);
+            emote.ButtonAutomaticGradientMidpoints = CloneGradientMidpoints(config.AutomaticGradientMidpoints);
+            emote.ButtonAutomaticAddBorder = config.AutomaticAddBorder;
+            emote.ButtonAutomaticBorderColor = config.AutomaticBorderColor;
+            emote.ButtonAutomaticBorderWidth = config.AutomaticBorderWidth;
+            emote.ButtonAutomaticBackgroundCustomPresetId = config.AutomaticBackgroundCustomPresetId;
             emote.ButtonAutomaticCutEmoteImage = CloneBitmapSource(config.AutomaticCutEmoteImage);
         }
 
@@ -12144,93 +13412,7 @@ namespace OceanyaClient
                     }
 
                     TabItem backgroundTab = new TabItem { Header = "Background" };
-                    StackPanel backgroundContent = new StackPanel { Margin = new Thickness(8, 6, 8, 8) };
-                    AutoCompleteDropdownField backgroundDropdown = CreateDialogAutoCompleteField(
-                        GetAutomaticBackgroundOptionItems(),
-                        GetAutomaticBackgroundSelectionName(config),
-                        "Background config",
-                        isReadOnly: true,
-                        preserveItemOrder: true);
-                    backgroundDropdown.TextValueChanged += (_, _) =>
-                    {
-                        ApplyAutomaticBackgroundSelection(backgroundDropdown.Text, config);
-                        RefreshFields();
-                    };
-                    AddSimpleField(backgroundContent, "Background config", backgroundDropdown);
-
-                    if (config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.PresetList)
-                    {
-                        string presetPath = ResolveBackgroundPresetPath(config.AutomaticBackgroundPreset);
-                        Grid presetGrid = new Grid();
-                        presetGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                        presetGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                        Button presetButton = CreateDialogButton("Preset image (locked)", isPrimary: false);
-                        presetButton.Width = 170;
-                        presetButton.IsEnabled = false;
-                        TextBlock presetPathText = new TextBlock
-                        {
-                            Margin = new Thickness(10, 0, 0, 0),
-                            VerticalAlignment = VerticalAlignment.Center,
-                            Foreground = new SolidColorBrush(Color.FromRgb(198, 212, 224)),
-                            Text = string.IsNullOrWhiteSpace(presetPath)
-                                ? "Preset missing"
-                                : Path.GetFileName(presetPath)
-                        };
-                        Grid.SetColumn(presetPathText, 1);
-                        presetGrid.Children.Add(presetButton);
-                        presetGrid.Children.Add(presetPathText);
-                        AddSimpleField(backgroundContent, "Background image", presetGrid);
-                    }
-                    else if (config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.SolidColor)
-                    {
-                        Button color = CreateDialogButton("Pick color...", isPrimary: false);
-                        color.Width = 130;
-                        color.Click += (_, _) =>
-                        {
-                            Color? picked = ShowAdvancedColorPickerDialog(config.AutomaticSolidColor);
-                            if (picked.HasValue)
-                            {
-                                config.AutomaticSolidColor = picked.Value;
-                                RefreshFields();
-                            }
-                        };
-                        AddSimpleField(backgroundContent, "Solid Color", color);
-                    }
-                    else if (config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.Upload)
-                    {
-                        Grid backgroundUploadGrid = new Grid();
-                        backgroundUploadGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                        backgroundUploadGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                        Button uploadBackground = CreateDialogButton("Upload background...", isPrimary: false);
-                        uploadBackground.Width = 170;
-                        uploadBackground.Click += (_, _) =>
-                        {
-                            OpenFileDialog picker = new OpenFileDialog
-                            {
-                                Title = "Select background image",
-                                Filter = "Image files (*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp;*.apng)|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp;*.apng|All files (*.*)|*.*"
-                            };
-                            if (picker.ShowDialog() == true)
-                            {
-                                config.AutomaticBackgroundUploadPath = picker.FileName;
-                                RefreshFields();
-                            }
-                        };
-                        TextBlock backgroundPathText = new TextBlock
-                        {
-                            Margin = new Thickness(10, 0, 0, 0),
-                            VerticalAlignment = VerticalAlignment.Center,
-                            Foreground = new SolidColorBrush(Color.FromRgb(198, 212, 224)),
-                            Text = string.IsNullOrWhiteSpace(config.AutomaticBackgroundUploadPath)
-                                ? "No image selected"
-                                : Path.GetFileName(config.AutomaticBackgroundUploadPath)
-                        };
-                        Grid.SetColumn(backgroundPathText, 1);
-                        backgroundUploadGrid.Children.Add(uploadBackground);
-                        backgroundUploadGrid.Children.Add(backgroundPathText);
-                        AddSimpleField(backgroundContent, "Background image", backgroundUploadGrid);
-                    }
-
+                    FrameworkElement backgroundContent = BuildAutomaticBackgroundEditor(config, RefreshPreview, dialog);
                     backgroundTab.Content = backgroundContent;
                     tabs.Items.Add(backgroundTab);
 
@@ -15030,6 +16212,17 @@ namespace OceanyaClient
         private string buttonAutomaticBackgroundPreset = "Oceanya BG";
         private Color buttonAutomaticSolidColor = Colors.Transparent;
         private string? buttonAutomaticBackgroundUploadAssetSourcePath;
+        private ButtonAutomaticGradientDirection buttonAutomaticGradientDirection = ButtonAutomaticGradientDirection.Horizontal;
+        private List<ButtonBackgroundGradientStop> buttonAutomaticGradientStops = new List<ButtonBackgroundGradientStop>
+        {
+            new ButtonBackgroundGradientStop { Position = 0.0, Color = Colors.White },
+            new ButtonBackgroundGradientStop { Position = 1.0, Color = Colors.Black }
+        };
+        private List<double> buttonAutomaticGradientMidpoints = new List<double> { 0.5 };
+        private bool buttonAutomaticAddBorder;
+        private Color buttonAutomaticBorderColor = Colors.Black;
+        private int buttonAutomaticBorderWidth = 5;
+        private string buttonAutomaticBackgroundCustomPresetId = string.Empty;
         private BitmapSource? buttonAutomaticCutEmoteImage;
         private string? sfxAssetSourcePath;
         private ImageSource? preAnimationPreview;
@@ -15336,6 +16529,48 @@ namespace OceanyaClient
             set => SetField(ref buttonAutomaticBackgroundUploadAssetSourcePath, value);
         }
 
+        public ButtonAutomaticGradientDirection ButtonAutomaticGradientDirection
+        {
+            get => buttonAutomaticGradientDirection;
+            set => SetField(ref buttonAutomaticGradientDirection, value);
+        }
+
+        public List<ButtonBackgroundGradientStop> ButtonAutomaticGradientStops
+        {
+            get => buttonAutomaticGradientStops;
+            set => SetField(ref buttonAutomaticGradientStops, value ?? new List<ButtonBackgroundGradientStop>());
+        }
+
+        public List<double> ButtonAutomaticGradientMidpoints
+        {
+            get => buttonAutomaticGradientMidpoints;
+            set => SetField(ref buttonAutomaticGradientMidpoints, value ?? new List<double>());
+        }
+
+        public bool ButtonAutomaticAddBorder
+        {
+            get => buttonAutomaticAddBorder;
+            set => SetField(ref buttonAutomaticAddBorder, value);
+        }
+
+        public Color ButtonAutomaticBorderColor
+        {
+            get => buttonAutomaticBorderColor;
+            set => SetField(ref buttonAutomaticBorderColor, value);
+        }
+
+        public int ButtonAutomaticBorderWidth
+        {
+            get => buttonAutomaticBorderWidth;
+            set => SetField(ref buttonAutomaticBorderWidth, Math.Clamp(value, 1, 32));
+        }
+
+        public string ButtonAutomaticBackgroundCustomPresetId
+        {
+            get => buttonAutomaticBackgroundCustomPresetId;
+            set => SetField(ref buttonAutomaticBackgroundCustomPresetId, value ?? string.Empty);
+        }
+
         public BitmapSource? ButtonAutomaticCutEmoteImage
         {
             get => buttonAutomaticCutEmoteImage;
@@ -15431,6 +16666,17 @@ namespace OceanyaClient
             ButtonAutomaticBackgroundPreset = "Oceanya BG";
             ButtonAutomaticSolidColor = Colors.Transparent;
             ButtonAutomaticBackgroundUploadAssetSourcePath = null;
+            ButtonAutomaticGradientDirection = ButtonAutomaticGradientDirection.Horizontal;
+            ButtonAutomaticGradientStops = new List<ButtonBackgroundGradientStop>
+            {
+                new ButtonBackgroundGradientStop { Position = 0.0, Color = Colors.White },
+                new ButtonBackgroundGradientStop { Position = 1.0, Color = Colors.Black }
+            };
+            ButtonAutomaticGradientMidpoints = new List<double> { 0.5 };
+            ButtonAutomaticAddBorder = false;
+            ButtonAutomaticBorderColor = Colors.Black;
+            ButtonAutomaticBorderWidth = 5;
+            ButtonAutomaticBackgroundCustomPresetId = string.Empty;
             ButtonAutomaticCutEmoteImage = null;
         }
 
@@ -15787,7 +17033,23 @@ namespace OceanyaClient
         PresetList = 0,
         SolidColor = 1,
         Upload = 2,
-        None = 3
+        None = 3,
+        Gradient = 4
+    }
+
+    public enum ButtonAutomaticGradientDirection
+    {
+        Horizontal = 0,
+        Vertical = 1,
+        DiagonalTopLeftToBottomRight = 2,
+        DiagonalBottomLeftToTopRight = 3,
+        Radial = 4
+    }
+
+    public sealed class ButtonBackgroundGradientStop
+    {
+        public double Position { get; set; }
+        public Color Color { get; set; } = Colors.Transparent;
     }
 
     public sealed class ButtonIconGenerationConfig
@@ -15804,6 +17066,19 @@ namespace OceanyaClient
         public string AutomaticBackgroundPreset { get; set; } = "Oceanya BG";
         public Color AutomaticSolidColor { get; set; } = Colors.Transparent;
         public string? AutomaticBackgroundUploadPath { get; set; }
+        public ButtonAutomaticGradientDirection AutomaticGradientDirection { get; set; } =
+            ButtonAutomaticGradientDirection.Horizontal;
+        public List<ButtonBackgroundGradientStop> AutomaticGradientStops { get; set; } =
+            new List<ButtonBackgroundGradientStop>
+            {
+                new ButtonBackgroundGradientStop { Position = 0.0, Color = Colors.White },
+                new ButtonBackgroundGradientStop { Position = 1.0, Color = Colors.Black }
+            };
+        public List<double> AutomaticGradientMidpoints { get; set; } = new List<double> { 0.5 };
+        public bool AutomaticAddBorder { get; set; }
+        public Color AutomaticBorderColor { get; set; } = Colors.Black;
+        public int AutomaticBorderWidth { get; set; } = 5;
+        public string AutomaticBackgroundCustomPresetId { get; set; } = string.Empty;
         public BitmapSource? AutomaticCutEmoteImage { get; set; }
     }
 

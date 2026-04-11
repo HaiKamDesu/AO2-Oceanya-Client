@@ -198,6 +198,46 @@ namespace OceanyaClient
         public bool UsesSquareCoordinates { get; set; }
     }
 
+    public enum CharacterCreatorButtonBackgroundPresetMode
+    {
+        SolidColor = 0,
+        Upload = 1,
+        Gradient = 2
+    }
+
+    public enum CharacterCreatorButtonBackgroundGradientDirection
+    {
+        Horizontal = 0,
+        Vertical = 1,
+        DiagonalTopLeftToBottomRight = 2,
+        DiagonalBottomLeftToTopRight = 3,
+        Radial = 4
+    }
+
+    public class CharacterCreatorButtonBackgroundGradientStop
+    {
+        public string Color { get; set; } = "#FFFFFFFF";
+        public double Position { get; set; }
+    }
+
+    public class CharacterCreatorButtonBackgroundPreset
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public CharacterCreatorButtonBackgroundPresetMode Mode { get; set; } =
+            CharacterCreatorButtonBackgroundPresetMode.SolidColor;
+        public string SolidColor { get; set; } = "#00000000";
+        public string UploadPath { get; set; } = string.Empty;
+        public CharacterCreatorButtonBackgroundGradientDirection GradientDirection { get; set; } =
+            CharacterCreatorButtonBackgroundGradientDirection.Horizontal;
+        public List<CharacterCreatorButtonBackgroundGradientStop> GradientStops { get; set; } =
+            new List<CharacterCreatorButtonBackgroundGradientStop>();
+        public List<double> GradientMidpoints { get; set; } = new List<double>();
+        public bool AddBorder { get; set; }
+        public string BorderColor { get; set; } = "#FF000000";
+        public int BorderWidth { get; set; } = 5;
+    }
+
     public class SaveData
     {
         //Initial Configuration
@@ -249,6 +289,8 @@ namespace OceanyaClient
             new Dictionary<string, VisualizerWindowState>(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, CharacterCreatorCutSelectionState> CharacterCreatorCutSelections { get; set; } =
             new Dictionary<string, CharacterCreatorCutSelectionState>(StringComparer.OrdinalIgnoreCase);
+        public List<CharacterCreatorButtonBackgroundPreset> CharacterCreatorButtonBackgroundPresets { get; set; } =
+            new List<CharacterCreatorButtonBackgroundPreset>();
     }
 
     public static class SaveFile
@@ -478,6 +520,9 @@ namespace OceanyaClient
                     pair => pair.Key,
                     pair => pair.Value,
                     StringComparer.OrdinalIgnoreCase);
+            data.CharacterCreatorButtonBackgroundPresets ??= new List<CharacterCreatorButtonBackgroundPreset>();
+            data.CharacterCreatorButtonBackgroundPresets = NormalizeButtonBackgroundPresets(
+                data.CharacterCreatorButtonBackgroundPresets);
 
             data.FolderVisualizer ??= new FolderVisualizerConfig();
             data.FolderVisualizer.Presets ??= new List<FolderVisualizerViewPreset>();
@@ -1245,6 +1290,85 @@ namespace OceanyaClient
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
                 .ToList();
+        }
+
+        private static List<CharacterCreatorButtonBackgroundPreset> NormalizeButtonBackgroundPresets(
+            IEnumerable<CharacterCreatorButtonBackgroundPreset>? presets)
+        {
+            List<CharacterCreatorButtonBackgroundPreset> normalized = new List<CharacterCreatorButtonBackgroundPreset>();
+            HashSet<string> usedNameModeKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (CharacterCreatorButtonBackgroundPreset? raw in presets ?? Array.Empty<CharacterCreatorButtonBackgroundPreset>())
+            {
+                if (raw == null)
+                {
+                    continue;
+                }
+
+                CharacterCreatorButtonBackgroundPreset preset = new CharacterCreatorButtonBackgroundPreset
+                {
+                    Id = string.IsNullOrWhiteSpace(raw.Id) ? Guid.NewGuid().ToString("N") : raw.Id.Trim(),
+                    Name = raw.Name?.Trim() ?? string.Empty,
+                    Mode = raw.Mode,
+                    SolidColor = string.IsNullOrWhiteSpace(raw.SolidColor) ? "#00000000" : raw.SolidColor.Trim(),
+                    UploadPath = raw.UploadPath?.Trim() ?? string.Empty,
+                    GradientDirection = raw.GradientDirection,
+                    AddBorder = raw.AddBorder,
+                    BorderColor = string.IsNullOrWhiteSpace(raw.BorderColor) ? "#FF000000" : raw.BorderColor.Trim(),
+                    BorderWidth = Math.Clamp(raw.BorderWidth, 1, 32),
+                    GradientStops = (raw.GradientStops ?? new List<CharacterCreatorButtonBackgroundGradientStop>())
+                        .Where(stop => stop != null)
+                        .Select(stop => new CharacterCreatorButtonBackgroundGradientStop
+                        {
+                            Color = string.IsNullOrWhiteSpace(stop.Color) ? "#FFFFFFFF" : stop.Color.Trim(),
+                            Position = Math.Clamp(stop.Position, 0.0, 1.0)
+                        })
+                        .OrderBy(stop => stop.Position)
+                        .ToList(),
+                    GradientMidpoints = (raw.GradientMidpoints ?? new List<double>())
+                        .Select(value => Math.Clamp(value, 0.0, 1.0))
+                        .ToList()
+                };
+
+                if (string.IsNullOrWhiteSpace(preset.Name))
+                {
+                    continue;
+                }
+
+                if (preset.GradientStops.Count < 2)
+                {
+                    preset.GradientStops = new List<CharacterCreatorButtonBackgroundGradientStop>
+                    {
+                        new CharacterCreatorButtonBackgroundGradientStop { Color = "#FFFFFFFF", Position = 0.0 },
+                        new CharacterCreatorButtonBackgroundGradientStop { Color = "#FF000000", Position = 1.0 }
+                    };
+                }
+
+                List<double> normalizedMidpoints = new List<double>();
+                for (int i = 0; i < preset.GradientStops.Count - 1; i++)
+                {
+                    double left = preset.GradientStops[i].Position;
+                    double right = preset.GradientStops[i + 1].Position;
+                    double midpoint = i < preset.GradientMidpoints.Count
+                        ? preset.GradientMidpoints[i]
+                        : left + ((right - left) * 0.5);
+                    normalizedMidpoints.Add(Math.Clamp(midpoint, left, right));
+                }
+                preset.GradientMidpoints = normalizedMidpoints;
+
+                string baseName = preset.Name;
+                int suffix = 2;
+                string uniquenessKey = $"{preset.Name}|{preset.Mode}";
+                while (!usedNameModeKeys.Add(uniquenessKey))
+                {
+                    preset.Name = $"{baseName} ({suffix})";
+                    uniquenessKey = $"{preset.Name}|{preset.Mode}";
+                    suffix++;
+                }
+
+                normalized.Add(preset);
+            }
+
+            return normalized;
         }
     }
 
