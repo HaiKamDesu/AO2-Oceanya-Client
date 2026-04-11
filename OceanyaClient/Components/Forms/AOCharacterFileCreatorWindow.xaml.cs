@@ -164,14 +164,29 @@ namespace OceanyaClient
             "Darken",
             "Overlay"
         };
+        private const string ButtonBackgroundNoOptionName = "No BG";
+        private const string ButtonBackgroundSolidColorOptionName = "Solid Color";
+        private const string ButtonBackgroundUploadOptionName = "Upload";
+        private const string DefaultButtonBackgroundPresetName = "Oceanya BG";
         private static readonly IReadOnlyDictionary<string, string> ButtonBackgroundPresetAssetMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["Athena Base (preset)"] =
+            ["Athena Base"] =
                 "pack://application:,,,/OceanyaClient;component/Resources/ButtonBackgroundPresets/AthenaBase.png",
-            ["Juror Base (preset)"] =
+            ["Juror Base"] =
                 "pack://application:,,,/OceanyaClient;component/Resources/ButtonBackgroundPresets/Jurorbase.png",
-            ["Oceanyan BG (preset)"] =
+            ["Oceanya BG"] =
                 "pack://application:,,,/OceanyaClient;component/Resources/ButtonBackgroundPresets/OceanyanBG.png"
+        };
+        private static readonly IReadOnlyList<AutoCompleteDropdownItem> ButtonBackgroundOptionItems = new List<AutoCompleteDropdownItem>
+        {
+            new AutoCompleteDropdownItem("===Presets===", isSelectable: false),
+            new AutoCompleteDropdownItem(ButtonBackgroundNoOptionName),
+            new AutoCompleteDropdownItem("Athena Base"),
+            new AutoCompleteDropdownItem("Juror Base"),
+            new AutoCompleteDropdownItem("Oceanya BG"),
+            new AutoCompleteDropdownItem("===Custom===", isSelectable: false),
+            new AutoCompleteDropdownItem(ButtonBackgroundSolidColorOptionName),
+            new AutoCompleteDropdownItem(ButtonBackgroundUploadOptionName)
         };
         private const int EmoteModIdle = 0;
         private const int EmoteModPreanim = 1;
@@ -212,7 +227,8 @@ namespace OceanyaClient
             EffectsMode = ButtonEffectsGenerationMode.Darken,
             DarknessPercent = 50,
             OpacityPercent = 75,
-            AutomaticBackgroundMode = ButtonAutomaticBackgroundMode.None
+            AutomaticBackgroundMode = ButtonAutomaticBackgroundMode.None,
+            AutomaticBackgroundPreset = DefaultButtonBackgroundPresetName
         };
         private string bulkButtonBackgroundUploadPath = string.Empty;
         private string bulkButtonOverlayUploadPath = string.Empty;
@@ -335,14 +351,14 @@ namespace OceanyaClient
             FrameTypeComboBox.IsTextReadOnly = true;
             ButtonIconsApplyScopeDropdown.ItemsSource = ButtonIconsApplyScopeOptionNames;
             ButtonIconsApplyScopeDropdown.IsTextReadOnly = true;
-            ButtonIconsBackgroundDropdown.ItemsSource = GetAutomaticBackgroundOptions();
+            ButtonIconsBackgroundDropdown.ItemsSource = GetAutomaticBackgroundOptionItems();
             ButtonIconsEffectsDropdown.ItemsSource = ButtonEffectsGenerationOptionNames;
             ButtonIconsBackgroundDropdown.IsTextReadOnly = true;
             ButtonIconsEffectsDropdown.IsTextReadOnly = true;
             FrameTargetComboBox.Text = CharacterFrameTarget.PreAnimation.ToString();
             FrameTypeComboBox.Text = CharacterFrameEventType.Sfx.ToString();
             ButtonIconsApplyScopeDropdown.Text = ButtonIconsApplyScopeOptionNames[1];
-            ButtonIconsBackgroundDropdown.Text = "None";
+            ButtonIconsBackgroundDropdown.Text = ButtonBackgroundNoOptionName;
             ButtonIconsEffectsDropdown.Text = "Darken";
             ButtonIconsSolidColorPreview.Background = new SolidColorBrush(Colors.Transparent);
             ButtonIconsSolidColorHexTextBlock.Text = ToHexColor(Colors.Transparent);
@@ -403,8 +419,10 @@ namespace OceanyaClient
                     continue;
                 }
 
-                Rect normalized = new Rect(pair.Value.X, pair.Value.Y, pair.Value.Width, pair.Value.Height);
-                if (normalized.Width <= 0 || normalized.Height <= 0)
+                double normalizedSize = pair.Value.UsesSquareCoordinates
+                    ? pair.Value.SquareSize
+                    : (pair.Value.Width > 0 ? pair.Value.Width : pair.Value.Height);
+                if (normalizedSize <= 0)
                 {
                     continue;
                 }
@@ -412,7 +430,9 @@ namespace OceanyaClient
                 savedCutSelectionByEmoteKey[pair.Key.Trim()] = new CutSelectionState
                 {
                     SourcePath = pair.Value.SourcePath?.Trim() ?? string.Empty,
-                    NormalizedSelection = normalized
+                    NormalizedX = Math.Clamp(pair.Value.X, 0, 1),
+                    NormalizedY = Math.Clamp(pair.Value.Y, 0, 1),
+                    NormalizedSize = Math.Clamp(normalizedSize, 0, 1)
                 };
             }
         }
@@ -2035,7 +2055,6 @@ namespace OceanyaClient
                 ? Visibility.Visible
                 : Visibility.Collapsed;
             ButtonIconsSectionPanel.Visibility = string.Equals(section, "buttonicons", StringComparison.OrdinalIgnoreCase)
-                && IsButtonIconsSectionRequired()
                 ? Visibility.Visible
                 : Visibility.Collapsed;
             FileOrganizationSectionPanel.Visibility = string.Equals(section, "fileorganization", StringComparison.OrdinalIgnoreCase)
@@ -2058,7 +2077,7 @@ namespace OceanyaClient
             }
             else if (string.Equals(section, "buttonicons", StringComparison.OrdinalIgnoreCase))
             {
-                StatusTextBlock.Text = "Step 4: Bulk-generate missing button icons.";
+                StatusTextBlock.Text = "Step 4: Bulk-generate or revisit button icon config.";
             }
             else if (string.Equals(section, "fileorganization", StringComparison.OrdinalIgnoreCase))
             {
@@ -2103,12 +2122,17 @@ namespace OceanyaClient
 
         private void UpdateSectionButtonNumbers()
         {
-            bool hasButtonIcons = SectionButtonIconsButton.Visibility == Visibility.Visible;
             SectionSetupButton.Content = "1. Initial Character Setup";
             SectionEffectsButton.Content = "2. Effects";
             SectionEmotesButton.Content = "3. Emotes";
-            SectionButtonIconsButton.Content = "4. Button Icons";
-            SectionFileOrganizationButton.Content = hasButtonIcons ? "5. File Organization" : "4. File Organization";
+            bool needsButtonIconsAttention = IsButtonIconsSectionRequired();
+            SectionButtonIconsButton.Content = needsButtonIconsAttention
+                ? "4. Button Icons (!)"
+                : "4. Button Icons";
+            SectionButtonIconsButton.FontWeight = needsButtonIconsAttention
+                ? FontWeights.Bold
+                : FontWeights.Normal;
+            SectionFileOrganizationButton.Content = "5. File Organization";
         }
 
         private static void ApplySectionButtonStyle(Button button, bool isActive)
@@ -2196,23 +2220,9 @@ namespace OceanyaClient
 
         private void UpdateButtonIconsSectionVisibility()
         {
-            bool required = IsButtonIconsSectionRequired();
-            SectionButtonIconsButton.Visibility = required ? Visibility.Visible : Visibility.Collapsed;
-            if (!required)
-            {
-                ButtonIconsSectionPanel.Visibility = Visibility.Collapsed;
-                if (string.Equals(activeSection, "buttonicons", StringComparison.OrdinalIgnoreCase))
-                {
-                    SetActiveSection("emotes");
-                }
-            }
-            else
-            {
-                ButtonIconsSectionPanel.Visibility = string.Equals(activeSection, "buttonicons", StringComparison.OrdinalIgnoreCase)
-                    ? Visibility.Visible
-                    : Visibility.Collapsed;
-            }
-
+            ButtonIconsSectionPanel.Visibility = string.Equals(activeSection, "buttonicons", StringComparison.OrdinalIgnoreCase)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
             UpdateSectionButtonNumbers();
         }
 
@@ -2316,14 +2326,14 @@ namespace OceanyaClient
                 DarknessPercent = 50,
                 OpacityPercent = 75,
                 AutomaticBackgroundMode = ButtonAutomaticBackgroundMode.None,
-                AutomaticBackgroundPreset = ButtonBackgroundPresetAssetMap.Keys.FirstOrDefault() ?? "Oceanya Logo (preset)",
+                AutomaticBackgroundPreset = ButtonBackgroundPresetAssetMap.Keys.FirstOrDefault() ?? DefaultButtonBackgroundPresetName,
                 AutomaticSolidColor = Colors.Transparent
             };
             bulkButtonBackgroundUploadPath = string.Empty;
             bulkButtonOverlayUploadPath = string.Empty;
             bulkButtonCutoutByEmoteId.Clear();
             ButtonIconsApplyScopeDropdown.Text = ButtonIconsApplyScopeOptionNames[1];
-            ButtonIconsBackgroundDropdown.Text = "None";
+            ButtonIconsBackgroundDropdown.Text = ButtonBackgroundNoOptionName;
             ButtonIconsEffectsDropdown.Text = "Darken";
             UpdateBulkButtonIconsPanels();
             RenderBulkCutoutPreviewTiles(Array.Empty<CharacterCreationEmoteViewModel>());
@@ -2496,6 +2506,119 @@ namespace OceanyaClient
                 || !string.IsNullOrWhiteSpace(emote.ButtonAutomaticBackgroundUploadAssetSourcePath);
         }
 
+        private BitmapSource? ResolveEffectiveBulkCutout(CharacterCreationEmoteViewModel emote)
+        {
+            if (bulkButtonCutoutByEmoteId.TryGetValue(emote.Id, out BitmapSource? bulkCutout) && bulkCutout != null)
+            {
+                return CloneBitmapSource(bulkCutout);
+            }
+
+            return CloneBitmapSource(emote.ButtonAutomaticCutEmoteImage);
+        }
+
+        private bool HasEffectiveBulkCutout(CharacterCreationEmoteViewModel emote)
+        {
+            return bulkButtonCutoutByEmoteId.TryGetValue(emote.Id, out BitmapSource? bulkCutout) && bulkCutout != null
+                || emote.ButtonAutomaticCutEmoteImage != null;
+        }
+
+        private static string BuildBulkCutoutEmoteLabel(CharacterCreationEmoteViewModel emote)
+        {
+            return $"{emote.EmoteHeader} - {emote.Name}";
+        }
+
+        private BitmapSource? ResolveBulkCutoutPreviewBitmap(CharacterCreationEmoteViewModel emote)
+        {
+            BitmapSource? effectiveCutout = ResolveEffectiveBulkCutout(emote);
+            if (effectiveCutout != null)
+            {
+                return effectiveCutout;
+            }
+
+            List<CutSourceOption> sourceOptions = ResolveCutSourceOptions(emote);
+            IEnumerable<CutSourceOption> orderedSourceOptions = sourceOptions
+                .OrderByDescending(static option => option.Name.StartsWith("Idle", StringComparison.OrdinalIgnoreCase))
+                .ThenBy(static option => option.Name, StringComparer.OrdinalIgnoreCase);
+            foreach (CutSourceOption option in orderedSourceOptions)
+            {
+                if (!TryLoadButtonBitmap(option.Path, out BitmapSource? previewBitmap, out _) || previewBitmap == null)
+                {
+                    continue;
+                }
+
+                return CloneBitmapSource(previewBitmap);
+            }
+
+            return null;
+        }
+
+        private bool TryValidateBulkButtonIconApply(
+            IReadOnlyList<CharacterCreationEmoteViewModel> targets,
+            [NotNullWhen(false)] out string? validationMessage)
+        {
+            List<string> issues = new List<string>();
+            if (bulkButtonIconConfig.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.Upload)
+            {
+                string backgroundUploadPath = bulkButtonIconConfig.AutomaticBackgroundUploadPath ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(backgroundUploadPath))
+                {
+                    issues.Add("Background: choose an uploaded background image or switch the background mode away from Upload.");
+                }
+                else if (!TryLoadButtonBitmap(backgroundUploadPath, out _, out _))
+                {
+                    issues.Add("Background: the selected uploaded background image could not be loaded.");
+                }
+            }
+            else if (bulkButtonIconConfig.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.PresetList)
+            {
+                string presetPath = ResolveBackgroundPresetPath(bulkButtonIconConfig.AutomaticBackgroundPreset);
+                if (!TryLoadButtonBitmap(presetPath, out _, out _))
+                {
+                    issues.Add("Background: the selected preset image is missing.");
+                }
+            }
+
+            if (bulkButtonIconConfig.EffectsMode == ButtonEffectsGenerationMode.Overlay)
+            {
+                string overlayPath = bulkButtonIconConfig.OverlayImagePath ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(overlayPath))
+                {
+                    issues.Add("Effect: choose an overlay image or switch the effect mode away from Overlay.");
+                }
+                else if (!TryLoadButtonBitmap(overlayPath, out _, out _))
+                {
+                    issues.Add("Effect: the selected overlay image could not be loaded.");
+                }
+            }
+
+            List<string> missingCutoutLabels = targets
+                .Where(emote => !HasEffectiveBulkCutout(emote))
+                .Select(BuildBulkCutoutEmoteLabel)
+                .Take(8)
+                .ToList();
+            int missingCutoutCount = targets.Count(emote => !HasEffectiveBulkCutout(emote));
+            if (missingCutoutCount > 0)
+            {
+                string suffix = missingCutoutCount > missingCutoutLabels.Count ? ", ..." : string.Empty;
+                issues.Add(
+                    "Emote: configure cutouts first for "
+                    + string.Join(", ", missingCutoutLabels)
+                    + suffix
+                    + ".");
+            }
+
+            validationMessage = null;
+            if (issues.Count == 0)
+            {
+                return true;
+            }
+
+            validationMessage =
+                "Automatic button config is incomplete:" + Environment.NewLine + Environment.NewLine
+                + string.Join(Environment.NewLine, issues.Select(static issue => "• " + issue));
+            return false;
+        }
+
         private void ButtonIconsBulkCuttingButton_Click(object sender, RoutedEventArgs e)
         {
             IReadOnlyList<CharacterCreationEmoteViewModel> targets = ResolveBulkButtonTargetEmotes();
@@ -2510,28 +2633,45 @@ namespace OceanyaClient
                 return;
             }
 
-            BitmapSource? carryForwardCutout = null;
-            Rect? carryForwardSelection = null;
-            foreach (CharacterCreationEmoteViewModel emote in targets)
+            List<CharacterCreationEmoteViewModel> cuttableTargets = targets
+                .Where(emote => ResolveCutSourceOptions(emote).Count > 0)
+                .ToList();
+            if (cuttableTargets.Count == 0)
             {
-                bulkButtonCutoutByEmoteId.TryGetValue(emote.Id, out BitmapSource? existingCutout);
-                existingCutout ??= carryForwardCutout;
-                BitmapSource? cutout = ShowEmoteCuttingDialog(emote, existingCutout, carryForwardSelection);
-                if (cutout == null)
-                {
-                    continue;
-                }
+                OceanyaMessageBox.Show(
+                    this,
+                    "No target emotes have preanim/idle/talking image sources available for cutout editing yet.",
+                    "Button Icons",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
 
-                bulkButtonCutoutByEmoteId[emote.Id] = cutout;
-                carryForwardCutout = cutout;
-                if (TryGetSavedCutSelectionForEmote(emote, out CutSelectionState? state))
+            bool accepted;
+            if (cuttableTargets.Count == 1)
+            {
+                CharacterCreationEmoteViewModel singleTarget = cuttableTargets[0];
+                BitmapSource? cutout = ShowEmoteCuttingDialog(singleTarget, ResolveEffectiveBulkCutout(singleTarget));
+                accepted = cutout != null;
+                if (cutout != null)
                 {
-                    carryForwardSelection = state.NormalizedSelection;
+                    bulkButtonCutoutByEmoteId[singleTarget.Id] = cutout;
                 }
+            }
+            else
+            {
+                accepted = ShowBulkEmoteCuttingDialog(cuttableTargets);
+            }
+
+            if (!accepted)
+            {
+                return;
             }
 
             RenderBulkCutoutPreviewTiles(targets);
-            StatusTextBlock.Text = "Bulk emote cutting updated.";
+            StatusTextBlock.Text = cuttableTargets.Count == targets.Count
+                ? "Bulk emote cutting updated."
+                : $"Bulk emote cutting updated. Skipped {targets.Count - cuttableTargets.Count} emote(s) without image sources.";
         }
 
         private void RenderBulkCutoutPreviewTiles(IReadOnlyList<CharacterCreationEmoteViewModel> targets)
@@ -2539,10 +2679,7 @@ namespace OceanyaClient
             ButtonIconsCutoutPreviewWrapPanel.Children.Clear();
             foreach (CharacterCreationEmoteViewModel emote in targets)
             {
-                if (!bulkButtonCutoutByEmoteId.TryGetValue(emote.Id, out BitmapSource? cutout) || cutout == null)
-                {
-                    continue;
-                }
+                BitmapSource? previewBitmap = ResolveBulkCutoutPreviewBitmap(emote);
 
                 Border tile = new Border
                 {
@@ -2553,18 +2690,31 @@ namespace OceanyaClient
                     BorderThickness = new Thickness(1),
                     CornerRadius = new CornerRadius(3),
                     Background = new SolidColorBrush(Color.FromArgb(110, 20, 20, 20)),
-                    ToolTip = emote.EmoteHeader + " - " + emote.Name,
+                    ToolTip = BuildBulkCutoutEmoteLabel(emote),
                     Cursor = Cursors.Hand
                 };
-                tile.Child = new Image
+                Grid tileGrid = new Grid();
+                Image previewImage = new Image
                 {
-                    Source = cutout,
+                    Source = previewBitmap,
                     Stretch = Stretch.Uniform
                 };
+                TextBlock emptyText = new TextBlock
+                {
+                    Text = "+",
+                    Foreground = new SolidColorBrush(Color.FromRgb(191, 213, 232)),
+                    FontSize = 24,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Visibility = previewBitmap == null ? Visibility.Visible : Visibility.Collapsed
+                };
+                tileGrid.Children.Add(previewImage);
+                tileGrid.Children.Add(emptyText);
+                tile.Child = tileGrid;
                 tile.MouseLeftButtonUp += (_, _) =>
                 {
                     SelectEmoteTile(emote);
-                    BitmapSource? updated = ShowEmoteCuttingDialog(emote, cutout);
+                    BitmapSource? updated = ShowEmoteCuttingDialog(emote, ResolveEffectiveBulkCutout(emote));
                     if (updated == null)
                     {
                         return;
@@ -2591,6 +2741,17 @@ namespace OceanyaClient
                 return;
             }
 
+            if (!TryValidateBulkButtonIconApply(targets, out string? validationMessage))
+            {
+                OceanyaMessageBox.Show(
+                    this,
+                    validationMessage ?? "Automatic button config is incomplete.",
+                    "Button Icons",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
             int appliedCount = 0;
             foreach (CharacterCreationEmoteViewModel emote in targets)
             {
@@ -2605,9 +2766,7 @@ namespace OceanyaClient
                     AutomaticBackgroundPreset = bulkButtonIconConfig.AutomaticBackgroundPreset,
                     AutomaticSolidColor = bulkButtonIconConfig.AutomaticSolidColor,
                     AutomaticBackgroundUploadPath = bulkButtonIconConfig.AutomaticBackgroundUploadPath,
-                    AutomaticCutEmoteImage = bulkButtonCutoutByEmoteId.TryGetValue(emote.Id, out BitmapSource? cutout)
-                        ? CloneBitmapSource(cutout)
-                        : null
+                    AutomaticCutEmoteImage = ResolveEffectiveBulkCutout(emote)
                 };
 
                 ApplyButtonIconGenerationConfig(emote, config);
@@ -8224,10 +8383,11 @@ namespace OceanyaClient
 
                     StackPanel backgroundTabContent = new StackPanel { Margin = new Thickness(8, 6, 8, 6) };
                     AutoCompleteDropdownField backgroundDropdown = CreateDialogAutoCompleteField(
-                        GetAutomaticBackgroundOptions(),
+                        GetAutomaticBackgroundOptionItems(),
                         GetAutomaticBackgroundSelectionName(config),
                         "Background for automatic generation.",
-                        isReadOnly: true);
+                        isReadOnly: true,
+                        preserveItemOrder: true);
                     backgroundDropdown.TextValueChanged += (_, _) =>
                     {
                         ApplyAutomaticBackgroundSelection(backgroundDropdown.Text, config);
@@ -8291,7 +8451,7 @@ namespace OceanyaClient
                         };
                         Grid.SetColumn(colorValue, 2);
                         solidGrid.Children.Add(colorValue);
-                        AddSimpleField(backgroundTabContent, "Solid color", solidGrid);
+                        AddSimpleField(backgroundTabContent, "Solid Color", solidGrid);
                     }
                     else if (config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.Upload)
                     {
@@ -8468,25 +8628,227 @@ namespace OceanyaClient
             return savedCutSelectionByEmoteKey.TryGetValue(emoteCutSelectionKey, out state);
         }
 
-        private void PersistCutSelectionState(string emoteKey, CutSelectionState state)
+        private static CharacterCreatorCutSelectionState BuildPersistedCutSelectionState(CutSelectionState state)
         {
-            SaveFile.Data.CharacterCreatorCutSelections[emoteKey] = new CharacterCreatorCutSelectionState
+            return new CharacterCreatorCutSelectionState
             {
                 SourcePath = state.SourcePath ?? string.Empty,
-                X = state.NormalizedSelection.X,
-                Y = state.NormalizedSelection.Y,
-                Width = state.NormalizedSelection.Width,
-                Height = state.NormalizedSelection.Height
+                X = state.NormalizedX,
+                Y = state.NormalizedY,
+                Width = state.NormalizedSize,
+                Height = state.NormalizedSize,
+                SquareSize = state.NormalizedSize,
+                UsesSquareCoordinates = true
             };
+        }
+
+        private void PersistCutSelectionState(string emoteKey, CutSelectionState state)
+        {
+            SaveFile.Data.CharacterCreatorCutSelections[emoteKey] = BuildPersistedCutSelectionState(state);
             SaveFile.Save();
         }
 
-        private BitmapSource? ShowEmoteCuttingDialog(
-            CharacterCreationEmoteViewModel emote,
-            BitmapSource? existingCutout,
-            Rect? suggestedNormalizedSelection = null)
+        private static PixelSquareSelection ClampPixelSquareSelectionToFrame(PixelSquareSelection selection, BitmapSource frame)
         {
-            string emoteCutSelectionKey = BuildCutSelectionStorageKey(emote);
+            int maxSize = Math.Max(1, Math.Min(frame.PixelWidth, frame.PixelHeight));
+            int clampedSize = Math.Clamp(selection.Size, 1, maxSize);
+            int maxX = Math.Max(0, frame.PixelWidth - clampedSize);
+            int maxY = Math.Max(0, frame.PixelHeight - clampedSize);
+            return new PixelSquareSelection(
+                Math.Clamp(selection.X, 0, maxX),
+                Math.Clamp(selection.Y, 0, maxY),
+                clampedSize);
+        }
+
+        private static bool TryCreatePixelSquareSelectionFromDisplayBounds(
+            BitmapSource frame,
+            Rect viewport,
+            Rect rawSelectionBounds,
+            out PixelSquareSelection selection)
+        {
+            selection = default;
+            if (viewport.Width <= 0 || viewport.Height <= 0)
+            {
+                return false;
+            }
+
+            Rect clipped = Rect.Intersect(rawSelectionBounds, viewport);
+            if (clipped.IsEmpty || clipped.Width < 4 || clipped.Height < 4)
+            {
+                return false;
+            }
+
+            double scale = Math.Min(
+                viewport.Width / Math.Max(1, frame.PixelWidth),
+                viewport.Height / Math.Max(1, frame.PixelHeight));
+            if (scale <= 0)
+            {
+                return false;
+            }
+
+            int cropX = Math.Max(0, (int)Math.Round((clipped.X - viewport.X) / scale));
+            int cropY = Math.Max(0, (int)Math.Round((clipped.Y - viewport.Y) / scale));
+            int proposedSize = Math.Max(
+                1,
+                Math.Min(
+                    (int)Math.Round(clipped.Width / scale),
+                    (int)Math.Round(clipped.Height / scale)));
+            int maxSize = Math.Min(frame.PixelWidth - cropX, frame.PixelHeight - cropY);
+            if (maxSize <= 0)
+            {
+                return false;
+            }
+
+            selection = new PixelSquareSelection(cropX, cropY, Math.Min(proposedSize, maxSize));
+            selection = ClampPixelSquareSelectionToFrame(selection, frame);
+            return selection.Size > 0;
+        }
+
+        private static bool TryRestorePixelSquareSelection(
+            CutSelectionState? state,
+            BitmapSource frame,
+            out PixelSquareSelection selection)
+        {
+            selection = default;
+            if (state == null || state.NormalizedSize <= 0)
+            {
+                return false;
+            }
+
+            int cropX = Math.Max(0, (int)Math.Round(state.NormalizedX * frame.PixelWidth));
+            int cropY = Math.Max(0, (int)Math.Round(state.NormalizedY * frame.PixelHeight));
+            int cropSize = Math.Max(1, (int)Math.Round(state.NormalizedSize * frame.PixelWidth));
+            if (cropSize <= 0)
+            {
+                return false;
+            }
+
+            selection = ClampPixelSquareSelectionToFrame(new PixelSquareSelection(cropX, cropY, cropSize), frame);
+            return selection.Size > 0;
+        }
+
+        private static Rect ProjectPixelSquareSelectionToViewport(
+            BitmapSource frame,
+            Rect viewport,
+            PixelSquareSelection selection)
+        {
+            double scale = Math.Min(
+                viewport.Width / Math.Max(1, frame.PixelWidth),
+                viewport.Height / Math.Max(1, frame.PixelHeight));
+            double x = viewport.X + (selection.X * scale);
+            double y = viewport.Y + (selection.Y * scale);
+            double size = selection.Size * scale;
+            return new Rect(x, y, size, size);
+        }
+
+        private static bool TryResolveCutSelectionDisplayRect(
+            CutSelectionState? state,
+            BitmapSource frame,
+            Rect viewport,
+            out Rect displayRect)
+        {
+            displayRect = Rect.Empty;
+            if (!TryRestorePixelSquareSelection(state, frame, out PixelSquareSelection pixelSelection))
+            {
+                return false;
+            }
+
+            displayRect = ProjectPixelSquareSelectionToViewport(frame, viewport, pixelSelection);
+            return !displayRect.IsEmpty && displayRect.Width >= 2 && displayRect.Height >= 2;
+        }
+
+        private static BitmapSource? CreateCutoutFromPixelSquareSelection(
+            BitmapSource? frame,
+            PixelSquareSelection? selection)
+        {
+            if (frame == null || !selection.HasValue || selection.Value.Size <= 0)
+            {
+                return null;
+            }
+
+            PixelSquareSelection clamped = ClampPixelSquareSelectionToFrame(selection.Value, frame);
+            if (clamped.Size <= 0)
+            {
+                return null;
+            }
+
+            CroppedBitmap cropped = new CroppedBitmap(frame, new Int32Rect(clamped.X, clamped.Y, clamped.Size, clamped.Size));
+            cropped.Freeze();
+            return cropped;
+        }
+
+        private static CutSelectionState CreateCutSelectionState(
+            string sourcePath,
+            BitmapSource frame,
+            PixelSquareSelection selection)
+        {
+            PixelSquareSelection clamped = ClampPixelSquareSelectionToFrame(selection, frame);
+            return new CutSelectionState
+            {
+                SourcePath = sourcePath ?? string.Empty,
+                NormalizedX = Math.Clamp((double)clamped.X / Math.Max(1, frame.PixelWidth), 0, 1),
+                NormalizedY = Math.Clamp((double)clamped.Y / Math.Max(1, frame.PixelHeight), 0, 1),
+                NormalizedSize = Math.Clamp((double)clamped.Size / Math.Max(1, frame.PixelWidth), 0, 1)
+            };
+        }
+
+        private static CutSelectionState? CloneCutSelectionState(CutSelectionState? state)
+        {
+            if (state == null)
+            {
+                return null;
+            }
+
+            return new CutSelectionState
+            {
+                SourcePath = state.SourcePath ?? string.Empty,
+                NormalizedX = state.NormalizedX,
+                NormalizedY = state.NormalizedY,
+                NormalizedSize = state.NormalizedSize
+            };
+        }
+
+        private static string ComputeBitmapFingerprint(BitmapSource? bitmap)
+        {
+            if (bitmap == null)
+            {
+                return string.Empty;
+            }
+
+            int stride = Math.Max(1, ((bitmap.PixelWidth * Math.Max(1, bitmap.Format.BitsPerPixel)) + 7) / 8);
+            byte[] pixels = new byte[Math.Max(1, stride * Math.Max(1, bitmap.PixelHeight))];
+            try
+            {
+                bitmap.CopyPixels(pixels, stride, 0);
+            }
+            catch
+            {
+                return $"{bitmap.PixelWidth}x{bitmap.PixelHeight}";
+            }
+
+            unchecked
+            {
+                int hash = 17;
+                int step = Math.Max(1, pixels.Length / 256);
+                for (int i = 0; i < pixels.Length; i += step)
+                {
+                    hash = (hash * 31) + pixels[i];
+                }
+
+                return $"{bitmap.PixelWidth}x{bitmap.PixelHeight}:{hash}";
+            }
+        }
+
+        private static string ComputeCutSelectionFingerprint(CutSelectionState? state, BitmapSource? cutout)
+        {
+            string stateFingerprint = state == null
+                ? "none"
+                : $"{state.SourcePath}|{state.NormalizedX:F6}|{state.NormalizedY:F6}|{state.NormalizedSize:F6}";
+            return stateFingerprint + "|" + ComputeBitmapFingerprint(cutout);
+        }
+
+        private static List<CutSourceOption> ResolveCutSourceOptions(CharacterCreationEmoteViewModel emote)
+        {
             List<CutSourceOption> sourceOptions = new List<CutSourceOption>();
             if (!string.IsNullOrWhiteSpace(emote.PreAnimationAssetSourcePath))
             {
@@ -8507,11 +8869,20 @@ namespace OceanyaClient
                 sourceOptions.Add(new CutSourceOption("Talking", emote.FinalAnimationTalkingAssetSourcePath));
             }
 
-            sourceOptions = sourceOptions
+            return sourceOptions
                 .Where(static option => !string.IsNullOrWhiteSpace(option.Path) && File.Exists(option.Path))
                 .GroupBy(static option => option.Path, StringComparer.OrdinalIgnoreCase)
                 .Select(static group => group.First())
                 .ToList();
+        }
+
+        private BitmapSource? ShowEmoteCuttingDialog(
+            CharacterCreationEmoteViewModel emote,
+            BitmapSource? existingCutout,
+            PixelSquareSelection? suggestedPixelSelection = null)
+        {
+            string emoteCutSelectionKey = BuildCutSelectionStorageKey(emote);
+            List<CutSourceOption> sourceOptions = ResolveCutSourceOptions(emote);
             if (sourceOptions.Count == 0)
             {
                 OceanyaMessageBox.Show(
@@ -8742,12 +9113,9 @@ namespace OceanyaClient
             bool suppressTimelineSeek = false;
             Point dragStart;
             bool dragging = false;
-            Rect selectionBounds = Rect.Empty;
-            Rect normalizedSelectionBounds = Rect.Empty;
+            PixelSquareSelection? currentPixelSelection = null;
             BitmapSource? currentSelectionCutout = null;
-            string currentSourceName = sourceOptions[0].Name;
             string currentSourcePath = sourceOptions[0].Path;
-            Rect? transientSuggestedSelection = suggestedNormalizedSelection;
 
             void UpdateLastCutoutPreviewForCurrentSource()
             {
@@ -8759,8 +9127,7 @@ namespace OceanyaClient
 
                 bool hasMatchingSavedSelection = savedCutSelectionByEmoteKey.TryGetValue(emoteCutSelectionKey, out CutSelectionState? saved)
                     && string.Equals(saved.SourcePath, currentSourcePath, StringComparison.OrdinalIgnoreCase)
-                    && saved.NormalizedSelection.Width > 0
-                    && saved.NormalizedSelection.Height > 0;
+                    && saved.NormalizedSize > 0;
                 lastCutoutImage.Source = hasMatchingSavedSelection ? existingCutout : null;
             }
 
@@ -8778,36 +9145,27 @@ namespace OceanyaClient
                 return new Rect(x, y, drawWidth, drawHeight);
             }
 
-            bool TryGetSavedSelectionForCurrentSource(out Rect normalizedSelection)
+            CutSelectionState? GetSavedSelectionForCurrentSource()
             {
                 if (savedCutSelectionByEmoteKey.TryGetValue(emoteCutSelectionKey, out CutSelectionState? saved)
                     && string.Equals(saved.SourcePath, currentSourcePath, StringComparison.OrdinalIgnoreCase)
-                    && saved.NormalizedSelection.Width > 0
-                    && saved.NormalizedSelection.Height > 0)
+                    && saved.NormalizedSize > 0)
                 {
-                    normalizedSelection = saved.NormalizedSelection;
-                    return true;
+                    return saved;
                 }
 
-                normalizedSelection = Rect.Empty;
-                return false;
+                return null;
             }
 
-            void UpdateLastSelectionVisual(Rect? normalizedSelection)
+            void UpdateLastSelectionVisual(CutSelectionState? selectionState)
             {
-                if (currentFrame == null || !normalizedSelection.HasValue)
+                if (currentFrame == null
+                    || !TryResolveCutSelectionDisplayRect(selectionState, currentFrame, ComputeImageViewport(currentFrame), out Rect rect))
                 {
                     lastSelectionRect.Visibility = Visibility.Collapsed;
                     return;
                 }
 
-                Rect viewport = ComputeImageViewport(currentFrame);
-                Rect normalized = normalizedSelection.Value;
-                Rect rect = new Rect(
-                    viewport.X + (normalized.X * viewport.Width),
-                    viewport.Y + (normalized.Y * viewport.Height),
-                    normalized.Width * viewport.Width,
-                    normalized.Height * viewport.Height);
                 if (rect.Width < 2 || rect.Height < 2)
                 {
                     lastSelectionRect.Visibility = Visibility.Collapsed;
@@ -8821,100 +9179,9 @@ namespace OceanyaClient
                 lastSelectionRect.Visibility = Visibility.Visible;
             }
 
-            void ApplySavedSelectionAsCurrent()
-            {
-                if (currentFrame == null)
-                {
-                    selectionBounds = Rect.Empty;
-                    normalizedSelectionBounds = Rect.Empty;
-                    UpdateSelectionVisual();
-                    UpdateCurrentCutoutPreview();
-                    UpdateLastSelectionVisual(null);
-                    UpdateLastCutoutPreviewForCurrentSource();
-                    return;
-                }
-
-                Rect normalized;
-                if (TryGetSavedSelectionForCurrentSource(out Rect persistedSelection))
-                {
-                    normalized = persistedSelection;
-                }
-                else if (transientSuggestedSelection.HasValue
-                    && transientSuggestedSelection.Value.Width > 0
-                    && transientSuggestedSelection.Value.Height > 0)
-                {
-                    normalized = transientSuggestedSelection.Value;
-                }
-                else
-                {
-                    selectionBounds = Rect.Empty;
-                    normalizedSelectionBounds = Rect.Empty;
-                    UpdateSelectionVisual();
-                    UpdateCurrentCutoutPreview();
-                    UpdateLastSelectionVisual(null);
-                    UpdateLastCutoutPreviewForCurrentSource();
-                    return;
-                }
-
-                Rect viewport = ComputeImageViewport(currentFrame);
-                normalizedSelectionBounds = normalized;
-                selectionBounds = new Rect(
-                    viewport.X + (normalized.X * viewport.Width),
-                    viewport.Y + (normalized.Y * viewport.Height),
-                    normalized.Width * viewport.Width,
-                    normalized.Height * viewport.Height);
-                UpdateSelectionVisual();
-                UpdateCurrentCutoutPreview();
-                UpdateLastSelectionVisual(normalized);
-                UpdateLastCutoutPreviewForCurrentSource();
-            }
-
-            void UpdateSelectionBoundsFromNormalized()
-            {
-                if (currentFrame == null || normalizedSelectionBounds.IsEmpty || normalizedSelectionBounds.Width <= 0 || normalizedSelectionBounds.Height <= 0)
-                {
-                    selectionBounds = Rect.Empty;
-                    UpdateSelectionVisual();
-                    UpdateCurrentCutoutPreview();
-                    return;
-                }
-
-                Rect viewport = ComputeImageViewport(currentFrame);
-                selectionBounds = new Rect(
-                    viewport.X + (normalizedSelectionBounds.X * viewport.Width),
-                    viewport.Y + (normalizedSelectionBounds.Y * viewport.Height),
-                    normalizedSelectionBounds.Width * viewport.Width,
-                    normalizedSelectionBounds.Height * viewport.Height);
-                UpdateSelectionVisual();
-                UpdateCurrentCutoutPreview();
-            }
-
-            void UpdateNormalizedSelectionFromBounds()
-            {
-                if (currentFrame == null || selectionBounds.IsEmpty)
-                {
-                    normalizedSelectionBounds = Rect.Empty;
-                    return;
-                }
-
-                Rect viewport = ComputeImageViewport(currentFrame);
-                Rect selection = Rect.Intersect(selectionBounds, viewport);
-                if (selection.IsEmpty || selection.Width < 2 || selection.Height < 2)
-                {
-                    normalizedSelectionBounds = Rect.Empty;
-                    return;
-                }
-
-                normalizedSelectionBounds = new Rect(
-                    Math.Clamp((selection.X - viewport.X) / viewport.Width, 0, 1),
-                    Math.Clamp((selection.Y - viewport.Y) / viewport.Height, 0, 1),
-                    Math.Clamp(selection.Width / viewport.Width, 0, 1),
-                    Math.Clamp(selection.Height / viewport.Height, 0, 1));
-            }
-
             void UpdateSelectionVisual()
             {
-                if (selectionBounds.IsEmpty || selectionBounds.Width < 2 || selectionBounds.Height < 2)
+                if (currentFrame == null || !currentPixelSelection.HasValue)
                 {
                     selectionRect.Visibility = Visibility.Collapsed;
                     currentCutoutImage.Source = null;
@@ -8922,6 +9189,8 @@ namespace OceanyaClient
                     return;
                 }
 
+                Rect viewport = ComputeImageViewport(currentFrame);
+                Rect selectionBounds = ProjectPixelSquareSelectionToViewport(currentFrame, viewport, currentPixelSelection.Value);
                 selectionRect.Visibility = Visibility.Visible;
                 Canvas.SetLeft(selectionRect, selectionBounds.X);
                 Canvas.SetTop(selectionRect, selectionBounds.Y);
@@ -8931,36 +9200,40 @@ namespace OceanyaClient
 
             void UpdateCurrentCutoutPreview()
             {
-                currentSelectionCutout = null;
-                currentCutoutImage.Source = null;
+                currentSelectionCutout = CreateCutoutFromPixelSquareSelection(currentFrame, currentPixelSelection);
+                currentCutoutImage.Source = currentSelectionCutout;
+            }
+
+            void ApplyInitialSelectionForCurrentSource()
+            {
                 if (currentFrame == null)
                 {
+                    currentPixelSelection = null;
+                    UpdateSelectionVisual();
+                    UpdateCurrentCutoutPreview();
+                    UpdateLastSelectionVisual(null);
+                    UpdateLastCutoutPreviewForCurrentSource();
                     return;
                 }
 
-                Rect viewport = ComputeImageViewport(currentFrame);
-                Rect selection = Rect.Intersect(selectionBounds, viewport);
-                if (selection.IsEmpty || selection.Width < 4 || selection.Height < 4)
+                CutSelectionState? savedSelection = GetSavedSelectionForCurrentSource();
+                if (TryRestorePixelSquareSelection(savedSelection, currentFrame, out PixelSquareSelection restored))
                 {
-                    return;
+                    currentPixelSelection = restored;
                 }
-
-                double normalizedX = (selection.X - viewport.X) / viewport.Width;
-                double normalizedY = (selection.Y - viewport.Y) / viewport.Height;
-                double normalizedSize = selection.Width / viewport.Width;
-                int cropX = Math.Max(0, (int)Math.Round(normalizedX * currentFrame.PixelWidth));
-                int cropY = Math.Max(0, (int)Math.Round(normalizedY * currentFrame.PixelHeight));
-                int cropSize = Math.Max(1, (int)Math.Round(normalizedSize * currentFrame.PixelWidth));
-                cropSize = Math.Min(cropSize, Math.Min(currentFrame.PixelWidth - cropX, currentFrame.PixelHeight - cropY));
-                if (cropSize <= 0)
+                else if (suggestedPixelSelection.HasValue)
                 {
-                    return;
+                    currentPixelSelection = ClampPixelSquareSelectionToFrame(suggestedPixelSelection.Value, currentFrame);
+                }
+                else
+                {
+                    currentPixelSelection = null;
                 }
 
-                CroppedBitmap cropped = new CroppedBitmap(currentFrame, new Int32Rect(cropX, cropY, cropSize, cropSize));
-                cropped.Freeze();
-                currentSelectionCutout = cropped;
-                currentCutoutImage.Source = cropped;
+                UpdateSelectionVisual();
+                UpdateCurrentCutoutPreview();
+                UpdateLastSelectionVisual(savedSelection);
+                UpdateLastCutoutPreviewForCurrentSource();
             }
 
             void LoadSource(string path)
@@ -8969,9 +9242,9 @@ namespace OceanyaClient
                 previewController?.Dispose();
                 previewController = null;
                 currentFrame = null;
-                selectionBounds = Rect.Empty;
-                normalizedSelectionBounds = Rect.Empty;
+                currentPixelSelection = null;
                 UpdateSelectionVisual();
+                UpdateCurrentCutoutPreview();
 
                 if (AnimationTimelinePreviewController.TryCreate(ResolveAo2PreviewImagePath(path), out AnimationTimelinePreviewController? createdController))
                 {
@@ -8988,15 +9261,9 @@ namespace OceanyaClient
                     {
                         previewImage.Source = frame;
                         currentFrame = frame as BitmapSource;
-                        UpdateSelectionBoundsFromNormalized();
-                        if (TryGetSavedSelectionForCurrentSource(out Rect normalized))
-                        {
-                            UpdateLastSelectionVisual(normalized);
-                        }
-                        else
-                        {
-                            UpdateLastSelectionVisual(null);
-                        }
+                        UpdateSelectionVisual();
+                        UpdateCurrentCutoutPreview();
+                        UpdateLastSelectionVisual(GetSavedSelectionForCurrentSource());
                         suppressTimelineSeek = true;
                         timelineSlider.Value = Math.Clamp(positionMs, timelineSlider.Minimum, timelineSlider.Maximum);
                         suppressTimelineSeek = false;
@@ -9010,7 +9277,7 @@ namespace OceanyaClient
                     timelineSlider.Maximum = 1;
                 }
 
-                ApplySavedSelectionAsCurrent();
+                ApplyInitialSelectionForCurrentSource();
 
                 bool interactive = previewController?.HasTimeline == true;
                 playPauseButton.IsEnabled = interactive;
@@ -9026,7 +9293,6 @@ namespace OceanyaClient
                     string.Equals(option.Name, sourceDropdown.Text, StringComparison.OrdinalIgnoreCase));
                 if (selected != null)
                 {
-                    currentSourceName = selected.Name;
                     LoadSource(selected.Path);
                 }
             };
@@ -9040,14 +9306,14 @@ namespace OceanyaClient
 
                 dragging = true;
                 dragStart = e.GetPosition(selectionCanvas);
-                selectionBounds = new Rect(dragStart, dragStart);
-                normalizedSelectionBounds = Rect.Empty;
+                currentPixelSelection = null;
                 UpdateSelectionVisual();
+                UpdateCurrentCutoutPreview();
                 selectionCanvas.CaptureMouse();
             };
             selectionCanvas.MouseMove += (_, e) =>
             {
-                if (!dragging)
+                if (!dragging || currentFrame == null)
                 {
                     return;
                 }
@@ -9056,12 +9322,22 @@ namespace OceanyaClient
                 double dx = current.X - dragStart.X;
                 double dy = current.Y - dragStart.Y;
                 double size = Math.Max(Math.Abs(dx), Math.Abs(dy));
-                double width = Math.Sign(dx) * size;
-                double height = Math.Sign(dy) * size;
+                double widthDirection = dx == 0 ? (dy < 0 ? -1 : 1) : Math.Sign(dx);
+                double heightDirection = dy == 0 ? (dx < 0 ? -1 : 1) : Math.Sign(dy);
+                double width = widthDirection * size;
+                double height = heightDirection * size;
                 Point end = new Point(dragStart.X + width, dragStart.Y + height);
-                selectionBounds = new Rect(dragStart, end);
-                UpdateNormalizedSelectionFromBounds();
-                transientSuggestedSelection = null;
+                Rect rawSelectionBounds = new Rect(dragStart, end);
+                Rect viewport = ComputeImageViewport(currentFrame);
+                if (TryCreatePixelSquareSelectionFromDisplayBounds(currentFrame, viewport, rawSelectionBounds, out PixelSquareSelection selection))
+                {
+                    currentPixelSelection = selection;
+                }
+                else
+                {
+                    currentPixelSelection = null;
+                }
+
                 UpdateSelectionVisual();
                 UpdateCurrentCutoutPreview();
             };
@@ -9073,21 +9349,14 @@ namespace OceanyaClient
                     selectionCanvas.ReleaseMouseCapture();
                 }
 
-                UpdateNormalizedSelectionFromBounds();
-                transientSuggestedSelection = null;
+                suggestedPixelSelection = null;
                 UpdateCurrentCutoutPreview();
             };
             selectionCanvas.SizeChanged += (_, _) =>
             {
-                UpdateSelectionBoundsFromNormalized();
-                if (TryGetSavedSelectionForCurrentSource(out Rect normalized))
-                {
-                    UpdateLastSelectionVisual(normalized);
-                }
-                else
-                {
-                    UpdateLastSelectionVisual(null);
-                }
+                UpdateSelectionVisual();
+                UpdateCurrentCutoutPreview();
+                UpdateLastSelectionVisual(GetSavedSelectionForCurrentSource());
             };
 
             playPauseButton.Click += (_, _) =>
@@ -9144,20 +9413,7 @@ namespace OceanyaClient
                 return null;
             }
 
-            Rect viewport = ComputeImageViewport(currentFrame);
-            Rect effectiveSelection = selectionBounds;
-            if ((effectiveSelection.IsEmpty || effectiveSelection.Width < 2 || effectiveSelection.Height < 2)
-                && selectionRect.Visibility == Visibility.Visible)
-            {
-                effectiveSelection = new Rect(
-                    Canvas.GetLeft(selectionRect),
-                    Canvas.GetTop(selectionRect),
-                    selectionRect.Width,
-                    selectionRect.Height);
-            }
-
-            Rect selection = Rect.Intersect(effectiveSelection, viewport);
-            if (selection.IsEmpty || selection.Width < 4 || selection.Height < 4)
+            if (!currentPixelSelection.HasValue || currentPixelSelection.Value.Size <= 0)
             {
                 OceanyaMessageBox.Show(
                     this,
@@ -9168,54 +9424,883 @@ namespace OceanyaClient
                 return null;
             }
 
-            if (currentSelectionCutout != null)
+            if (currentSelectionCutout == null)
             {
-                SaveCutSelectionState(emoteCutSelectionKey, currentSourcePath, selection, viewport);
-                return currentSelectionCutout;
+                currentSelectionCutout = CreateCutoutFromPixelSquareSelection(currentFrame, currentPixelSelection);
             }
 
-            double normalizedX = (selection.X - viewport.X) / viewport.Width;
-            double normalizedY = (selection.Y - viewport.Y) / viewport.Height;
-            double normalizedSize = selection.Width / viewport.Width;
-            int cropX = Math.Max(0, (int)Math.Round(normalizedX * currentFrame.PixelWidth));
-            int cropY = Math.Max(0, (int)Math.Round(normalizedY * currentFrame.PixelHeight));
-            int cropSize = Math.Max(1, (int)Math.Round(normalizedSize * currentFrame.PixelWidth));
-            cropSize = Math.Min(cropSize, Math.Min(currentFrame.PixelWidth - cropX, currentFrame.PixelHeight - cropY));
-            if (cropSize <= 0)
+            if (currentSelectionCutout == null)
             {
                 return null;
             }
 
-            CroppedBitmap cropped = new CroppedBitmap(currentFrame, new Int32Rect(cropX, cropY, cropSize, cropSize));
-            cropped.Freeze();
-            SaveCutSelectionState(emoteCutSelectionKey, currentSourcePath, selection, viewport);
-            return cropped;
+            SaveCutSelectionState(emoteCutSelectionKey, currentSourcePath, currentFrame, currentPixelSelection.Value);
+            return currentSelectionCutout;
         }
 
-        private void SaveCutSelectionState(string emoteKey, string sourceName, Rect selection, Rect viewport)
+        private void SaveCutSelectionState(string emoteKey, string sourceName, BitmapSource frame, PixelSquareSelection selection)
         {
-            if (viewport.Width <= 0 || viewport.Height <= 0)
+            if (selection.Size <= 0)
             {
                 return;
             }
 
-            Rect normalized = new Rect(
-                Math.Clamp((selection.X - viewport.X) / viewport.Width, 0, 1),
-                Math.Clamp((selection.Y - viewport.Y) / viewport.Height, 0, 1),
-                Math.Clamp(selection.Width / viewport.Width, 0, 1),
-                Math.Clamp(selection.Height / viewport.Height, 0, 1));
-            if (normalized.Width <= 0 || normalized.Height <= 0)
-            {
-                return;
-            }
-
-            CutSelectionState state = new CutSelectionState
-            {
-                SourcePath = sourceName,
-                NormalizedSelection = normalized
-            };
+            CutSelectionState state = CreateCutSelectionState(sourceName, frame, selection);
             savedCutSelectionByEmoteKey[emoteKey] = state;
             PersistCutSelectionState(emoteKey, state);
+        }
+
+        private bool ShowBulkEmoteCuttingDialog(IReadOnlyList<CharacterCreationEmoteViewModel> targets)
+        {
+            List<BulkCutoutEditorEntry> entries = targets
+                .Select(emote =>
+                {
+                    string emoteCutSelectionKey = BuildCutSelectionStorageKey(emote);
+                    savedCutSelectionByEmoteKey.TryGetValue(emoteCutSelectionKey, out CutSelectionState? savedSelection);
+                    BitmapSource? initialCutout = ResolveEffectiveBulkCutout(emote);
+                    List<CutSourceOption> sourceOptions = ResolveCutSourceOptions(emote);
+                    string selectedSourcePath = savedSelection?.SourcePath ?? sourceOptions.FirstOrDefault()?.Path ?? string.Empty;
+                    BulkCutoutEditorEntry entry = new BulkCutoutEditorEntry
+                    {
+                        Emote = emote,
+                        EmoteCutSelectionKey = emoteCutSelectionKey,
+                        SourceOptions = sourceOptions,
+                        InitialCutout = CloneBitmapSource(initialCutout),
+                        InitialSelectionState = CloneCutSelectionState(savedSelection),
+                        WorkingCutout = CloneBitmapSource(initialCutout),
+                        WorkingSelectionState = CloneCutSelectionState(savedSelection),
+                        SelectedSourcePath = selectedSourcePath
+                    };
+                    entry.InitialFingerprint = ComputeCutSelectionFingerprint(entry.InitialSelectionState, entry.InitialCutout);
+                    return entry;
+                })
+                .Where(static entry => entry.SourceOptions.Count > 0)
+                .ToList();
+            if (entries.Count == 0)
+            {
+                OceanyaMessageBox.Show(
+                    this,
+                    "No emote image sources are available yet. Add preanim/idle/talking assets first.",
+                    "Emote Cutting",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return false;
+            }
+
+            Window dialog = CreateEmoteDialog("Configure Cutouts", 1120, 820);
+            string popupStateKey = BuildPopupStateKey("EmoteCuttingBatch");
+            ApplyPopupState(dialog, popupStateKey);
+
+            Grid body = new Grid
+            {
+                Margin = new Thickness(12, 8, 12, 2)
+            };
+            body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            Grid navigatorGrid = new Grid
+            {
+                Margin = new Thickness(0, 0, 0, 10)
+            };
+            navigatorGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            navigatorGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            navigatorGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            Button topPreviousButton = CreateDialogButton("←", isPrimary: false);
+            topPreviousButton.Width = 42;
+            topPreviousButton.Margin = new Thickness(0, 0, 8, 0);
+            Button topNextButton = CreateDialogButton("→", isPrimary: false);
+            topNextButton.Width = 42;
+            topNextButton.Margin = new Thickness(8, 0, 0, 0);
+            ScrollViewer navigatorScrollViewer = new ScrollViewer
+            {
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled
+            };
+            StackPanel navigatorPanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
+            navigatorScrollViewer.Content = navigatorPanel;
+            Grid.SetColumn(topPreviousButton, 0);
+            Grid.SetColumn(navigatorScrollViewer, 1);
+            Grid.SetColumn(topNextButton, 2);
+            navigatorGrid.Children.Add(topPreviousButton);
+            navigatorGrid.Children.Add(navigatorScrollViewer);
+            navigatorGrid.Children.Add(topNextButton);
+            Grid.SetRow(navigatorGrid, 0);
+            body.Children.Add(navigatorGrid);
+
+            Grid editorGrid = new Grid
+            {
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+            editorGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            editorGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            editorGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            AutoCompleteDropdownField sourceDropdown = CreateDialogAutoCompleteField(
+                Array.Empty<object>(),
+                string.Empty,
+                "Choose emote source image for cutting.",
+                isReadOnly: true);
+            AddDialogFieldContainer(editorGrid, 0, "Source", "Current emote assets used for cutout extraction.", sourceDropdown);
+
+            Border previewBorder = new Border
+            {
+                MinHeight = 120,
+                Height = Math.Clamp(SaveFile.Data.CharacterCreatorCuttingPreviewHeight, 120, 520),
+                CornerRadius = new CornerRadius(4),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(64, 80, 98)),
+                BorderThickness = new Thickness(1),
+                Background = new SolidColorBrush(Color.FromArgb(145, 14, 14, 14)),
+                Padding = new Thickness(6),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch
+            };
+            Grid previewGrid = new Grid();
+            Image previewImage = new Image { Stretch = Stretch.Uniform };
+            Canvas selectionCanvas = new Canvas { Background = Brushes.Transparent };
+            System.Windows.Shapes.Rectangle lastSelectionRect = new System.Windows.Shapes.Rectangle
+            {
+                Stroke = new SolidColorBrush(Color.FromRgb(226, 160, 96)),
+                StrokeThickness = 1.3,
+                StrokeDashArray = new DoubleCollection { 4, 2 },
+                Fill = Brushes.Transparent,
+                Visibility = Visibility.Collapsed
+            };
+            System.Windows.Shapes.Rectangle selectionRect = new System.Windows.Shapes.Rectangle
+            {
+                Stroke = new SolidColorBrush(Color.FromRgb(148, 220, 255)),
+                Fill = new SolidColorBrush(Color.FromArgb(42, 96, 182, 226)),
+                StrokeThickness = 1.5,
+                Visibility = Visibility.Collapsed
+            };
+            selectionCanvas.Children.Add(lastSelectionRect);
+            selectionCanvas.Children.Add(selectionRect);
+            previewGrid.Children.Add(previewImage);
+            previewGrid.Children.Add(selectionCanvas);
+            previewBorder.Child = previewGrid;
+
+            Button playPauseButton = CreateTimelineSymbolButton("▶", "Play/pause preview.");
+            Button prevFrameButton = CreateTimelineSymbolButton("⏮", "Go back one frame.");
+            Button nextFrameButton = CreateTimelineSymbolButton("⏭", "Go forward one frame.");
+            Slider timelineSlider = new Slider
+            {
+                Minimum = 0,
+                Maximum = 1000,
+                Value = 0,
+                Margin = new Thickness(8, 0, 8, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            CheckBox loopCheckBox = new CheckBox
+            {
+                Content = "Loop",
+                IsChecked = true,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(8, 0, 0, 0)
+            };
+            ApplyDialogCheckBoxStyle(loopCheckBox);
+
+            Grid timelineControls = new Grid
+            {
+                Margin = new Thickness(0, 8, 0, 0)
+            };
+            timelineControls.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            timelineControls.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            timelineControls.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            timelineControls.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            timelineControls.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            timelineControls.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            timelineControls.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            Grid.SetColumn(playPauseButton, 0);
+            Grid.SetColumn(prevFrameButton, 1);
+            Grid.SetColumn(nextFrameButton, 2);
+            Grid.SetColumn(timelineSlider, 5);
+            Grid.SetColumn(loopCheckBox, 6);
+            timelineControls.Children.Add(playPauseButton);
+            timelineControls.Children.Add(prevFrameButton);
+            timelineControls.Children.Add(nextFrameButton);
+
+            Button copySelectionButton = CreateDialogButton("Copy Cutout Square", isPrimary: false);
+            copySelectionButton.Width = 156;
+            copySelectionButton.Margin = new Thickness(8, 0, 0, 0);
+            Button pasteSelectionButton = CreateDialogButton("Paste Cutout Square", isPrimary: false);
+            pasteSelectionButton.Width = 160;
+            pasteSelectionButton.Margin = new Thickness(8, 0, 0, 0);
+            Grid.SetColumn(copySelectionButton, 3);
+            Grid.SetColumn(pasteSelectionButton, 4);
+            timelineControls.Children.Add(copySelectionButton);
+            timelineControls.Children.Add(pasteSelectionButton);
+            timelineControls.Children.Add(timelineSlider);
+            timelineControls.Children.Add(loopCheckBox);
+
+            TextBlock tipText = new TextBlock
+            {
+                Text = "Drag to draw a square selection. Use Previous/Next to move through the list and Done to save the whole batch.",
+                Foreground = new SolidColorBrush(Color.FromRgb(186, 202, 218)),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 8, 0, 0)
+            };
+
+            Border previewResizeGrip = new Border
+            {
+                Height = 8,
+                Margin = new Thickness(0, 2, 0, 4),
+                Background = Brushes.Transparent,
+                Cursor = Cursors.SizeNS,
+                Child = new Border
+                {
+                    Height = 2,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Background = new SolidColorBrush(Color.FromArgb(92, 90, 115, 138))
+                }
+            };
+
+            bool resizingPreview = false;
+            Point previewResizeStartPoint = default;
+            double previewResizeStartHeight = previewBorder.Height;
+            previewResizeGrip.MouseLeftButtonDown += (_, e) =>
+            {
+                resizingPreview = true;
+                previewResizeStartPoint = e.GetPosition(dialog);
+                previewResizeStartHeight = previewBorder.Height;
+                previewResizeGrip.CaptureMouse();
+                e.Handled = true;
+            };
+            previewResizeGrip.MouseMove += (_, e) =>
+            {
+                if (!resizingPreview || e.LeftButton != MouseButtonState.Pressed)
+                {
+                    return;
+                }
+
+                Point current = e.GetPosition(dialog);
+                double next = Math.Clamp(previewResizeStartHeight + (current.Y - previewResizeStartPoint.Y), 120, 520);
+                previewBorder.Height = next;
+                SaveFile.Data.CharacterCreatorCuttingPreviewHeight = next;
+                SaveFile.Save();
+                e.Handled = true;
+            };
+            previewResizeGrip.MouseLeftButtonUp += (_, e) =>
+            {
+                if (!resizingPreview)
+                {
+                    return;
+                }
+
+                resizingPreview = false;
+                previewResizeGrip.ReleaseMouseCapture();
+                e.Handled = true;
+            };
+
+            StackPanel previewPanel = new StackPanel();
+            previewPanel.Children.Add(previewBorder);
+            previewPanel.Children.Add(previewResizeGrip);
+            previewPanel.Children.Add(timelineControls);
+            previewPanel.Children.Add(tipText);
+            AddDialogFieldContainer(editorGrid, 1, "Frame + Crop", "Select a frame and draw the crop region.", previewPanel);
+
+            Border lastCutoutBorder = new Border
+            {
+                Width = 96,
+                Height = 96,
+                BorderBrush = new SolidColorBrush(Color.FromRgb(72, 92, 112)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                Background = new SolidColorBrush(Color.FromArgb(110, 20, 20, 20)),
+                Padding = new Thickness(4),
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            Image lastCutoutImage = new Image { Stretch = Stretch.Uniform };
+            lastCutoutBorder.Child = lastCutoutImage;
+
+            Border currentCutoutBorder = new Border
+            {
+                Width = 96,
+                Height = 96,
+                BorderBrush = new SolidColorBrush(Color.FromRgb(72, 92, 112)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                Background = new SolidColorBrush(Color.FromArgb(110, 20, 20, 20)),
+                Padding = new Thickness(4),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Margin = new Thickness(10, 0, 0, 0)
+            };
+            Image currentCutoutImage = new Image { Stretch = Stretch.Uniform };
+            currentCutoutBorder.Child = currentCutoutImage;
+
+            StackPanel cutoutPreviewRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal
+            };
+            StackPanel lastColumn = new StackPanel();
+            lastColumn.Children.Add(new TextBlock
+            {
+                Text = "Saved cutout",
+                Foreground = new SolidColorBrush(Color.FromRgb(188, 204, 220)),
+                Margin = new Thickness(0, 0, 0, 4)
+            });
+            lastColumn.Children.Add(lastCutoutBorder);
+            StackPanel currentColumn = new StackPanel();
+            currentColumn.Children.Add(new TextBlock
+            {
+                Text = "Current cutout",
+                Foreground = new SolidColorBrush(Color.FromRgb(188, 204, 220)),
+                Margin = new Thickness(0, 0, 0, 4)
+            });
+            currentColumn.Children.Add(currentCutoutBorder);
+            cutoutPreviewRow.Children.Add(lastColumn);
+            cutoutPreviewRow.Children.Add(currentColumn);
+            AddDialogFieldContainer(editorGrid, 2, "Cutout previews", "Saved cutout and the current in-progress cutout.", cutoutPreviewRow);
+            Grid.SetRow(editorGrid, 1);
+            body.Children.Add(editorGrid);
+
+            Grid buttonGrid = new Grid
+            {
+                Margin = new Thickness(0, 2, 0, 0)
+            };
+            buttonGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            buttonGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            buttonGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            Button bottomPreviousButton = CreateDialogButton("Previous", isPrimary: false);
+            bottomPreviousButton.Width = 120;
+            bottomPreviousButton.HorizontalAlignment = HorizontalAlignment.Left;
+            Button cancelButton = CreateDialogButton("Cancel", isPrimary: false);
+            cancelButton.Width = 120;
+            cancelButton.HorizontalAlignment = HorizontalAlignment.Center;
+            Button nextButton = CreateDialogButton("Next", isPrimary: true);
+            nextButton.Width = 120;
+            nextButton.HorizontalAlignment = HorizontalAlignment.Right;
+            Grid.SetColumn(bottomPreviousButton, 0);
+            Grid.SetColumn(cancelButton, 1);
+            Grid.SetColumn(nextButton, 2);
+            buttonGrid.Children.Add(bottomPreviousButton);
+            buttonGrid.Children.Add(cancelButton);
+            buttonGrid.Children.Add(nextButton);
+            BuildStyledDialogContent(dialog, dialog.Title, body, buttonGrid);
+
+            int currentIndex = 0;
+            AnimationTimelinePreviewController? previewController = null;
+            BitmapSource? currentFrame = null;
+            PixelSquareSelection? currentPixelSelection = null;
+            PixelSquareSelection? copiedSelection = null;
+            BitmapSource? currentSelectionCutout = null;
+            string currentSourcePath = string.Empty;
+            bool suppressTimelineSeek = false;
+            bool suppressSourceDropdownEvents = false;
+            bool allowCloseWithoutPrompt = false;
+            Point dragStart = default;
+            bool dragging = false;
+
+            BulkCutoutEditorEntry GetCurrentEntry()
+            {
+                return entries[currentIndex];
+            }
+
+            Rect ComputeImageViewport(BitmapSource frame)
+            {
+                double hostWidth = Math.Max(1, selectionCanvas.ActualWidth);
+                double hostHeight = Math.Max(1, selectionCanvas.ActualHeight);
+                double frameWidth = Math.Max(1, frame.PixelWidth);
+                double frameHeight = Math.Max(1, frame.PixelHeight);
+                double scale = Math.Min(hostWidth / frameWidth, hostHeight / frameHeight);
+                double drawWidth = frameWidth * scale;
+                double drawHeight = frameHeight * scale;
+                double x = (hostWidth - drawWidth) * 0.5;
+                double y = (hostHeight - drawHeight) * 0.5;
+                return new Rect(x, y, drawWidth, drawHeight);
+            }
+
+            void RefreshNavigatorTiles()
+            {
+                navigatorPanel.Children.Clear();
+                for (int i = 0; i < entries.Count; i++)
+                {
+                    BulkCutoutEditorEntry entry = entries[i];
+                    BitmapSource? previewBitmap = CloneBitmapSource(entry.WorkingCutout) ?? ResolveBulkCutoutPreviewBitmap(entry.Emote);
+                    Border tile = new Border
+                    {
+                        Width = 68,
+                        Height = 68,
+                        Margin = new Thickness(0, 0, 6, 0),
+                        BorderBrush = i == currentIndex
+                            ? new SolidColorBrush(Color.FromRgb(148, 220, 255))
+                            : new SolidColorBrush(Color.FromRgb(72, 92, 112)),
+                        BorderThickness = i == currentIndex ? new Thickness(2) : new Thickness(1),
+                        CornerRadius = new CornerRadius(4),
+                        Background = new SolidColorBrush(Color.FromArgb(110, 20, 20, 20)),
+                        Cursor = Cursors.Hand,
+                        ToolTip = BuildBulkCutoutEmoteLabel(entry.Emote)
+                    };
+                    Grid tileGrid = new Grid();
+                    tileGrid.Children.Add(new Image
+                    {
+                        Source = previewBitmap,
+                        Stretch = Stretch.Uniform
+                    });
+                    tileGrid.Children.Add(new TextBlock
+                    {
+                        Text = "+",
+                        Foreground = new SolidColorBrush(Color.FromRgb(191, 213, 232)),
+                        FontSize = 24,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Visibility = previewBitmap == null ? Visibility.Visible : Visibility.Collapsed
+                    });
+                    tile.Child = tileGrid;
+                    int capturedIndex = i;
+                    tile.MouseLeftButtonUp += (_, _) =>
+                    {
+                        if (capturedIndex == currentIndex)
+                        {
+                            return;
+                        }
+
+                        CaptureCurrentEntryState();
+                        currentIndex = capturedIndex;
+                        LoadCurrentEntry();
+                    };
+                    navigatorPanel.Children.Add(tile);
+                }
+
+                if (currentIndex >= 0 && currentIndex < navigatorPanel.Children.Count
+                    && navigatorPanel.Children[currentIndex] is FrameworkElement activeTile)
+                {
+                    Dispatcher.BeginInvoke(new Action(activeTile.BringIntoView), DispatcherPriority.Background);
+                }
+            }
+
+            void UpdateNavigationButtons()
+            {
+                bool hasPrevious = currentIndex > 0;
+                bool hasNext = currentIndex < entries.Count - 1;
+                topPreviousButton.IsEnabled = hasPrevious;
+                bottomPreviousButton.IsEnabled = hasPrevious;
+                topNextButton.IsEnabled = hasNext;
+                nextButton.Content = hasNext ? "Next" : "Done";
+                copySelectionButton.IsEnabled = currentPixelSelection.HasValue;
+                pasteSelectionButton.IsEnabled = copiedSelection.HasValue && currentFrame != null;
+            }
+
+            void UpdateLastSelectionVisual()
+            {
+                if (currentFrame == null
+                    || !TryResolveCutSelectionDisplayRect(
+                        GetCurrentEntry().InitialSelectionState != null
+                            && string.Equals(GetCurrentEntry().InitialSelectionState.SourcePath, currentSourcePath, StringComparison.OrdinalIgnoreCase)
+                            ? GetCurrentEntry().InitialSelectionState
+                            : null,
+                        currentFrame,
+                        ComputeImageViewport(currentFrame),
+                        out Rect rect))
+                {
+                    lastSelectionRect.Visibility = Visibility.Collapsed;
+                    return;
+                }
+
+                lastSelectionRect.Visibility = Visibility.Visible;
+                Canvas.SetLeft(lastSelectionRect, rect.X);
+                Canvas.SetTop(lastSelectionRect, rect.Y);
+                lastSelectionRect.Width = rect.Width;
+                lastSelectionRect.Height = rect.Height;
+            }
+
+            void UpdateSavedCutoutPreview()
+            {
+                if (GetCurrentEntry().InitialCutout == null)
+                {
+                    lastCutoutImage.Source = null;
+                    return;
+                }
+
+                if (GetCurrentEntry().InitialSelectionState == null
+                    || string.Equals(GetCurrentEntry().InitialSelectionState.SourcePath, currentSourcePath, StringComparison.OrdinalIgnoreCase))
+                {
+                    lastCutoutImage.Source = GetCurrentEntry().InitialCutout;
+                    return;
+                }
+
+                lastCutoutImage.Source = null;
+            }
+
+            void UpdateSelectionVisual()
+            {
+                if (currentFrame == null || !currentPixelSelection.HasValue)
+                {
+                    selectionRect.Visibility = Visibility.Collapsed;
+                    currentSelectionCutout = null;
+                    currentCutoutImage.Source = null;
+                    UpdateNavigationButtons();
+                    return;
+                }
+
+                Rect viewport = ComputeImageViewport(currentFrame);
+                Rect selectionBounds = ProjectPixelSquareSelectionToViewport(currentFrame, viewport, currentPixelSelection.Value);
+                selectionRect.Visibility = Visibility.Visible;
+                Canvas.SetLeft(selectionRect, selectionBounds.X);
+                Canvas.SetTop(selectionRect, selectionBounds.Y);
+                selectionRect.Width = selectionBounds.Width;
+                selectionRect.Height = selectionBounds.Height;
+                currentSelectionCutout = CreateCutoutFromPixelSquareSelection(currentFrame, currentPixelSelection);
+                currentCutoutImage.Source = currentSelectionCutout;
+                UpdateNavigationButtons();
+            }
+
+            void CaptureCurrentEntryState()
+            {
+                BulkCutoutEditorEntry entry = GetCurrentEntry();
+                entry.SelectedSourcePath = currentSourcePath;
+                if (currentFrame != null && currentPixelSelection.HasValue)
+                {
+                    entry.WorkingSelectionState = CreateCutSelectionState(currentSourcePath, currentFrame, currentPixelSelection.Value);
+                    entry.WorkingCutout = CloneBitmapSource(currentSelectionCutout)
+                        ?? CreateCutoutFromPixelSquareSelection(currentFrame, currentPixelSelection);
+                }
+            }
+
+            bool HasUnsavedBatchChanges()
+            {
+                CaptureCurrentEntryState();
+                return entries.Any(entry =>
+                    !string.Equals(
+                        entry.InitialFingerprint,
+                        ComputeCutSelectionFingerprint(entry.WorkingSelectionState, entry.WorkingCutout),
+                        StringComparison.Ordinal));
+            }
+
+            bool ConfirmCancelIfNeeded()
+            {
+                if (!HasUnsavedBatchChanges())
+                {
+                    return true;
+                }
+
+                MessageBoxResult result = OceanyaMessageBox.Show(
+                    dialog,
+                    "You have unsaved cutout changes in this list. Closing now will lose them. Close anyway?",
+                    "Emote Cutting",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+                return result == MessageBoxResult.Yes;
+            }
+
+            void ApplyEntrySelectionForCurrentSource()
+            {
+                if (currentFrame == null)
+                {
+                    currentPixelSelection = null;
+                    UpdateSelectionVisual();
+                    UpdateLastSelectionVisual();
+                    UpdateSavedCutoutPreview();
+                    return;
+                }
+
+                if (GetCurrentEntry().WorkingSelectionState != null
+                    && string.Equals(GetCurrentEntry().WorkingSelectionState.SourcePath, currentSourcePath, StringComparison.OrdinalIgnoreCase)
+                    && TryRestorePixelSquareSelection(GetCurrentEntry().WorkingSelectionState, currentFrame, out PixelSquareSelection savedSelection))
+                {
+                    currentPixelSelection = savedSelection;
+                }
+                else if (currentIndex > 0
+                    && entries[currentIndex - 1].WorkingSelectionState != null
+                    && TryRestorePixelSquareSelection(entries[currentIndex - 1].WorkingSelectionState, currentFrame, out PixelSquareSelection previousSelection))
+                {
+                    currentPixelSelection = previousSelection;
+                }
+                else
+                {
+                    currentPixelSelection = null;
+                }
+
+                UpdateSelectionVisual();
+                UpdateLastSelectionVisual();
+                UpdateSavedCutoutPreview();
+            }
+
+            void LoadSource(string sourcePath)
+            {
+                currentSourcePath = sourcePath ?? string.Empty;
+                previewController?.Dispose();
+                previewController = null;
+                currentFrame = null;
+                currentPixelSelection = null;
+                currentSelectionCutout = null;
+                previewImage.Source = null;
+                currentCutoutImage.Source = null;
+                selectionRect.Visibility = Visibility.Collapsed;
+
+                if (AnimationTimelinePreviewController.TryCreate(ResolveAo2PreviewImagePath(sourcePath), out AnimationTimelinePreviewController? createdController))
+                {
+                    previewController = createdController;
+                    currentFrame = createdController.CurrentFrame as BitmapSource;
+                    previewImage.Source = createdController.CurrentFrame;
+                    timelineSlider.Maximum = Math.Max(1, createdController.EffectiveDurationMs);
+                    createdController.SetLoop(loopCheckBox.IsChecked == true);
+                    createdController.PlaybackStateChanged += isPlaying => Dispatcher.Invoke(() =>
+                    {
+                        playPauseButton.Content = isPlaying ? "⏸" : "▶";
+                    });
+                    createdController.PositionChanged += (frame, positionMs) => Dispatcher.Invoke(() =>
+                    {
+                        previewImage.Source = frame;
+                        currentFrame = frame as BitmapSource;
+                        UpdateSelectionVisual();
+                        UpdateLastSelectionVisual();
+                        suppressTimelineSeek = true;
+                        timelineSlider.Value = Math.Clamp(positionMs, timelineSlider.Minimum, timelineSlider.Maximum);
+                        suppressTimelineSeek = false;
+                        UpdateNavigationButtons();
+                    });
+                }
+                else if (TryLoadButtonBitmap(sourcePath, out BitmapSource? bitmap, out _))
+                {
+                    currentFrame = bitmap;
+                    previewImage.Source = bitmap;
+                    timelineSlider.Value = 0;
+                    timelineSlider.Maximum = 1;
+                }
+
+                ApplyEntrySelectionForCurrentSource();
+
+                bool interactive = previewController?.HasTimeline == true;
+                playPauseButton.IsEnabled = interactive;
+                prevFrameButton.IsEnabled = interactive;
+                nextFrameButton.IsEnabled = interactive;
+                timelineSlider.IsEnabled = interactive;
+                loopCheckBox.IsEnabled = interactive;
+            }
+
+            void LoadCurrentEntry()
+            {
+                BulkCutoutEditorEntry entry = GetCurrentEntry();
+                suppressSourceDropdownEvents = true;
+                sourceDropdown.ItemsSource = entry.SourceOptions.Select(static option => option.Name).ToArray();
+                CutSourceOption selectedOption = entry.SourceOptions.FirstOrDefault(option =>
+                        string.Equals(option.Path, entry.SelectedSourcePath, StringComparison.OrdinalIgnoreCase))
+                    ?? entry.SourceOptions.First();
+                sourceDropdown.Text = selectedOption.Name;
+                suppressSourceDropdownEvents = false;
+                LoadSource(selectedOption.Path);
+                RefreshNavigatorTiles();
+                UpdateNavigationButtons();
+            }
+
+            void NavigateRelative(int delta)
+            {
+                int nextIndex = currentIndex + delta;
+                if (nextIndex < 0 || nextIndex >= entries.Count)
+                {
+                    return;
+                }
+
+                CaptureCurrentEntryState();
+                currentIndex = nextIndex;
+                LoadCurrentEntry();
+            }
+
+            sourceDropdown.TextValueChanged += (_, _) =>
+            {
+                if (suppressSourceDropdownEvents)
+                {
+                    return;
+                }
+
+                CutSourceOption? selected = GetCurrentEntry().SourceOptions.FirstOrDefault(option =>
+                    string.Equals(option.Name, sourceDropdown.Text, StringComparison.OrdinalIgnoreCase));
+                if (selected == null)
+                {
+                    return;
+                }
+
+                GetCurrentEntry().SelectedSourcePath = selected.Path;
+                LoadSource(selected.Path);
+            };
+
+            selectionCanvas.MouseLeftButtonDown += (_, e) =>
+            {
+                if (currentFrame == null)
+                {
+                    return;
+                }
+
+                dragging = true;
+                dragStart = e.GetPosition(selectionCanvas);
+                currentPixelSelection = null;
+                UpdateSelectionVisual();
+                selectionCanvas.CaptureMouse();
+            };
+            selectionCanvas.MouseMove += (_, e) =>
+            {
+                if (!dragging || currentFrame == null)
+                {
+                    return;
+                }
+
+                Point current = e.GetPosition(selectionCanvas);
+                double dx = current.X - dragStart.X;
+                double dy = current.Y - dragStart.Y;
+                double size = Math.Max(Math.Abs(dx), Math.Abs(dy));
+                double widthDirection = dx == 0 ? (dy < 0 ? -1 : 1) : Math.Sign(dx);
+                double heightDirection = dy == 0 ? (dx < 0 ? -1 : 1) : Math.Sign(dy);
+                Point end = new Point(
+                    dragStart.X + (widthDirection * size),
+                    dragStart.Y + (heightDirection * size));
+                Rect rawSelectionBounds = new Rect(dragStart, end);
+                Rect viewport = ComputeImageViewport(currentFrame);
+                if (TryCreatePixelSquareSelectionFromDisplayBounds(currentFrame, viewport, rawSelectionBounds, out PixelSquareSelection selection))
+                {
+                    currentPixelSelection = selection;
+                }
+                else
+                {
+                    currentPixelSelection = null;
+                }
+
+                UpdateSelectionVisual();
+            };
+            selectionCanvas.MouseLeftButtonUp += (_, _) =>
+            {
+                dragging = false;
+                if (selectionCanvas.IsMouseCaptured)
+                {
+                    selectionCanvas.ReleaseMouseCapture();
+                }
+
+                UpdateSelectionVisual();
+                CaptureCurrentEntryState();
+                RefreshNavigatorTiles();
+            };
+            selectionCanvas.SizeChanged += (_, _) =>
+            {
+                UpdateSelectionVisual();
+                UpdateLastSelectionVisual();
+            };
+
+            playPauseButton.Click += (_, _) =>
+            {
+                if (previewController == null)
+                {
+                    return;
+                }
+
+                if (previewController.IsPlaying)
+                {
+                    previewController.Pause();
+                }
+                else
+                {
+                    previewController.Play();
+                }
+            };
+            prevFrameButton.Click += (_, _) => previewController?.StepFrame(-1);
+            nextFrameButton.Click += (_, _) => previewController?.StepFrame(1);
+            timelineSlider.ValueChanged += (_, _) =>
+            {
+                if (!suppressTimelineSeek)
+                {
+                    previewController?.Seek(timelineSlider.Value);
+                }
+            };
+            loopCheckBox.Checked += (_, _) => previewController?.SetLoop(true);
+            loopCheckBox.Unchecked += (_, _) => previewController?.SetLoop(false);
+            copySelectionButton.Click += (_, _) =>
+            {
+                if (!currentPixelSelection.HasValue)
+                {
+                    return;
+                }
+
+                copiedSelection = currentPixelSelection;
+                UpdateNavigationButtons();
+            };
+            pasteSelectionButton.Click += (_, _) =>
+            {
+                if (currentFrame == null || !copiedSelection.HasValue)
+                {
+                    return;
+                }
+
+                currentPixelSelection = ClampPixelSquareSelectionToFrame(copiedSelection.Value, currentFrame);
+                UpdateSelectionVisual();
+                CaptureCurrentEntryState();
+                RefreshNavigatorTiles();
+            };
+            topPreviousButton.Click += (_, _) => NavigateRelative(-1);
+            bottomPreviousButton.Click += (_, _) => NavigateRelative(-1);
+            topNextButton.Click += (_, _) => NavigateRelative(1);
+            cancelButton.Click += (_, _) =>
+            {
+                if (!ConfirmCancelIfNeeded())
+                {
+                    return;
+                }
+
+                allowCloseWithoutPrompt = true;
+                dialog.DialogResult = false;
+            };
+            nextButton.Click += (_, _) =>
+            {
+                if (currentIndex < entries.Count - 1)
+                {
+                    NavigateRelative(1);
+                    return;
+                }
+
+                CaptureCurrentEntryState();
+                foreach (BulkCutoutEditorEntry entry in entries)
+                {
+                    if (entry.WorkingCutout != null)
+                    {
+                        bulkButtonCutoutByEmoteId[entry.Emote.Id] = CloneBitmapSource(entry.WorkingCutout)!;
+                    }
+                    else
+                    {
+                        bulkButtonCutoutByEmoteId.Remove(entry.Emote.Id);
+                    }
+
+                    if (entry.WorkingSelectionState != null)
+                    {
+                        savedCutSelectionByEmoteKey[entry.EmoteCutSelectionKey] = CloneCutSelectionState(entry.WorkingSelectionState)!;
+                        SaveFile.Data.CharacterCreatorCutSelections[entry.EmoteCutSelectionKey] =
+                            BuildPersistedCutSelectionState(entry.WorkingSelectionState);
+                    }
+                }
+
+                SaveFile.Save();
+                allowCloseWithoutPrompt = true;
+                dialog.DialogResult = true;
+            };
+            dialog.Closing += (_, e) =>
+            {
+                if (allowCloseWithoutPrompt)
+                {
+                    return;
+                }
+
+                if (ConfirmCancelIfNeeded())
+                {
+                    allowCloseWithoutPrompt = true;
+                    return;
+                }
+
+                e.Cancel = true;
+            };
+
+            LoadCurrentEntry();
+
+            bool? result;
+            try
+            {
+                result = dialog.ShowDialog();
+            }
+            finally
+            {
+                PersistPopupState(dialog, popupStateKey);
+                previewController?.Dispose();
+            }
+
+            return result == true;
         }
 
         private Color? ShowAdvancedColorPickerDialog(Color initialColor)
@@ -9779,26 +10864,29 @@ namespace OceanyaClient
             int row,
             string label,
             string? toolTip,
-            IEnumerable<string> options,
+            System.Collections.IEnumerable options,
             string value,
-            bool isReadOnly)
+            bool isReadOnly,
+            bool preserveItemOrder = false)
         {
-            AutoCompleteDropdownField field = CreateDialogAutoCompleteField(options, value, toolTip, isReadOnly);
+            AutoCompleteDropdownField field = CreateDialogAutoCompleteField(options, value, toolTip, isReadOnly, preserveItemOrder);
             AddDialogFieldContainer(grid, row, label, toolTip, field);
             return field;
         }
 
         private AutoCompleteDropdownField CreateDialogAutoCompleteField(
-            IEnumerable<string> options,
+            System.Collections.IEnumerable options,
             string value,
             string? toolTip,
-            bool isReadOnly)
+            bool isReadOnly,
+            bool preserveItemOrder = false)
         {
             AutoCompleteDropdownField field = new AutoCompleteDropdownField
             {
                 Text = value ?? string.Empty,
-                ItemsSource = options?.ToArray() ?? Array.Empty<string>(),
+                ItemsSource = options ?? Array.Empty<object>(),
                 IsTextReadOnly = isReadOnly,
+                PreserveItemOrder = preserveItemOrder,
                 ToolTip = toolTip,
                 Margin = new Thickness(0, 0, 0, 2)
             };
@@ -10198,16 +11286,17 @@ namespace OceanyaClient
             return ButtonEffectsGenerationMode.UseAssetAsBothVersions;
         }
 
+        private static IReadOnlyList<AutoCompleteDropdownItem> GetAutomaticBackgroundOptionItems()
+        {
+            return ButtonBackgroundOptionItems;
+        }
+
         private static IReadOnlyList<string> GetAutomaticBackgroundOptions()
         {
-            List<string> options = new List<string>
-            {
-                "None",
-                "Solid color",
-                "Upload"
-            };
-            options.AddRange(ButtonBackgroundPresetAssetMap.Keys);
-            return options;
+            return ButtonBackgroundOptionItems
+                .Where(static item => item.IsSelectable)
+                .Select(static item => item.Text)
+                .ToList();
         }
 
         private static string GetAutomaticBackgroundSelectionName(ButtonIconGenerationConfig config)
@@ -10216,29 +11305,29 @@ namespace OceanyaClient
             {
                 ButtonAutomaticBackgroundMode.PresetList => ButtonBackgroundPresetAssetMap.ContainsKey(config.AutomaticBackgroundPreset)
                     ? config.AutomaticBackgroundPreset
-                    : ButtonBackgroundPresetAssetMap.Keys.FirstOrDefault() ?? "None",
-                ButtonAutomaticBackgroundMode.SolidColor => "Solid color",
-                ButtonAutomaticBackgroundMode.Upload => "Upload",
-                _ => "None"
+                    : ButtonBackgroundPresetAssetMap.Keys.FirstOrDefault() ?? ButtonBackgroundNoOptionName,
+                ButtonAutomaticBackgroundMode.SolidColor => ButtonBackgroundSolidColorOptionName,
+                ButtonAutomaticBackgroundMode.Upload => ButtonBackgroundUploadOptionName,
+                _ => ButtonBackgroundNoOptionName
             };
         }
 
         private static void ApplyAutomaticBackgroundSelection(string selectionText, ButtonIconGenerationConfig config)
         {
             string selected = (selectionText ?? string.Empty).Trim();
-            if (string.Equals(selected, "Solid color", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(selected, ButtonBackgroundSolidColorOptionName, StringComparison.OrdinalIgnoreCase))
             {
                 config.AutomaticBackgroundMode = ButtonAutomaticBackgroundMode.SolidColor;
                 return;
             }
 
-            if (string.Equals(selected, "Upload", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(selected, ButtonBackgroundUploadOptionName, StringComparison.OrdinalIgnoreCase))
             {
                 config.AutomaticBackgroundMode = ButtonAutomaticBackgroundMode.Upload;
                 return;
             }
 
-            if (string.Equals(selected, "None", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(selected, ButtonBackgroundNoOptionName, StringComparison.OrdinalIgnoreCase))
             {
                 config.AutomaticBackgroundMode = ButtonAutomaticBackgroundMode.None;
                 return;
@@ -11057,10 +12146,11 @@ namespace OceanyaClient
                     TabItem backgroundTab = new TabItem { Header = "Background" };
                     StackPanel backgroundContent = new StackPanel { Margin = new Thickness(8, 6, 8, 8) };
                     AutoCompleteDropdownField backgroundDropdown = CreateDialogAutoCompleteField(
-                        GetAutomaticBackgroundOptions(),
+                        GetAutomaticBackgroundOptionItems(),
                         GetAutomaticBackgroundSelectionName(config),
                         "Background config",
-                        isReadOnly: true);
+                        isReadOnly: true,
+                        preserveItemOrder: true);
                     backgroundDropdown.TextValueChanged += (_, _) =>
                     {
                         ApplyAutomaticBackgroundSelection(backgroundDropdown.Text, config);
@@ -11104,7 +12194,7 @@ namespace OceanyaClient
                                 RefreshFields();
                             }
                         };
-                        AddSimpleField(backgroundContent, "Solid color", color);
+                        AddSimpleField(backgroundContent, "Solid Color", color);
                     }
                     else if (config.AutomaticBackgroundMode == ButtonAutomaticBackgroundMode.Upload)
                     {
@@ -13937,7 +15027,7 @@ namespace OceanyaClient
         private string? buttonTwoImagesOffAssetSourcePath;
         private string? buttonEffectsOverlayAssetSourcePath;
         private ButtonAutomaticBackgroundMode buttonAutomaticBackgroundMode = ButtonAutomaticBackgroundMode.None;
-        private string buttonAutomaticBackgroundPreset = "Oceanya Logo (preset)";
+        private string buttonAutomaticBackgroundPreset = "Oceanya BG";
         private Color buttonAutomaticSolidColor = Colors.Transparent;
         private string? buttonAutomaticBackgroundUploadAssetSourcePath;
         private BitmapSource? buttonAutomaticCutEmoteImage;
@@ -14338,7 +15428,7 @@ namespace OceanyaClient
             ButtonTwoImagesOffAssetSourcePath = null;
             ButtonEffectsOverlayAssetSourcePath = null;
             ButtonAutomaticBackgroundMode = ButtonAutomaticBackgroundMode.None;
-            ButtonAutomaticBackgroundPreset = "Oceanya Logo (preset)";
+            ButtonAutomaticBackgroundPreset = "Oceanya BG";
             ButtonAutomaticSolidColor = Colors.Transparent;
             ButtonAutomaticBackgroundUploadAssetSourcePath = null;
             ButtonAutomaticCutEmoteImage = null;
@@ -14621,10 +15711,39 @@ namespace OceanyaClient
         public FileOrganizationEntryViewModel? Entry { get; set; }
     }
 
+    public readonly struct PixelSquareSelection
+    {
+        public PixelSquareSelection(int x, int y, int size)
+        {
+            X = x;
+            Y = y;
+            Size = size;
+        }
+
+        public int X { get; }
+        public int Y { get; }
+        public int Size { get; }
+    }
+
     public sealed class CutSelectionState
     {
         public string SourcePath { get; set; } = string.Empty;
-        public Rect NormalizedSelection { get; set; } = Rect.Empty;
+        public double NormalizedX { get; set; }
+        public double NormalizedY { get; set; }
+        public double NormalizedSize { get; set; }
+    }
+
+    internal sealed class BulkCutoutEditorEntry
+    {
+        public CharacterCreationEmoteViewModel Emote { get; set; } = null!;
+        public string EmoteCutSelectionKey { get; set; } = string.Empty;
+        public List<CutSourceOption> SourceOptions { get; set; } = new List<CutSourceOption>();
+        public BitmapSource? InitialCutout { get; set; }
+        public CutSelectionState? InitialSelectionState { get; set; }
+        public BitmapSource? WorkingCutout { get; set; }
+        public CutSelectionState? WorkingSelectionState { get; set; }
+        public string SelectedSourcePath { get; set; } = string.Empty;
+        public string InitialFingerprint { get; set; } = string.Empty;
     }
 
     public enum FileOrganizationEntryKind
@@ -14682,7 +15801,7 @@ namespace OceanyaClient
         public string? TwoImagesOffPath { get; set; }
         public string? OverlayImagePath { get; set; }
         public ButtonAutomaticBackgroundMode AutomaticBackgroundMode { get; set; } = ButtonAutomaticBackgroundMode.None;
-        public string AutomaticBackgroundPreset { get; set; } = "Oceanya Logo (preset)";
+        public string AutomaticBackgroundPreset { get; set; } = "Oceanya BG";
         public Color AutomaticSolidColor { get; set; } = Colors.Transparent;
         public string? AutomaticBackgroundUploadPath { get; set; }
         public BitmapSource? AutomaticCutEmoteImage { get; set; }

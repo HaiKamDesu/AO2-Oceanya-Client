@@ -1145,11 +1145,10 @@
                                         Tag="buttonicons"
                                         Content="4. Button Icons"
                                         Style="{StaticResource NavButtonStyle}"
-                                        Click="SectionButton_Click"
-                                        Visibility="Collapsed"/>
+                                        Click="SectionButton_Click"/>
                                 <Button x:Name="SectionFileOrganizationButton"
                                         Tag="fileorganization"
-                                        Content="4. File Organization"
+                                        Content="5. File Organization"
                                         Style="{StaticResource NavButtonStyle}"
                                         Click="SectionButton_Click"/>
                             </StackPanel>
@@ -1691,7 +1690,7 @@
                                 <StackPanel>
                                     <TextBlock Text="Button Icons" Foreground="White" FontSize="14" FontWeight="SemiBold"/>
                                     <Border Margin="0,8,0,8" Padding="8" BorderBrush="#725E3B" BorderThickness="1" CornerRadius="4" Background="#33221800">
-                                        <TextBlock Text="The button icons tab is a conditional tab that only exists because you were lazy and did not fully make your buttons in the emotes tab. And due to that, this is a tab to help you do all of them automatically at once."
+                                        <TextBlock Text="Use this tab to bulk-generate or revisit button icon config across a list of emotes at once."
                                                    Foreground="#FFE3CAA7"
                                                    TextWrapping="Wrap"/>
                                     </Border>
@@ -1717,7 +1716,8 @@
                                                                 ToolTip="Automatic generation background source for the selected emote list."/>
                                                         <TextBlock Text="Background Config" Style="{StaticResource FieldTitleStyle}"/>
                                                     </DockPanel>
-                                                    <local:AutoCompleteDropdownField x:Name="ButtonIconsBackgroundDropdown"/>
+                                                    <local:AutoCompleteDropdownField x:Name="ButtonIconsBackgroundDropdown"
+                                                                                     PreserveItemOrder="True"/>
                                                 </StackPanel>
 
                                                 <Border x:Name="ButtonIconsPresetPreviewCard"

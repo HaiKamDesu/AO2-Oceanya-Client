@@ -35,6 +35,13 @@
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsSelectable}" Value="False">
+                    <Setter Property="IsEnabled" Value="False"/>
+                    <Setter Property="Focusable" Value="False"/>
+                    <Setter Property="Background" Value="Transparent"/>
+                </DataTrigger>
+            </Style.Triggers>
         </Style>
 
         <Style x:Key="InlineArrowButtonStyle" TargetType="Button">
@@ -60,11 +67,21 @@
                            Foreground="#FF9FD0F5"
                            Text="{Binding ItemSymbolGlyph, RelativeSource={RelativeSource AncestorType={x:Type local:AutoCompleteDropdownField}}}"
                            Visibility="Collapsed"/>
-                <TextBlock Text="{Binding}" Foreground="#FFF2F2F2"/>
+                <TextBlock x:Name="ItemText"
+                           Text="{Binding Text}"
+                           Foreground="#FFF2F2F2"/>
             </StackPanel>
             <DataTemplate.Triggers>
-                <DataTrigger Binding="{Binding ShowItemSymbol, RelativeSource={RelativeSource AncestorType={x:Type local:AutoCompleteDropdownField}}}" Value="True">
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding ShowItemSymbol, RelativeSource={RelativeSource AncestorType={x:Type local:AutoCompleteDropdownField}}}" Value="True"/>
+                        <Condition Binding="{Binding IsSelectable}" Value="True"/>
+                    </MultiDataTrigger.Conditions>
                     <Setter TargetName="ItemSymbol" Property="Visibility" Value="Visible"/>
+                </MultiDataTrigger>
+                <DataTrigger Binding="{Binding IsSelectable}" Value="False">
+                    <Setter TargetName="ItemText" Property="Foreground" Value="#FF8D8D8D"/>
+                    <Setter TargetName="ItemText" Property="FontWeight" Value="SemiBold"/>
                 </DataTrigger>
             </DataTemplate.Triggers>
         </DataTemplate>

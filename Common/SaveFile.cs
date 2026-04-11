@@ -194,6 +194,8 @@ namespace OceanyaClient
         public double Y { get; set; }
         public double Width { get; set; }
         public double Height { get; set; }
+        public double SquareSize { get; set; }
+        public bool UsesSquareCoordinates { get; set; }
     }
 
     public class SaveData
@@ -461,6 +463,12 @@ namespace OceanyaClient
                         state.Y = Math.Clamp(state.Y, 0, 1);
                         state.Width = Math.Clamp(state.Width, 0, 1);
                         state.Height = Math.Clamp(state.Height, 0, 1);
+                        state.SquareSize = Math.Clamp(state.SquareSize, 0, 1);
+                        if (state.UsesSquareCoordinates && state.SquareSize <= 0)
+                        {
+                            state.SquareSize = state.Width > 0 ? state.Width : state.Height;
+                        }
+
                         return state;
                     },
                     StringComparer.OrdinalIgnoreCase);
