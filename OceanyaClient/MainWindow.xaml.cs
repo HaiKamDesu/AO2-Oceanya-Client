@@ -439,6 +439,9 @@ namespace OceanyaClient
             ICMessage.ShoutModifiers previousShoutModifier = profileClient.shoutModifiers;
             ICMessage.Effects previousEffect = profileClient.effect;
             bool previousScreenshake = profileClient.screenshake;
+            bool previousPreanimEnabled = profileClient.PreanimEnabled;
+            bool previousImmediate = profileClient.Immediate;
+            bool previousAdditive = profileClient.Additive;
 
             // Execute actions in order.
             foreach (AgentAction action in agentResponse.Actions)
@@ -446,9 +449,19 @@ namespace OceanyaClient
                 await ExecuteSingleActionAsync(
                     profileClient, networkClient, snapshot, action, appliedChanges,
                     previousSfx, previousShoutModifier, previousEffect, previousScreenshake,
+                    previousPreanimEnabled, previousImmediate, previousAdditive,
                     cancellationToken);
             }
 
+            RestoreAiTransientState(
+                profileClient,
+                previousSfx,
+                previousShoutModifier,
+                previousEffect,
+                previousScreenshake,
+                previousPreanimEnabled,
+                previousImmediate,
+                previousAdditive);
             RefreshUiAfterAiStateChanged(profileClient);
             return appliedChanges.Count == 0
                 ? "AI action completed with no visible changes."
@@ -465,6 +478,9 @@ namespace OceanyaClient
             ICMessage.ShoutModifiers previousShoutModifier,
             ICMessage.Effects previousEffect,
             bool previousScreenshake,
+            bool previousPreanimEnabled,
+            bool previousImmediate,
+            bool previousAdditive,
             CancellationToken cancellationToken)
         {
             switch (action.Type)
@@ -629,7 +645,8 @@ namespace OceanyaClient
                 case AgentActionType.Speak:
                     await ExecuteSpeakActionAsync(
                         profileClient, networkClient, action, appliedChanges,
-                        previousSfx, previousShoutModifier, previousEffect, previousScreenshake);
+                        previousSfx, previousShoutModifier, previousEffect, previousScreenshake,
+                        previousPreanimEnabled, previousImmediate, previousAdditive);
                     break;
             }
         }
@@ -642,9 +659,12 @@ namespace OceanyaClient
             string previousSfx,
             ICMessage.ShoutModifiers previousShoutModifier,
             ICMessage.Effects previousEffect,
-            bool previousScreenshake)
+            bool previousScreenshake,
+            bool previousPreanimEnabled,
+            bool previousImmediate,
+            bool previousAdditive)
         {
-            bool resetTransient = false;
+            ICMessage.TextColors previousSpeakTextColor = profileClient.textColor;
 
             // Apply speak-level emote before sending.
             if (!string.IsNullOrWhiteSpace(action.Emote))
@@ -663,26 +683,22 @@ namespace OceanyaClient
                 && Enum.TryParse(action.ShoutModifier, ignoreCase: true, out ICMessage.ShoutModifiers speakShout))
             {
                 profileClient.shoutModifiers = speakShout;
-                resetTransient = true;
             }
 
             if (!string.IsNullOrWhiteSpace(action.Effect)
                 && Enum.TryParse(action.Effect, ignoreCase: true, out ICMessage.Effects speakEffect))
             {
                 profileClient.effect = speakEffect;
-                resetTransient = true;
             }
 
             if (action.Screenshake.HasValue)
             {
                 profileClient.screenshake = action.Screenshake.Value;
-                resetTransient = true;
             }
 
             if (!string.IsNullOrWhiteSpace(action.Sfx))
             {
                 profileClient.curSFX = action.Sfx.Trim();
-                resetTransient = true;
             }
 
             if (useSingleInternalClient)
@@ -715,19 +731,45 @@ namespace OceanyaClient
                     appliedChanges.Add("sent IC message");
                 }
 
-                // Reset transient state after message sent.
-                if (resetTransient)
-                {
-                    profileClient.curSFX = previousSfx;
-                    profileClient.shoutModifiers = previousShoutModifier;
-                    profileClient.effect = previousEffect;
-                    profileClient.screenshake = previousScreenshake;
+                RestoreAiTransientState(
+                    profileClient,
+                    previousSfx,
+                    previousShoutModifier,
+                    previousEffect,
+                    previousScreenshake,
+                    previousPreanimEnabled,
+                    previousImmediate,
+                    previousAdditive);
 
-                    if (useSingleInternalClient)
-                    {
-                        ApplyProfileToSingleInternalClient(profileClient);
-                    }
+                profileClient.textColor = previousSpeakTextColor;
+                if (useSingleInternalClient)
+                {
+                    ApplyProfileToSingleInternalClient(profileClient);
                 }
+            }
+        }
+
+        private void RestoreAiTransientState(
+            AOClient profileClient,
+            string previousSfx,
+            ICMessage.ShoutModifiers previousShoutModifier,
+            ICMessage.Effects previousEffect,
+            bool previousScreenshake,
+            bool previousPreanimEnabled,
+            bool previousImmediate,
+            bool previousAdditive)
+        {
+            profileClient.curSFX = previousSfx;
+            profileClient.shoutModifiers = previousShoutModifier;
+            profileClient.effect = previousEffect;
+            profileClient.screenshake = previousScreenshake;
+            profileClient.PreanimEnabled = previousPreanimEnabled;
+            profileClient.Immediate = previousImmediate;
+            profileClient.Additive = previousAdditive;
+
+            if (useSingleInternalClient)
+            {
+                ApplyProfileToSingleInternalClient(profileClient);
             }
         }
 

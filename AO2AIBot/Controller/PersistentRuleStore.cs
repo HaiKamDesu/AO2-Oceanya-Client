@@ -56,6 +56,37 @@ namespace AO2AIBot.Controller
     {
         private readonly List<PersistentRule> rules = new List<PersistentRule>();
         private readonly object sync = new object();
+        private static readonly string[] ImperativeRuleVerbs = new[]
+        {
+            "respond",
+            "reply",
+            "speak",
+            "talk",
+            "write",
+            "answer",
+            "use",
+            "avoid",
+            "stay",
+            "be",
+            "keep",
+            "continue",
+            "stop"
+        };
+        private static readonly string[] MetaRuleMentions = new[]
+        {
+            "example",
+            "for example",
+            "test sentence",
+            "test phrase",
+            "sample sentence",
+            "sample phrase",
+            "contains the word",
+            "contains the phrase",
+            "if i say",
+            "what if i say",
+            "saying the word",
+            "mentioning the word"
+        };
 
         /// <summary>
         /// Phrases that indicate a player is issuing a durable instruction.
@@ -80,20 +111,30 @@ namespace AO2AIBot.Controller
         };
 
         /// <summary>
+        /// Phrases that indicate a player is issuing a session-scoped instruction.
+        /// </summary>
+        private static readonly string[] SessionInstructionCues = new[]
+        {
+            "for this session",
+            "this session",
+            "until reconnect",
+            "until restart",
+            "until we reset",
+            "for the rest of this session"
+        };
+
+        /// <summary>
         /// Phrases that indicate a player is revoking or overriding a persistent rule.
         /// </summary>
         private static readonly string[] RevocationCues = new[]
         {
             "stop doing that",
             "forget that rule",
-            "forget that",
-            "nevermind",
-            "never mind",
-            "cancel that",
-            "undo that",
-            "stop that",
+            "ignore previous rule",
+            "ignore that rule",
+            "remove that rule",
+            "stop following that rule",
             "don't do that anymore",
-            "no longer",
             "from now on instead"
         };
 
@@ -109,6 +150,28 @@ namespace AO2AIBot.Controller
 
             string lower = message.ToLowerInvariant();
             foreach (string cue in DurableInstructionCues)
+            {
+                if (lower.Contains(cue))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Checks whether a player message contains a session-scoped instruction cue.
+        /// </summary>
+        public static bool ContainsSessionInstructionCue(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                return false;
+            }
+
+            string lower = message.ToLowerInvariant();
+            foreach (string cue in SessionInstructionCues)
             {
                 if (lower.Contains(cue))
                 {
@@ -142,9 +205,38 @@ namespace AO2AIBot.Controller
         }
 
         /// <summary>
+        /// Determines whether a player message should be promoted into a standing rule.
+        /// </summary>
+        public static bool ShouldPromoteRuleCommand(string message, out string scope)
+        {
+            scope = DetermineRuleScope(message);
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                return false;
+            }
+
+            string lower = message.ToLowerInvariant().Trim();
+            bool hasCue = ContainsDurableInstructionCue(lower) || ContainsSessionInstructionCue(lower);
+            if (!hasCue || !HasLeadingPromotionCue(lower) || LooksLikeMetaMention(lower))
+            {
+                return false;
+            }
+
+            return LooksImperativeRule(lower);
+        }
+
+        /// <summary>
+        /// Determines whether the instruction should persist for the whole session or beyond.
+        /// </summary>
+        public static string DetermineRuleScope(string message)
+        {
+            return ContainsSessionInstructionCue(message) ? "session" : "persistent";
+        }
+
+        /// <summary>
         /// Adds a new persistent rule.
         /// </summary>
-        public void AddRule(string text, string kind = "behavior", string source = "player_command")
+        public void AddRule(string text, string kind = "behavior", string source = "player_command", string? scope = null)
         {
             if (string.IsNullOrWhiteSpace(text))
             {
@@ -157,7 +249,8 @@ namespace AO2AIBot.Controller
                 {
                     Text = text.Trim(),
                     Kind = kind,
-                    Source = source
+                    Source = source,
+                    Scope = string.IsNullOrWhiteSpace(scope) ? DetermineRuleScope(text) : scope.Trim()
                 });
             }
         }
@@ -269,6 +362,62 @@ namespace AO2AIBot.Controller
                     return rules.Count(r => r.Enabled);
                 }
             }
+        }
+
+        private static bool LooksImperativeRule(string lowerMessage)
+        {
+            if (string.IsNullOrWhiteSpace(lowerMessage))
+            {
+                return false;
+            }
+
+            return ImperativeRuleVerbs.Any(verb =>
+                System.Text.RegularExpressions.Regex.IsMatch(
+                    lowerMessage,
+                    $@"\b{System.Text.RegularExpressions.Regex.Escape(verb)}\b",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                || lowerMessage.IndexOf("you ", StringComparison.OrdinalIgnoreCase) >= 0
+                || lowerMessage.IndexOf("your ", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static bool HasLeadingPromotionCue(string lowerMessage)
+        {
+            if (string.IsNullOrWhiteSpace(lowerMessage))
+            {
+                return false;
+            }
+
+            string normalized = lowerMessage.TrimStart();
+            string[] politePrefixes = { "please ", "pls ", "okay ", "ok ", "hey " };
+            foreach (string prefix in politePrefixes)
+            {
+                if (normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    normalized = normalized.Substring(prefix.Length).TrimStart();
+                    break;
+                }
+            }
+
+            IEnumerable<string> allCues = DurableInstructionCues.Concat(SessionInstructionCues);
+            return allCues.Any(cue => normalized.StartsWith(cue, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static bool LooksLikeMetaMention(string lowerMessage)
+        {
+            if (string.IsNullOrWhiteSpace(lowerMessage))
+            {
+                return false;
+            }
+
+            if (MetaRuleMentions.Any(token => lowerMessage.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0))
+            {
+                return true;
+            }
+
+            return System.Text.RegularExpressions.Regex.IsMatch(
+                lowerMessage,
+                @"\b(?:example|sample|test)\b.{0,40}[""`]",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         }
     }
 }

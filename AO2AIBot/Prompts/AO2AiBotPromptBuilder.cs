@@ -2,6 +2,7 @@ using AO2AIBot.Chat;
 using AO2AIBot.Controller;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace AO2AIBot.Prompts
 {
@@ -23,7 +24,7 @@ namespace AO2AIBot.Prompts
             IReadOnlyList<ChatLogEntry> history,
             ChatLogEntry? latestEntry,
             string triggerReason,
-            IReadOnlyList<string>? persistentRules = null)
+            IReadOnlyList<PersistentRule>? activeRules = null)
         {
             if (snapshot == null)
             {
@@ -41,12 +42,15 @@ namespace AO2AIBot.Prompts
             // === OTHER PLAYERS (with known limits) ===
             AppendOtherPlayers(sb, snapshot);
 
-            // === PERSISTENT RULES ===
-            AppendPersistentRules(sb, persistentRules);
+            // === RULES ===
+            AppendStandingRules(sb, activeRules, latestEntry);
 
             // === CHAT CONTEXT ===
             AppendChatContext(sb, snapshot, history, latestEntry);
             sb.AppendLine();
+
+            // === TARGET CHARACTER CONTEXT ===
+            AppendRequestedCharacterContext(sb, snapshot, latestEntry);
 
             // === CONVERSATION HISTORY ===
             sb.AppendLine("## Conversation History");
@@ -91,7 +95,7 @@ namespace AO2AIBot.Prompts
             sb.AppendLine("To stay silent: {\"shouldRespond\":false,\"actions\":[]}");
             sb.AppendLine();
             sb.AppendLine("Every IC speak action MUST include an explicit \"emote\" field chosen from Available Emotes.");
-            sb.AppendLine("Use the channel of the latest message unless you have a specific reason to switch.");
+            sb.AppendLine("If Chat Context gives an Expected response channel, use that channel. Otherwise use the latest message channel.");
 
             return sb.ToString();
         }
@@ -123,6 +127,10 @@ namespace AO2AIBot.Prompts
             sb.AppendLine("## Required Format");
             sb.AppendLine("To respond: {\"shouldRespond\":true,\"actions\":[{\"type\":\"speak\",\"channel\":\"IC\",\"message\":\"...\",\"emote\":\"...\"}]}");
             sb.AppendLine("To stay silent: {\"shouldRespond\":false,\"actions\":[]}");
+            sb.AppendLine();
+            sb.AppendLine("Do NOT apologize, narrate retries, or say you will try again.");
+            sb.AppendLine("If you cannot satisfy the validation errors exactly, output {\"shouldRespond\":false,\"actions\":[]}.");
+            AppendSpecialCorrectionHint(sb, failedResponse, validationErrors);
             sb.AppendLine();
 
             sb.AppendLine("## Your Previous Invalid Response");
@@ -203,20 +211,38 @@ namespace AO2AIBot.Prompts
             sb.AppendLine();
         }
 
-        private static void AppendPersistentRules(StringBuilder sb, IReadOnlyList<string>? rules)
+        private static void AppendStandingRules(
+            StringBuilder sb,
+            IReadOnlyList<PersistentRule>? rules,
+            ChatLogEntry? latestEntry)
         {
-            sb.AppendLine("## Persistent Rules");
-            if (rules == null || rules.Count == 0)
+            IReadOnlyList<PersistentRule> persistentRules = rules == null
+                ? Array.Empty<PersistentRule>()
+                : rules.Where(rule => string.Equals(rule.Scope, "persistent", StringComparison.OrdinalIgnoreCase))
+                    .ToList()
+                    .AsReadOnly();
+            IReadOnlyList<PersistentRule> sessionRules = rules == null
+                ? Array.Empty<PersistentRule>()
+                : rules.Where(rule => string.Equals(rule.Scope, "session", StringComparison.OrdinalIgnoreCase))
+                    .ToList()
+                    .AsReadOnly();
+
+            sb.AppendLine("## Standing Rules");
+            AppendRuleGroup(sb, "Persistent Rules", persistentRules);
+            AppendRuleGroup(sb, "Session Rules", sessionRules);
+
+            sb.AppendLine("## Transient Turn Instructions");
+            if (latestEntry == null || latestEntry.IsFromServer || string.IsNullOrWhiteSpace(latestEntry.Message))
             {
                 sb.AppendLine("  (none active)");
             }
+            else if (PersistentRuleStore.ShouldPromoteRuleCommand(latestEntry.Message, out _))
+            {
+                sb.AppendLine("  Latest instruction was promoted into a standing rule above.");
+            }
             else
             {
-                sb.AppendLine("  These are standing instructions you MUST follow on every response:");
-                for (int i = 0; i < rules.Count; i++)
-                {
-                    sb.AppendLine($"  {i + 1}. {rules[i]}");
-                }
+                sb.AppendLine($"  Latest turn-only instruction: {latestEntry.Message.Trim()}");
             }
 
             sb.AppendLine();
@@ -274,6 +300,12 @@ namespace AO2AIBot.Prompts
 
             if (latestEntry != null)
             {
+                string expectedChannel = ResolveExpectedChannel(latestEntry);
+                if (!string.IsNullOrWhiteSpace(expectedChannel))
+                {
+                    sb.AppendLine($"  Expected response channel: {expectedChannel}");
+                }
+
                 sb.AppendLine(latestEntry.IsFromServer
                     ? "  Latest source: SERVER output"
                     : "  Latest source: player message");
@@ -299,6 +331,41 @@ namespace AO2AIBot.Prompts
             {
                 sb.AppendLine("  → Larger group. Respond only when directly addressed or clearly relevant.");
             }
+        }
+
+        private static void AppendRequestedCharacterContext(
+            StringBuilder sb,
+            AOClientControlSnapshot snapshot,
+            ChatLogEntry? latestEntry)
+        {
+            if (latestEntry == null || string.IsNullOrWhiteSpace(latestEntry.Message))
+            {
+                return;
+            }
+
+            if (!TryExtractRequestedCharacter(latestEntry.Message, snapshot, out string requestedCharacter))
+            {
+                return;
+            }
+
+            sb.AppendLine("## Requested Character Switch");
+            sb.AppendLine($"  Target character: {requestedCharacter}");
+            if (snapshot.AvailableCharacterEmotes.TryGetValue(requestedCharacter, out IReadOnlyList<string>? emotes)
+                && emotes != null
+                && emotes.Count > 0)
+            {
+                const int maxDisplay = 25;
+                IEnumerable<string> display = emotes.Count > maxDisplay ? emotes.Take(maxDisplay) : emotes;
+                string suffix = emotes.Count > maxDisplay ? $" ... (+{emotes.Count - maxDisplay} more)" : string.Empty;
+                sb.AppendLine($"  Valid emotes for {requestedCharacter}: {string.Join(", ", display)}{suffix}");
+                sb.AppendLine("  If you switch character this turn, any later set_emote or IC speak emote MUST come from this target list.");
+            }
+            else
+            {
+                sb.AppendLine("  No emote list is currently available for that character. Avoid guessing.");
+            }
+
+            sb.AppendLine();
         }
 
         private static string FormatEntryForPrompt(ChatLogEntry entry)
@@ -350,6 +417,156 @@ namespace AO2AIBot.Prompts
             }
 
             return message.IndexOf(name, StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static void AppendRuleGroup(
+            StringBuilder sb,
+            string title,
+            IReadOnlyList<PersistentRule> rules)
+        {
+            sb.AppendLine($"### {title}");
+            if (rules.Count == 0)
+            {
+                sb.AppendLine("  (none active)");
+                return;
+            }
+
+            for (int i = 0; i < rules.Count; i++)
+            {
+                sb.AppendLine($"  {i + 1}. {rules[i].Text}");
+            }
+        }
+
+        private static string ResolveExpectedChannel(ChatLogEntry latestEntry)
+        {
+            if (latestEntry == null)
+            {
+                return string.Empty;
+            }
+
+            if (TryResolveExplicitChannelRequest(latestEntry.Message, out string explicitChannel))
+            {
+                return explicitChannel;
+            }
+
+            return string.Equals(latestEntry.ChatLogType, "OOC", StringComparison.OrdinalIgnoreCase)
+                ? "OOC"
+                : "IC";
+        }
+
+        private static bool TryExtractRequestedCharacter(
+            string message,
+            AOClientControlSnapshot snapshot,
+            out string requestedCharacter)
+        {
+            requestedCharacter = string.Empty;
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                return false;
+            }
+
+            string lower = message.ToLowerInvariant();
+            if (lower.IndexOf("character", StringComparison.OrdinalIgnoreCase) < 0
+                && lower.IndexOf("switch to", StringComparison.OrdinalIgnoreCase) < 0
+                && lower.IndexOf("change to", StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                return false;
+            }
+
+            foreach (string character in snapshot.AvailableCharacters.OrderByDescending(value => value.Length))
+            {
+                if (lower.IndexOf(character, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    requestedCharacter = character;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static void AppendSpecialCorrectionHint(
+            StringBuilder sb,
+            string failedResponse,
+            IReadOnlyList<string>? validationErrors)
+        {
+            if (!NeedsKeepShoutOrEffectHint(failedResponse, validationErrors))
+            {
+                return;
+            }
+
+            sb.AppendLine("Keep the same requested shoutModifier/effect/channel/message.");
+            sb.AppendLine("Only add a valid IC emote from Available Emotes. Do NOT remove the shout or effect.");
+        }
+
+        private static bool NeedsKeepShoutOrEffectHint(
+            string failedResponse,
+            IReadOnlyList<string>? validationErrors)
+        {
+            if (validationErrors == null || validationErrors.Count == 0)
+            {
+                return false;
+            }
+
+            bool onlyMissingEmoteErrors = validationErrors.All(error =>
+                error.IndexOf("IC speak requires an explicit 'emote' field", StringComparison.OrdinalIgnoreCase) >= 0);
+            if (!onlyMissingEmoteErrors)
+            {
+                return false;
+            }
+
+            AOClientAgentResponseParser.ParseResult parseResult = AOClientAgentResponseParser.Parse(failedResponse ?? string.Empty);
+            if (!parseResult.Success || parseResult.Response == null)
+            {
+                return false;
+            }
+
+            return parseResult.Response.Actions.Any(action =>
+                    string.Equals(action.Type, AgentActionType.Speak, StringComparison.Ordinal)
+                    && (!string.IsNullOrWhiteSpace(action.ShoutModifier) || !string.IsNullOrWhiteSpace(action.Effect)))
+                || parseResult.Response.Actions.Any(action =>
+                    string.Equals(action.Type, AgentActionType.SetShoutModifier, StringComparison.Ordinal)
+                    || string.Equals(action.Type, AgentActionType.SetEffect, StringComparison.Ordinal));
+        }
+
+        private static bool TryResolveExplicitChannelRequest(string? message, out string channel)
+        {
+            channel = string.Empty;
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                return false;
+            }
+
+            string lower = message.ToLowerInvariant();
+            if (LooksLikeExplicitChannelRequest(lower, "ooc"))
+            {
+                channel = "OOC";
+                return true;
+            }
+
+            if (LooksLikeExplicitChannelRequest(lower, "ic"))
+            {
+                channel = "IC";
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool LooksLikeExplicitChannelRequest(string lowerMessage, string channelToken)
+        {
+            Regex directedRequestPattern = new Regex(
+                $@"\b(?:tell|say|reply|respond|answer|speak|talk|write|type)\b(?:\s+\w+){{0,5}}\s+(?:in|from|via|on|to)?\s*{channelToken}\b",
+                RegexOptions.IgnoreCase | RegexOptions.Compiled);
+            if (directedRequestPattern.IsMatch(lowerMessage))
+            {
+                return true;
+            }
+
+            Regex channelThenVerbPattern = new Regex(
+                $@"\b{channelToken}\b(?:\s+\w+){{0,3}}\s+\b(?:reply|respond|say|speak|talk|write|type|answer)\b",
+                RegexOptions.IgnoreCase | RegexOptions.Compiled);
+            return channelThenVerbPattern.IsMatch(lowerMessage);
         }
 
         private static void AppendAreaInfoList(StringBuilder sb, AOClientControlSnapshot snapshot)

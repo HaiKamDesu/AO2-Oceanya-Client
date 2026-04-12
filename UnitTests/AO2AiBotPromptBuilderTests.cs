@@ -21,6 +21,12 @@ namespace UnitTests
                 CurrentPosition = "jud",
                 CurrentBackground = "basement",
                 AvailableSfx = new[] { "Default", "Nothing", "dramatic/whoosh" },
+                AvailableCharacters = new[] { "Phoenix", "Miles" },
+                AvailableCharacterEmotes = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+                {
+                    { "Phoenix", new[] { "normal", "thinking" } },
+                    { "Miles", new[] { "normal", "smirk", "desk-slam" } }
+                },
                 CurrentAreaPlayers = new[]
                 {
                     new Player { PlayerID = 1, ICCharacterName = "Adrian", OOCShowname = "Jarvis" },
@@ -130,18 +136,20 @@ namespace UnitTests
                 CurrentCharacter = "Phoenix"
             };
 
-            List<string> rules = new List<string>
+            List<PersistentRule> rules = new List<PersistentRule>
             {
-                "For every IC line, choose an emote by vibe.",
-                "Always respond in red text."
+                new PersistentRule { Text = "For every IC line, choose an emote by vibe.", Scope = "persistent" },
+                new PersistentRule { Text = "Always respond in red text.", Scope = "session" }
             };
 
             string prompt = AO2AiBotPromptBuilder.BuildPrompt(
                 snapshot, Array.Empty<ChatLogEntry>(), null, "manual", rules);
 
-            Assert.That(prompt, Does.Contain("## Persistent Rules"));
+            Assert.That(prompt, Does.Contain("## Standing Rules"));
+            Assert.That(prompt, Does.Contain("### Persistent Rules"));
+            Assert.That(prompt, Does.Contain("### Session Rules"));
             Assert.That(prompt, Does.Contain("1. For every IC line, choose an emote by vibe."));
-            Assert.That(prompt, Does.Contain("2. Always respond in red text."));
+            Assert.That(prompt, Does.Contain("1. Always respond in red text."));
         }
 
         [Test]
@@ -189,7 +197,109 @@ namespace UnitTests
             Assert.That(prompt, Does.Contain("## Validation Errors"));
             Assert.That(prompt, Does.Contain("IC speak requires an explicit 'emote' field."));
             Assert.That(prompt, Does.Contain("Text color 'purple' is not valid."));
+            Assert.That(prompt, Does.Contain("Do NOT apologize"));
             Assert.That(prompt, Does.Contain("bad response"));
+        }
+
+        [Test]
+        public void BuildPrompt_IncludesExpectedResponseChannel()
+        {
+            AOClientControlSnapshot snapshot = new AOClientControlSnapshot
+            {
+                CurrentCharacter = "Phoenix"
+            };
+
+            ChatLogEntry latestEntry = new ChatLogEntry
+            {
+                ChatLogType = "IC",
+                ShowName = "Judge",
+                Message = "say it in OOC"
+            };
+
+            string prompt = AO2AiBotPromptBuilder.BuildPrompt(
+                snapshot,
+                new[] { latestEntry },
+                latestEntry,
+                "new message");
+
+            Assert.That(prompt, Does.Contain("Expected response channel: OOC"));
+        }
+
+        [Test]
+        public void BuildPrompt_RecognizesFromOocOverridePhrase()
+        {
+            AOClientControlSnapshot snapshot = new AOClientControlSnapshot
+            {
+                CurrentCharacter = "Phoenix"
+            };
+
+            ChatLogEntry latestEntry = new ChatLogEntry
+            {
+                ChatLogType = "IC",
+                ShowName = "Judge",
+                Message = "tell me something from ooc"
+            };
+
+            string prompt = AO2AiBotPromptBuilder.BuildPrompt(
+                snapshot,
+                new[] { latestEntry },
+                latestEntry,
+                "new message");
+
+            Assert.That(prompt, Does.Contain("Expected response channel: OOC"));
+            Assert.That(prompt, Does.Contain("If Chat Context gives an Expected response channel, use that channel."));
+        }
+
+        [Test]
+        public void BuildPrompt_IncludesTargetCharacterEmotesWhenSwitchRequested()
+        {
+            AOClientControlSnapshot snapshot = new AOClientControlSnapshot
+            {
+                CurrentCharacter = "Phoenix",
+                AvailableCharacters = new[] { "Phoenix", "Miles" },
+                AvailableCharacterEmotes = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+                {
+                    { "Phoenix", new[] { "normal", "thinking" } },
+                    { "Miles", new[] { "normal", "smirk", "desk-slam" } }
+                }
+            };
+
+            ChatLogEntry latestEntry = new ChatLogEntry
+            {
+                ChatLogType = "OOC",
+                ShowName = "Judge",
+                Message = "switch character to Miles and reply"
+            };
+
+            string prompt = AO2AiBotPromptBuilder.BuildPrompt(
+                snapshot,
+                new[] { latestEntry },
+                latestEntry,
+                "new message");
+
+            Assert.That(prompt, Does.Contain("## Requested Character Switch"));
+            Assert.That(prompt, Does.Contain("Target character: Miles"));
+            Assert.That(prompt, Does.Contain("Valid emotes for Miles: normal, smirk, desk-slam"));
+        }
+
+        [Test]
+        public void BuildCorrectionPrompt_WhenOnlyMissingEmoteWithShout_KeepsShoutHint()
+        {
+            List<string> errors = new List<string>
+            {
+                "Action[0] (speak): IC speak requires an explicit 'emote' field. Choose from available emotes."
+            };
+
+            string failedResponse =
+                """
+                {"shouldRespond":true,"actions":[{"type":"speak","channel":"IC","message":"Take that!","shoutModifier":"takeThat","effect":"realization"}]}
+                """;
+
+            string prompt = AO2AiBotPromptBuilder.BuildCorrectionPrompt(
+                "original context", failedResponse, errors);
+
+            Assert.That(prompt, Does.Contain("Keep the same requested shoutModifier/effect/channel/message."));
+            Assert.That(prompt, Does.Contain("Do NOT remove the shout or effect."));
         }
     }
 }

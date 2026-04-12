@@ -143,6 +143,12 @@ namespace AO2AIBot.Controller
         public IReadOnlyList<string> AvailableEmotes { get; set; } = Array.Empty<string>();
 
         /// <summary>
+        /// Gets or sets the emote lists for all currently known characters, keyed by exact character name.
+        /// </summary>
+        public IReadOnlyDictionary<string, IReadOnlyList<string>> AvailableCharacterEmotes { get; set; } =
+            new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
         /// Gets or sets the available positions for the current background.
         /// </summary>
         public IReadOnlyList<string> AvailablePositions { get; set; } = Array.Empty<string>();

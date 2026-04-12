@@ -24,6 +24,7 @@ namespace AO2AIBot.Controller
             AOClient effectiveNetworkClient = networkClient ?? profileClient;
             List<string> availablePositions = GetAvailablePositions(profileClient, effectiveNetworkClient);
             List<string> availableSfx = GetAvailableSfx(profileClient);
+            IReadOnlyDictionary<string, IReadOnlyList<string>> availableCharacterEmotes = BuildCharacterEmoteMap();
 
             return new AOClientControlSnapshot
             {
@@ -65,6 +66,7 @@ namespace AO2AIBot.Controller
                     .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
                     .ToList()
                     ?? new List<string>(),
+                AvailableCharacterEmotes = availableCharacterEmotes,
                 AvailablePositions = availablePositions,
                 AvailableAreas = effectiveNetworkClient.AvailableAreas
                     .Where(area => !string.IsNullOrWhiteSpace(area))
@@ -141,6 +143,35 @@ namespace AO2AIBot.Controller
             return availableSfx
                 .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
                 .ToList();
+        }
+
+        private static IReadOnlyDictionary<string, IReadOnlyList<string>> BuildCharacterEmoteMap()
+        {
+            Dictionary<string, IReadOnlyList<string>> result =
+                new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (CharacterFolder character in CharacterFolder.FullList)
+            {
+                string characterName = character.Name?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(characterName))
+                {
+                    continue;
+                }
+
+                IReadOnlyList<string> emotes = character.configINI?.Emotions?.Values == null
+                    ? Array.Empty<string>()
+                    : character.configINI.Emotions.Values
+                        .Select(emote => emote.Name)
+                        .Where(name => !string.IsNullOrWhiteSpace(name))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                        .ToList()
+                        .AsReadOnly();
+
+                result[characterName] = emotes;
+            }
+
+            return result;
         }
 
         private static IEnumerable<string> ResolveSoundListPaths(string characterDirectory)

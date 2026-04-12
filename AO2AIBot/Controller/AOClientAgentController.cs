@@ -116,10 +116,10 @@ namespace AO2AIBot.Controller
                 ruleStore.TryRevokeLatestRule();
                 CustomConsole.Info("[PersistentRules] Revoked most recent rule due to: " + message);
             }
-            else if (PersistentRuleStore.ContainsDurableInstructionCue(message))
+            else if (PersistentRuleStore.ShouldPromoteRuleCommand(message, out string scope))
             {
-                ruleStore.AddRule(message);
-                CustomConsole.Info("[PersistentRules] Added new persistent rule: " + message);
+                ruleStore.AddRule(message, scope: scope);
+                CustomConsole.Info("[PersistentRules] Added new " + scope + " rule: " + message);
             }
         }
 
@@ -215,7 +215,11 @@ namespace AO2AIBot.Controller
             AOClientControlSnapshot snapshot = snapshotProvider();
             IReadOnlyList<ChatLogEntry> fullHistory = chatLogManager.GetHistorySnapshot();
             IReadOnlyList<ChatLogEntry> promptHistory = SelectPromptHistory(fullHistory, settings.MaxPromptMessages);
-            IReadOnlyList<string> activeRules = ruleStore.GetActiveRuleTexts();
+            IReadOnlyList<PersistentRule> activeRules = ruleStore.GetActiveRules();
+            IReadOnlyList<string> activeRuleTexts = activeRules
+                .Select(rule => rule.Text)
+                .ToList()
+                .AsReadOnly();
 
             Dictionary<string, string> systemVariables = new Dictionary<string, string>(StringComparer.Ordinal)
             {
@@ -296,25 +300,26 @@ namespace AO2AIBot.Controller
                         }
 
                         PublishClearTransient();
+                        PublishWaitDecision();
                         PublishFinalMessage(
-                            "AI response invalid after " + maxAttempts + " attempts: " + parseResult.ErrorMessage,
+                            "AI response suppressed after " + maxAttempts + " invalid attempt(s): " + parseResult.ErrorMessage,
                             isError: true,
                             rawResponse: response);
-                        return;
-                    }
-
-                    if (parseResult.ShouldWait || parseResult.Response == null || !parseResult.Response.ShouldRespond)
-                    {
-                        PublishClearTransient();
-                        PublishWaitDecision();
                         return;
                     }
 
                     // === VALIDATE ===
                     // Re-fetch snapshot for validation in case state changed during LLM call.
                     AOClientControlSnapshot validationSnapshot = snapshotProvider();
+                    ValidationContext? validationContext = BuildValidationContext(
+                        latestEntry,
+                        attempt,
+                        activeRuleTexts,
+                        fullHistory);
                     AgentResponseValidator.ValidationResult validation =
-                        AgentResponseValidator.Validate(parseResult.Response, validationSnapshot);
+                        parseResult.Response == null
+                            ? new AgentResponseValidator.ValidationResult(false, new[] { "Parsed response was unexpectedly null." })
+                            : AgentResponseValidator.Validate(parseResult.Response, validationSnapshot, validationContext);
 
                     if (!validation.IsValid)
                     {
@@ -333,10 +338,18 @@ namespace AO2AIBot.Controller
                         }
 
                         PublishClearTransient();
+                        PublishWaitDecision();
                         PublishFinalMessage(
-                            "AI response validation failed after " + maxAttempts + " attempts: " + errorSummary,
+                            "AI response suppressed after " + maxAttempts + " invalid attempt(s): " + errorSummary,
                             isError: true,
                             rawResponse: response);
+                        return;
+                    }
+
+                    if (parseResult.ShouldWait || parseResult.Response == null || !parseResult.Response.ShouldRespond)
+                    {
+                        PublishClearTransient();
+                        PublishWaitDecision();
                         return;
                     }
 
@@ -373,6 +386,34 @@ namespace AO2AIBot.Controller
                         rawResponse: response);
                 }
             }
+        }
+
+        private static ValidationContext? BuildValidationContext(
+            ChatLogEntry? latestEntry,
+            int attemptNumber,
+            IReadOnlyList<string> activeRuleTexts,
+            IReadOnlyList<ChatLogEntry> fullHistory)
+        {
+            if (latestEntry == null)
+            {
+                return null;
+            }
+
+            IReadOnlyList<string> recentSelfMessages = fullHistory
+                .Where(entry => entry.IsFromSelf && !entry.IsFromServer && !string.IsNullOrWhiteSpace(entry.Message))
+                .Select(entry => entry.Message.Trim())
+                .TakeLast(4)
+                .ToList()
+                .AsReadOnly();
+
+            return new ValidationContext
+            {
+                TriggeringMessage = latestEntry.IsFromServer ? string.Empty : latestEntry.Message,
+                TriggeringChannel = latestEntry.ChatLogType?.Trim() ?? string.Empty,
+                AttemptNumber = attemptNumber,
+                ActiveRules = activeRuleTexts ?? Array.Empty<string>(),
+                RecentSelfMessages = recentSelfMessages
+            };
         }
 
         private static IReadOnlyList<ChatLogEntry> SelectPromptHistory(

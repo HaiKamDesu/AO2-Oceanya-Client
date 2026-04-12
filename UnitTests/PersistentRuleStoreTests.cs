@@ -56,6 +56,51 @@ namespace UnitTests
         }
 
         [Test]
+        public void ContainsRevocationCue_Nevermind_ReturnsFalse()
+        {
+            Assert.That(PersistentRuleStore.ContainsRevocationCue(
+                "nevermind"), Is.False);
+        }
+
+        [Test]
+        public void ContainsSessionInstructionCue_ForThisSession_ReturnsTrue()
+        {
+            Assert.That(PersistentRuleStore.ContainsSessionInstructionCue(
+                "for this session always respond in lowercase"), Is.True);
+        }
+
+        [Test]
+        public void ShouldPromoteRuleCommand_ClearImperativeInstruction_ReturnsTrue()
+        {
+            bool shouldPromote = PersistentRuleStore.ShouldPromoteRuleCommand(
+                "from now on, respond in lowercase", out string scope);
+
+            Assert.That(shouldPromote, Is.True);
+            Assert.That(scope, Is.EqualTo("persistent"));
+        }
+
+        [Test]
+        public void ShouldPromoteRuleCommand_MetaExampleMention_ReturnsFalse()
+        {
+            bool shouldPromote = PersistentRuleStore.ShouldPromoteRuleCommand(
+                "this is a test sentence containing the word nevermind and the phrase always respond in red",
+                out _);
+
+            Assert.That(shouldPromote, Is.False);
+        }
+
+        [Test]
+        public void ShouldPromoteRuleCommand_ClearImperativeSayWordInstruction_ReturnsTrue()
+        {
+            bool shouldPromote = PersistentRuleStore.ShouldPromoteRuleCommand(
+                "from now on say the word nevermind in every ooc reply",
+                out string scope);
+
+            Assert.That(shouldPromote, Is.True);
+            Assert.That(scope, Is.EqualTo("persistent"));
+        }
+
+        [Test]
         public void ContainsRevocationCue_NormalChat_ReturnsFalse()
         {
             Assert.That(PersistentRuleStore.ContainsRevocationCue(
@@ -71,6 +116,17 @@ namespace UnitTests
             Assert.That(store.ActiveCount, Is.EqualTo(1));
             IReadOnlyList<string> texts = store.GetActiveRuleTexts();
             Assert.That(texts[0], Does.Contain("emote based on the vibe"));
+        }
+
+        [Test]
+        public void AddRule_SessionCueStoresSessionScope()
+        {
+            PersistentRuleStore store = new PersistentRuleStore();
+            store.AddRule("for this session always use lowercase");
+
+            IReadOnlyList<PersistentRule> rules = store.GetActiveRules();
+            Assert.That(rules, Has.Count.EqualTo(1));
+            Assert.That(rules[0].Scope, Is.EqualTo("session"));
         }
 
         [Test]
