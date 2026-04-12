@@ -9,6 +9,7 @@
     <ApplicationIcon>..\OceanyaClient\Resources\OceanyaO.ico</ApplicationIcon>
     <ClientOutputDir>..\OceanyaClient\bin\$(Configuration)\net8.0-windows\</ClientOutputDir>
     <ReleasePackageName>Oceanya Client v$(OceanyaAppVersion)</ReleasePackageName>
+    <ReleasePackageStagingDir>..\OceanyaClient\bin\$(Configuration)\ReleaseZipStaging\</ReleasePackageStagingDir>
     <ReleasePackageDir>..\OceanyaClient\bin\$(Configuration)\$(ReleasePackageName)\</ReleasePackageDir>
     <ReleasePackageZipPath>..\OceanyaClient\bin\$(Configuration)\$(ReleasePackageName).zip</ReleasePackageZipPath>
   </PropertyGroup>
@@ -45,7 +46,9 @@
   <Target Name="CreateReleasePackageZip" AfterTargets="CopyHivemindAgentIntoClientOutput" Condition="'$(Configuration)' == 'Release'">
     <RemoveDir Directories="$(ReleasePackageDir)" Condition="Exists('$(ReleasePackageDir)')" />
     <Delete Files="$(ReleasePackageZipPath)" Condition="Exists('$(ReleasePackageZipPath)')" />
+    <RemoveDir Directories="$(ReleasePackageStagingDir)" Condition="Exists('$(ReleasePackageStagingDir)')" />
     <MakeDir Directories="$(ReleasePackageDir)" />
+    <MakeDir Directories="$(ReleasePackageStagingDir)\$(ReleasePackageName)" />
 
     <ItemGroup>
       <ClientReleaseFiles Include="$(ClientOutputDir)**\*" />
@@ -57,7 +60,18 @@
       SkipUnchangedFiles="false"
       OverwriteReadOnlyFiles="true" />
 
-    <ZipDirectory SourceDirectory="$(ReleasePackageDir)" DestinationFile="$(ReleasePackageZipPath)" />
+    <ItemGroup>
+      <ReleasePackageStageFiles Include="$(ReleasePackageDir)**\*" />
+    </ItemGroup>
+
+    <Copy
+      SourceFiles="@(ReleasePackageStageFiles)"
+      DestinationFiles="@(ReleasePackageStageFiles->'$(ReleasePackageStagingDir)\$(ReleasePackageName)\%(RecursiveDir)%(Filename)%(Extension)')"
+      SkipUnchangedFiles="false"
+      OverwriteReadOnlyFiles="true" />
+
+    <ZipDirectory SourceDirectory="$(ReleasePackageStagingDir)" DestinationFile="$(ReleasePackageZipPath)" />
+    <RemoveDir Directories="$(ReleasePackageStagingDir)" Condition="Exists('$(ReleasePackageStagingDir)')" />
   </Target>
 
 </Project>

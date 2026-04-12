@@ -8,9 +8,9 @@ Use this file as the first stop before broad repository searches. It should poin
 - Notes: Covers IC/OOC packet handling, log formatting, and AO2-facing display behavior.
 
 ## Character File Creator
-- Doc: `Documentation/AgentDocumentationWorkflow.md`
+- Doc: `Documentation/CharacterFileCreator.md`
 - Main code: `OceanyaClient/Components/Forms/AOCharacterFileCreatorWindow.xaml.cs`, `OceanyaClient/Features/CharacterCreator/AOCharacterFileCreatorBuilder.cs`, `OceanyaClient/Features/CharacterCreator/GeneratedAssetPathCollisionResolver.cs`
-- Notes: Includes file organization, generated assets, and duplicate-name collision handling.
+- Notes: Includes file organization, generated assets, duplicate-name collision handling, emote-tile interactions, and built-in asset viewers.
 
 ## Character Tagging
 - Docs:
@@ -20,9 +20,9 @@ Use this file as the first stop before broad repository searches. It should poin
 - Main code: tagging-related workflows under `OceanyaClient` plus supporting data in `Documentation/TaggingCharacters`
 
 ## Release Packaging
-- Doc: `Documentation/AgentDocumentationWorkflow.md`
+- Doc: `Documentation/ReleasePackaging.md`
 - Main code: `Directory.Build.props`, `OceanyaHivemindAgent/OceanyaHivemindAgent.csproj`, `OceanyaClient/OceanyaClient.csproj`
-- Notes: Release builds package the client output as `Oceanya Client v<version>` and generate a zip with the same folder inside it.
+- Notes: Release builds package the client output as `Oceanya Client v<version>` and the zip now preserves that outer folder.
 
 ## File Hivemind
 - Doc: `Documentation/AgentDocumentationWorkflow.md`

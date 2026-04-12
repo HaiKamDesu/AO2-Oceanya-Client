@@ -759,6 +759,8 @@
                                     CornerRadius="4"
                                     AllowDrop="True"
                                     Tag="button"
+                                    PreviewMouseLeftButtonDown="EmoteButtonDropZone_PreviewMouseLeftButtonDown"
+                                    PreviewMouseLeftButtonUp="EmoteButtonDropZone_PreviewMouseLeftButtonUp"
                                     MouseLeftButtonDown="EmoteDropZone_MouseLeftButtonDown"
                                     MouseLeftButtonUp="EmoteDropZone_MouseLeftButtonUp"
                                     PreviewMouseRightButtonDown="EmoteDropZone_PreviewMouseRightButtonDown"
@@ -787,7 +789,7 @@
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="Visibility" Value="Collapsed"/>
                                                 <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding Emote.HasButtonIconValue}" Value="False">
+                                                    <DataTrigger Binding="{Binding Emote.ButtonIconPreview}" Value="{x:Null}">
                                                         <Setter Property="Visibility" Value="Visible"/>
                                                     </DataTrigger>
                                                     <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=Border}, Path=IsMouseOver}" Value="True">
@@ -810,6 +812,7 @@
                                            Foreground="#FFF2F2F2"
                                            FontWeight="SemiBold"
                                            FontSize="12"
+                                           HorizontalAlignment="Left"
                                            VerticalAlignment="Center"
                                            TextTrimming="CharacterEllipsis"
                                            MouseLeftButtonDown="EmoteNameTextBlock_MouseLeftButtonDown">
@@ -893,6 +896,7 @@
                                    FontSize="10"
                                    Foreground="#FFC4CED8"
                                    Text="{Binding Emote.SfxSummaryText}"
+                                   HorizontalAlignment="Left"
                                    TextTrimming="CharacterEllipsis"
                                    Cursor="Hand"
                                    Tag="sfx"
@@ -1536,45 +1540,69 @@
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0"
+                                    <Button Grid.Column="0"
+                                            Content="(?)"
+                                            Style="{StaticResource HelpBadgeStyle}">
+                                        <Button.ToolTip>
+                                            <TextBlock TextWrapping="Wrap">
+                                                Emote editor quick guide:
+                                                <LineBreak/>
+                                                Use + / - / ↑ / ↓ here to add, remove, and reorder emotes.
+                                                <LineBreak/>
+                                                Click a tile to select it.
+                                                <LineBreak/>
+                                                Click a preanim, final anim, or button preview to import an asset.
+                                                <LineBreak/>
+                                                Right-click a tile or field for extra options.
+                                                <LineBreak/>
+                                                Double-click an emote name to rename it.
+                                                <LineBreak/>
+                                                Click the SFX text to configure emote SFX.
+                                                <LineBreak/>
+                                                You can also drag and drop one or multiple image/audio files into the grid for quick add and assignment.
+                                            </TextBlock>
+                                        </Button.ToolTip>
+                                    </Button>
+                                    <TextBlock Grid.Column="1"
                                                Text="Emote Editor"
                                                Foreground="White"
                                                FontSize="14"
                                                FontWeight="SemiBold"
                                                Margin="0,0,14,0"
                                                VerticalAlignment="Center"/>
-                                    <Button Grid.Column="1" Width="30" Height="28" Margin="0,0,6,0"
+                                    <Button Grid.Column="2" Width="30" Height="28" Margin="0,0,6,0"
                                             Content="+"
                                             Foreground="#7CE39B"
                                             Style="{StaticResource EmoteToolbarButtonStyle}"
                                             ToolTip="Add emote"
                                             Click="AddEmoteToolbarButton_Click"/>
-                                    <Button Grid.Column="2" Width="30" Height="28" Margin="0,0,6,0"
+                                    <Button Grid.Column="3" Width="30" Height="28" Margin="0,0,6,0"
                                             Content="-"
                                             Foreground="#F07F7F"
                                             Style="{StaticResource EmoteToolbarButtonStyle}"
                                             ToolTip="Delete selected emote"
                                             Click="DeleteEmoteToolbarButton_Click"/>
-                                    <Button Grid.Column="3" Width="30" Height="28" Margin="0,0,6,0"
+                                    <Button Grid.Column="4" Width="30" Height="28" Margin="0,0,6,0"
                                             Content="↑"
                                             Style="{StaticResource EmoteToolbarButtonStyle}"
                                             ToolTip="Move selected emote up"
                                             Click="MoveUpEmoteToolbarButton_Click"/>
-                                    <Button Grid.Column="4" Width="30" Height="28" Margin="0,0,10,0"
+                                    <Button Grid.Column="5" Width="30" Height="28" Margin="0,0,10,0"
                                             Content="↓"
                                             Style="{StaticResource EmoteToolbarButtonStyle}"
                                             ToolTip="Move selected emote down"
                                             Click="MoveDownEmoteToolbarButton_Click"/>
                                     <TextBlock x:Name="SelectedEmoteHeaderTextBlock"
-                                               Grid.Column="5"
+                                               Grid.Column="6"
                                                Foreground="#FFD0D0D0"
                                                VerticalAlignment="Center"
                                                Text="No emote selected"/>
                                     <CheckBox x:Name="LoopAnimationPreviewsCheckBox"
-                                              Grid.Column="6"
+                                              Grid.Column="7"
                                               Margin="12,0,0,0"
                                               VerticalAlignment="Center"
                                               IsChecked="True"

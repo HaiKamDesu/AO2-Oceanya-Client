@@ -222,6 +222,8 @@ namespace OceanyaClient
             new Dictionary<UIElement, TranslateTransform>();
         private bool suppressEmoteTileSelectionChanged;
         private DateTime suppressFieldSingleClickUntilUtc = DateTime.MinValue;
+        private Guid? pendingButtonImportEmoteId;
+        private bool pendingButtonImportUsesSelectedState;
         private CharacterCreationEmoteViewModel? contextMenuTargetEmote;
         private string contextMenuTargetZone = string.Empty;
         private readonly Dictionary<Guid, BitmapSource> bulkButtonCutoutByEmoteId = new Dictionary<Guid, BitmapSource>();
@@ -949,9 +951,10 @@ namespace OceanyaClient
                 {
                     viewModel.ButtonIconMode = ButtonIconMode.TwoImages;
                     viewModel.ButtonIconAssetSourcePath = viewModel.ButtonTwoImagesOnAssetSourcePath;
-                    viewModel.ButtonIconPreview = TryLoadPreviewImage(viewModel.ButtonTwoImagesOnAssetSourcePath);
                     viewModel.ButtonIconToken = Path.GetFileNameWithoutExtension(viewModel.ButtonTwoImagesOnAssetSourcePath);
                 }
+
+                RefreshButtonIconPreview(viewModel);
 
                 viewModel.SfxAssetSourcePath = ResolveAudioTokenPathWithinCharacterDirectory(characterDirectoryPath, source.sfxName);
                 viewModel.FrameEvents.Clear();
@@ -2066,14 +2069,7 @@ namespace OceanyaClient
             else if (string.Equals(section, "fileorganization", StringComparison.OrdinalIgnoreCase))
             {
                 currentFileOrganizationPath = string.Empty;
-                if (allFileOrganizationEntries.Count == 0)
-                {
-                    RefreshFileOrganizationEntries();
-                }
-                else
-                {
-                    RefreshFileOrganizationCurrentFolderView();
-                }
+                RefreshFileOrganizationEntries();
                 StatusTextBlock.Text = "Organize the final generated folder structure.";
             }
             else
@@ -2717,12 +2713,9 @@ namespace OceanyaClient
                 };
 
                 ApplyButtonIconGenerationConfig(emote, config);
-                if (TryBuildButtonIconPair(config, out BitmapSource? onImage, out _, out _)
-                    && onImage != null)
+                RefreshButtonIconPreview(emote);
+                if (emote.ButtonIconPreview != null)
                 {
-                    emote.ButtonIconPreview = onImage;
-                    emote.ButtonIconAssetSourcePath = ResolveRepresentativeButtonSourcePath(config);
-                    emote.ButtonIconToken = $"button_{emote.Index}";
                     appliedCount++;
                 }
             }
@@ -4386,7 +4379,11 @@ namespace OceanyaClient
                 && !selected.IsInteractionLocked
                 && (selected.IsExternal || !string.IsNullOrWhiteSpace(selected.AssetKey) || selected.IsFolder);
             openItem.IsEnabled = selected != null
-                && (selected.IsFolder || IsCharIniOrganizationEntry(selected) || IsTextOrganizationEntry(selected));
+                && (selected.IsFolder
+                    || IsCharIniOrganizationEntry(selected)
+                    || IsTextOrganizationEntry(selected)
+                    || selected.EntryKind == FileOrganizationEntryKind.Image
+                    || selected.EntryKind == FileOrganizationEntryKind.Audio);
             menu.Items.Add(openItem);
             renameItem.IsEnabled = canEditSelected;
             moveItem.IsEnabled = canEditSelected;
@@ -4920,6 +4917,18 @@ namespace OceanyaClient
                 return true;
             }
 
+            if (entry.EntryKind == FileOrganizationEntryKind.Image)
+            {
+                ShowFileOrganizationImageViewer(entry);
+                return true;
+            }
+
+            if (entry.EntryKind == FileOrganizationEntryKind.Audio)
+            {
+                ShowFileOrganizationAudioViewer(entry);
+                return true;
+            }
+
             if (!IsTextOrganizationEntry(entry))
             {
                 return false;
@@ -5053,6 +5062,641 @@ namespace OceanyaClient
 
             errorMessage = "Could not locate a physical source file for this text asset.";
             return false;
+        }
+
+        private IReadOnlyList<FileOrganizationEntryViewModel> GetOrganizationSiblingEntries(
+            FileOrganizationEntryViewModel entry,
+            FileOrganizationEntryKind kind)
+        {
+            string parentPath = GetParentDirectoryPath(entry.RelativePath, entry.IsFolder);
+            return allFileOrganizationEntries
+                .Where(candidate => !candidate.IsFolder
+                    && candidate.EntryKind == kind
+                    && string.Equals(
+                        GetParentDirectoryPath(candidate.RelativePath, candidate.IsFolder),
+                        parentPath,
+                        StringComparison.OrdinalIgnoreCase))
+                .OrderBy(static candidate => candidate.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static string? TryResolveOrganizationImageSourcePath(FileOrganizationEntryViewModel entry)
+        {
+            if (entry == null || entry.IsFolder || string.IsNullOrWhiteSpace(entry.SourcePath))
+            {
+                return null;
+            }
+
+            string? resolvedPath = Ao2AnimationPreview.ResolveAo2ImagePath(entry.SourcePath);
+            return !string.IsNullOrWhiteSpace(resolvedPath) && File.Exists(resolvedPath)
+                ? resolvedPath
+                : null;
+        }
+
+        private void ShowFileOrganizationImageViewer(FileOrganizationEntryViewModel initialEntry)
+        {
+            IReadOnlyList<FileOrganizationEntryViewModel> siblingEntries = GetOrganizationSiblingEntries(initialEntry, FileOrganizationEntryKind.Image);
+            int currentIndex = Math.Max(0, siblingEntries
+                .Select((entry, index) => new { entry, index })
+                .FirstOrDefault(item => ReferenceEquals(item.entry, initialEntry))?.index ?? 0);
+            Window dialog = CreateEmoteDialog("Image Asset Viewer", 1080, 760);
+            dialog.MinWidth = 820;
+            dialog.MinHeight = 600;
+
+            Button previousButton = CreateDialogButton("←", isPrimary: false);
+            previousButton.Width = 54;
+            previousButton.Height = 54;
+            previousButton.VerticalAlignment = VerticalAlignment.Center;
+
+            Button nextButton = CreateDialogButton("→", isPrimary: false);
+            nextButton.Width = 54;
+            nextButton.Height = 54;
+            nextButton.VerticalAlignment = VerticalAlignment.Center;
+
+            TextBlock fileNameText = new TextBlock
+            {
+                Foreground = new SolidColorBrush(Color.FromRgb(235, 235, 235)),
+                FontSize = 17,
+                FontWeight = FontWeights.SemiBold,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Margin = new Thickness(0, 0, 0, 4)
+            };
+
+            TextBlock fileMetaText = new TextBlock
+            {
+                Foreground = new SolidColorBrush(Color.FromRgb(179, 194, 208)),
+                FontSize = 12,
+                TextTrimming = TextTrimming.CharacterEllipsis
+            };
+
+            ScaleTransform zoomTransform = new ScaleTransform(1, 1);
+            Image previewImage = new Image
+            {
+                Stretch = Stretch.Uniform,
+                LayoutTransform = zoomTransform,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            TextBlock emptyText = new TextBlock
+            {
+                Text = "Preview unavailable",
+                Foreground = new SolidColorBrush(Color.FromRgb(192, 205, 218)),
+                FontSize = 18,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Visibility = Visibility.Collapsed
+            };
+
+            Border previewFrame = new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(90, 0, 0, 0)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(62, 84, 106)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(14),
+                Margin = new Thickness(0, 10, 0, 0)
+            };
+
+            Slider zoomSlider = new Slider
+            {
+                Minimum = 0.1,
+                Maximum = 8.0,
+                Value = 1.0,
+                Width = 180,
+                TickFrequency = 0.1,
+                IsSnapToTickEnabled = false,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            TextBlock zoomValueText = new TextBlock
+            {
+                Text = "100%",
+                Foreground = new SolidColorBrush(Color.FromRgb(210, 221, 232)),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(8, 0, 0, 0)
+            };
+
+            ScrollViewer imageScrollViewer = new ScrollViewer
+            {
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                CanContentScroll = false,
+                Cursor = Cursors.Hand
+            };
+
+            Grid imageHost = new Grid();
+            imageHost.Children.Add(previewImage);
+            imageHost.Children.Add(emptyText);
+            imageScrollViewer.Content = imageHost;
+            imageScrollViewer.PreviewMouseWheel += (_, e) =>
+            {
+                double delta = e.Delta > 0 ? 0.1 : -0.1;
+                double nextZoom = Math.Clamp(zoomTransform.ScaleX + delta, 0.1, 8.0);
+                zoomTransform.ScaleX = nextZoom;
+                zoomTransform.ScaleY = nextZoom;
+                zoomValueText.Text = $"{Math.Round(nextZoom * 100):0}%";
+                zoomSlider.Value = nextZoom;
+                e.Handled = true;
+            };
+            Point panStartPoint = default;
+            double panStartHorizontalOffset = 0;
+            double panStartVerticalOffset = 0;
+            bool isPanningPreview = false;
+            imageScrollViewer.PreviewMouseLeftButtonDown += (_, e) =>
+            {
+                if (previewImage.Source == null)
+                {
+                    return;
+                }
+
+                isPanningPreview = true;
+                panStartPoint = e.GetPosition(imageScrollViewer);
+                panStartHorizontalOffset = imageScrollViewer.HorizontalOffset;
+                panStartVerticalOffset = imageScrollViewer.VerticalOffset;
+                imageScrollViewer.Cursor = Cursors.SizeAll;
+                imageScrollViewer.CaptureMouse();
+                e.Handled = true;
+            };
+            imageScrollViewer.PreviewMouseMove += (_, e) =>
+            {
+                if (!isPanningPreview || e.LeftButton != MouseButtonState.Pressed)
+                {
+                    return;
+                }
+
+                Point currentPoint = e.GetPosition(imageScrollViewer);
+                Vector delta = currentPoint - panStartPoint;
+                imageScrollViewer.ScrollToHorizontalOffset(Math.Max(0, panStartHorizontalOffset - delta.X));
+                imageScrollViewer.ScrollToVerticalOffset(Math.Max(0, panStartVerticalOffset - delta.Y));
+                e.Handled = true;
+            };
+            imageScrollViewer.PreviewMouseLeftButtonUp += (_, e) =>
+            {
+                if (!isPanningPreview)
+                {
+                    return;
+                }
+
+                isPanningPreview = false;
+                imageScrollViewer.ReleaseMouseCapture();
+                imageScrollViewer.Cursor = Cursors.Hand;
+                e.Handled = true;
+            };
+            imageScrollViewer.MouseLeave += (_, _) =>
+            {
+                if (!isPanningPreview)
+                {
+                    imageScrollViewer.Cursor = Cursors.Hand;
+                }
+            };
+            previewFrame.Child = imageScrollViewer;
+
+            Button zoomOutButton = CreateDialogButton("-", isPrimary: false);
+            zoomOutButton.Width = 36;
+            Button zoomResetButton = CreateDialogButton("100%", isPrimary: false);
+            zoomResetButton.Width = 72;
+            Button zoomInButton = CreateDialogButton("+", isPrimary: false);
+            zoomInButton.Width = 36;
+
+            zoomSlider.ValueChanged += (_, _) =>
+            {
+                double zoom = Math.Clamp(zoomSlider.Value, 0.1, 8.0);
+                zoomTransform.ScaleX = zoom;
+                zoomTransform.ScaleY = zoom;
+                zoomValueText.Text = $"{Math.Round(zoom * 100):0}%";
+            };
+            zoomOutButton.Click += (_, _) => zoomSlider.Value = Math.Max(zoomSlider.Minimum, zoomSlider.Value - 0.1);
+            zoomInButton.Click += (_, _) => zoomSlider.Value = Math.Min(zoomSlider.Maximum, zoomSlider.Value + 0.1);
+            zoomResetButton.Click += (_, _) => zoomSlider.Value = 1.0;
+
+            Grid timelinePanel = new Grid
+            {
+                Margin = new Thickness(0, 10, 0, 0),
+                Visibility = Visibility.Collapsed
+            };
+            timelinePanel.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            timelinePanel.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            timelinePanel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            timelinePanel.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            Button playPauseButton = CreateTimelineSymbolButton("▶", "Play or pause the animated preview.");
+            Button restartButton = CreateTimelineSymbolButton("⟲", "Restart the animated preview.");
+            CheckBox loopCheckBox = new CheckBox
+            {
+                Content = "Loop",
+                IsChecked = true,
+                Margin = new Thickness(10, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = new SolidColorBrush(Color.FromRgb(214, 224, 235))
+            };
+            ApplyDialogCheckBoxStyle(loopCheckBox);
+
+            Slider timelineSlider = new Slider
+            {
+                Minimum = 0,
+                Maximum = 1,
+                Value = 0,
+                Margin = new Thickness(8, 0, 8, 0),
+                IsEnabled = false
+            };
+            Grid.SetColumn(playPauseButton, 0);
+            Grid.SetColumn(restartButton, 1);
+            Grid.SetColumn(timelineSlider, 2);
+            Grid.SetColumn(loopCheckBox, 3);
+            timelinePanel.Children.Add(playPauseButton);
+            timelinePanel.Children.Add(restartButton);
+            timelinePanel.Children.Add(timelineSlider);
+            timelinePanel.Children.Add(loopCheckBox);
+
+            Grid body = new Grid();
+            body.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            body.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            Grid centerContent = new Grid();
+            centerContent.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            centerContent.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            centerContent.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            Grid headerRow = new Grid();
+            headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            StackPanel titleStack = new StackPanel();
+            titleStack.Children.Add(fileNameText);
+            titleStack.Children.Add(fileMetaText);
+            Grid.SetColumn(titleStack, 0);
+
+            Grid zoomRow = new Grid();
+            zoomRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            zoomRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            zoomRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            zoomRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            zoomRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            Grid.SetColumn(zoomOutButton, 0);
+            Grid.SetColumn(zoomResetButton, 1);
+            Grid.SetColumn(zoomInButton, 2);
+            Grid.SetColumn(zoomSlider, 3);
+            Grid.SetColumn(zoomValueText, 4);
+            zoomRow.Children.Add(zoomOutButton);
+            zoomRow.Children.Add(zoomResetButton);
+            zoomRow.Children.Add(zoomInButton);
+            zoomRow.Children.Add(zoomSlider);
+            zoomRow.Children.Add(zoomValueText);
+            Grid.SetColumn(zoomRow, 1);
+            headerRow.Children.Add(titleStack);
+            headerRow.Children.Add(zoomRow);
+
+            Grid.SetRow(headerRow, 0);
+            Grid.SetRow(previewFrame, 1);
+            Grid.SetRow(timelinePanel, 2);
+            centerContent.Children.Add(headerRow);
+            centerContent.Children.Add(previewFrame);
+            centerContent.Children.Add(timelinePanel);
+
+            Grid.SetColumn(previousButton, 0);
+            Grid.SetColumn(centerContent, 1);
+            Grid.SetColumn(nextButton, 2);
+            body.Children.Add(previousButton);
+            body.Children.Add(centerContent);
+            body.Children.Add(nextButton);
+            BuildStyledDialogContentWithoutOuterScroll(dialog, dialog.Title, body);
+
+            AnimationTimelinePreviewController? activeController = null;
+            bool ignoreTimelineValueChange = false;
+
+            void DisposeActiveController()
+            {
+                activeController?.Dispose();
+                activeController = null;
+            }
+
+            void RefreshCurrentEntry()
+            {
+                DisposeActiveController();
+                FileOrganizationEntryViewModel currentEntry = siblingEntries[currentIndex];
+                string? resolvedPath = TryResolveOrganizationImageSourcePath(currentEntry);
+                AnimationTimelinePreviewController? controller = null;
+                bool hasAnimatedSource = !string.IsNullOrWhiteSpace(resolvedPath)
+                    && Ao2AnimationPreview.IsPotentialAnimatedPath(resolvedPath)
+                    && AnimationTimelinePreviewController.TryCreate(resolvedPath, out controller)
+                    && controller != null;
+
+                fileNameText.Text = currentEntry.Name;
+                previousButton.IsEnabled = currentIndex > 0;
+                nextButton.IsEnabled = currentIndex < siblingEntries.Count - 1;
+                zoomSlider.Value = 1.0;
+                imageScrollViewer.ScrollToHorizontalOffset(0);
+                imageScrollViewer.ScrollToVerticalOffset(0);
+
+                if (hasAnimatedSource)
+                {
+                    activeController = controller;
+                    previewImage.Source = controller.CurrentFrame;
+                    emptyText.Visibility = Visibility.Collapsed;
+                    timelinePanel.Visibility = Visibility.Visible;
+                    timelineSlider.IsEnabled = controller.HasTimeline;
+                    timelineSlider.Maximum = Math.Max(1, controller.EffectiveDurationMs);
+                    timelineSlider.Value = 0;
+                    fileMetaText.Text =
+                        $"{currentEntry.RelativePath} (Animated asset - {Math.Round(controller.EffectiveDurationMs):0} ms)";
+                    controller.PositionChanged += (frame, positionMs) => Dispatcher.Invoke(() =>
+                    {
+                        previewImage.Source = frame;
+                        ignoreTimelineValueChange = true;
+                        timelineSlider.Value = Math.Clamp(positionMs, 0, timelineSlider.Maximum);
+                        ignoreTimelineValueChange = false;
+                    });
+                    controller.PlaybackStateChanged += isPlaying => Dispatcher.Invoke(() =>
+                    {
+                        playPauseButton.Content = isPlaying ? "⏸" : "▶";
+                    });
+                    controller.SetLoop(loopCheckBox.IsChecked == true);
+                    playPauseButton.Content = "▶";
+                }
+                else
+                {
+                    previewImage.Source = !string.IsNullOrWhiteSpace(resolvedPath)
+                        ? Ao2AnimationPreview.LoadStaticPreviewImage(resolvedPath, decodePixelWidth: 0)
+                        : currentEntry.PreviewImage;
+                    emptyText.Visibility = previewImage.Source == null ? Visibility.Visible : Visibility.Collapsed;
+                    timelinePanel.Visibility = Visibility.Collapsed;
+                    timelineSlider.IsEnabled = false;
+                    fileMetaText.Text = currentEntry.RelativePath;
+                    playPauseButton.Content = "▶";
+                }
+            }
+
+            previousButton.Click += (_, _) =>
+            {
+                if (currentIndex <= 0)
+                {
+                    return;
+                }
+
+                currentIndex--;
+                RefreshCurrentEntry();
+            };
+            nextButton.Click += (_, _) =>
+            {
+                if (currentIndex >= siblingEntries.Count - 1)
+                {
+                    return;
+                }
+
+                currentIndex++;
+                RefreshCurrentEntry();
+            };
+            playPauseButton.Click += (_, _) =>
+            {
+                if (activeController == null)
+                {
+                    return;
+                }
+
+                if (activeController.IsPlaying)
+                {
+                    activeController.Pause();
+                }
+                else
+                {
+                    activeController.Play();
+                }
+            };
+            restartButton.Click += (_, _) =>
+            {
+                if (activeController == null)
+                {
+                    return;
+                }
+
+                activeController.Seek(0);
+                activeController.Play();
+            };
+            loopCheckBox.Checked += (_, _) => activeController?.SetLoop(true);
+            loopCheckBox.Unchecked += (_, _) => activeController?.SetLoop(false);
+            timelineSlider.ValueChanged += (_, _) =>
+            {
+                if (ignoreTimelineValueChange || activeController == null)
+                {
+                    return;
+                }
+
+                activeController.Seek(timelineSlider.Value);
+            };
+            dialog.Closed += (_, _) => DisposeActiveController();
+
+            RefreshCurrentEntry();
+            _ = dialog.ShowDialog();
+        }
+
+        private void ShowFileOrganizationAudioViewer(FileOrganizationEntryViewModel initialEntry)
+        {
+            IReadOnlyList<FileOrganizationEntryViewModel> siblingEntries = GetOrganizationSiblingEntries(initialEntry, FileOrganizationEntryKind.Audio);
+            int currentIndex = Math.Max(0, siblingEntries
+                .Select((entry, index) => new { entry, index })
+                .FirstOrDefault(item => ReferenceEquals(item.entry, initialEntry))?.index ?? 0);
+            Window dialog = CreateEmoteDialog("Sound Asset Viewer", 760, 420);
+            dialog.MinWidth = 640;
+            dialog.MinHeight = 320;
+
+            AO2BlipPreviewPlayer player = new AO2BlipPreviewPlayer
+            {
+                Volume = fileOrganizationAudioPreviewPlayer.Volume
+            };
+            DispatcherTimer progressTimer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromMilliseconds(120)
+            };
+
+            Button previousButton = CreateDialogButton("←", isPrimary: false);
+            previousButton.Width = 54;
+            previousButton.Height = 54;
+            previousButton.VerticalAlignment = VerticalAlignment.Center;
+
+            Button nextButton = CreateDialogButton("→", isPrimary: false);
+            nextButton.Width = 54;
+            nextButton.Height = 54;
+            nextButton.VerticalAlignment = VerticalAlignment.Center;
+
+            TextBlock fileNameText = new TextBlock
+            {
+                Foreground = new SolidColorBrush(Color.FromRgb(235, 235, 235)),
+                FontSize = 17,
+                FontWeight = FontWeights.SemiBold,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Margin = new Thickness(0, 0, 0, 4)
+            };
+
+            TextBlock fileMetaText = new TextBlock
+            {
+                Foreground = new SolidColorBrush(Color.FromRgb(179, 194, 208)),
+                FontSize = 12,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Margin = new Thickness(0, 0, 0, 12)
+            };
+
+            Button playButton = CreateDialogButton("Play", isPrimary: true);
+            playButton.Width = 110;
+            Button stopButton = CreateDialogButton("Stop", isPrimary: false);
+            stopButton.Width = 110;
+
+            ProgressBar progressBar = new ProgressBar
+            {
+                Height = 14,
+                Margin = new Thickness(0, 12, 0, 0),
+                Minimum = 0,
+                Maximum = 1
+            };
+
+            TextBlock playbackStatusText = new TextBlock
+            {
+                Foreground = new SolidColorBrush(Color.FromRgb(188, 203, 218)),
+                Margin = new Thickness(0, 8, 0, 0)
+            };
+
+            Border bodyCard = new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(90, 0, 0, 0)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(62, 84, 106)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(16)
+            };
+
+            StackPanel centerStack = new StackPanel();
+            centerStack.Children.Add(fileNameText);
+            centerStack.Children.Add(fileMetaText);
+
+            StackPanel buttonRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal
+            };
+            buttonRow.Children.Add(playButton);
+            buttonRow.Children.Add(stopButton);
+            centerStack.Children.Add(buttonRow);
+            centerStack.Children.Add(progressBar);
+            centerStack.Children.Add(playbackStatusText);
+            bodyCard.Child = centerStack;
+
+            Grid body = new Grid();
+            body.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            body.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            Grid.SetColumn(previousButton, 0);
+            Grid.SetColumn(bodyCard, 1);
+            Grid.SetColumn(nextButton, 2);
+            body.Children.Add(previousButton);
+            body.Children.Add(bodyCard);
+            body.Children.Add(nextButton);
+
+            BuildStyledDialogContentWithoutOuterScroll(dialog, dialog.Title, body);
+
+            DateTime playbackStartedUtc = DateTime.MinValue;
+            double currentDurationMs = 0;
+
+            void StopPlayback()
+            {
+                progressTimer.Stop();
+                player.Stop();
+                progressBar.Value = 0;
+                playbackStartedUtc = DateTime.MinValue;
+                playbackStatusText.Text = currentDurationMs > 0
+                    ? $"Ready • {Math.Round(currentDurationMs):0} ms"
+                    : "Ready";
+            }
+
+            bool TryLoadCurrentEntry()
+            {
+                FileOrganizationEntryViewModel currentEntry = siblingEntries[currentIndex];
+                fileNameText.Text = currentEntry.Name;
+                fileMetaText.Text = currentEntry.RelativePath;
+                previousButton.IsEnabled = currentIndex > 0;
+                nextButton.IsEnabled = currentIndex < siblingEntries.Count - 1;
+                StopPlayback();
+                if (string.IsNullOrWhiteSpace(currentEntry.SourcePath) || !File.Exists(currentEntry.SourcePath))
+                {
+                    currentDurationMs = 0;
+                    playbackStatusText.Text = "Preview unavailable";
+                    return false;
+                }
+
+                if (!player.TrySetBlip(currentEntry.SourcePath))
+                {
+                    currentDurationMs = 0;
+                    playbackStatusText.Text = "Could not load this audio file.";
+                    return false;
+                }
+
+                currentDurationMs = Math.Max(120, player.GetLoadedDurationMs());
+                progressBar.Maximum = currentDurationMs;
+                playbackStatusText.Text = $"Ready • {Math.Round(currentDurationMs):0} ms";
+                return true;
+            }
+
+            progressTimer.Tick += (_, _) =>
+            {
+                if (playbackStartedUtc == DateTime.MinValue || currentDurationMs <= 0)
+                {
+                    return;
+                }
+
+                double elapsedMs = (DateTime.UtcNow - playbackStartedUtc).TotalMilliseconds;
+                progressBar.Value = Math.Clamp(elapsedMs, 0, currentDurationMs);
+                if (elapsedMs >= currentDurationMs)
+                {
+                    StopPlayback();
+                }
+            };
+
+            playButton.Click += (_, _) =>
+            {
+                if (!TryLoadCurrentEntry())
+                {
+                    return;
+                }
+
+                StopPlayback();
+                if (!player.PlayBlip())
+                {
+                    playbackStatusText.Text = "Could not start playback.";
+                    return;
+                }
+
+                playbackStartedUtc = DateTime.UtcNow;
+                playbackStatusText.Text = $"Playing • {Math.Round(currentDurationMs):0} ms";
+                progressTimer.Start();
+            };
+            stopButton.Click += (_, _) => StopPlayback();
+            previousButton.Click += (_, _) =>
+            {
+                if (currentIndex <= 0)
+                {
+                    return;
+                }
+
+                currentIndex--;
+                _ = TryLoadCurrentEntry();
+            };
+            nextButton.Click += (_, _) =>
+            {
+                if (currentIndex >= siblingEntries.Count - 1)
+                {
+                    return;
+                }
+
+                currentIndex++;
+                _ = TryLoadCurrentEntry();
+            };
+            dialog.Closed += (_, _) =>
+            {
+                StopPlayback();
+                progressTimer.Stop();
+                player.Dispose();
+            };
+
+            _ = TryLoadCurrentEntry();
+            _ = dialog.ShowDialog();
         }
 
         private void FileOrgRowResizeThumb_DragStarted(object sender, DragStartedEventArgs e)
@@ -5602,7 +6246,117 @@ namespace OceanyaClient
                 if (tile.Emote != null)
                 {
                     tile.Emote.IsSelected = ReferenceEquals(tile.Emote, selected);
+                    RefreshButtonIconPreview(tile.Emote);
                 }
+            }
+        }
+
+        private static bool ShouldUseButtonOnPreview(CharacterCreationEmoteViewModel emote)
+        {
+            return emote.IsSelected;
+        }
+
+        private static bool TryBuildButtonIconPreviewPair(
+            ButtonIconGenerationConfig config,
+            out BitmapSource? onImage,
+            out BitmapSource? offImage,
+            out string? validationMessage)
+        {
+            onImage = null;
+            offImage = null;
+            validationMessage = null;
+
+            if (config.Mode != ButtonIconMode.TwoImages)
+            {
+                return TryBuildButtonIconPair(config, out onImage, out offImage, out validationMessage);
+            }
+
+            ButtonEffectConfig onEffect = config.OnEffect ?? new ButtonEffectConfig();
+            ButtonEffectConfig offEffect = config.OffEffect ?? new ButtonEffectConfig();
+            if (!ValidateButtonEffectConfig(onEffect, "button_on", out validationMessage))
+            {
+                return false;
+            }
+
+            if (!ValidateButtonEffectConfig(offEffect, "button_off", out validationMessage))
+            {
+                return false;
+            }
+
+            bool hasOn = TryLoadButtonBitmap(config.TwoImagesOnPath ?? string.Empty, out BitmapSource? twoOn, out _)
+                && twoOn != null;
+            bool hasOff = TryLoadButtonBitmap(config.TwoImagesOffPath ?? string.Empty, out BitmapSource? twoOff, out _)
+                && twoOff != null;
+            if (!hasOn && !hasOff)
+            {
+                validationMessage = "Two images mode requires button_on or button_off.";
+                return false;
+            }
+
+            int twoSide = Math.Max(
+                hasOn ? ComputeButtonIconSquareSide(twoOn!) : 0,
+                hasOff ? ComputeButtonIconSquareSide(twoOff!) : 0);
+            twoSide = Math.Max(twoSide, 1);
+
+            if (hasOn)
+            {
+                BitmapSource squareOn = RenderBitmap(twoSide, twoSide, drawingContext =>
+                {
+                    DrawImageContain(drawingContext, twoOn!, new Rect(0, 0, twoSide, twoSide));
+                });
+                onImage = ApplyButtonEffectToBitmap(squareOn, onEffect);
+            }
+
+            if (hasOff)
+            {
+                BitmapSource squareOff = RenderBitmap(twoSide, twoSide, drawingContext =>
+                {
+                    DrawImageContain(drawingContext, twoOff!, new Rect(0, 0, twoSide, twoSide));
+                });
+                offImage = ApplyButtonEffectToBitmap(squareOff, offEffect);
+            }
+
+            return true;
+        }
+
+        private static bool TryResolveButtonPreviewImage(
+            CharacterCreationEmoteViewModel emote,
+            [NotNullWhen(true)] out BitmapSource? previewImage)
+        {
+            previewImage = null;
+            ButtonIconGenerationConfig config = BuildButtonIconGenerationConfig(emote);
+            if (!TryBuildButtonIconPreviewPair(config, out BitmapSource? onImage, out BitmapSource? offImage, out _))
+            {
+                return false;
+            }
+
+            previewImage = ShouldUseButtonOnPreview(emote) ? onImage : offImage;
+            return previewImage != null;
+        }
+
+        private static void RefreshButtonIconPreview(CharacterCreationEmoteViewModel emote)
+        {
+            if (TryResolveButtonPreviewImage(emote, out BitmapSource? previewImage))
+            {
+                emote.ButtonIconPreview = previewImage;
+                emote.ButtonIconToken = $"button_{Math.Max(1, emote.Index)}";
+                if (string.IsNullOrWhiteSpace(emote.ButtonIconAssetSourcePath))
+                {
+                    emote.ButtonIconAssetSourcePath = ResolveRepresentativeButtonSourcePath(BuildButtonIconGenerationConfig(emote));
+                }
+
+                return;
+            }
+
+            emote.ButtonIconPreview = null;
+            if (string.IsNullOrWhiteSpace(emote.ButtonSingleImageAssetSourcePath)
+                && string.IsNullOrWhiteSpace(emote.ButtonTwoImagesOnAssetSourcePath)
+                && string.IsNullOrWhiteSpace(emote.ButtonTwoImagesOffAssetSourcePath)
+                && string.IsNullOrWhiteSpace(emote.ButtonAutomaticBackgroundUploadAssetSourcePath)
+                && emote.ButtonAutomaticCutEmoteImage == null)
+            {
+                emote.ButtonIconToken = string.Empty;
+                emote.ButtonIconAssetSourcePath = null;
             }
         }
 
@@ -6607,10 +7361,60 @@ namespace OceanyaClient
 
             suppressFieldSingleClickUntilUtc = DateTime.UtcNow.AddMilliseconds(350);
             string zoneTag = zone.Tag?.ToString() ?? string.Empty;
+            if (string.Equals(zoneTag, "button", StringComparison.OrdinalIgnoreCase))
+            {
+                pendingButtonImportEmoteId = entry.Emote.Id;
+                pendingButtonImportUsesSelectedState = entry.Emote.IsSelected;
+            }
+            else
+            {
+                pendingButtonImportEmoteId = null;
+            }
+
             if (string.Equals(zoneTag, "preanim", StringComparison.OrdinalIgnoreCase))
             {
                 ShowPreAnimationConfigDialog(entry.Emote);
             }
+        }
+
+        private void EmoteButtonDropZone_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (sender is not FrameworkElement zone
+                || zone.DataContext is not EmoteTileEntryViewModel entry
+                || entry.Emote == null)
+            {
+                return;
+            }
+
+            if (sender is UIElement captureTarget)
+            {
+                captureTarget.CaptureMouse();
+            }
+
+            pendingButtonImportEmoteId = entry.Emote.Id;
+            pendingButtonImportUsesSelectedState = entry.Emote.IsSelected;
+
+            // Button-field clicks should import the asset directly instead of selecting or dragging the whole tile.
+            e.Handled = true;
+        }
+
+        private void EmoteButtonDropZone_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (sender is UIElement captureTarget && captureTarget.IsMouseCaptured)
+            {
+                captureTarget.ReleaseMouseCapture();
+            }
+
+            if (e.ClickCount != 1
+                || sender is not FrameworkElement zone
+                || zone.DataContext is not EmoteTileEntryViewModel entry
+                || entry.Emote == null)
+            {
+                return;
+            }
+
+            ImportImageAssetForZone(entry.Emote, "button");
+            e.Handled = true;
         }
 
         private void EmoteDropZone_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
@@ -6633,16 +7437,13 @@ namespace OceanyaClient
                 return;
             }
 
-            SelectEmoteTile(entry.Emote);
             string zoneTag = zone.Tag?.ToString() ?? string.Empty;
-            if (string.Equals(zoneTag, "preanim", StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(zoneTag, "button", StringComparison.OrdinalIgnoreCase))
             {
-                ImportImageAssetForZone(entry.Emote, zoneTag);
+                SelectEmoteTile(entry.Emote);
             }
-            else
-            {
-                ImportImageAssetForZone(entry.Emote, zoneTag);
-            }
+
+            ImportImageAssetForZone(entry.Emote, zoneTag);
 
             e.Handled = true;
         }
@@ -6725,6 +7526,75 @@ namespace OceanyaClient
             }
         }
 
+        private static bool HasAnyManualButtonAsset(CharacterCreationEmoteViewModel emote)
+        {
+            return !string.IsNullOrWhiteSpace(emote.ButtonSingleImageAssetSourcePath)
+                || !string.IsNullOrWhiteSpace(emote.ButtonTwoImagesOnAssetSourcePath)
+                || !string.IsNullOrWhiteSpace(emote.ButtonTwoImagesOffAssetSourcePath);
+        }
+
+        private static bool HasCompleteTwoImageButtonAssets(CharacterCreationEmoteViewModel emote)
+        {
+            return !string.IsNullOrWhiteSpace(emote.ButtonTwoImagesOnAssetSourcePath)
+                && !string.IsNullOrWhiteSpace(emote.ButtonTwoImagesOffAssetSourcePath);
+        }
+
+        private static void ApplyDefaultSingleImageAssignment(CharacterCreationEmoteViewModel emote, string sourcePath, bool assignSelectedState)
+        {
+            emote.ButtonIconMode = ButtonIconMode.SingleImage;
+            emote.ButtonSingleImageAssetSourcePath = sourcePath;
+            emote.ButtonTwoImagesOnAssetSourcePath = null;
+            emote.ButtonTwoImagesOffAssetSourcePath = null;
+            emote.ButtonOnEffect = assignSelectedState
+                ? new ButtonEffectConfig()
+                : new ButtonEffectConfig
+                {
+                    Mode = ButtonEffectsGenerationMode.Darken,
+                    DarknessPercent = 50
+                };
+            emote.ButtonOffEffect = assignSelectedState
+                ? new ButtonEffectConfig
+                {
+                    Mode = ButtonEffectsGenerationMode.Darken,
+                    DarknessPercent = 50
+                }
+                : new ButtonEffectConfig();
+        }
+
+        private static void ApplyDefaultTwoImageAssignment(CharacterCreationEmoteViewModel emote, string sourcePath, bool assignSelectedState)
+        {
+            emote.ButtonIconMode = ButtonIconMode.TwoImages;
+            emote.ButtonSingleImageAssetSourcePath = null;
+            emote.ButtonTwoImagesOnAssetSourcePath = assignSelectedState ? sourcePath : null;
+            emote.ButtonTwoImagesOffAssetSourcePath = assignSelectedState ? null : sourcePath;
+            emote.ButtonOnEffect = assignSelectedState
+                ? new ButtonEffectConfig()
+                : new ButtonEffectConfig
+                {
+                    Mode = ButtonEffectsGenerationMode.Darken,
+                    DarknessPercent = 50
+                };
+            emote.ButtonOffEffect = assignSelectedState
+                ? new ButtonEffectConfig
+                {
+                    Mode = ButtonEffectsGenerationMode.Darken,
+                    DarknessPercent = 50
+                }
+                : new ButtonEffectConfig();
+        }
+
+        private bool ConfirmReplacingAutomaticButtonConfig(CharacterCreationEmoteViewModel emote, bool assignSelectedState)
+        {
+            string stateName = assignSelectedState ? "button_on" : "button_off";
+            MessageBoxResult result = OceanyaMessageBox.Show(
+                this,
+                $"This button is currently configured to generate automatically.\n\nReplace that automatic setup with a manually uploaded {stateName} asset?",
+                "Replace Automatic Button Config",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            return result == MessageBoxResult.Yes;
+        }
+
         private void ApplyImageAssetToEmote(CharacterCreationEmoteViewModel emote, string zone, string sourcePath)
         {
             string token = Path.GetFileNameWithoutExtension(sourcePath);
@@ -6750,17 +7620,60 @@ namespace OceanyaClient
             }
             else if (string.Equals(zone, "button", StringComparison.OrdinalIgnoreCase))
             {
-                emote.ButtonIconMode = ButtonIconMode.SingleImage;
-                emote.ButtonSingleImageAssetSourcePath = sourcePath;
-                emote.ButtonOnEffect = new ButtonEffectConfig();
-                emote.ButtonOffEffect = new ButtonEffectConfig
+                bool useSelectedState = pendingButtonImportEmoteId.HasValue
+                    && pendingButtonImportEmoteId.Value == emote.Id
+                    ? pendingButtonImportUsesSelectedState
+                    : emote.IsSelected;
+                pendingButtonImportEmoteId = null;
+
+                if (emote.ButtonIconMode == ButtonIconMode.Automatic)
                 {
-                    Mode = ButtonEffectsGenerationMode.Darken,
-                    DarknessPercent = 50
-                };
+                    if (!ConfirmReplacingAutomaticButtonConfig(emote, useSelectedState))
+                    {
+                        StatusTextBlock.Text = "Button icon import cancelled.";
+                        return;
+                    }
+
+                    ApplyDefaultTwoImageAssignment(emote, sourcePath, useSelectedState);
+                }
+                else if (emote.ButtonIconMode == ButtonIconMode.TwoImages || HasCompleteTwoImageButtonAssets(emote))
+                {
+                    emote.ButtonIconMode = ButtonIconMode.TwoImages;
+                    emote.ButtonSingleImageAssetSourcePath = null;
+                    if (useSelectedState)
+                    {
+                        emote.ButtonTwoImagesOnAssetSourcePath = sourcePath;
+                    }
+                    else
+                    {
+                        emote.ButtonTwoImagesOffAssetSourcePath = sourcePath;
+                    }
+                }
+                else if (!HasAnyManualButtonAsset(emote))
+                {
+                    ApplyDefaultSingleImageAssignment(emote, sourcePath, useSelectedState);
+                }
+                else if (emote.ButtonIconMode == ButtonIconMode.SingleImage)
+                {
+                    emote.ButtonSingleImageAssetSourcePath = sourcePath;
+                }
+                else
+                {
+                    emote.ButtonIconMode = ButtonIconMode.TwoImages;
+                    emote.ButtonSingleImageAssetSourcePath = null;
+                    if (useSelectedState)
+                    {
+                        emote.ButtonTwoImagesOnAssetSourcePath = sourcePath;
+                    }
+                    else
+                    {
+                        emote.ButtonTwoImagesOffAssetSourcePath = sourcePath;
+                    }
+                }
+
                 emote.ButtonIconAssetSourcePath = sourcePath;
-                emote.ButtonIconPreview = preview;
                 emote.ButtonIconToken = token;
+                RefreshButtonIconPreview(emote);
                 StatusTextBlock.Text = "Button icon asset imported.";
             }
 
@@ -7065,6 +7978,11 @@ namespace OceanyaClient
 
             if (dialog.ShowDialog() != true)
             {
+                if (string.Equals(zoneTag, "button", StringComparison.OrdinalIgnoreCase))
+                {
+                    pendingButtonImportEmoteId = null;
+                }
+
                 return;
             }
 
@@ -8354,7 +9272,7 @@ namespace OceanyaClient
                 body.Children.Add(titleText);
 
                 Grid previewGrid = new Grid();
-                Image previewImage = new Image { Stretch = Stretch.UniformToFill };
+                Image previewImage = new Image { Stretch = Stretch.Uniform };
                 TextBlock plusText = new TextBlock
                 {
                     Text = "+",
@@ -8632,7 +9550,7 @@ namespace OceanyaClient
 
             void RefreshPreviews()
             {
-                if (TryBuildButtonIconPair(config, out BitmapSource? onImage, out BitmapSource? offImage, out string? validation))
+                if (TryBuildButtonIconPreviewPair(config, out BitmapSource? onImage, out BitmapSource? offImage, out string? validation))
                 {
                     onPreviewImage.Source = onImage;
                     offPreviewImage.Source = offImage;
@@ -8681,9 +9599,7 @@ namespace OceanyaClient
             }
 
             ApplyButtonIconGenerationConfig(emote, config);
-            emote.ButtonIconPreview = savedOn;
-            emote.ButtonIconAssetSourcePath = ResolveRepresentativeButtonSourcePath(config);
-            emote.ButtonIconToken = $"button_{emote.Index}";
+            RefreshButtonIconPreview(emote);
             UpdateButtonIconsSectionVisibility();
             StatusTextBlock.Text = "Button icon configuration saved.";
         }
@@ -12907,6 +13823,30 @@ namespace OceanyaClient
             return panel;
         }
 
+        private void BuildStyledDialogContentWithoutOuterScroll(Window dialog, string title, UIElement body)
+        {
+            Border panel = new Border
+            {
+                Margin = new Thickness(10),
+                Background = new SolidColorBrush(Color.FromArgb(160, 16, 16, 16)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(47, 74, 94)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(10),
+                Child = body
+            };
+
+            if (dialog is GenericOceanyaWindow genericDialog)
+            {
+                genericDialog.HeaderText = title;
+                genericDialog.BodyMargin = new Thickness(0);
+                genericDialog.BodyContent = panel;
+                return;
+            }
+
+            dialog.Content = panel;
+        }
+
         private void BuildStyledDialogContent(Window dialog, string title, UIElement body, UIElement buttons)
         {
             Border panel = new Border
@@ -14762,8 +15702,9 @@ namespace OceanyaClient
                     DrawImageContain(drawingContext, twoOff, new Rect(0, 0, twoSide, twoSide));
                 });
 
-                onImage = ApplyButtonEffectToBitmap(squareOn, onEffect);
-                offImage = ApplyButtonEffectToBitmap(squareOff, offEffect);
+                // Manual two-image mode should use the uploaded assets as-is.
+                onImage = squareOn;
+                offImage = squareOff;
                 return true;
             }
 

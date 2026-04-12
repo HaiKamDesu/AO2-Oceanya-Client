@@ -1,8 +1,11 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Windows;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using NUnit.Framework;
 using OceanyaClient;
 using OceanyaClient.Features.CharacterCreator;
@@ -251,6 +254,201 @@ namespace UnitTests
                 StartupFunctionalityCatalog.Options.Any(o =>
                     string.Equals(o.Id, StartupFunctionalityIds.OceanyanFileHivemind, StringComparison.OrdinalIgnoreCase)),
                 Is.True);
+        }
+    }
+
+    [TestFixture]
+    [NonParallelizable]
+    [Apartment(ApartmentState.STA)]
+    public class AOCharacterFileCreatorWindowTests
+    {
+        private string tempRoot = string.Empty;
+
+        [SetUp]
+        public void SetUp()
+        {
+            tempRoot = Path.Combine(Path.GetTempPath(), "ao_char_creator_window_tests_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempRoot);
+
+            if (Application.Current == null)
+            {
+                _ = new Application();
+            }
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            try
+            {
+                if (Directory.Exists(tempRoot))
+                {
+                    Directory.Delete(tempRoot, true);
+                }
+            }
+            catch
+            {
+                // Best-effort cleanup.
+            }
+        }
+
+        [Test]
+        public void SetActiveSection_FileOrganization_RebuildsGeneratedButtonEntries()
+        {
+            string buttonPath = CreateSolidPng(Path.Combine(tempRoot, "button.png"), Colors.Orange);
+            AOCharacterFileCreatorWindow window = new AOCharacterFileCreatorWindow();
+
+            CharacterCreationEmoteViewModel emote = new CharacterCreationEmoteViewModel
+            {
+                Index = 1,
+                Name = "Normal",
+                ButtonIconMode = ButtonIconMode.SingleImage,
+                ButtonSingleImageAssetSourcePath = buttonPath
+            };
+
+            FieldInfo? emotesField = typeof(AOCharacterFileCreatorWindow).GetField(
+                "emotes",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(emotesField, Is.Not.Null);
+            var emotes = emotesField!.GetValue(window) as System.Collections.ObjectModel.ObservableCollection<CharacterCreationEmoteViewModel>;
+            Assert.That(emotes, Is.Not.Null);
+            emotes!.Add(emote);
+
+            MethodInfo? setActiveSectionMethod = typeof(AOCharacterFileCreatorWindow).GetMethod(
+                "SetActiveSection",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(setActiveSectionMethod, Is.Not.Null);
+
+            setActiveSectionMethod!.Invoke(window, new object[] { "fileorganization" });
+
+            FieldInfo? allEntriesField = typeof(AOCharacterFileCreatorWindow).GetField(
+                "allFileOrganizationEntries",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(allEntriesField, Is.Not.Null);
+            var entries = allEntriesField!.GetValue(window) as System.Collections.Generic.List<FileOrganizationEntryViewModel>;
+            Assert.That(entries, Is.Not.Null);
+            System.Collections.Generic.List<FileOrganizationEntryViewModel> safeEntries = entries!;
+            Assert.That(
+                safeEntries.Any(static entry => string.Equals(entry.RelativePath, "emotions/button1_on.png", StringComparison.OrdinalIgnoreCase)),
+                Is.True);
+            Assert.That(
+                safeEntries.Any(static entry => string.Equals(entry.RelativePath, "emotions/button1_off.png", StringComparison.OrdinalIgnoreCase)),
+                Is.True);
+
+            window.Close();
+        }
+
+        [Test]
+        public void RefreshButtonIconPreview_UsesAvailableTwoImageSideWithoutRequiringBothAssets()
+        {
+            string buttonOnPath = CreateSolidPng(Path.Combine(tempRoot, "button_on.png"), Colors.DeepSkyBlue);
+            CharacterCreationEmoteViewModel emote = new CharacterCreationEmoteViewModel
+            {
+                Index = 1,
+                Name = "Normal",
+                IsSelected = true,
+                ButtonIconMode = ButtonIconMode.TwoImages,
+                ButtonTwoImagesOnAssetSourcePath = buttonOnPath
+            };
+
+            MethodInfo? refreshButtonPreviewMethod = typeof(AOCharacterFileCreatorWindow).GetMethod(
+                "RefreshButtonIconPreview",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(refreshButtonPreviewMethod, Is.Not.Null);
+
+            refreshButtonPreviewMethod!.Invoke(null, new object[] { emote });
+
+            Assert.That(emote.ButtonIconPreview, Is.Not.Null);
+
+            emote.IsSelected = false;
+            refreshButtonPreviewMethod.Invoke(null, new object[] { emote });
+
+            Assert.That(emote.ButtonIconPreview, Is.Null);
+            Assert.That(emote.HasButtonIconValue, Is.True);
+        }
+
+        [Test]
+        public void TryBuildButtonIconPair_TwoImagesMode_PreservesUploadedBrightness()
+        {
+            string buttonOnPath = CreateSolidPng(Path.Combine(tempRoot, "button_on_bright.png"), Color.FromRgb(240, 240, 240));
+            string buttonOffPath = CreateSolidPng(Path.Combine(tempRoot, "button_off_dark.png"), Color.FromRgb(180, 180, 180));
+
+            ButtonIconGenerationConfig config = new ButtonIconGenerationConfig
+            {
+                Mode = ButtonIconMode.TwoImages,
+                TwoImagesOnPath = buttonOnPath,
+                TwoImagesOffPath = buttonOffPath,
+                OnEffect = new ButtonEffectConfig
+                {
+                    Mode = ButtonEffectsGenerationMode.Darken,
+                    DarknessPercent = 80
+                },
+                OffEffect = new ButtonEffectConfig
+                {
+                    Mode = ButtonEffectsGenerationMode.Darken,
+                    DarknessPercent = 10
+                }
+            };
+
+            MethodInfo? buildPairMethod = typeof(AOCharacterFileCreatorWindow).GetMethod(
+                "TryBuildButtonIconPair",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(buildPairMethod, Is.Not.Null);
+
+            object?[] args = { config, null, null, null };
+            object? successResult = buildPairMethod!.Invoke(null, args);
+            Assert.That(successResult, Is.EqualTo(true));
+
+            BitmapSource? onImage = args[1] as BitmapSource;
+            BitmapSource? offImage = args[2] as BitmapSource;
+            Assert.That(onImage, Is.Not.Null);
+            Assert.That(offImage, Is.Not.Null);
+
+            Color onCenter = SampleCenterColor(onImage!);
+            Color offCenter = SampleCenterColor(offImage!);
+
+            Assert.That(onCenter.R, Is.GreaterThan(offCenter.R));
+            Assert.That(onCenter.G, Is.GreaterThan(offCenter.G));
+            Assert.That(onCenter.B, Is.GreaterThan(offCenter.B));
+        }
+
+        private static string CreateSolidPng(string path, Color color)
+        {
+            int width = 16;
+            int height = 16;
+            byte[] pixels = new byte[width * height * 4];
+            for (int i = 0; i < pixels.Length; i += 4)
+            {
+                pixels[i] = color.B;
+                pixels[i + 1] = color.G;
+                pixels[i + 2] = color.R;
+                pixels[i + 3] = color.A;
+            }
+
+            BitmapSource bitmap = BitmapSource.Create(
+                width,
+                height,
+                96,
+                96,
+                PixelFormats.Pbgra32,
+                null,
+                pixels,
+                width * 4);
+
+            using FileStream stream = File.Create(path);
+            PngBitmapEncoder encoder = new PngBitmapEncoder();
+            encoder.Frames.Add(BitmapFrame.Create(bitmap));
+            encoder.Save(stream);
+            return path;
+        }
+
+        private static Color SampleCenterColor(BitmapSource bitmap)
+        {
+            int x = Math.Max(0, bitmap.PixelWidth / 2);
+            int y = Math.Max(0, bitmap.PixelHeight / 2);
+            byte[] pixels = new byte[4];
+            bitmap.CopyPixels(new Int32Rect(x, y, 1, 1), pixels, 4, 0);
+            return Color.FromArgb(pixels[3], pixels[2], pixels[1], pixels[0]);
         }
     }
 }
