@@ -1,5 +1,31 @@
-## Build & Test
+## Repository Structure
+- **AO2-Client/**: Git submodule pointing to the original Attorney Online client. Reference code only.
+- **tsuserver3/**: Git submodule pointing to the main Attorney Online server implementation. Reference code only.
+- **tsuserverCC/**: Git submodule pointing to a widely used Attorney Online server fork. Reference code only.
+- **AOBot-Testing/**: Core AO2 protocol/client implementation.
+- **Common/**: Shared utilities and persistence helpers.
+- **OceanyaClient/**: Main WPF client implementation.
+- **OceanyaHivemindAgent/**: Standalone tray/background process for File Hivemind sync.
+- **AO2AIBot/**: AI agent logic, prompt assembly, parsing, and provider integration.
+- **UnitTests/**: NUnit 4 test suite.
+- **Documentation/**: Repository documentation for humans and future AI agents.
 
+## Reference Code Usage
+The code in `AO2-Client`, `tsuserver3`, and `tsuserverCC` exists for reference only. Use it to understand:
+- AO2 network protocols and packet structures
+- game mechanics and chat/log behavior
+- server-side packet handling, area management, permissions, and moderation behavior
+- common AO2 customization patterns
+- UI workflows and feature parity targets
+
+Do **not** copy this code directly into the C# projects. Use it to understand behavior, then implement equivalent logic natively in this repository.
+
+## Working with Git Submodules
+- The repository includes `AO2-Client`, `tsuserver3`, and `tsuserverCC` as git submodules.
+- First-time clone: `git clone --recurse-submodules`
+- If already cloned without submodules: `git submodule update --init --recursive`
+
+## Build And Test Verification
 Run from the project root. Use this exact dotnet path on WSL:
 
 ```bash
@@ -22,78 +48,102 @@ The app version is centrally defined in `Directory.Build.props` via `OceanyaAppV
 
 | Project | Purpose |
 |---|---|
-| `OceanyaClient` | WPF frontend — the main executable. Multi-client AO2 controller with AI integration. |
-| `AOBot-Testing` (`AO2.csproj`) | Core AO2 protocol layer. `AOClient` (WebSocket), message structures (`ICMessage`, etc.), character/INI parsing. |
-| `AO2AIBot` | AI agent logic — prompt building, response parsing, client control. Provider-agnostic (OpenAI + Ollama). |
-| `Common` | Shared utilities: `SaveFile`/`SaveData`, `Globals`, `CustomConsole`, `CountdownTimer`. |
-| `OceanyaHivemindAgent` | Standalone background tray app for File Hivemind sync. Launched as a subprocess by `OceanyaClient`. |
-| `UnitTests` | NUnit 4 test project. References all other projects. |
-
-## AO2-Client Submodule
-
-`AO2-Client/` is a git submodule pinned to `v2.11.0-release` of the original Attorney Online client. Use it to understand network protocols, packet structures, and game mechanics. **Do not copy this code directly** — implement equivalent behavior in the C# WPF projects.
-
-```bash
-# First-time clone
-git clone --recurse-submodules
-
-# After cloning without the flag
-git submodule update --init --recursive
-```
+| `OceanyaClient` | WPF frontend, the main executable. Multi-client AO2 controller with AI integration. |
+| `AOBot-Testing` (`AO2.csproj`) | Core AO2 protocol layer. `AOClient`, packet/message structures, character parsing, and transport logic. |
+| `AO2AIBot` | AI agent logic: prompt building, response parsing, client control. Provider-agnostic (OpenAI + Ollama). |
+| `Common` | Shared utilities: `SaveFile`/`SaveData`, `Globals`, `CustomConsole`, `CountdownTimer`, sync helpers. |
+| `OceanyaHivemindAgent` | Standalone tray/background app for File Hivemind sync. |
+| `UnitTests` | NUnit 4 test project referencing the main projects. |
 
 ## Architecture
 
 ### Startup Flow
-
-`StartupFunctionalityCatalog` defines the modes the user picks at launch:
-- **GM Multi-Client** — multiple `AOClient` instances controlled from `MainWindow`.
-- **AO2 AI Bot (Dev)** — same UI with `AOClientAgentController` wired to each client. Only visible in `DEBUG` builds where `Environment.UserName` is `"Usuario"`.
-- **Character Database Viewer / File Creator / File Hivemind** — offline tools.
+`StartupFunctionalityCatalog` defines the launch modes:
+- **GM Multi-Client**: multiple `AOClient` instances controlled from `MainWindow`
+- **AO2 AI Bot (Dev)**: same UI with `AOClientAgentController` wired to each client; only visible in `DEBUG` builds when `Environment.UserName == "Usuario"`
+- **Character Database Viewer / File Creator / File Hivemind**: offline tools
 
 ### AO2 Protocol Layer (`AOBot-Testing`)
+`AOClient` owns the AO2 transport and packet handling.
 
-`AOClient` holds a `ClientWebSocket` and implements the AO2 packet protocol. Key callbacks: `OnICMessageReceived`, `OnOOCMessageReceived`, `OnChangedCharacter`, `OnBGChange`, `OnReconnectionAttempt`.
+Important callbacks/events include:
+- `OnICMessageReceived`
+- `OnIcActionReceived`
+- `OnOOCMessageReceived`
+- `OnChangedCharacter`
+- `OnBGChange`
+- `OnReconnectionAttempt`
 
-Server endpoints are loaded from `OceanyaClient/server.json` at runtime via `Globals.LoadServerIPs()`.
+Server endpoints are loaded from `OceanyaClient/server.json` via `Globals.LoadServerIPs()`.
 
-AO2 message text uses symbol escaping: `<percent>` → `%`, `<dollar>` → `$`, `<num>` → `#`, `<and>` → `&`. Use `Globals.ReplaceTextForSymbols` / `ReplaceSymbolsForText` when crossing the protocol boundary.
+AO2 message text uses symbol escaping:
+- `<percent>` -> `%`
+- `<dollar>` -> `$`
+- `<num>` -> `#`
+- `<and>` -> `&`
+
+Use `Globals.ReplaceTextForSymbols` and `Globals.ReplaceSymbolsForText` when crossing the protocol boundary.
 
 ### AI Agent Pipeline (`AO2AIBot`)
+1. `AOClientAgentController` receives `ChatLogEntry` records, queues evaluation work, and calls `IAiChatCompletionService`.
+2. `AiChatCompletionService` selects `GPTClient` or `OllamaClient` based on `AiChatProviderSettings.Provider`.
+3. `AO2AiBotPromptBuilder` assembles the user prompt from client state and transcript history.
+4. `AO2AiBotPromptCatalog` provides the system instruction set.
+5. `AOClientAgentResponseParser` parses `SYSTEM_WAIT()` or JSON responses into `AOClientAgentDecision`.
 
-The AI pipeline is decoupled from the UI via injected delegates:
-
-1. **`AOClientAgentController`** — receives `ChatLogEntry` records, queues evaluations with a `SemaphoreSlim` gate (one active evaluation at a time), calls `IAiChatCompletionService`.
-2. **`AiChatCompletionService`** — selects `GPTClient` (OpenAI) or `OllamaClient` (local) based on `AiChatProviderSettings.Provider`. OpenAI key is read from env var `OPENAI_API_KEY` (or a custom variable name in settings).
-3. **`AO2AiBotPromptBuilder`** — assembles the user prompt from `AOClientControlSnapshot` (current client state) and transcript history.
-4. **`AO2AiBotPromptCatalog`** — provides system instructions. `AdditionalInstructions` from settings is appended as a second instruction block.
-5. **`AOClientAgentResponseParser`** — parses the model response. Expects `SYSTEM_WAIT()` (no-op) or a JSON object. Accepts both the current shape (`state` sub-object) and the legacy shape (`modifiers` sub-object).
-
-The `AOClientAgentDecision` from the parser is handed back to `MainWindow` via the `actionExecutor` delegate, which maps it to actual `AOClient` calls.
+The resulting decision is executed through delegates wired by `MainWindow`.
 
 ### Save Data (`Common`)
-
-`SaveFile.Data` is the in-memory `SaveData` singleton. Call `SaveFile.SaveToDisk()` to persist. `SaveFile.LoadSnapshotFromDisk()` returns a copy without mutating the singleton (used by `OceanyaHivemindAgent`).
+`SaveFile.Data` is the in-memory singleton.
+- `SaveFile.SaveToDisk()` persists it
+- `SaveFile.LoadSnapshotFromDisk()` returns a copy without mutating the singleton
 
 ### File Hivemind
+`OceanyaClient` can launch `OceanyaHivemindAgent.exe` as a subprocess.
 
-`OceanyaClient` can launch `OceanyaHivemindAgent.exe` as a subprocess. The agent uses a named `EventWaitHandle` (`FileHivemindBackgroundAgentCommandLine.AgentStopSignalEventName`) to receive stop signals from the parent.
+The background agent uses the named `EventWaitHandle` `FileHivemindBackgroundAgentCommandLine.AgentStopSignalEventName` so the parent can request shutdown.
 
 ### Test Conventions
+Framework: NUnit 4 with Moq.
 
-Framework: NUnit 4 with Moq. Live network tests (`LiveServerConnectionTests`, `GoogleDriveSyncLiveTests`) and AI provider tests (`OllamaClientTests`, `GPTClientTests`) require external services and are not expected to pass without configuration.
+These tests depend on external services and are not expected to pass without configuration:
+- `LiveServerConnectionTests`
+- `GoogleDriveSyncLiveTests`
+- `OllamaClientTests`
+- `GPTClientTests`
+
+## Documentation Workflow
+To save tokens and reduce repeated broad searches, agents should treat `Documentation/` as a maintained feature index plus focused topic docs, not as a dumping ground.
+
+Before doing a wide code search for a feature:
+1. Check `Documentation/FeatureIndex.md`.
+2. Open the most relevant linked doc(s).
+3. Only then do a targeted code search for the specific classes/files that doc points to.
+
+When an agent investigates, fixes, adds, removes, or significantly refactors a feature:
+1. Update `Documentation/FeatureIndex.md` if the feature entry is missing, renamed, or moved.
+2. Create or update a focused markdown doc for that feature when the behavior, entry points, packet flow, file ownership, or caveats would help future work.
+3. Keep docs concise and high-signal. Prefer one index entry plus one focused doc over large repetitive writeups.
+4. Delete or rewrite stale docs when they are actively misleading. Do not leave contradictory documentation behind.
+5. If you add, remove, or rename files under `Documentation/`, also update the solution's `Documentation` solution folder so the files stay visible in Visual Studio.
+
+Documentation should usually capture:
+- feature purpose
+- main entry points/files
+- important packet formats or external behavior contracts
+- known pitfalls, parity quirks, or gotchas
+- test coverage and important missing coverage
 
 ## Code Style
-
-- **Naming**: PascalCase for classes, methods, and properties. camelCase for local variables and parameters.
+- **Naming**: PascalCase for classes, methods, and properties. camelCase for locals and parameters.
 - **Formatting**: 4-space indentation. Lines under 120 characters.
-- **Types**: Always use explicit types. Nullable reference types enabled (`<Nullable>enable</Nullable>`).
-- **Error handling**: `try-catch` for expected exceptions. Log with `CustomConsole.Error(message, exception)`.
-- **Async**: `async`/`await` throughout. No blocking calls.
+- **Types**: Use explicit types. Nullable reference types are enabled.
+- **Error handling**: Use `try-catch` for expected exceptions. Log via `CustomConsole.Error(message, exception)`.
+- **Async**: Prefer `async`/`await`. Avoid blocking calls.
 - **Comments**: XML documentation comments on all public methods and classes.
-- **Dependencies**: Inject dependencies rather than constructing them inline.
-- **Namespaces**: Follow existing structure (`AOBot_Testing.Agents`, `AOBot_Testing.Structures`, etc.).
+- **Dependencies**: Inject dependencies rather than constructing them inline when practical.
+- **Namespaces**: Follow the existing structure such as `AOBot_Testing.Agents`, `AOBot_Testing.Structures`, etc.
 
 ## UI Consistency
-
-- **Dark ComboBoxes**: For dark-themed windows, always use the fully themed ComboBox pattern from `InitialConfigurationWindow.xaml` / `CharacterFolderVisualizerWindow.xaml`: `DarkComboBoxItemStyle`, `DarkComboBoxStyle` with custom `ControlTemplate`, dark popup/dropdown background and highlighted/selected states. Do not ship new popups with default/light-themed ComboBox dropdowns.
-- **Auto-complete dropdowns**: Use `AutoCompleteComboBoxBehavior` for editable searchable dropdowns (opens on type, filters list, arrow-key navigation, `Enter` to commit).
+- **Dark ComboBoxes**: For dark-themed windows, use the fully themed ComboBox pattern from `InitialConfigurationWindow.xaml` / `CharacterFolderVisualizerWindow.xaml`. Do not ship light/default dropdown popups in dark windows.
+- **Auto-complete dropdowns**: Use `AutoCompleteComboBoxBehavior` for editable searchable dropdowns with filter-on-type, arrow navigation, and Enter-to-commit behavior.

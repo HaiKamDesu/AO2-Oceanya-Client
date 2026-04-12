@@ -694,8 +694,10 @@ namespace OceanyaClient.Components
             btnRealization.IsChecked = false;
             btnScreenshake.IsChecked = false;
             EffectDropdown.SelectedText = ICMessage.Effects.None.ToString();
+            if (curClient != null) curClient.effect = ICMessage.Effects.None;
             chkPreanim.IsChecked = false;
             sfxDropdown.SelectedText = "Default";
+            if (curClient != null) curClient.curSFX = string.Empty;
 
             OnResetMessageEffects?.Invoke();
         }
@@ -759,6 +761,7 @@ namespace OceanyaClient.Components
             if (sender is ToggleButton toggleButton)
             {
                 EffectDropdown.SelectedText = ICMessage.Effects.Realization.ToString();
+                if (curClient != null) curClient.effect = ICMessage.Effects.Realization;
                 txtICMessage.Focus();
             }
         }
@@ -770,6 +773,9 @@ namespace OceanyaClient.Components
             {
                 if(EffectDropdown.SelectedText == ICMessage.Effects.Realization.ToString())
                     EffectDropdown.SelectedText = ICMessage.Effects.None.ToString();
+
+                if (curClient != null && Enum.TryParse(EffectDropdown.SelectedText, out ICMessage.Effects parsedEffect))
+                    curClient.effect = parsedEffect;
 
                 txtICMessage.Focus();
             }
