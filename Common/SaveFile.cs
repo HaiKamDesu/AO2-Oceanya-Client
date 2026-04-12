@@ -238,6 +238,74 @@ namespace OceanyaClient
         public int BorderWidth { get; set; } = 5;
     }
 
+    public enum CharacterCreatorButtonEffectPresetMode
+    {
+        None = 0,
+        ReduceOpacity = 1,
+        Darken = 2,
+        Overlay = 3
+    }
+
+    public class CharacterCreatorButtonEffectPreset
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public CharacterCreatorButtonEffectPresetMode Mode { get; set; } =
+            CharacterCreatorButtonEffectPresetMode.Darken;
+        public int OpacityPercent { get; set; } = 75;
+        public int DarknessPercent { get; set; } = 50;
+        public string OverlayPath { get; set; } = string.Empty;
+        public bool AddBorder { get; set; }
+        public string BorderColor { get; set; } = "#FF000000";
+        public int BorderWidth { get; set; } = 5;
+    }
+
+    public class CharacterCreatorButtonEffectSnapshot
+    {
+        public CharacterCreatorButtonEffectPresetMode Mode { get; set; } =
+            CharacterCreatorButtonEffectPresetMode.None;
+        public int OpacityPercent { get; set; } = 75;
+        public int DarknessPercent { get; set; } = 50;
+        public string OverlayPath { get; set; } = string.Empty;
+        public bool AddBorder { get; set; }
+        public string BorderColor { get; set; } = "#FF000000";
+        public int BorderWidth { get; set; } = 5;
+        public string CustomPresetId { get; set; } = string.Empty;
+    }
+
+    public class CharacterCreatorLastBulkButtonIconConfig
+    {
+        public string ApplyScope { get; set; } = "Missing button_on or button_off";
+
+        // Background snapshot (mirrors CharacterCreatorButtonBackgroundPreset fields).
+        public CharacterCreatorButtonBackgroundPresetMode BackgroundMode { get; set; } =
+            CharacterCreatorButtonBackgroundPresetMode.SolidColor;
+        public bool BackgroundUsesBuiltInPreset { get; set; }
+        public string BackgroundBuiltInPresetName { get; set; } = "Oceanya BG";
+        public bool BackgroundUsesNone { get; set; } = true;
+        public string BackgroundCustomPresetId { get; set; } = string.Empty;
+        public string SolidColor { get; set; } = "#00000000";
+        public string BackgroundUploadPath { get; set; } = string.Empty;
+        public CharacterCreatorButtonBackgroundGradientDirection GradientDirection { get; set; } =
+            CharacterCreatorButtonBackgroundGradientDirection.Horizontal;
+        public List<CharacterCreatorButtonBackgroundGradientStop> GradientStops { get; set; } =
+            new List<CharacterCreatorButtonBackgroundGradientStop>();
+        public List<double> GradientMidpoints { get; set; } = new List<double>();
+        public bool BackgroundAddBorder { get; set; }
+        public string BackgroundBorderColor { get; set; } = "#FF000000";
+        public int BackgroundBorderWidth { get; set; } = 5;
+
+        // Effects.
+        public CharacterCreatorButtonEffectSnapshot OnEffect { get; set; } =
+            new CharacterCreatorButtonEffectSnapshot();
+        public CharacterCreatorButtonEffectSnapshot OffEffect { get; set; } =
+            new CharacterCreatorButtonEffectSnapshot
+            {
+                Mode = CharacterCreatorButtonEffectPresetMode.Darken,
+                DarknessPercent = 50
+            };
+    }
+
     public class SaveData
     {
         //Initial Configuration
@@ -291,6 +359,9 @@ namespace OceanyaClient
             new Dictionary<string, CharacterCreatorCutSelectionState>(StringComparer.OrdinalIgnoreCase);
         public List<CharacterCreatorButtonBackgroundPreset> CharacterCreatorButtonBackgroundPresets { get; set; } =
             new List<CharacterCreatorButtonBackgroundPreset>();
+        public List<CharacterCreatorButtonEffectPreset> CharacterCreatorButtonEffectPresets { get; set; } =
+            new List<CharacterCreatorButtonEffectPreset>();
+        public CharacterCreatorLastBulkButtonIconConfig? CharacterCreatorLastBulkButtonIconConfig { get; set; }
     }
 
     public static class SaveFile
@@ -523,6 +594,12 @@ namespace OceanyaClient
             data.CharacterCreatorButtonBackgroundPresets ??= new List<CharacterCreatorButtonBackgroundPreset>();
             data.CharacterCreatorButtonBackgroundPresets = NormalizeButtonBackgroundPresets(
                 data.CharacterCreatorButtonBackgroundPresets);
+
+            data.CharacterCreatorButtonEffectPresets ??= new List<CharacterCreatorButtonEffectPreset>();
+            data.CharacterCreatorButtonEffectPresets = NormalizeButtonEffectPresets(
+                data.CharacterCreatorButtonEffectPresets);
+
+            NormalizeLastBulkButtonIconConfig(data);
 
             data.FolderVisualizer ??= new FolderVisualizerConfig();
             data.FolderVisualizer.Presets ??= new List<FolderVisualizerViewPreset>();
@@ -1370,7 +1447,110 @@ namespace OceanyaClient
 
             return normalized;
         }
+
+        private static List<CharacterCreatorButtonEffectPreset> NormalizeButtonEffectPresets(
+            IEnumerable<CharacterCreatorButtonEffectPreset>? presets)
+        {
+            List<CharacterCreatorButtonEffectPreset> normalized = new List<CharacterCreatorButtonEffectPreset>();
+            HashSet<string> usedNameKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (CharacterCreatorButtonEffectPreset? raw in presets ?? Array.Empty<CharacterCreatorButtonEffectPreset>())
+            {
+                if (raw == null)
+                {
+                    continue;
+                }
+
+                CharacterCreatorButtonEffectPreset preset = new CharacterCreatorButtonEffectPreset
+                {
+                    Id = string.IsNullOrWhiteSpace(raw.Id) ? Guid.NewGuid().ToString("N") : raw.Id.Trim(),
+                    Name = raw.Name?.Trim() ?? string.Empty,
+                    Mode = raw.Mode,
+                    OpacityPercent = Math.Clamp(raw.OpacityPercent, 0, 100),
+                    DarknessPercent = Math.Clamp(raw.DarknessPercent, 0, 100),
+                    OverlayPath = raw.OverlayPath?.Trim() ?? string.Empty,
+                    AddBorder = raw.AddBorder,
+                    BorderColor = string.IsNullOrWhiteSpace(raw.BorderColor) ? "#FF000000" : raw.BorderColor.Trim(),
+                    BorderWidth = Math.Clamp(raw.BorderWidth, 1, 32)
+                };
+
+                if (string.IsNullOrWhiteSpace(preset.Name))
+                {
+                    continue;
+                }
+
+                string baseName = preset.Name;
+                int suffix = 2;
+                string uniquenessKey = $"{preset.Name}|{preset.Mode}";
+                while (!usedNameKeys.Add(uniquenessKey))
+                {
+                    preset.Name = $"{baseName} ({suffix})";
+                    uniquenessKey = $"{preset.Name}|{preset.Mode}";
+                    suffix++;
+                }
+
+                normalized.Add(preset);
+            }
+
+            return normalized;
+        }
+
+        private static void NormalizeLastBulkButtonIconConfig(SaveData data)
+        {
+            CharacterCreatorLastBulkButtonIconConfig? config = data.CharacterCreatorLastBulkButtonIconConfig;
+            if (config == null)
+            {
+                return;
+            }
+
+            config.ApplyScope = string.IsNullOrWhiteSpace(config.ApplyScope) ? "Missing button_on or button_off" : config.ApplyScope.Trim();
+            config.BackgroundBuiltInPresetName = string.IsNullOrWhiteSpace(config.BackgroundBuiltInPresetName)
+                ? "Oceanya BG"
+                : config.BackgroundBuiltInPresetName.Trim();
+            config.BackgroundCustomPresetId = config.BackgroundCustomPresetId?.Trim() ?? string.Empty;
+            config.SolidColor = string.IsNullOrWhiteSpace(config.SolidColor) ? "#00000000" : config.SolidColor.Trim();
+            config.BackgroundUploadPath = config.BackgroundUploadPath?.Trim() ?? string.Empty;
+            config.BackgroundBorderColor = string.IsNullOrWhiteSpace(config.BackgroundBorderColor)
+                ? "#FF000000"
+                : config.BackgroundBorderColor.Trim();
+            config.BackgroundBorderWidth = Math.Clamp(config.BackgroundBorderWidth, 1, 32);
+            config.GradientStops ??= new List<CharacterCreatorButtonBackgroundGradientStop>();
+            config.GradientStops = config.GradientStops
+                .Where(stop => stop != null)
+                .Select(stop => new CharacterCreatorButtonBackgroundGradientStop
+                {
+                    Color = string.IsNullOrWhiteSpace(stop.Color) ? "#FFFFFFFF" : stop.Color.Trim(),
+                    Position = Math.Clamp(stop.Position, 0.0, 1.0)
+                })
+                .OrderBy(stop => stop.Position)
+                .ToList();
+            config.GradientMidpoints ??= new List<double>();
+            config.GradientMidpoints = config.GradientMidpoints
+                .Select(value => Math.Clamp(value, 0.0, 1.0))
+                .ToList();
+
+            config.OnEffect ??= new CharacterCreatorButtonEffectSnapshot();
+            config.OffEffect ??= new CharacterCreatorButtonEffectSnapshot
+            {
+                Mode = CharacterCreatorButtonEffectPresetMode.Darken,
+                DarknessPercent = 50
+            };
+
+            NormalizeEffectSnapshot(config.OnEffect);
+            NormalizeEffectSnapshot(config.OffEffect);
+        }
+
+        private static void NormalizeEffectSnapshot(CharacterCreatorButtonEffectSnapshot snapshot)
+        {
+            snapshot.OpacityPercent = Math.Clamp(snapshot.OpacityPercent, 0, 100);
+            snapshot.DarknessPercent = Math.Clamp(snapshot.DarknessPercent, 0, 100);
+            snapshot.OverlayPath = snapshot.OverlayPath?.Trim() ?? string.Empty;
+            snapshot.BorderColor = string.IsNullOrWhiteSpace(snapshot.BorderColor)
+                ? "#FF000000"
+                : snapshot.BorderColor.Trim();
+            snapshot.BorderWidth = Math.Clamp(snapshot.BorderWidth, 1, 32);
+            snapshot.CustomPresetId = snapshot.CustomPresetId?.Trim() ?? string.Empty;
+        }
     }
 
-    
+
 }

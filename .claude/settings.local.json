@@ -9,7 +9,9 @@
       "Bash(dotnet build:*)",
       "Bash(/mnt/c/Windows/Microsoft.NET/Framework64/v4.0.30319/MSBuild.exe \"Oceanya Client.sln\" /t:Build /p:Configuration=Debug /v:minimal)",
       "Bash(cmd.exe /c \"C:\\\\Program Files\\\\dotnet\\\\dotnet.exe build OceanyaClient/OceanyaClient.csproj -c Debug -v minimal 2>&1\")",
-      "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" build OceanyaClient/OceanyaClient.csproj -c Debug -v minimal)"
+      "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" build OceanyaClient/OceanyaClient.csproj -c Debug -v minimal)",
+      "Bash(ls *.sln)",
+      "Bash(find . -maxdepth 2 -name \"*.sln\")"
     ]
   },
   "enableAllProjectMcpServers": false
