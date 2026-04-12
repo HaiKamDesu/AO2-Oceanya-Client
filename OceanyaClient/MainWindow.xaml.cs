@@ -855,6 +855,7 @@ namespace OceanyaClient
             singleInternalClient.effect = profileClient.effect;
             singleInternalClient.screenshake = profileClient.screenshake;
             singleInternalClient.textColor = profileClient.textColor;
+            singleInternalClient.PreanimEnabled = profileClient.PreanimEnabled;
             singleInternalClient.Immediate = profileClient.Immediate;
             singleInternalClient.Additive = profileClient.Additive;
             singleInternalClient.SelfOffset = profileClient.SelfOffset;

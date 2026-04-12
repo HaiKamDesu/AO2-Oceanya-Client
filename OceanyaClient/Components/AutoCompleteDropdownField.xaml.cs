@@ -28,7 +28,7 @@ namespace OceanyaClient
 
         public event EventHandler? TextValueChanged;
 
-        public ObservableCollection<string> Suggestions { get; } = new ObservableCollection<string>();
+        public ObservableCollection<AutoCompleteDropdownItem> Suggestions { get; } = new ObservableCollection<AutoCompleteDropdownItem>();
 
         public static readonly DependencyProperty TextProperty = DependencyProperty.Register(
             nameof(Text),
@@ -38,7 +38,7 @@ namespace OceanyaClient
 
         public static readonly DependencyProperty ItemsSourceProperty = DependencyProperty.Register(
             nameof(ItemsSource),
-            typeof(IEnumerable<string>),
+            typeof(IEnumerable),
             typeof(AutoCompleteDropdownField),
             new PropertyMetadata(null, OnItemsSourcePropertyChanged));
 
@@ -64,6 +64,11 @@ namespace OceanyaClient
             typeof(bool),
             typeof(AutoCompleteDropdownField),
             new PropertyMetadata(false, OnIsTextReadOnlyPropertyChanged));
+        public static readonly DependencyProperty PreserveItemOrderProperty = DependencyProperty.Register(
+            nameof(PreserveItemOrder),
+            typeof(bool),
+            typeof(AutoCompleteDropdownField),
+            new PropertyMetadata(false, OnPreserveItemOrderPropertyChanged));
 
         public AutoCompleteDropdownField()
         {
@@ -79,9 +84,9 @@ namespace OceanyaClient
             set => SetValue(TextProperty, value);
         }
 
-        public IEnumerable<string> ItemsSource
+        public IEnumerable ItemsSource
         {
-            get => (IEnumerable<string>)GetValue(ItemsSourceProperty);
+            get => (IEnumerable)GetValue(ItemsSourceProperty);
             set => SetValue(ItemsSourceProperty, value);
         }
 
@@ -107,6 +112,12 @@ namespace OceanyaClient
         {
             get => (bool)GetValue(IsTextReadOnlyProperty);
             set => SetValue(IsTextReadOnlyProperty, value);
+        }
+
+        public bool PreserveItemOrder
+        {
+            get => (bool)GetValue(PreserveItemOrderProperty);
+            set => SetValue(PreserveItemOrderProperty, value);
         }
 
         private void AutoCompleteDropdownField_Loaded(object sender, RoutedEventArgs e)
@@ -161,6 +172,14 @@ namespace OceanyaClient
             if (d is AutoCompleteDropdownField field)
             {
                 field.ApplyReadOnlyTextAreaState();
+            }
+        }
+
+        private static void OnPreserveItemOrderPropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            if (d is AutoCompleteDropdownField field)
+            {
+                field.RefreshSuggestions(field.InputTextBox.Text ?? string.Empty);
             }
         }
 
@@ -303,14 +322,14 @@ namespace OceanyaClient
 
         private void SuggestionItem_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
-            if (sender is not FrameworkElement element || element.DataContext is not string token)
+            if (sender is not FrameworkElement element || element.DataContext is not AutoCompleteDropdownItem item || !item.IsSelectable)
             {
                 Trace("SuggestionItem_Down_NoToken");
                 return;
             }
 
-            Trace("SuggestionItem_Down_Commit", token);
-            CommitToken(token);
+            Trace("SuggestionItem_Down_Commit", item.Text);
+            CommitToken(item.Text);
             e.Handled = true;
         }
 
@@ -329,10 +348,12 @@ namespace OceanyaClient
             }
 
             ListBoxItem? item = ItemsControl.ContainerFromElement(listBox, source) as ListBoxItem;
-            if (item?.DataContext is string token && !string.IsNullOrWhiteSpace(token))
+            if (item?.DataContext is AutoCompleteDropdownItem suggestion
+                && suggestion.IsSelectable
+                && !string.IsNullOrWhiteSpace(suggestion.Text))
             {
-                Trace("List_Down_Commit", token);
-                CommitToken(token);
+                Trace("List_Down_Commit", suggestion.Text);
+                CommitToken(suggestion.Text);
                 e.Handled = true;
             }
         }
@@ -345,25 +366,23 @@ namespace OceanyaClient
                 return;
             }
 
-            if (listBox.SelectedItem is string token && !string.IsNullOrWhiteSpace(token))
+            if (listBox.SelectedItem is AutoCompleteDropdownItem item
+                && item.IsSelectable
+                && !string.IsNullOrWhiteSpace(item.Text))
             {
-                Trace("List_SelectionChanged_Commit", token);
-                CommitToken(token);
+                Trace("List_SelectionChanged_Commit", item.Text);
+                CommitToken(item.Text);
             }
         }
 
         private void RefreshSuggestions(string input)
         {
-            IEnumerable<string> source = GetOrderedSource();
+            IReadOnlyList<AutoCompleteDropdownItem> source = GetOrderedSource().ToList();
             string query = forceOpenAll ? string.Empty : (input ?? string.Empty).Trim();
-
-            IEnumerable<string> matches = source
-                .Where(option => string.IsNullOrWhiteSpace(query)
-                    || option.Contains(query, StringComparison.OrdinalIgnoreCase))
-                .Take(60);
+            IReadOnlyList<AutoCompleteDropdownItem> matches = BuildSuggestionList(source, query);
 
             Suggestions.Clear();
-            foreach (string match in matches)
+            foreach (AutoCompleteDropdownItem match in matches.Take(60))
             {
                 Suggestions.Add(match);
             }
@@ -379,13 +398,41 @@ namespace OceanyaClient
             forceOpenAll = false;
         }
 
-        private IEnumerable<string> GetOrderedSource()
+        private IReadOnlyList<AutoCompleteDropdownItem> GetOrderedSource()
         {
-            IEnumerable<string> source = ItemsSource ?? Enumerable.Empty<string>();
-            return source
-                .Where(static value => !string.IsNullOrWhiteSpace(value))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(static value => value, StringComparer.OrdinalIgnoreCase);
+            List<AutoCompleteDropdownItem> normalized = new List<AutoCompleteDropdownItem>();
+            IEnumerable source = ItemsSource ?? Array.Empty<object>();
+            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (object? raw in source)
+            {
+                AutoCompleteDropdownItem? item = raw switch
+                {
+                    AutoCompleteDropdownItem structured => structured,
+                    string text when !string.IsNullOrWhiteSpace(text) => new AutoCompleteDropdownItem(text.Trim()),
+                    _ => null
+                };
+                if (item == null || string.IsNullOrWhiteSpace(item.Text))
+                {
+                    continue;
+                }
+
+                string dedupeKey = (item.IsSelectable ? "S:" : "C:") + item.Text.Trim();
+                if (!seen.Add(dedupeKey))
+                {
+                    continue;
+                }
+
+                normalized.Add(item);
+            }
+
+            if (PreserveItemOrder)
+            {
+                return normalized;
+            }
+
+            return normalized
+                .OrderBy(static item => item.Text, StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
 
         private void NavigateSuggestions(bool moveDown)
@@ -399,9 +446,14 @@ namespace OceanyaClient
 
             SuggestionsPopup.IsOpen = true;
             int currentIndex = SuggestionsListBox.SelectedIndex;
-            int nextIndex = moveDown
-                ? (currentIndex < 0 ? 0 : Math.Min(currentIndex + 1, Suggestions.Count - 1))
-                : (currentIndex < 0 ? Suggestions.Count - 1 : Math.Max(currentIndex - 1, 0));
+            int nextIndex = FindNextSelectableSuggestionIndex(currentIndex, moveDown);
+            if (nextIndex < 0)
+            {
+                navigationSelectionActive = false;
+                SuggestionsListBox.SelectedIndex = -1;
+                return;
+            }
+
             SuggestionsListBox.SelectedIndex = nextIndex;
             SuggestionsListBox.ScrollIntoView(SuggestionsListBox.SelectedItem);
             navigationSelectionActive = nextIndex >= 0;
@@ -409,7 +461,7 @@ namespace OceanyaClient
 
         private void CommitFromInput()
         {
-            string? selectedSuggestion = SuggestionsListBox.SelectedItem as string;
+            AutoCompleteDropdownItem? selectedSuggestion = SuggestionsListBox.SelectedItem as AutoCompleteDropdownItem;
             string candidate = ResolveInputCandidate(
                 InputTextBox.Text ?? string.Empty,
                 Suggestions,
@@ -426,11 +478,14 @@ namespace OceanyaClient
             CommitToken(candidate);
         }
 
-        private string ResolveInputCandidate(string rawInput, IEnumerable<string> suggestions, string? selectedSuggestion)
+        private string ResolveInputCandidate(
+            string rawInput,
+            IEnumerable<AutoCompleteDropdownItem> suggestions,
+            AutoCompleteDropdownItem? selectedSuggestion)
         {
-            if (!string.IsNullOrWhiteSpace(selectedSuggestion))
+            if (selectedSuggestion != null && selectedSuggestion.IsSelectable && !string.IsNullOrWhiteSpace(selectedSuggestion.Text))
             {
-                return selectedSuggestion;
+                return selectedSuggestion.Text;
             }
 
             string normalized = (rawInput ?? string.Empty).Trim();
@@ -439,23 +494,100 @@ namespace OceanyaClient
                 return string.Empty;
             }
 
-            string? exactFromSuggestions = suggestions.FirstOrDefault(item =>
-                string.Equals(item, normalized, StringComparison.OrdinalIgnoreCase));
+            string? exactFromSuggestions = suggestions
+                .Where(static item => item.IsSelectable)
+                .Select(static item => item.Text)
+                .FirstOrDefault(item => string.Equals(item, normalized, StringComparison.OrdinalIgnoreCase));
             if (!string.IsNullOrWhiteSpace(exactFromSuggestions))
             {
                 return exactFromSuggestions;
             }
 
-            string? exactFromAll = GetOrderedSource().FirstOrDefault(item =>
-                string.Equals(item, normalized, StringComparison.OrdinalIgnoreCase));
+            string? exactFromAll = GetOrderedSource()
+                .Where(static item => item.IsSelectable)
+                .Select(static item => item.Text)
+                .FirstOrDefault(item => string.Equals(item, normalized, StringComparison.OrdinalIgnoreCase));
             if (!string.IsNullOrWhiteSpace(exactFromAll))
             {
                 return exactFromAll;
             }
 
-            string? startsWith = suggestions.FirstOrDefault(item =>
-                item.StartsWith(normalized, StringComparison.OrdinalIgnoreCase));
+            string? startsWith = suggestions
+                .Where(static item => item.IsSelectable)
+                .Select(static item => item.Text)
+                .FirstOrDefault(item => item.StartsWith(normalized, StringComparison.OrdinalIgnoreCase));
             return startsWith ?? normalized;
+        }
+
+        private static IReadOnlyList<AutoCompleteDropdownItem> BuildSuggestionList(
+            IReadOnlyList<AutoCompleteDropdownItem> source,
+            string query)
+        {
+            if (string.IsNullOrWhiteSpace(query))
+            {
+                return source;
+            }
+
+            List<AutoCompleteDropdownItem> filtered = new List<AutoCompleteDropdownItem>();
+            AutoCompleteDropdownItem? pendingCategory = null;
+            bool currentCategoryAdded = false;
+            foreach (AutoCompleteDropdownItem item in source)
+            {
+                if (!item.IsSelectable)
+                {
+                    pendingCategory = item;
+                    currentCategoryAdded = false;
+                    continue;
+                }
+
+                if (!item.Text.Contains(query, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (pendingCategory != null && !currentCategoryAdded)
+                {
+                    filtered.Add(pendingCategory);
+                    currentCategoryAdded = true;
+                }
+
+                filtered.Add(item);
+            }
+
+            return filtered;
+        }
+
+        private int FindNextSelectableSuggestionIndex(int currentIndex, bool moveDown)
+        {
+            if (Suggestions.Count == 0)
+            {
+                return -1;
+            }
+
+            if (moveDown)
+            {
+                int startIndex = currentIndex < 0 ? 0 : currentIndex + 1;
+                for (int i = startIndex; i < Suggestions.Count; i++)
+                {
+                    if (Suggestions[i].IsSelectable)
+                    {
+                        return i;
+                    }
+                }
+
+                return currentIndex;
+            }
+
+            int reverseStart = currentIndex < 0 ? Suggestions.Count - 1 : currentIndex - 1;
+            for (int i = reverseStart; i >= 0; i--)
+            {
+                if (Suggestions[i].IsSelectable)
+                {
+                    return i;
+                }
+            }
+
+            return currentIndex;
         }
 
         private void CommitToken(string value)
@@ -492,6 +624,24 @@ namespace OceanyaClient
             {
                 File.AppendAllText(DropdownTracePath, line + Environment.NewLine);
             }
+        }
+    }
+
+    public sealed class AutoCompleteDropdownItem
+    {
+        public AutoCompleteDropdownItem(string text, bool isSelectable = true)
+        {
+            Text = text?.Trim() ?? string.Empty;
+            IsSelectable = isSelectable;
+        }
+
+        public string Text { get; }
+
+        public bool IsSelectable { get; }
+
+        public override string ToString()
+        {
+            return Text;
         }
     }
 }

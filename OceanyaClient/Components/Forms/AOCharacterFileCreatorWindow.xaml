@@ -1145,11 +1145,10 @@
                                         Tag="buttonicons"
                                         Content="4. Button Icons"
                                         Style="{StaticResource NavButtonStyle}"
-                                        Click="SectionButton_Click"
-                                        Visibility="Collapsed"/>
+                                        Click="SectionButton_Click"/>
                                 <Button x:Name="SectionFileOrganizationButton"
                                         Tag="fileorganization"
-                                        Content="4. File Organization"
+                                        Content="5. File Organization"
                                         Style="{StaticResource NavButtonStyle}"
                                         Click="SectionButton_Click"/>
                             </StackPanel>
@@ -1691,7 +1690,7 @@
                                 <StackPanel>
                                     <TextBlock Text="Button Icons" Foreground="White" FontSize="14" FontWeight="SemiBold"/>
                                     <Border Margin="0,8,0,8" Padding="8" BorderBrush="#725E3B" BorderThickness="1" CornerRadius="4" Background="#33221800">
-                                        <TextBlock Text="The button icons tab is a conditional tab that only exists because you were lazy and did not fully make your buttons in the emotes tab. And due to that, this is a tab to help you do all of them automatically at once."
+                                        <TextBlock Text="Use this tab to bulk-generate or revisit button icon config across a list of emotes at once."
                                                    Foreground="#FFE3CAA7"
                                                    TextWrapping="Wrap"/>
                                     </Border>
@@ -1709,83 +1708,12 @@
                                     <TabControl Margin="0,0,0,10"
                                                 Style="{StaticResource DialogTabControlStyle}"
                                                 ItemContainerStyle="{StaticResource DialogTabItemStyle}">
-                                        <TabItem Header="Background">
-                                            <StackPanel Margin="8,8,8,8">
-                                                <StackPanel Margin="0,0,0,8">
-                                                    <DockPanel Margin="0,0,0,4" LastChildFill="False">
-                                                        <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
-                                                                ToolTip="Automatic generation background source for the selected emote list."/>
-                                                        <TextBlock Text="Background Config" Style="{StaticResource FieldTitleStyle}"/>
-                                                    </DockPanel>
-                                                    <local:AutoCompleteDropdownField x:Name="ButtonIconsBackgroundDropdown"/>
-                                                </StackPanel>
-
-                                                <Border x:Name="ButtonIconsPresetPreviewCard"
-                                                        Visibility="Collapsed"
-                                                        Margin="0,0,0,8"
-                                                        BorderBrush="#445A7088"
-                                                        BorderThickness="1"
-                                                        CornerRadius="4"
-                                                        Background="#2A101820"
-                                                        Padding="8">
-                                                    <StackPanel>
-                                                        <TextBlock Text="Preset preview" Foreground="#FFD3E5F7" Margin="0,0,0,6"/>
-                                                        <Border Height="130" BorderBrush="#39536A84" BorderThickness="1" CornerRadius="4" Background="#1A000000">
-                                                            <Image x:Name="ButtonIconsPresetPreviewImage" Stretch="Uniform"/>
-                                                        </Border>
-                                                    </StackPanel>
-                                                </Border>
-
-                                                <StackPanel x:Name="ButtonIconsSolidColorPanel" Visibility="Collapsed" Margin="0,0,0,8">
-                                                    <DockPanel Margin="0,0,0,4" LastChildFill="False">
-                                                        <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
-                                                                ToolTip="Pick solid background color for automatic button generation."/>
-                                                        <TextBlock Text="Solid Color" Style="{StaticResource FieldTitleStyle}"/>
-                                                    </DockPanel>
-                                                    <Grid>
-                                                        <Grid.ColumnDefinitions>
-                                                            <ColumnDefinition Width="Auto"/>
-                                                            <ColumnDefinition Width="Auto"/>
-                                                            <ColumnDefinition Width="*"/>
-                                                        </Grid.ColumnDefinitions>
-                                                        <Button x:Name="ButtonIconsPickColorButton"
-                                                                Width="130"
-                                                                Content="Pick color..."
-                                                                Style="{StaticResource ModernButton}"
-                                                                Click="ButtonIconsPickColorButton_Click"/>
-                                                        <Border x:Name="ButtonIconsSolidColorPreview"
-                                                                Grid.Column="1"
-                                                                Width="48"
-                                                                Height="30"
-                                                                Margin="8,0,8,0"
-                                                                BorderBrush="#556F899F"
-                                                                BorderThickness="1"/>
-                                                        <TextBlock x:Name="ButtonIconsSolidColorHexTextBlock"
-                                                                   Grid.Column="2"
-                                                                   VerticalAlignment="Center"
-                                                                   Foreground="#FFD3E5F7"/>
-                                                    </Grid>
-                                                </StackPanel>
-
-                                                <StackPanel x:Name="ButtonIconsUploadPanel" Visibility="Collapsed" Margin="0,0,0,8">
-                                                    <DockPanel Margin="0,0,0,4" LastChildFill="False">
-                                                        <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
-                                                                ToolTip="Upload a shared background image for automatic button generation."/>
-                                                        <TextBlock Text="Background Upload" Style="{StaticResource FieldTitleStyle}"/>
-                                                    </DockPanel>
-                                                    <Button x:Name="ButtonIconsBackgroundUploadButton"
-                                                            Width="150"
-                                                            Content="Select image..."
-                                                            Style="{StaticResource ModernButton}"
-                                                            Click="ButtonIconsBackgroundUploadButton_Click"/>
-                                                    <TextBlock x:Name="ButtonIconsBackgroundUploadTextBlock"
-                                                               Foreground="#FFC5D6E8"
-                                                               Margin="0,6,0,0"
-                                                               Text="No file selected"/>
-                                                </StackPanel>
-                                            </StackPanel>
+                                        <TabItem Header="Background"
+                                                 ToolTip="Configure the shared square base that sits behind the cutout before button_on/button_off effects are applied.">
+                                            <ContentControl x:Name="ButtonIconsBackgroundEditorHost" Margin="8,8,8,8"/>
                                         </TabItem>
-                                        <TabItem Header="Emote">
+                                        <TabItem Header="Emote"
+                                                 ToolTip="Choose and preview the cutout used inside the square button background for each target emote.">
                                             <StackPanel Margin="8,8,8,8">
                                                 <StackPanel Margin="0,0,0,8">
                                                     <DockPanel Margin="0,0,0,4" LastChildFill="False">
@@ -1797,50 +1725,20 @@
                                                             Width="200"
                                                             Content="Configure cutouts..."
                                                             Style="{StaticResource ModernButton}"
+                                                            ToolTip="Open the bulk cutout editor for the emotes matched by the current Apply To scope."
                                                             Click="ButtonIconsBulkCuttingButton_Click"/>
+                                                    <DockPanel Margin="0,8,0,4" LastChildFill="False">
+                                                        <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                                                                ToolTip="Each tile shows the current cutout for a target emote. Click a tile to edit that emote directly."/>
+                                                        <TextBlock Text="Current Cutouts" Style="{StaticResource FieldTitleStyle}"/>
+                                                    </DockPanel>
                                                     <WrapPanel x:Name="ButtonIconsCutoutPreviewWrapPanel" Margin="0,8,0,0" HorizontalAlignment="Center"/>
                                                 </StackPanel>
                                             </StackPanel>
                                         </TabItem>
-                                        <TabItem Header="Effect">
-                                            <StackPanel Margin="8,8,8,8">
-                                                <StackPanel Margin="0,0,0,10">
-                                                    <DockPanel Margin="0,0,0,4" LastChildFill="False">
-                                                        <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
-                                                                ToolTip="How button_off is generated from button_on."/>
-                                                        <TextBlock Text="Effects Generation" Style="{StaticResource FieldTitleStyle}"/>
-                                                    </DockPanel>
-                                                    <local:AutoCompleteDropdownField x:Name="ButtonIconsEffectsDropdown"/>
-                                                    <StackPanel x:Name="ButtonIconsDarkenPanel" Visibility="Collapsed" Margin="0,6,0,0">
-                                                        <TextBlock x:Name="ButtonIconsDarkenValueText" Foreground="#FFD3E5F7" Margin="0,0,0,4" Text="Darkness: 50%"/>
-                                                        <Slider x:Name="ButtonIconsDarkenSlider"
-                                                                Minimum="0"
-                                                                Maximum="100"
-                                                                Value="50"
-                                                                TickFrequency="5"
-                                                                IsSnapToTickEnabled="True"
-                                                                ValueChanged="ButtonIconsDarkenSlider_ValueChanged"/>
-                                                    </StackPanel>
-                                                    <StackPanel x:Name="ButtonIconsOpacityPanel" Visibility="Collapsed" Margin="0,6,0,0">
-                                                        <TextBlock x:Name="ButtonIconsOpacityValueText" Foreground="#FFD3E5F7" Margin="0,0,0,4" Text="Opacity: 75%"/>
-                                                        <Slider x:Name="ButtonIconsOpacitySlider"
-                                                                Minimum="0"
-                                                                Maximum="100"
-                                                                Value="75"
-                                                                TickFrequency="5"
-                                                                IsSnapToTickEnabled="True"
-                                                                ValueChanged="ButtonIconsOpacitySlider_ValueChanged"/>
-                                                    </StackPanel>
-                                                    <StackPanel x:Name="ButtonIconsOverlayPanel" Visibility="Collapsed" Margin="0,6,0,0">
-                                                        <Button x:Name="ButtonIconsOverlayUploadButton"
-                                                                Width="170"
-                                                                Content="Select overlay..."
-                                                                Style="{StaticResource ModernButton}"
-                                                                Click="ButtonIconsOverlayUploadButton_Click"/>
-                                                        <TextBlock x:Name="ButtonIconsOverlayPathTextBlock" Foreground="#FFC5D6E8" Margin="0,6,0,0" Text="No overlay selected"/>
-                                                    </StackPanel>
-                                                </StackPanel>
-                                            </StackPanel>
+                                        <TabItem Header="Effect"
+                                                 ToolTip="Configure separate selected/unselected button states, save reusable presets, and preview button_on/button_off side by side.">
+                                            <ContentControl x:Name="ButtonIconsEffectsEditorHost" Margin="8,8,8,8"/>
                                         </TabItem>
                                     </TabControl>
 
@@ -1848,6 +1746,7 @@
                                             Width="260"
                                             Content="Apply Automatic Config To List"
                                             Style="{StaticResource ModernButton}"
+                                            ToolTip="Apply the current automatic square button setup to every emote matched by the Apply To scope."
                                             Click="ButtonIconsApplyButton_Click"/>
                                 </StackPanel>
                             </ScrollViewer>
