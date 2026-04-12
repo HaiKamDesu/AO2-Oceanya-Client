@@ -6,9 +6,11 @@
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <ApplicationIcon>..\OceanyaClient\Resources\OceanyaO.ico</ApplicationIcon>
-    <OutDir>..\OceanyaClient\bin\$(Configuration)\net8.0-windows\</OutDir>
+    <ClientOutputDir>..\OceanyaClient\bin\$(Configuration)\net8.0-windows\</ClientOutputDir>
+    <ReleasePackageName>Oceanya Client v$(OceanyaAppVersion)</ReleasePackageName>
+    <ReleasePackageDir>..\OceanyaClient\bin\$(Configuration)\$(ReleasePackageName)\</ReleasePackageDir>
+    <ReleasePackageZipPath>..\OceanyaClient\bin\$(Configuration)\$(ReleasePackageName).zip</ReleasePackageZipPath>
   </PropertyGroup>
 
   <ItemGroup>
@@ -23,5 +25,39 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
+
+  <Target Name="CopyHivemindAgentIntoClientOutput" AfterTargets="Build">
+    <ItemGroup>
+      <HivemindFilesToCopy Include="$(TargetPath)" />
+      <HivemindFilesToCopy Include="$(TargetDir)$(AssemblyName).deps.json" Condition="Exists('$(TargetDir)$(AssemblyName).deps.json')" />
+      <HivemindFilesToCopy Include="$(TargetDir)$(AssemblyName).runtimeconfig.json" Condition="Exists('$(TargetDir)$(AssemblyName).runtimeconfig.json')" />
+      <HivemindFilesToCopy Include="$(TargetDir)$(AssemblyName).pdb" Condition="Exists('$(TargetDir)$(AssemblyName).pdb')" />
+      <HivemindFilesToCopy Include="$(TargetDir)Resources\**\*" Condition="Exists('$(TargetDir)Resources')" />
+    </ItemGroup>
+
+    <Copy
+      SourceFiles="@(HivemindFilesToCopy)"
+      DestinationFiles="@(HivemindFilesToCopy->'$(ClientOutputDir)%(RecursiveDir)%(Filename)%(Extension)')"
+      SkipUnchangedFiles="false"
+      OverwriteReadOnlyFiles="true" />
+  </Target>
+
+  <Target Name="CreateReleasePackageZip" AfterTargets="CopyHivemindAgentIntoClientOutput" Condition="'$(Configuration)' == 'Release'">
+    <RemoveDir Directories="$(ReleasePackageDir)" Condition="Exists('$(ReleasePackageDir)')" />
+    <Delete Files="$(ReleasePackageZipPath)" Condition="Exists('$(ReleasePackageZipPath)')" />
+    <MakeDir Directories="$(ReleasePackageDir)" />
+
+    <ItemGroup>
+      <ClientReleaseFiles Include="$(ClientOutputDir)**\*" />
+    </ItemGroup>
+
+    <Copy
+      SourceFiles="@(ClientReleaseFiles)"
+      DestinationFiles="@(ClientReleaseFiles->'$(ReleasePackageDir)%(RecursiveDir)%(Filename)%(Extension)')"
+      SkipUnchangedFiles="false"
+      OverwriteReadOnlyFiles="true" />
+
+    <ZipDirectory SourceDirectory="$(ReleasePackageDir)" DestinationFile="$(ReleasePackageZipPath)" />
+  </Target>
 
 </Project>

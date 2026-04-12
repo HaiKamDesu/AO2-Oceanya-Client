@@ -1,6 +1,7 @@
 ﻿using AOBot_Testing.Structures;
 using System;
 using System.Diagnostics;
+using System.IO;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -46,6 +47,7 @@ namespace AOBot_Testing.Agents
         private readonly List<string> availableAreas = new List<string>();
         private readonly List<AreaInfo> availableAreaInfos = new List<AreaInfo>();
         private readonly List<Player> currentAreaPlayers = new List<Player>();
+        private readonly List<string> currentEvidenceNames = new List<string>();
         public CharacterFolder? currentINI;
         public Emote? currentEmote;
 
@@ -90,6 +92,7 @@ namespace AOBot_Testing.Agents
 
         public Action<string, string, string, string, int, bool>? OnMessageReceived;
         public Action<ICMessage>? OnICMessageReceived;
+        public Action<string, string, bool, ICMessage.TextColors>? OnIcActionReceived;
         public Action<string, string, bool>? OnOOCMessageReceived;
         public Action<CharacterFolder>? OnChangedCharacter;
         public Action<string>? OnBGChange;
@@ -493,6 +496,9 @@ namespace AOBot_Testing.Agents
                 ICMessage? icMessage = ICMessage.FromConsoleLine(message);
                 if (icMessage != null)
                 {
+                    icMessage.ShowName = ResolveIncomingIcDisplayName(icMessage);
+                    EmitIcActionMessages(icMessage);
+
                     // Handle IC message
                     OnMessageReceived?.Invoke("IC", icMessage.Character, icMessage.ShowName, icMessage.Message, icMessage.CharId, false);
                     OnICMessageReceived?.Invoke(icMessage);
@@ -587,6 +593,14 @@ namespace AOBot_Testing.Agents
                 curBG = newBG;
                 OnBGChange?.Invoke(newBG);
             }
+            else if (message.StartsWith("LE#"))
+            {
+                ParseEvidenceList(message);
+            }
+            else if (message.StartsWith("MC#"))
+            {
+                HandleMusicPacket(message);
+            }
         }
 
         #region Connection Related Methods
@@ -680,7 +694,228 @@ namespace AOBot_Testing.Agents
                 return explicitShowName;
             }
 
-            return CurrentINI?.configINI?.ShowName ?? string.Empty;
+            if (CurrentINI?.configINI != null)
+            {
+                if ((CurrentINI.configINI.NeedsShowName ?? string.Empty).StartsWith("false", StringComparison.OrdinalIgnoreCase))
+                {
+                    return string.Empty;
+                }
+
+                if (!string.IsNullOrWhiteSpace(CurrentINI.configINI.ShowName))
+                {
+                    return CurrentINI.configINI.ShowName;
+                }
+            }
+
+            return CurrentINI?.Name ?? string.Empty;
+        }
+
+        private string ResolveIncomingIcDisplayName(ICMessage icMessage)
+        {
+            string packetShowName = icMessage.ShowName?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(packetShowName))
+            {
+                return packetShowName;
+            }
+
+            string characterName = ResolveIncomingIcCharacterName(icMessage);
+            if (string.IsNullOrWhiteSpace(characterName))
+            {
+                return string.Empty;
+            }
+
+            CharacterFolder? matchingCharacter = CharacterFolder.FullList.FirstOrDefault(character =>
+                string.Equals(character.Name, characterName, StringComparison.OrdinalIgnoreCase));
+            if (matchingCharacter?.configINI != null)
+            {
+                if ((matchingCharacter.configINI.NeedsShowName ?? string.Empty).StartsWith("false", StringComparison.OrdinalIgnoreCase))
+                {
+                    return string.Empty;
+                }
+
+                if (!string.IsNullOrWhiteSpace(matchingCharacter.configINI.ShowName))
+                {
+                    return matchingCharacter.configINI.ShowName;
+                }
+            }
+
+            return characterName;
+        }
+
+        private string ResolveIncomingIcCharacterName(ICMessage icMessage)
+        {
+            string characterName = icMessage.Character?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(characterName))
+            {
+                return characterName;
+            }
+
+            if (icMessage.CharId >= 0 && icMessage.CharId < serverCharacterList.Count)
+            {
+                return serverCharacterList.ElementAt(icMessage.CharId).Key;
+            }
+
+            return string.Empty;
+        }
+
+        private void EmitIcActionMessages(ICMessage icMessage)
+        {
+            string displayName = icMessage.ShowName ?? string.Empty;
+            bool isSentFromSelf = icMessage.CharId == iniPuppetID;
+
+            string shoutMessage = ResolveShoutLogMessage(icMessage);
+            if (!string.IsNullOrWhiteSpace(shoutMessage))
+            {
+                OnIcActionReceived?.Invoke(displayName, "shouts " + shoutMessage, isSentFromSelf, ICMessage.TextColors.White);
+            }
+
+            string evidenceMessage = ResolveEvidenceLogMessage(icMessage);
+            if (!string.IsNullOrWhiteSpace(evidenceMessage))
+            {
+                OnIcActionReceived?.Invoke(displayName, "has presented evidence " + evidenceMessage, isSentFromSelf, ICMessage.TextColors.White);
+            }
+        }
+
+        private string ResolveShoutLogMessage(ICMessage icMessage)
+        {
+            if (icMessage.ShoutModifier == ICMessage.ShoutModifiers.Nothing)
+            {
+                return string.Empty;
+            }
+
+            string characterName = ResolveIncomingIcCharacterName(icMessage);
+            CharacterFolder? matchingCharacter = CharacterFolder.FullList.FirstOrDefault(character =>
+                string.Equals(character.Name, characterName, StringComparison.OrdinalIgnoreCase));
+
+            return icMessage.ShoutModifier switch
+            {
+                ICMessage.ShoutModifiers.HoldIt => ReadShoutOverrideOrDefault(matchingCharacter, "holdit_message", "HOLD IT!"),
+                ICMessage.ShoutModifiers.Objection => ReadShoutOverrideOrDefault(matchingCharacter, "objection_message", "OBJECTION!"),
+                ICMessage.ShoutModifiers.TakeThat => ReadShoutOverrideOrDefault(matchingCharacter, "takethat_message", "TAKE THAT!"),
+                ICMessage.ShoutModifiers.Custom => ReadShoutOverrideOrDefault(matchingCharacter, "custom_message", "CUSTOM OBJECTION!"),
+                _ => string.Empty
+            };
+        }
+
+        private static string ReadShoutOverrideOrDefault(CharacterFolder? characterFolder, string key, string fallback)
+        {
+            string pathToIni = characterFolder?.configINI?.PathToConfigINI ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(pathToIni) || !File.Exists(pathToIni))
+            {
+                return fallback;
+            }
+
+            try
+            {
+                IniDocument document = IniDocument.Load(pathToIni);
+                string value = document.GetLatestValueOrDefault("Shouts", key).Trim();
+                return string.IsNullOrWhiteSpace(value) ? fallback : value;
+            }
+            catch
+            {
+                return fallback;
+            }
+        }
+
+        private string ResolveEvidenceLogMessage(ICMessage icMessage)
+        {
+            if (!int.TryParse((icMessage.EvidenceID ?? string.Empty).Trim(), out int evidenceId)
+                || evidenceId <= 0
+                || evidenceId > currentEvidenceNames.Count)
+            {
+                return string.Empty;
+            }
+
+            return currentEvidenceNames[evidenceId - 1];
+        }
+
+        private void ParseEvidenceList(string message)
+        {
+            string[] fields = message.Split('#');
+            currentEvidenceNames.Clear();
+
+            foreach (string field in fields.Skip(1))
+            {
+                if (string.Equals(field, "%", StringComparison.Ordinal))
+                {
+                    break;
+                }
+
+                string[] subFields = field.Split('&');
+                if (subFields.Length < 3)
+                {
+                    continue;
+                }
+
+                currentEvidenceNames.Add(Globals.ReplaceTextForSymbols(subFields[0]));
+            }
+        }
+
+        private void HandleMusicPacket(string message)
+        {
+            string[] fields = message.Split('#');
+            if (fields.Length < 3)
+            {
+                return;
+            }
+
+            string song = Globals.ReplaceTextForSymbols(fields[1]).Trim();
+            if (!int.TryParse(fields[2], out int characterId))
+            {
+                return;
+            }
+
+            string displayName = ResolveDisplayNameForMusicPacket(characterId, fields.Length > 3
+                ? Globals.ReplaceTextForSymbols(fields[3]).Trim()
+                : string.Empty);
+            if (string.IsNullOrWhiteSpace(displayName))
+            {
+                return;
+            }
+
+            bool isSentFromSelf = characterId == iniPuppetID;
+            if (string.Equals(song, "~stop.mp3", StringComparison.OrdinalIgnoreCase))
+            {
+                OnIcActionReceived?.Invoke(displayName, "has stopped the music.", isSentFromSelf, ICMessage.TextColors.White);
+                return;
+            }
+
+            string songName = Path.GetFileNameWithoutExtension(song);
+            if (!string.IsNullOrWhiteSpace(songName))
+            {
+                OnIcActionReceived?.Invoke(displayName, "has played a song " + songName, isSentFromSelf, ICMessage.TextColors.White);
+            }
+        }
+
+        private string ResolveDisplayNameForMusicPacket(int characterId, string packetShowName)
+        {
+            if (!string.IsNullOrWhiteSpace(packetShowName))
+            {
+                return packetShowName;
+            }
+
+            if (characterId < 0 || characterId >= serverCharacterList.Count)
+            {
+                return string.Empty;
+            }
+
+            string characterName = serverCharacterList.ElementAt(characterId).Key;
+            CharacterFolder? matchingCharacter = CharacterFolder.FullList.FirstOrDefault(character =>
+                string.Equals(character.Name, characterName, StringComparison.OrdinalIgnoreCase));
+            if (matchingCharacter?.configINI != null)
+            {
+                if ((matchingCharacter.configINI.NeedsShowName ?? string.Empty).StartsWith("false", StringComparison.OrdinalIgnoreCase))
+                {
+                    return string.Empty;
+                }
+
+                if (!string.IsNullOrWhiteSpace(matchingCharacter.configINI.ShowName))
+                {
+                    return matchingCharacter.configINI.ShowName;
+                }
+            }
+
+            return characterName;
         }
 
         private string ResolveEffectStringForPacket(bool hasSelectedCustomSfx)

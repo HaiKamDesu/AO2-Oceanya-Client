@@ -192,13 +192,6 @@ namespace OceanyaClient
                 string forcedRefreshReason = preflightResult.forcedRefreshReason;
                 TargetedAssetRefreshPlan trackedChangePlan = preflightResult.trackedChangePlan;
 
-                SaveConfiguration(
-                    configIniPath,
-                    selectedFunctionality.Id,
-                    UseSingleClientCheckBox.IsChecked != false,
-                    selectedServerEndpoint,
-                    selectedServerName);
-
                 bool shouldRefreshAssets = refreshRequested || !string.IsNullOrWhiteSpace(forcedRefreshReason);
                 bool shouldRunTargetedRefresh = !refreshRequested
                     && string.IsNullOrWhiteSpace(forcedRefreshReason)
@@ -229,8 +222,18 @@ namespace OceanyaClient
                         "Refresh Changed Assets",
                         MessageBoxButton.YesNo,
                         MessageBoxImage.Question);
-                    shouldRunTargetedRefresh = refreshDecision == MessageBoxResult.Yes;
+                    if (refreshDecision != MessageBoxResult.Yes)
+                    {
+                        return;
+                    }
                 }
+
+                SaveConfiguration(
+                    configIniPath,
+                    selectedFunctionality.Id,
+                    UseSingleClientCheckBox.IsChecked != false,
+                    selectedServerEndpoint,
+                    selectedServerName);
 
                 if (shouldRefreshAssets)
                 {

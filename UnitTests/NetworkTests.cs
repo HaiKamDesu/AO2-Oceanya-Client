@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
@@ -7,6 +8,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using AOBot_Testing.Agents;
+using AOBot_Testing.Structures;
 using NUnit.Framework;
 
 namespace UnitTests;
@@ -98,6 +100,98 @@ public class NetworkTests
             Assert.That(message, Is.EqualTo("hello&bye"));
             Assert.That(fromServer, Is.True);
         });
+    }
+
+    [Test]
+    public async Task HandleMessage_FallsBackToCharacterIniShowname_WhenPacketShownameIsBlank()
+    {
+        string baseRoot = CreateAoBaseRoot();
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(baseRoot, "characters", "Franziska"));
+            File.WriteAllText(
+                Path.Combine(baseRoot, "characters", "Franziska", "char.ini"),
+                "[Options]\nshowname=von Karma\nside=pro\ngender=female\n[Emotions]\nnumber=1\n1=normal#-#normal#0#1\n");
+
+            Globals.BaseFolders = new List<string> { baseRoot };
+            CharacterFolder.RefreshCharacterList();
+
+            AOClient client = new AOClient("ws://localhost:10001/");
+            await client.HandleMessage("SC#Franziska#%");
+
+            ICMessage? received = null;
+            client.OnICMessageReceived += message => received = message;
+
+            await client.HandleMessage("MS#chat#-#Franziska#normal#Test#wit#1#0#0#0#0#0#0#0###-1###0&0#0#0#0#0###0##0#0#%");
+
+            Assert.That(received, Is.Not.Null);
+            Assert.That(received!.ShowName, Is.EqualTo("von Karma"));
+        }
+        finally
+        {
+            Globals.BaseFolders = new List<string>();
+            CharacterFolder.RefreshCharacterList();
+            if (Directory.Exists(baseRoot))
+            {
+                Directory.Delete(baseRoot, true);
+            }
+        }
+    }
+
+    [Test]
+    public async Task HandleMessage_RaisesMusicActionMessages()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+        await client.HandleMessage("SC#Franziska#%");
+
+        string? showName = null;
+        string? action = null;
+
+        client.OnIcActionReceived += (sn, msg, _, _) =>
+        {
+            showName = sn;
+            action = msg;
+        };
+
+        await client.HandleMessage("MC#pwr/trial.mp3#0#von Karma#%");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(showName, Is.EqualTo("von Karma"));
+            Assert.That(action, Is.EqualTo("has played a song trial"));
+        });
+    }
+
+    [Test]
+    public async Task HandleMessage_RaisesEvidenceActionMessages()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+        await client.HandleMessage("LE#Knife&A sharp blade&knife.png#Badge&A lawyer badge&badge.png#%");
+
+        List<string> actions = new List<string>();
+        client.OnIcActionReceived += (_, msg, _, _) => actions.Add(msg);
+
+        ICMessage message = new ICMessage
+        {
+            DeskMod = ICMessage.DeskMods.Chat,
+            PreAnim = "-",
+            Character = "Phoenix",
+            Emote = "normal",
+            Message = "Take a look",
+            Side = "wit",
+            SfxName = "1",
+            EmoteModifier = ICMessage.EmoteModifiers.NoPreanimation,
+            CharId = 0,
+            SfxDelay = 0,
+            ShoutModifier = ICMessage.ShoutModifiers.Objection,
+            EvidenceID = "2",
+            TextColor = ICMessage.TextColors.White,
+            ShowName = "Phoenix"
+        };
+
+        await client.HandleMessage(ICMessage.GetCommand(message));
+
+        Assert.That(actions, Does.Contain("has presented evidence Badge"));
     }
 
     [Test]
@@ -208,6 +302,15 @@ public class NetworkTests
     {
         FieldInfo? field = typeof(AOClient).GetField("serverCharacterList", BindingFlags.NonPublic | BindingFlags.Instance);
         return (Dictionary<string, bool>)field!.GetValue(client)!;
+    }
+
+    private static string CreateAoBaseRoot()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "ao_network_tests_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(Path.Combine(root, "characters"));
+        Directory.CreateDirectory(Path.Combine(root, "background"));
+        return root;
     }
 
     private static async Task RunAoCompatibleTcpServerAsync(

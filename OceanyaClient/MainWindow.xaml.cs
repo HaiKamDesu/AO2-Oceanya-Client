@@ -1057,6 +1057,67 @@ namespace OceanyaClient
                 nameLinks: nameLinks);
         }
 
+        private void AddLoggedIcActionMessage(
+            AOClient profileClient,
+            string showName,
+            string action,
+            string message,
+            bool isSentFromSelf,
+            ICMessage.TextColors textColor)
+        {
+            ICLogControl.AddActionMessage(
+                profileClient,
+                showName,
+                action,
+                message,
+                isSentFromSelf,
+                textColor);
+        }
+
+        private void AppendAo2ActionLog(
+            AOClient profileClient,
+            string showName,
+            string combinedAction,
+            bool isSentFromSelf,
+            ICMessage.TextColors textColor)
+        {
+            string normalized = (combinedAction ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                return;
+            }
+
+            const string shoutPrefix = "shouts ";
+            const string evidencePrefix = "has presented evidence ";
+            const string musicPrefix = "has played a song ";
+
+            if (normalized.StartsWith(shoutPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                AddLoggedIcActionMessage(profileClient, showName, "shouts", normalized.Substring(shoutPrefix.Length), isSentFromSelf, textColor);
+                return;
+            }
+
+            if (normalized.StartsWith(evidencePrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                AddLoggedIcActionMessage(profileClient, showName, "has presented evidence", normalized.Substring(evidencePrefix.Length), isSentFromSelf, textColor);
+                return;
+            }
+
+            if (normalized.StartsWith(musicPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                AddLoggedIcActionMessage(profileClient, showName, "has played a song", normalized.Substring(musicPrefix.Length), isSentFromSelf, textColor);
+                return;
+            }
+
+            if (string.Equals(normalized, "has stopped the music.", StringComparison.OrdinalIgnoreCase))
+            {
+                AddLoggedIcActionMessage(profileClient, showName, "has stopped the music.", string.Empty, isSentFromSelf, textColor);
+                return;
+            }
+
+            AddLoggedIcMessage(profileClient, showName, normalized, isSentFromSelf, textColor);
+        }
+
         private void AddLoggedOocMessage(
             AOClient profileClient,
             string showName,
@@ -2087,6 +2148,19 @@ namespace OceanyaClient
                     targetClient.iniPuppetID = singleInternalClient.iniPuppetID;
                 });
             };
+            singleInternalClient.OnIcActionReceived += (string showName, string action, bool isSentFromSelf, ICMessage.TextColors textColor) =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    AOClient? targetClient = GetSingleModeLogTarget(singleInternalClient, singleInternalClient);
+                    if (targetClient == null)
+                    {
+                        return;
+                    }
+
+                    AppendAo2ActionLog(targetClient, showName, action, isSentFromSelf, textColor);
+                });
+            };
 
             singleInternalClient.OnOOCMessageReceived += (string showName, string message, bool isFromServer) =>
             {
@@ -2184,6 +2258,13 @@ namespace OceanyaClient
                             bool isSentFromSelf = clients.Select(x => x.Value.iniPuppetID).Contains(icMessage.CharId);
 
                             AddLoggedIcMessage(bot, icMessage.ShowName, icMessage.Message, isSentFromSelf, icMessage.TextColor);
+                        });
+                    };
+                    bot.OnIcActionReceived += (string showName, string action, bool isSentFromSelf, ICMessage.TextColors textColor) =>
+                    {
+                        Dispatcher.Invoke(() =>
+                        {
+                            AppendAo2ActionLog(bot, showName, action, isSentFromSelf, textColor);
                         });
                     };
 

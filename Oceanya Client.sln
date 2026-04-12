@@ -18,6 +18,19 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{6F313B9C-030C-4ABC-86D0-457D68A84AEA}"
 	ProjectSection(SolutionItems) = preProject
 		Directory.Build.props = Directory.Build.props
+		AGENTS.md = AGENTS.md
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Documentation", "Documentation", "{E2E466CC-4456-49E0-975D-6D4498440A5A}"
+	ProjectSection(SolutionItems) = preProject
+		Documentation\AO2-Chat-Config-Coloring-Guide.md = Documentation\AO2-Chat-Config-Coloring-Guide.md
+		Documentation\AgentDocumentationWorkflow.md = Documentation\AgentDocumentationWorkflow.md
+		Documentation\FeatureIndex.md = Documentation\FeatureIndex.md
+		Documentation\ReleaseNotes\OceanyaClient-v4.0.md = Documentation\ReleaseNotes\OceanyaClient-v4.0.md
+		Documentation\TaggingCharacters\CharacterFolderIdentitySummary.md = Documentation\TaggingCharacters\CharacterFolderIdentitySummary.md
+		Documentation\TaggingCharacters\CharacterTaggingMigrationGuide.md = Documentation\TaggingCharacters\CharacterTaggingMigrationGuide.md
+		Documentation\TaggingCharacters\character_folder_tags_backup_20260222_135533.json = Documentation\TaggingCharacters\character_folder_tags_backup_20260222_135533.json
+		Documentation\TaggingCharacters\TaggingForWindowsTags.md = Documentation\TaggingCharacters\TaggingForWindowsTags.md
 	EndProjectSection
 EndProject
 Global

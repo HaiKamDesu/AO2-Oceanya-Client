@@ -504,6 +504,7 @@ namespace AOBot_Testing.Structures
 
         public string PathToConfigINI { get; set; }
         public string ShowName { get; set; } = string.Empty;
+        public string NeedsShowName { get; set; } = string.Empty;
         public string Gender { get; set; } = string.Empty;
         public string Side { get; set; } = string.Empty;
         public string Blips { get; set; } = string.Empty;
@@ -524,6 +525,7 @@ namespace AOBot_Testing.Structures
             IniDocument document = IniDocument.Load(configINIPath);
 
             ShowName = document.GetLatestValueOrDefault("Options", "showname");
+            NeedsShowName = document.GetLatestValueOrDefault("Options", "needs_showname");
             Gender = document.GetLatestValueOrDefault("Options", "gender");
             Side = document.GetLatestValueOrDefault("Options", "side");
             Blips = document.GetLatestValueOrDefault("Options", "blips");

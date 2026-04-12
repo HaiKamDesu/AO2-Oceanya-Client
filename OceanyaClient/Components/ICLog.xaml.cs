@@ -86,6 +86,17 @@ namespace OceanyaClient.Components
             AddMessageCore(client, showName, message, isSentFromSelf, textColor, nameLinks, messageLinks, transientHandle: null);
         }
 
+        public void AddActionMessage(
+            AOClient? client,
+            string showName,
+            string action,
+            string message = "",
+            bool isSentFromSelf = false,
+            ICMessage.TextColors textColor = ICMessage.TextColors.White)
+        {
+            AddActionMessageCore(client, showName, action, message, isSentFromSelf, textColor, transientHandle: null);
+        }
+
         public LogMessageHandle AddTransientMessage(
             AOClient? client,
             string showName,
@@ -312,6 +323,55 @@ namespace OceanyaClient.Components
             }
         }
 
+        private void AddActionMessageCore(
+            AOClient? client,
+            string showName,
+            string action,
+            string message,
+            bool isSentFromSelf,
+            ICMessage.TextColors textColor,
+            LogMessageHandle? transientHandle)
+        {
+            AOClient? logClient = ResolveLogClient(client);
+            if (logClient == null)
+            {
+                return;
+            }
+
+            LogState state = EnsureLogState(logClient);
+            bool shouldScroll = IsScrolledToBottom();
+            Paragraph paragraph = CreateActionParagraph(showName, action, message, isSentFromSelf, textColor);
+
+            if (state.Inverted)
+            {
+                if (state.Document.Blocks.Count == 0)
+                {
+                    state.Document.Blocks.Add(paragraph);
+                }
+                else
+                {
+                    state.Document.Blocks.InsertBefore(state.Document.Blocks.FirstBlock, paragraph);
+                }
+            }
+            else
+            {
+                state.Document.Blocks.Add(paragraph);
+            }
+
+            if (transientHandle != null)
+            {
+                state.TransientEntries[transientHandle.Id] = paragraph;
+            }
+
+            TrimLog(state);
+
+            if (IsCurrentLogStream(client) && shouldScroll)
+            {
+                LogBox.Document = state.Document;
+                ScrollToEndRespectingInversion();
+            }
+        }
+
         private Paragraph CreateParagraph(
             string showName,
             string message,
@@ -326,6 +386,22 @@ namespace OceanyaClient.Components
                 LineHeight = 2
             };
             PopulateParagraph(paragraph, showName, message, isSentFromSelf, textColor, nameLinks, messageLinks);
+            return paragraph;
+        }
+
+        private Paragraph CreateActionParagraph(
+            string showName,
+            string action,
+            string message,
+            bool isSentFromSelf,
+            ICMessage.TextColors textColor)
+        {
+            Paragraph paragraph = new Paragraph
+            {
+                Margin = new Thickness(0, 2, 0, 2),
+                LineHeight = 2
+            };
+            PopulateActionParagraph(paragraph, showName, action, message, isSentFromSelf, textColor);
             return paragraph;
         }
 
@@ -377,6 +453,70 @@ namespace OceanyaClient.Components
             }
 
             AppendActionLinks(paragraph, messageLinks);
+        }
+
+        private void PopulateActionParagraph(
+            Paragraph paragraph,
+            string showName,
+            string action,
+            string message,
+            bool isSentFromSelf,
+            ICMessage.TextColors textColor)
+        {
+            paragraph.Inlines.Clear();
+
+            Brush nameBrush;
+            if (isSentFromSelf)
+            {
+                Run gmTag = new Run("[GM] ")
+                {
+                    FontWeight = FontWeights.Bold,
+                    Foreground = formatRules.First(rule => rule.Name == ICMessage.TextColors.Gray).ColorBrush
+                };
+                paragraph.Inlines.Add(gmTag);
+                nameBrush = new SolidColorBrush(Color.FromArgb(255, 154, 220, 225));
+            }
+            else
+            {
+                nameBrush = Brushes.White;
+            }
+
+            paragraph.Inlines.Add(new Run(showName ?? string.Empty)
+            {
+                FontWeight = FontWeights.Bold,
+                Foreground = nameBrush
+            });
+
+            paragraph.Inlines.Add(new Run(" ")
+            {
+                Foreground = Brushes.White
+            });
+
+            paragraph.Inlines.Add(new Run(action ?? string.Empty)
+            {
+                Foreground = Brushes.White
+            });
+
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                return;
+            }
+
+            paragraph.Inlines.Add(new Run(" ")
+            {
+                Foreground = Brushes.White
+            });
+
+            bool emphasizeMessage = string.Equals(action, "shouts", StringComparison.OrdinalIgnoreCase);
+            foreach (Inline inline in FormatMessageText(message ?? string.Empty, textColor))
+            {
+                if (emphasizeMessage)
+                {
+                    inline.FontWeight = FontWeights.Bold;
+                }
+
+                paragraph.Inlines.Add(inline);
+            }
         }
 
         private void AppendActionLinks(Paragraph paragraph, IReadOnlyList<LogMessageActionLink>? links)

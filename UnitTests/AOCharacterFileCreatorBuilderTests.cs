@@ -136,6 +136,66 @@ namespace UnitTests
             Assert.That(Directory.Exists(Path.Combine(folder, "portraits", "hd")), Is.True);
             Assert.That(File.ReadAllText(Path.Combine(folder, "readme.txt")), Does.Contain("AO Character File Creator"));
         }
+
+        [Test]
+        public void GeneratedAssetPathCollisionResolver_RenamesDifferentSourcesThatShareTheSameFileName()
+        {
+            List<GeneratedAssetPathCollisionCandidate> candidates = new List<GeneratedAssetPathCollisionCandidate>
+            {
+                new GeneratedAssetPathCollisionCandidate
+                {
+                    AssetKey = "emote:1:anim",
+                    DefaultRelativePath = "Images/attack.png",
+                    PreferredRelativePath = "Images/attack.png",
+                    SourceIdentity = @"D:\chars\a\attack.png"
+                },
+                new GeneratedAssetPathCollisionCandidate
+                {
+                    AssetKey = "emote:2:anim",
+                    DefaultRelativePath = "Images/attack.png",
+                    PreferredRelativePath = "Images/attack.png",
+                    SourceIdentity = @"D:\chars\b\attack.png"
+                }
+            };
+
+            Dictionary<string, string> resolved = GeneratedAssetPathCollisionResolver.Resolve(candidates);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(resolved["emote:1:anim"], Is.EqualTo("Images/attack.png"));
+                Assert.That(resolved["emote:2:anim"], Is.EqualTo("Images/attack-1.png"));
+            });
+        }
+
+        [Test]
+        public void GeneratedAssetPathCollisionResolver_KeepsSamePathWhenDuplicateReferenceUsesTheSameSource()
+        {
+            List<GeneratedAssetPathCollisionCandidate> candidates = new List<GeneratedAssetPathCollisionCandidate>
+            {
+                new GeneratedAssetPathCollisionCandidate
+                {
+                    AssetKey = "emote:1:anim",
+                    DefaultRelativePath = "Images/attack.png",
+                    PreferredRelativePath = "Images/attack.png",
+                    SourceIdentity = @"D:\chars\a\attack.png"
+                },
+                new GeneratedAssetPathCollisionCandidate
+                {
+                    AssetKey = "emote:1:splitbase",
+                    DefaultRelativePath = "Images/attack.png",
+                    PreferredRelativePath = "Images/attack.png",
+                    SourceIdentity = @"D:\chars\a\attack.png"
+                }
+            };
+
+            Dictionary<string, string> resolved = GeneratedAssetPathCollisionResolver.Resolve(candidates);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(resolved["emote:1:anim"], Is.EqualTo("Images/attack.png"));
+                Assert.That(resolved["emote:1:splitbase"], Is.EqualTo("Images/attack.png"));
+            });
+        }
     }
 
     [TestFixture]
