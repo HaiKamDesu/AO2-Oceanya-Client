@@ -7,6 +7,7 @@ using NUnit.Framework;
 namespace UiAutomationTests;
 
 [TestFixture]
+[Category("Smoke")]
 [NonParallelizable]
 [Apartment(ApartmentState.STA)]
 public sealed class FirstWaveSmokeTests

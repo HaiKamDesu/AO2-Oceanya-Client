@@ -28,3 +28,10 @@ Use this file as the first stop before broad repository searches. It should poin
 - Doc: `Documentation/AgentDocumentationWorkflow.md`
 - Main code: `OceanyaClient/Features/FileHivemind/*`, `OceanyaHivemindAgent/Program.cs`, `Common/SaveFile.cs`
 - Notes: Background agent lifecycle, saved connection state, and parent/child shutdown signaling live here.
+
+## UI Automation Smoke Tests
+- Doc: `UiAutomationTests/README.md`
+- Main code: `UiAutomationTests/FirstWaveSmokeTests.cs`, `UiAutomationTests/FlaUiSmokeApp.cs`, `UiAutomationTests/SmokeFixturePaths.cs`
+- Fixture assets: `UnitTests/TestAssets/FlaUISmoke/`
+- CI: `.github/workflows/ui-smoke.yml`
+- Notes: FlaUI UIA3 offline smoke suite. 10 tests tagged `[Category("Smoke")]`. Requires interactive Windows desktop. Filter: `--filter "Category=Smoke"`. Readiness polling via `Oceanya.ReadyMarker` descendant. Screenshots on failure in `<results-dir>/UiAutomationArtifacts/Screenshots/`.

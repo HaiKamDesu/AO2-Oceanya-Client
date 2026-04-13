@@ -1,0 +1,65 @@
+name: UI Smoke Tests
+
+# Run on manual trigger or when UI-relevant code changes on main.
+# These tests require an interactive Windows desktop session (provided by
+# windows-latest GitHub-hosted runners). They are intentionally offline and
+# deterministic — no real AO2 server connection is made.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'OceanyaClient/**'
+      - 'AOBot-Testing/**'
+      - 'Common/**'
+      - 'UiAutomationTests/**'
+      - 'UnitTests/TestAssets/FlaUISmoke/**'
+
+jobs:
+  ui-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # Build and test must be separate steps — chaining them can cause
+      # lock contention on obj/ output files (see AGENTS.md).
+      - name: Build solution
+        run: dotnet build "Oceanya Client.sln" --configuration Debug
+
+      - name: Run UI smoke tests
+        run: >
+          dotnet test UiAutomationTests/UiAutomationTests.csproj
+          --configuration Debug
+          --no-build
+          --filter "Category=Smoke"
+          --logger "trx;LogFileName=ui-smoke-results.trx"
+          --results-directory TestResults/UiSmoke
+        timeout-minutes: 10
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-smoke-results
+          path: TestResults/UiSmoke/*.trx
+          if-no-files-found: warn
+
+      - name: Upload failure screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-smoke-screenshots
+          # NUnit WorkDirectory resolves to the --results-directory path;
+          # FlaUiSmokeApp writes screenshots under WorkDirectory/UiAutomationArtifacts/Screenshots.
+          path: TestResults/UiSmoke/UiAutomationArtifacts/Screenshots/
+          if-no-files-found: ignore
