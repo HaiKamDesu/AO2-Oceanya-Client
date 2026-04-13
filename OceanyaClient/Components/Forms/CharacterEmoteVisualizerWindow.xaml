@@ -534,12 +534,14 @@
                     <TextBlock Grid.Column="0" Text="Search:" VerticalAlignment="Center" Foreground="#FFE2E2E2" Margin="0,0,8,0"/>
                     <TextBox Grid.Column="1"
                              x:Name="SearchTextBox"
+                             AutomationProperties.AutomationId="EmoteVisualizer.Search"
                              Style="{StaticResource ModernTextBox}"
                              TextChanged="SearchTextBox_TextChanged"/>
 
                     <TextBlock Grid.Column="2" Text="View:" VerticalAlignment="Center" Foreground="#FFE2E2E2" Margin="14,0,8,0"/>
                     <ComboBox Grid.Column="3"
                               x:Name="ViewModeCombo"
+                              AutomationProperties.AutomationId="EmoteVisualizer.ViewMode"
                               Width="220"
                               SelectionChanged="ViewModeCombo_SelectionChanged"
                               Style="{StaticResource DarkComboBoxStyle}">
@@ -552,6 +554,7 @@
 
                     <Button Grid.Column="4"
                             x:Name="RefreshCharacterButton"
+                            AutomationProperties.AutomationId="EmoteVisualizer.RefreshCharacter"
                             Content="Refresh Character"
                             Width="130"
                             HorizontalAlignment="Left"
@@ -561,6 +564,7 @@
 
                     <Button Grid.Column="5"
                             x:Name="OpenCharacterIniButton"
+                            AutomationProperties.AutomationId="EmoteVisualizer.OpenCharIni"
                             Content="Open char.ini"
                             Width="120"
                             HorizontalAlignment="Left"
@@ -570,6 +574,7 @@
 
                     <Button Grid.Column="6"
                             x:Name="OpenReadmeButton"
+                            AutomationProperties.AutomationId="EmoteVisualizer.OpenReadme"
                             Content="Open Readme"
                             Width="110"
                             HorizontalAlignment="Left"
@@ -579,6 +584,7 @@
 
                     <CheckBox Grid.Column="7"
                               x:Name="LoopAnimationsCheckBox"
+                              AutomationProperties.AutomationId="EmoteVisualizer.LoopAnimations"
                               Content="Loop animations"
                               VerticalAlignment="Center"
                               Margin="12,0,0,0"
@@ -589,6 +595,7 @@
 
                 <Border Grid.Row="1" Background="#14000000" BorderBrush="#4AFFFFFF" BorderThickness="1">
                     <ListView x:Name="EmoteListView"
+                              AutomationProperties.AutomationId="EmoteVisualizer.List"
                               Style="{StaticResource VisualizerListViewStyle}"
                               BorderThickness="0"
                               Background="#00000000"
@@ -611,11 +618,12 @@
                     </Grid.ColumnDefinitions>
 
                     <Border Grid.Column="0" Background="#AA000000" BorderBrush="#33FFFFFF" BorderThickness="1" Padding="8,6">
-                        <TextBlock x:Name="SummaryText" Foreground="#FFDADADA" FontSize="12"/>
+                        <TextBlock x:Name="SummaryText" AutomationProperties.AutomationId="EmoteVisualizer.Summary" Foreground="#FFDADADA" FontSize="12"/>
                     </Border>
 
                     <Button Grid.Column="1"
                             x:Name="ConfigureViewsButton"
+                            AutomationProperties.AutomationId="EmoteVisualizer.ConfigureViews"
                             Content="Configure Views"
                             Width="130"
                             Margin="8,0,0,0"

@@ -285,6 +285,7 @@ namespace OceanyaClient
             }
 
             hasRaisedFinishedLoading = true;
+            MarkAutomationReady();
             FinishedLoading?.Invoke();
         }
         private void RenameClient(AOClient bot)

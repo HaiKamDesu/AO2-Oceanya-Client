@@ -232,6 +232,7 @@
                     </Grid.ColumnDefinitions>
 
                     <TextBox x:Name="SearchTextBox"
+                             AutomationProperties.AutomationId="ServerSelection.Search"
                              Grid.Column="0"
                              Style="{StaticResource ModernTextBox}"
                              Background="#FF262626"
@@ -240,6 +241,7 @@
                              ToolTip="Search by name, endpoint, or description"/>
 
                     <Button x:Name="RefreshPollButton"
+                            AutomationProperties.AutomationId="ServerSelection.RefreshPoll"
                             Grid.Column="1"
                             Margin="10,0,0,0"
                             Width="130"
@@ -255,12 +257,14 @@
                     </Grid.ColumnDefinitions>
 
                     <TabControl x:Name="ServerTabs"
+                                AutomationProperties.AutomationId="ServerSelection.Tabs"
                                 Grid.Column="0"
                                 Style="{StaticResource ModernTabControl}"
                                 SelectionChanged="ServerTabs_SelectionChanged">
                         <TabItem Header="Defaults" Style="{StaticResource ModernTabItem}">
                             <Grid Margin="8">
                                 <ListView x:Name="DefaultsListView"
+                                          AutomationProperties.AutomationId="ServerSelection.DefaultsList"
                                           Style="{StaticResource ServerListViewStyle}"
                                           ItemContainerStyle="{StaticResource ServerListItemStyle}"
                                           SelectionMode="Extended"
@@ -292,6 +296,7 @@
                         <TabItem Header="AO Server Poll" Style="{StaticResource ModernTabItem}">
                             <Grid Margin="8">
                                 <ListView x:Name="AoPollListView"
+                                          AutomationProperties.AutomationId="ServerSelection.AoPollList"
                                           Style="{StaticResource ServerListViewStyle}"
                                           ItemContainerStyle="{StaticResource ServerListItemStyle}"
                                           SelectionMode="Extended"
@@ -323,6 +328,7 @@
                         <TabItem Header="Favorites" Style="{StaticResource ModernTabItem}">
                             <Grid Margin="8">
                                 <ListView x:Name="FavoritesListView"
+                                          AutomationProperties.AutomationId="ServerSelection.FavoritesList"
                                           Style="{StaticResource ServerListViewStyle}"
                                           ItemContainerStyle="{StaticResource ServerListItemStyle}"
                                           SelectionMode="Extended"
@@ -373,6 +379,7 @@
                                        HorizontalAlignment="Center"/>
 
                             <TextBlock x:Name="SelectionSummaryTextBlock"
+                                       AutomationProperties.AutomationId="ServerSelection.SelectionSummary"
                                        Grid.Row="1"
                                        Text="Select a server to inspect details."
                                        Foreground="#DDDDDD"
@@ -380,6 +387,7 @@
                                        TextWrapping="Wrap"/>
 
                             <TextBlock x:Name="SelectedEndpointTextBlock"
+                                       AutomationProperties.AutomationId="ServerSelection.SelectedEndpoint"
                                        Grid.Row="2"
                                        Text=""
                                        Foreground="#B8B8B8"
@@ -387,6 +395,7 @@
                                        TextWrapping="Wrap"/>
 
                             <TextBlock x:Name="NotSelectableReasonTextBlock"
+                                       AutomationProperties.AutomationId="ServerSelection.NotSelectableReason"
                                        Grid.Row="3"
                                        Text=""
                                        Foreground="#E0B6B6"
@@ -400,6 +409,7 @@
                                     BorderThickness="1">
                                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                                     <TextBlock x:Name="DescriptionTextBlock"
+                                               AutomationProperties.AutomationId="ServerSelection.Description"
                                                Margin="6"
                                                Foreground="White"
                                                TextWrapping="Wrap"/>
@@ -427,6 +437,7 @@
                         </Grid.ColumnDefinitions>
 
                         <Button x:Name="AddFavoriteButton"
+                                AutomationProperties.AutomationId="ServerSelection.AddFavorite"
                                 Grid.Column="1"
                                 Width="110"
                                 Content="ADD FAVORITE"
@@ -435,6 +446,7 @@
                                 Click="AddFavoriteButton_Click"/>
 
                         <Button x:Name="EditFavoriteButton"
+                                AutomationProperties.AutomationId="ServerSelection.EditFavorite"
                                 Grid.Column="2"
                                 Width="110"
                                 Content="EDIT FAVORITE"
@@ -444,6 +456,7 @@
                                 Click="EditFavoriteButton_Click"/>
 
                         <Button x:Name="RemoveFavoriteButton"
+                                AutomationProperties.AutomationId="ServerSelection.RemoveFavorite"
                                 Grid.Column="3"
                                 Width="130"
                                 Content="REMOVE FAVORITE"
@@ -453,6 +466,7 @@
                                 Click="RemoveFavoriteButton_Click"/>
 
                         <Button x:Name="CancelButton"
+                                AutomationProperties.AutomationId="ServerSelection.Cancel"
                                 Grid.Column="5"
                                 Width="90"
                                 Content="CANCEL"
@@ -461,6 +475,7 @@
                                 Click="CancelButton_Click"/>
 
                         <Button x:Name="SelectButton"
+                                AutomationProperties.AutomationId="ServerSelection.Select"
                                 Grid.Column="6"
                                 Width="90"
                                 Content="SELECT"
@@ -471,6 +486,7 @@
                     </Grid>
 
                     <TextBlock x:Name="StatusTextBlock"
+                               AutomationProperties.AutomationId="ServerSelection.Status"
                                Grid.Row="1"
                                Margin="0,8,0,0"
                                Text="Ready."

@@ -54,6 +54,7 @@
 
         <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto" Margin="0,6,0,0">
             <TextBlock x:Name="MessageTextBlock"
+                       AutomationProperties.AutomationId="MessageBox.Message"
                        Text="Message text goes here"
                        Style="{StaticResource MessageText}"
                        TextAlignment="Center">
@@ -67,22 +68,26 @@
 
         <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,20,0,0">
             <Button x:Name="YesButton"
+                    AutomationProperties.AutomationId="MessageBox.Yes"
                     Content="YES"
                     Style="{StaticResource ModernButton}"
                     Visibility="Collapsed"
                     Click="YesButton_Click"
                     IsDefault="True"/>
             <Button x:Name="NoButton"
+                    AutomationProperties.AutomationId="MessageBox.No"
                     Content="NO"
                     Style="{StaticResource ModernButton}"
                     Visibility="Collapsed"
                     Click="NoButton_Click"/>
             <Button x:Name="OKButton"
+                    AutomationProperties.AutomationId="MessageBox.Ok"
                     Content="OK"
                     Style="{StaticResource ModernButton}"
                     Click="OKButton_Click"
                     IsDefault="True"/>
             <Button x:Name="CancelButton"
+                    AutomationProperties.AutomationId="MessageBox.Cancel"
                     Content="CANCEL"
                     Style="{StaticResource ModernButton}"
                     Visibility="Collapsed"

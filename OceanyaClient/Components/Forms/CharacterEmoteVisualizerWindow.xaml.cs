@@ -230,6 +230,7 @@ namespace OceanyaClient
 
             hasLoaded = true;
             await LoadEmoteItemsAsync();
+            MarkAutomationReady();
         }
 
         private void Window_StateChanged(object? sender, EventArgs e)

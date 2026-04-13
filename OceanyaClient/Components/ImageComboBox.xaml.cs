@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -72,6 +73,18 @@ namespace OceanyaClient.Components
                 }), System.Windows.Threading.DispatcherPriority.Background);
             }
         }
+
+        public static readonly DependencyProperty AutomationIdProperty = DependencyProperty.Register(
+            nameof(AutomationId),
+            typeof(string),
+            typeof(ImageComboBox),
+            new PropertyMetadata(string.Empty, OnAutomationIdChanged));
+
+        public string AutomationId
+        {
+            get => (string)GetValue(AutomationIdProperty);
+            set => SetValue(AutomationIdProperty, value);
+        }
         #endregion
 
         #region Constructor
@@ -91,8 +104,24 @@ namespace OceanyaClient.Components
             };
 
             this.PreviewKeyDown += ImageComboBox_PreviewKeyDown;
+            ApplyAutomationIdentifiers();
         }
         #endregion
+
+        private static void OnAutomationIdChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            if (d is ImageComboBox comboBox)
+            {
+                comboBox.ApplyAutomationIdentifiers();
+            }
+        }
+
+        private void ApplyAutomationIdentifiers()
+        {
+            string automationId = AutomationId?.Trim() ?? string.Empty;
+            AutomationProperties.SetAutomationId(this, automationId);
+            AutomationProperties.SetAutomationId(cboINISelect, string.IsNullOrWhiteSpace(automationId) ? string.Empty : automationId + ".ComboBox");
+        }
 
         #region Event Handlers
         private void ImageComboBox_PreviewKeyDown(object sender, KeyEventArgs e)

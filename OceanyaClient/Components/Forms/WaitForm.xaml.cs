@@ -99,6 +99,12 @@ namespace OceanyaClient
 
         public static async Task ShowFormAsync(string message, Window owner)
         {
+            if (OceanyaTestMode.Current.DisableWaitForms)
+            {
+                Showing = false;
+                return;
+            }
+
             _currentTitle = message;
             _currentSubtitle = string.Empty;
             _ownerWindow = owner;
@@ -167,6 +173,12 @@ namespace OceanyaClient
 
         public static async Task CloseFormAsync()
         {
+            if (OceanyaTestMode.Current.DisableWaitForms)
+            {
+                Showing = false;
+                return;
+            }
+
             if (_formDispatcher == null) return;
 
             // Use the form's dispatcher to close it
@@ -199,6 +211,11 @@ namespace OceanyaClient
 
         public static async Task SetSubtitleAsync(string subtitle)
         {
+            if (OceanyaTestMode.Current.DisableWaitForms)
+            {
+                return;
+            }
+
             if (_formDispatcher == null) return;
 
             _currentSubtitle = subtitle;

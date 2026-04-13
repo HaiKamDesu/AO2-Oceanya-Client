@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -112,6 +113,7 @@ namespace OceanyaClient
             InitializeComponent();
             WindowHelper.AddWindow(this);
             Loaded += OnWindowLoaded;
+            UpdateAutomationReadyMarker(OceanyaWindowContentControl.AutomationReadyStateLoading);
         }
 
         /// <inheritdoc/>
@@ -176,6 +178,20 @@ namespace OceanyaClient
         {
             get => (bool)GetValue(IsCloseButtonVisibleProperty);
             set => SetValue(IsCloseButtonVisibleProperty, value);
+        }
+
+        /// <summary>
+        /// Updates the hidden UI automation ready marker hosted by this shell window.
+        /// </summary>
+        /// <param name="state">Ready-state string to expose to UI automation.</param>
+        public void UpdateAutomationReadyMarker(string state)
+        {
+            string normalizedState = string.IsNullOrWhiteSpace(state)
+                ? OceanyaWindowContentControl.AutomationReadyStateLoading
+                : state.Trim();
+            AutomationReadyMarker.Text = normalizedState;
+            AutomationProperties.SetName(AutomationReadyMarker, normalizedState);
+            AutomationProperties.SetHelpText(AutomationReadyMarker, normalizedState);
         }
 
         /// <summary>

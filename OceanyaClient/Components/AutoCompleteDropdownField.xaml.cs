@@ -5,6 +5,7 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -69,6 +70,11 @@ namespace OceanyaClient
             typeof(bool),
             typeof(AutoCompleteDropdownField),
             new PropertyMetadata(false, OnPreserveItemOrderPropertyChanged));
+        public static readonly DependencyProperty AutomationIdProperty = DependencyProperty.Register(
+            nameof(AutomationId),
+            typeof(string),
+            typeof(AutoCompleteDropdownField),
+            new PropertyMetadata(string.Empty, OnAutomationIdPropertyChanged));
 
         public AutoCompleteDropdownField()
         {
@@ -120,6 +126,12 @@ namespace OceanyaClient
             set => SetValue(PreserveItemOrderProperty, value);
         }
 
+        public string AutomationId
+        {
+            get => (string)GetValue(AutomationIdProperty);
+            set => SetValue(AutomationIdProperty, value);
+        }
+
         private void AutoCompleteDropdownField_Loaded(object sender, RoutedEventArgs e)
         {
             ApplySymbolVisibility();
@@ -128,6 +140,7 @@ namespace OceanyaClient
             suppressTextHandlers = false;
             UpdateVisualState();
             ApplyReadOnlyTextAreaState();
+            ApplyAutomationIdentifiers();
             Trace("Loaded");
         }
 
@@ -181,6 +194,23 @@ namespace OceanyaClient
             {
                 field.RefreshSuggestions(field.InputTextBox.Text ?? string.Empty);
             }
+        }
+
+        private static void OnAutomationIdPropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            if (d is AutoCompleteDropdownField field)
+            {
+                field.ApplyAutomationIdentifiers();
+            }
+        }
+
+        private void ApplyAutomationIdentifiers()
+        {
+            string automationId = AutomationId?.Trim() ?? string.Empty;
+            AutomationProperties.SetAutomationId(this, automationId);
+            AutomationProperties.SetAutomationId(InputTextBox, string.IsNullOrWhiteSpace(automationId) ? string.Empty : automationId + ".Input");
+            AutomationProperties.SetAutomationId(ToggleButton, string.IsNullOrWhiteSpace(automationId) ? string.Empty : automationId + ".Toggle");
+            AutomationProperties.SetAutomationId(SuggestionsListBox, string.IsNullOrWhiteSpace(automationId) ? string.Empty : automationId + ".Suggestions");
         }
 
         private void ApplySymbolVisibility()

@@ -66,6 +66,21 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        OceanyaTestModeOptions testModeOptions = OceanyaTestMode.ParseArgs(e.Args);
+        OceanyaTestMode.SetCurrent(testModeOptions);
+        if (testModeOptions.IsEnabled)
+        {
+            if (!string.IsNullOrWhiteSpace(testModeOptions.SaveFilePath))
+            {
+                SaveFile.ConfigureStoragePathForTests(testModeOptions.SaveFilePath);
+            }
+
+            if (!string.IsNullOrWhiteSpace(testModeOptions.ServerJsonPath))
+            {
+                Globals.ReloadServerIpsForTests(testModeOptions.ServerJsonPath);
+            }
+        }
+
         isHivemindAgentMode = FileHivemindBackgroundAgentCommandLine.IsAgentMode(e.Args);
         if (isHivemindAgentMode)
         {
@@ -92,8 +107,10 @@ public partial class App : Application
 
         TryStartBackgroundHivemindAgent();
 
-        // Simulate loading operation
-        await FakeLoadingAsync();
+        if (!OceanyaTestMode.Current.DisableFakeLoading)
+        {
+            await FakeLoadingAsync();
+        }
 
         // After loading finishes, show your main window
         InitialConfigurationWindow mainWindow = new InitialConfigurationWindow();
@@ -106,6 +123,11 @@ public partial class App : Application
 
     private async Task FakeLoadingAsync()
     {
+        if (OceanyaTestMode.Current.DisableFakeLoading)
+        {
+            return;
+        }
+
         // Randomly choose how many messages you'll display
         int stepsCount = _rand.Next(2, 9);
 

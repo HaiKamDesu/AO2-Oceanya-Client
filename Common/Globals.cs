@@ -19,12 +19,15 @@ public static class Globals
     public static readonly Servers DefaultServer = Servers.ChillAndDices;
     public static Dictionary<Servers, string> IPs = LoadServerIPs();
     public static string SelectedServerEndpoint = "";
+    private static string? serverJsonOverridePath;
 
     private static Dictionary<Servers, string> LoadServerIPs()
     {
         try
         {
-            string filePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "server.json");
+            string filePath = !string.IsNullOrWhiteSpace(serverJsonOverridePath)
+                ? serverJsonOverridePath
+                : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "server.json");
             string json = File.ReadAllText(filePath);
             Dictionary<Servers, string>? parsed = JsonSerializer.Deserialize<Dictionary<Servers, string>>(json);
 
@@ -59,6 +62,12 @@ public static class Globals
     public static void SetSelectedServerEndpoint(string endpoint)
     {
         SelectedServerEndpoint = endpoint?.Trim() ?? string.Empty;
+    }
+
+    public static void ReloadServerIpsForTests(string? serverJsonPath)
+    {
+        serverJsonOverridePath = string.IsNullOrWhiteSpace(serverJsonPath) ? null : serverJsonPath.Trim();
+        IPs = LoadServerIPs();
     }
 
     public static string AI_SYSTEM_PROMPT = @"

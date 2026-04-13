@@ -10,6 +10,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
@@ -26,6 +27,7 @@ namespace OceanyaClient
 
         private ServerEndpointDefinition? selectedServer;
         private bool ignoreStartupFunctionalitySelectionChanged;
+        private bool autoLaunchQueued;
 
         public InitialConfigurationWindow()
         {
@@ -70,7 +72,7 @@ namespace OceanyaClient
 
             async Task EnsureLaunchWaitFormAsync(string subtitle)
             {
-                if (startupLaunchOwner == null)
+                if (startupLaunchOwner == null || OceanyaTestMode.Current.DisableWaitForms)
                 {
                     return;
                 }
@@ -130,26 +132,29 @@ namespace OceanyaClient
 
                 if (selectedFunctionality.RequiresServerEndpoint)
                 {
-                    ServerEndpointDefinition validatedServer = await ValidateSelectedServerForLaunchAsync(
-                        selectedServer,
-                        selectedServerName,
-                        selectedServerEndpoint);
-                    if (!validatedServer.IsSelectable)
+                    if (!OceanyaTestMode.Current.SkipServerValidation)
                     {
-                        await CloseLaunchWaitFormAsync();
+                        ServerEndpointDefinition validatedServer = await ValidateSelectedServerForLaunchAsync(
+                            selectedServer,
+                            selectedServerName,
+                            selectedServerEndpoint);
+                        if (!validatedServer.IsSelectable)
+                        {
+                            await CloseLaunchWaitFormAsync();
 
-                        OceanyaMessageBox.Show(
-                            $"The selected server '{validatedServer.Name}' is not available.\n\n{ServerEndpointCatalog.GetNotSelectableReason(validatedServer)}",
-                            "Server Unavailable",
-                            MessageBoxButton.OK,
-                            MessageBoxImage.Warning);
-                        return;
+                            OceanyaMessageBox.Show(
+                                $"The selected server '{validatedServer.Name}' is not available.\n\n{ServerEndpointCatalog.GetNotSelectableReason(validatedServer)}",
+                                "Server Unavailable",
+                                MessageBoxButton.OK,
+                                MessageBoxImage.Warning);
+                            return;
+                        }
+
+                        selectedServer = validatedServer;
+                        selectedServerEndpoint = validatedServer.Endpoint.Trim();
+                        selectedServerName = validatedServer.Name.Trim();
+                        UpdateSelectedServerDisplay();
                     }
-
-                    selectedServer = validatedServer;
-                    selectedServerEndpoint = validatedServer.Endpoint.Trim();
-                    selectedServerName = validatedServer.Name.Trim();
-                    UpdateSelectedServerDisplay();
                 }
 
                 (string forcedRefreshReason, TargetedAssetRefreshPlan trackedChangePlan) preflightResult = await Task.Run(() =>
@@ -196,6 +201,14 @@ namespace OceanyaClient
                 bool shouldRunTargetedRefresh = !refreshRequested
                     && string.IsNullOrWhiteSpace(forcedRefreshReason)
                     && trackedChangePlan.HasAnyWork;
+
+                if (OceanyaTestMode.Current.SkipAssetRefreshPrompts)
+                {
+                    shouldRefreshAssets = false;
+                    shouldRunTargetedRefresh = false;
+                    forcedRefreshReason = string.Empty;
+                    trackedChangePlan = new TargetedAssetRefreshPlan();
+                }
 
                 if (!refreshRequested && !string.IsNullOrWhiteSpace(forcedRefreshReason))
                 {
@@ -428,8 +441,10 @@ namespace OceanyaClient
                 UseSingleClientCheckBox.IsChecked = SaveFile.Data.UseSingleInternalClient;
                 CleanupLegacyCustomServerData();
                 BindStartupFunctionalitySelection();
+                ApplyTestStartupOverrides();
 
                 selectedServer = ResolveInitialSelectedServer();
+                selectedServer = ApplyTestSelectedServerOverride(selectedServer);
                 if (selectedServer != null)
                 {
                     Globals.SetSelectedServerEndpoint(selectedServer.Endpoint);
@@ -604,6 +619,54 @@ namespace OceanyaClient
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
             ApplySelectedFunctionalityUi(animate: false);
+            MarkAutomationReady();
+
+            if (!autoLaunchQueued && OceanyaTestMode.Current.IsEnabled && OceanyaTestMode.Current.AutoLaunchStartupFunctionality)
+            {
+                autoLaunchQueued = true;
+                Dispatcher.BeginInvoke(
+                    DispatcherPriority.Background,
+                    new Action(() => OkButton_Click(OkButton, new RoutedEventArgs(Button.ClickEvent, OkButton))));
+            }
+        }
+
+        private void ApplyTestStartupOverrides()
+        {
+            OceanyaTestModeOptions options = OceanyaTestMode.Current;
+            if (!options.IsEnabled)
+            {
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(options.ConfigIniPath))
+            {
+                ConfigINIPathTextBox.Text = options.ConfigIniPath.Trim();
+            }
+
+            if (!string.IsNullOrWhiteSpace(options.StartupFunctionalityId))
+            {
+                StartupFunctionalityComboBox.SelectedValue =
+                    StartupFunctionalityCatalog.GetByIdOrDefault(options.StartupFunctionalityId).Id;
+            }
+        }
+
+        private ServerEndpointDefinition? ApplyTestSelectedServerOverride(ServerEndpointDefinition? resolvedServer)
+        {
+            OceanyaTestModeOptions options = OceanyaTestMode.Current;
+            if (!options.IsEnabled || string.IsNullOrWhiteSpace(options.ServerEndpoint))
+            {
+                return resolvedServer;
+            }
+
+            string endpoint = options.ServerEndpoint.Trim();
+            return new ServerEndpointDefinition
+            {
+                Name = endpoint,
+                Endpoint = endpoint,
+                Description = "Test mode endpoint override.",
+                Source = ServerEndpointSource.Defaults,
+                IsLegacy = ServerEndpointCatalog.IsLegacyEndpoint(endpoint)
+            };
         }
 
         private void BindStartupFunctionalitySelection()

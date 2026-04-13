@@ -1284,6 +1284,7 @@ namespace OceanyaClient
                 if (!hasRaisedFinishedLoading)
                 {
                     hasRaisedFinishedLoading = true;
+                    MarkAutomationReady();
                     FinishedLoading?.Invoke();
                 }
             }

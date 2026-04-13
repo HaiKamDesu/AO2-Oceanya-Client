@@ -548,12 +548,14 @@
                     <TextBlock Grid.Column="0" Text="Search:" VerticalAlignment="Center" Foreground="#FFE2E2E2" Margin="0,0,8,0"/>
                     <TextBox Grid.Column="1"
                              x:Name="SearchTextBox"
+                             AutomationProperties.AutomationId="FolderVisualizer.Search"
                              Style="{StaticResource ModernTextBox}"
                              TextChanged="SearchTextBox_TextChanged"/>
 
                     <TextBlock Grid.Column="2" Text="View:" VerticalAlignment="Center" Foreground="#FFE2E2E2" Margin="14,0,8,0"/>
                     <ComboBox Grid.Column="3"
                               x:Name="ViewModeCombo"
+                              AutomationProperties.AutomationId="FolderVisualizer.ViewMode"
                               Width="220"
                               SelectionChanged="ViewModeCombo_SelectionChanged"
                               Style="{StaticResource DarkComboBoxStyle}">
@@ -566,6 +568,7 @@
 
                     <Button Grid.Column="4"
                             x:Name="RefreshAssetsButton"
+                            AutomationProperties.AutomationId="FolderVisualizer.RefreshAssets"
                             Content="Refresh Assets"
                             Width="120"
                             HorizontalAlignment="Left"
@@ -575,6 +578,7 @@
 
                     <Button Grid.Column="5"
                             x:Name="SelectTagsButton"
+                            AutomationProperties.AutomationId="FolderVisualizer.FiltersSorting"
                             Content="Filters &amp; Sorting"
                             Width="140"
                             Margin="10,0,0,0"
@@ -583,6 +587,7 @@
 
                     <Button Grid.Column="6"
                             x:Name="ToggleTagPanelTopButton"
+                            AutomationProperties.AutomationId="FolderVisualizer.ToggleTagPanelTop"
                             Content="Hide Tags"
                             Width="95"
                             Margin="10,0,0,0"
@@ -591,6 +596,7 @@
 
                     <CheckBox Grid.Column="7"
                               x:Name="ViewIntegrityVerifierResultsCheckBox"
+                              AutomationProperties.AutomationId="FolderVisualizer.ShowIntegrity"
                               Content="View Integrity Verifier Results"
                               VerticalAlignment="Center"
                               Margin="12,0,0,0"
@@ -661,6 +667,7 @@
                                            VerticalAlignment="Center"/>
                                 <ComboBox Grid.Column="1"
                                           x:Name="TagInputComboBox"
+                                          AutomationProperties.AutomationId="FolderVisualizer.TagInput"
                                           Style="{StaticResource DarkComboBoxStyle}"
                                           IsEditable="True"
                                           IsTextSearchEnabled="False"
@@ -685,6 +692,7 @@
 
                             <ListBox Grid.Row="3"
                                      x:Name="SelectedFolderTagsListBox"
+                                     AutomationProperties.AutomationId="FolderVisualizer.SelectedTags"
                                      Background="#12000000"
                                      Foreground="#FFF0F0F0"
                                      BorderBrush="#3AFFFFFF"
@@ -735,12 +743,14 @@
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
                                 <Button x:Name="RenameTagButton"
+                                        AutomationProperties.AutomationId="FolderVisualizer.RenameTag"
                                         Grid.Column="0"
                                         Content="Rename"
                                         HorizontalAlignment="Stretch"
                                         Style="{StaticResource ModernButton}"
                                         Click="RenameTagButton_Click"/>
                                 <Button x:Name="RemoveSelectedTagButton"
+                                        AutomationProperties.AutomationId="FolderVisualizer.RemoveTag"
                                         Grid.Column="1"
                                         Content="Remove"
                                         HorizontalAlignment="Stretch"
@@ -748,6 +758,7 @@
                                         Style="{StaticResource ModernButton}"
                                         Click="RemoveSelectedTagButton_Click"/>
                                 <Button x:Name="ClearFolderTagsButton"
+                                        AutomationProperties.AutomationId="FolderVisualizer.ClearTags"
                                         Grid.Column="2"
                                         Content="Clear"
                                         HorizontalAlignment="Stretch"
@@ -768,6 +779,7 @@
 
                     <Border Grid.Column="2" Background="#14000000" BorderBrush="#4AFFFFFF" BorderThickness="1">
                         <ListView x:Name="FolderListView"
+                                  AutomationProperties.AutomationId="FolderVisualizer.List"
                                   Style="{StaticResource VisualizerListViewStyle}"
                                   BorderThickness="0"
                                   Background="#00000000"
@@ -793,7 +805,7 @@
 
                     <Border Grid.Column="0" Background="#AA000000" BorderBrush="#33FFFFFF" BorderThickness="1" Padding="8,6">
                         <StackPanel Orientation="Vertical">
-                            <TextBlock x:Name="SummaryText" Foreground="#FFDADADA" FontSize="12"/>
+                            <TextBlock x:Name="SummaryText" AutomationProperties.AutomationId="FolderVisualizer.Summary" Foreground="#FFDADADA" FontSize="12"/>
                             <TextBlock x:Name="ActiveTagFiltersText"
                                        Foreground="#FFBBD5EA"
                                        FontSize="11"
@@ -803,6 +815,7 @@
 
                     <Button Grid.Column="1"
                             x:Name="ConfigureViewsButton"
+                            AutomationProperties.AutomationId="FolderVisualizer.ConfigureViews"
                             Content="Configure Views"
                             Width="130"
                             Margin="8,0,0,0"
@@ -811,6 +824,7 @@
 
                     <Button Grid.Column="2"
                             x:Name="CloseBottomButton"
+                            AutomationProperties.AutomationId="FolderVisualizer.Close"
                             Content="Close"
                             Width="90"
                             Margin="8,0,0,0"

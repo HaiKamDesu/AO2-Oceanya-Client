@@ -202,6 +202,11 @@ namespace OceanyaClient
         /// <param name="subtitle">Initial subtitle message</param>
         public static async Task ShowFormAsync(string subtitle = "Loading...")
         {
+            if (OceanyaTestMode.Current.DisableLoadingScreen)
+            {
+                return;
+            }
+
             // Start (or ensure started) the dedicated thread
             StartFormOnNewThread();
 
@@ -235,6 +240,11 @@ namespace OceanyaClient
         /// </summary>
         public static async Task CloseFormAsync()
         {
+            if (OceanyaTestMode.Current.DisableLoadingScreen)
+            {
+                return;
+            }
+
             if (_formDispatcher == null) return;
 
             await _formDispatcher.InvokeAsync(() =>
@@ -272,6 +282,11 @@ namespace OceanyaClient
         /// </summary>
         public static void SetProgress(double progress, double animationDuration = 300)
         {
+            if (OceanyaTestMode.Current.DisableLoadingScreen)
+            {
+                return;
+            }
+
             if (_formDispatcher == null) return;
 
             _formDispatcher.Invoke(() =>
@@ -288,6 +303,11 @@ namespace OceanyaClient
         /// </summary>
         public static void SetSubtitle(string subtitle)
         {
+            if (OceanyaTestMode.Current.DisableLoadingScreen)
+            {
+                return;
+            }
+
             if (_formDispatcher == null) return;
 
             _formDispatcher.Invoke(() =>

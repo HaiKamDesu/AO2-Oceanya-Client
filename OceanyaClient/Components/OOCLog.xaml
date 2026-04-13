@@ -9,6 +9,7 @@
                 <!-- OOC Message -->
                 <Grid x:Name="grdOOCMessage" Canvas.Top="30" Height="18" DockPanel.Dock="Top">
                     <TextBox x:Name="txtOOCMessage"
+                         AutomationProperties.AutomationId="Main.Ooc.Message"
                          BorderBrush="White" Background="#FF575757"
                          FontFamily="pack://application:,,,/Resources/Fonts/#Igiari Cyrillic"
                          Foreground="White"
@@ -27,6 +28,7 @@
                     <!-- OOC Showname -->
                     <Grid x:Name="grdOOCShowname" Canvas.Top="47" Height="17" Width="93">
                         <TextBox x:Name="txtOOCShowname"
+                            AutomationProperties.AutomationId="Main.Ooc.Showname"
                             Width="93"
                             BorderBrush="White" Background="#FF575757"
                             FontFamily="pack://application:,,,/Resources/Fonts/#Igiari Cyrillic"
@@ -41,12 +43,19 @@
                             FontFamily="pack://application:,,,/Resources/Fonts/#Igiari Cyrillic"
                             IsHitTestVisible="False" VerticalAlignment="Center"/>
                     </Grid>
-                    <Button x:Name="btnServerConsole" Content="Server Console" FontSize="10" FontFamily="pack://application:,,,/Resources/Fonts/#Igiari Cyrillic" DockPanel.Dock="Right" Click="btnServerConsole_Click"/>
+                    <Button x:Name="btnServerConsole"
+                            AutomationProperties.AutomationId="Main.Ooc.ServerConsole"
+                            Content="Server Console"
+                            FontSize="10"
+                            FontFamily="pack://application:,,,/Resources/Fonts/#Igiari Cyrillic"
+                            DockPanel.Dock="Right"
+                            Click="btnServerConsole_Click"/>
                 </DockPanel>
             </DockPanel>
             <!-- This Grid will automatically fill the remaining space -->
             <Grid>
                 <RichTextBox x:Name="LogBox"
+                 AutomationProperties.AutomationId="Main.Ooc.Log"
                  IsReadOnly="True"
                  VerticalScrollBarVisibility="Auto"
                  BorderThickness="0"
@@ -61,6 +70,7 @@
                     </FlowDocument>
                 </RichTextBox>
                 <Label x:Name="lblStream" Content="[STREAM]" 
+           AutomationProperties.AutomationId="Main.Ooc.StreamLabel"
            Background="#7F000000" Foreground="White" 
            FontFamily="Arial" VerticalContentAlignment="Center" 
            Height="24" VerticalAlignment="Top"

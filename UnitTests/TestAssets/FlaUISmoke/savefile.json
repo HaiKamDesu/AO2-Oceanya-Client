@@ -1,0 +1,15 @@
+{
+  "ConfigIniPath": "",
+  "StartupFunctionalityId": "gm_multi_client",
+  "UseSingleInternalClient": true,
+  "SelectedServerEndpoint": "ws://127.0.0.1:27016",
+  "SelectedServerName": "Smoke Favorite",
+  "OOCName": "SmokeOOC",
+  "FolderVisualizer": {
+    "SelectedPresetId": ""
+  },
+  "EmoteVisualizer": {
+    "SelectedPresetId": ""
+  },
+  "PopupWindowStates": {}
+}

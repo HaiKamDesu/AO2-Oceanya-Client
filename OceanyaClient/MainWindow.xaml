@@ -100,11 +100,11 @@
         <Grid Margin="0">
 
             <!-- Optional body background treatment. -->
-            <Rectangle x:Name="imgScienceBlur" 
+                <Rectangle x:Name="imgScienceBlur" 
                        HorizontalAlignment="Center" Width="527" Height="670" 
                        VerticalAlignment="Top" Margin="0">
                 <Rectangle.Fill>
-                    <ImageBrush ImageSource="/Resources/scoienceblur.jpg" Opacity="0.5"/>
+                    <ImageBrush ImageSource="pack://application:,,,/OceanyaClient;component/Resources/scoienceblur.jpg" Opacity="0.5"/>
                 </Rectangle.Fill>
             </Rectangle>
 
@@ -112,10 +112,10 @@
                        HorizontalAlignment="Center" Width="527" Height="670" 
                        VerticalAlignment="Top" Margin="0" Fill="#7F000000"/>
 
-            <Rectangle HorizontalAlignment="Center" Width="369" Height="276"
+                <Rectangle HorizontalAlignment="Center" Width="369" Height="276"
                        VerticalAlignment="Top" Margin="0,-21,0,0">
                 <Rectangle.Fill>
-                    <ImageBrush ImageSource="/Resources/Logo_O.png" Stretch="Uniform" Opacity="0.1"/>
+                    <ImageBrush ImageSource="pack://application:,,,/OceanyaClient;component/Resources/Logo_O.png" Stretch="Uniform" Opacity="0.1"/>
                 </Rectangle.Fill>
             </Rectangle>
 
@@ -131,13 +131,15 @@
 
                 <DockPanel x:Name="Dock_ICLog" Height="323" Width="232" Canvas.Left="55">
                     <DockPanel.Background>
-                        <ImageBrush ImageSource="/Resources/LogBG.png"/>
+                        <ImageBrush ImageSource="pack://application:,,,/OceanyaClient;component/Resources/LogBG.png"/>
                     </DockPanel.Background>
                 </DockPanel>
                 <components:ICLog x:Name="ICLogControl" DockPanel.Dock="Top" Height="298" Width="228" Canvas.Left="59" HorizontalAlignment="Center" VerticalAlignment="Center"/>
 
-                <Image x:Name="imgShoutModifierBG" Height="42" Canvas.Left="2" Canvas.Top="296" Width="428" Source="/Resources/ObjectionButtonsBG.png" Stretch="None"/>
+                <Image x:Name="imgShoutModifierBG" Height="42" Canvas.Left="2" Canvas.Top="296" Width="428" Source="pack://application:,,,/OceanyaClient;component/Resources/ObjectionButtonsBG.png" Stretch="None"/>
                 <ToggleButton x:Name="HoldIt" Height="40" Width="102" Canvas.Left="4" Canvas.Top="298"
+                              AutomationProperties.AutomationId="Main.Shout.HoldIt"
+                              AutomationProperties.Name="Hold It"
                               BorderBrush="{x:Null}" HorizontalAlignment="Left" VerticalAlignment="Top"
                               Padding="0,0,0,0" Checked="ToggleButton_Checked"
                               Focusable="False" IsTabStop="False">
@@ -147,11 +149,11 @@
                                 <Setter.Value>
                                     <ControlTemplate TargetType="{x:Type ToggleButton}">
                                         <Grid>
-                                            <Image x:Name="ButtonImage" Source="/Resources/Buttons/Hold It.png"/>
+                                            <Image x:Name="ButtonImage" Source="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Hold It.png"/>
                                         </Grid>
                                         <ControlTemplate.Triggers>
                                             <Trigger Property="IsChecked" Value="True">
-                                                <Setter TargetName="ButtonImage" Property="Source" Value="/Resources/Buttons/Hold It_Selected.png"/>
+                                                <Setter TargetName="ButtonImage" Property="Source" Value="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Hold It_Selected.png"/>
                                             </Trigger>
                                         </ControlTemplate.Triggers>
                                     </ControlTemplate>
@@ -162,6 +164,8 @@
                 </ToggleButton>
 
                 <ToggleButton x:Name="Objection" Height="40" Width="102" Canvas.Left="111" Canvas.Top="298"
+                              AutomationProperties.AutomationId="Main.Shout.Objection"
+                              AutomationProperties.Name="Objection"
                               BorderBrush="{x:Null}" Padding="0,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Top"
                               Checked="ToggleButton_Checked"
                               Focusable="False" IsTabStop="False">
@@ -171,11 +175,11 @@
                                 <Setter.Value>
                                     <ControlTemplate TargetType="{x:Type ToggleButton}">
                                         <Grid>
-                                            <Image x:Name="ButtonImage" Source="/Resources/Buttons/Objection.png"/>
+                                            <Image x:Name="ButtonImage" Source="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Objection.png"/>
                                         </Grid>
                                         <ControlTemplate.Triggers>
                                             <Trigger Property="IsChecked" Value="True">
-                                                <Setter TargetName="ButtonImage" Property="Source" Value="/Resources/Buttons/Objection_Selected.png"/>
+                                                <Setter TargetName="ButtonImage" Property="Source" Value="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Objection_Selected.png"/>
                                             </Trigger>
                                         </ControlTemplate.Triggers>
                                     </ControlTemplate>
@@ -186,6 +190,8 @@
                 </ToggleButton>
 
                 <ToggleButton x:Name="TakeThat" Height="40" Width="102" Canvas.Left="218" Canvas.Top="298"
+                              AutomationProperties.AutomationId="Main.Shout.TakeThat"
+                              AutomationProperties.Name="Take That"
                               BorderBrush="{x:Null}" Padding="0,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Top"
                               Checked="ToggleButton_Checked"
                               Focusable="False" IsTabStop="False">
@@ -195,11 +201,11 @@
                                 <Setter.Value>
                                     <ControlTemplate TargetType="{x:Type ToggleButton}">
                                         <Grid>
-                                            <Image x:Name="ButtonImage" Source="/Resources/Buttons/Take That.png"/>
+                                            <Image x:Name="ButtonImage" Source="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Take That.png"/>
                                         </Grid>
                                         <ControlTemplate.Triggers>
                                             <Trigger Property="IsChecked" Value="True">
-                                                <Setter TargetName="ButtonImage" Property="Source" Value="/Resources/Buttons/Take That_Selected.png"/>
+                                                <Setter TargetName="ButtonImage" Property="Source" Value="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Take That_Selected.png"/>
                                             </Trigger>
                                         </ControlTemplate.Triggers>
                                     </ControlTemplate>
@@ -210,6 +216,8 @@
                 </ToggleButton>
 
                 <ToggleButton x:Name="Custom" Height="40" Width="102" Canvas.Left="324" Canvas.Top="298"
+                              AutomationProperties.AutomationId="Main.Shout.Custom"
+                              AutomationProperties.Name="Custom"
                               BorderBrush="{x:Null}" Padding="0,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center"
                               Checked="ToggleButton_Checked"
                               Focusable="False" IsTabStop="False">
@@ -219,11 +227,11 @@
                                 <Setter.Value>
                                     <ControlTemplate TargetType="{x:Type ToggleButton}">
                                         <Grid>
-                                            <Image x:Name="ButtonImage" Source="/Resources/Buttons/Custom.png"/>
+                                            <Image x:Name="ButtonImage" Source="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Custom.png"/>
                                         </Grid>
                                         <ControlTemplate.Triggers>
                                             <Trigger Property="IsChecked" Value="True">
-                                                <Setter TargetName="ButtonImage" Property="Source" Value="/Resources/Buttons/Custom_Selected.png"/>
+                                                <Setter TargetName="ButtonImage" Property="Source" Value="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Custom_Selected.png"/>
                                             </Trigger>
                                         </ControlTemplate.Triggers>
                                     </ControlTemplate>
@@ -234,6 +242,8 @@
                 </ToggleButton>
 
                 <Button x:Name="btnAddClient" Height="24" Width="24" BorderBrush="{x:Null}" Foreground="{x:Null}" Padding="0"
+                        AutomationProperties.AutomationId="Main.AddClient"
+                        AutomationProperties.Name="Add Client"
                         HorizontalAlignment="Center" VerticalAlignment="Top"
                         Click="btnAddClient_Click" Canvas.Left="2" Canvas.Top="24">
                     <Button.Style>
@@ -242,7 +252,7 @@
                                 <Setter.Value>
                                     <ControlTemplate TargetType="{x:Type Button}">
                                         <Grid>
-                                            <Image x:Name="ButtonImage" Source="/Resources/Buttons/Plus.png" Stretch="Fill"/>
+                                            <Image x:Name="ButtonImage" Source="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Plus.png" Stretch="Fill"/>
                                         </Grid>
                                         <ControlTemplate.Triggers>
                                             <Trigger Property="IsMouseOver" Value="True">
@@ -260,6 +270,8 @@
                 </Button>
 
                 <Button x:Name="btnRemoveClient" Height="24" Width="24" BorderBrush="{x:Null}" Foreground="{x:Null}" Padding="0"
+                        AutomationProperties.AutomationId="Main.RemoveClient"
+                        AutomationProperties.Name="Remove Client"
                         HorizontalAlignment="Left" VerticalAlignment="Top"
                         Click="btnRemoveClient_Click" Canvas.Left="28" Canvas.Top="24">
                     <Button.Style>
@@ -268,7 +280,7 @@
                                 <Setter.Value>
                                     <ControlTemplate TargetType="{x:Type Button}">
                                         <Grid>
-                                            <Image x:Name="ButtonImage" Source="/Resources/Buttons/Minus.png" Stretch="Fill"/>
+                                            <Image x:Name="ButtonImage" Source="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Minus.png" Stretch="Fill"/>
                                         </Grid>
                                         <ControlTemplate.Triggers>
                                             <Trigger Property="IsMouseOver" Value="True">
@@ -386,6 +398,8 @@
                           Canvas.Left="10" Focusable="False" IsTabStop="False" VerticalContentAlignment="Center"/>
 
                 <Button x:Name="btnRefreshCharacters" Height="24" Width="24" 
+                        AutomationProperties.AutomationId="Main.OpenCharacterFolderVisualizer"
+                        AutomationProperties.Name="Open Character Folder Visualizer"
                         BorderBrush="{x:Null}" Foreground="{x:Null}" Padding="0"
                         Canvas.Left="485" Canvas.Top="603"
                         Click="btnCharacterFolderVisualizer_Click"
@@ -396,7 +410,7 @@
                                 <Setter.Value>
                                     <ControlTemplate TargetType="{x:Type Button}">
                                         <Grid>
-                                            <Image x:Name="ButtonImage" Source="/Resources/Buttons/smallFolder.png" Stretch="Fill"/>
+                                            <Image x:Name="ButtonImage" Source="pack://application:,,,/OceanyaClient;component/Resources/Buttons/smallFolder.png" Stretch="Fill"/>
                                         </Grid>
                                         <ControlTemplate.Triggers>
                                             <Trigger Property="IsMouseOver" Value="True">
@@ -429,6 +443,8 @@
                     Canvas.Left="229" Focusable="False" IsTabStop="False" VerticalContentAlignment="Center" HorizontalAlignment="Center" VerticalAlignment="Top"/>
 
                 <Button x:Name="btnAreaNavigator"
+                        AutomationProperties.AutomationId="Main.AreaNavigator.Open"
+                        AutomationProperties.Name="Area Navigator"
                         Width="24"
                         Height="24"
                         Canvas.Left="458"
@@ -439,6 +455,7 @@
                         ToolTip="Area Navigator"/>
 
                 <Popup x:Name="AreaNavigatorPopup"
+                       AutomationProperties.AutomationId="Main.AreaNavigator.Popup"
                        PlacementTarget="{Binding ElementName=btnAreaNavigator}"
                        Placement="Top"
                        StaysOpen="False"
@@ -450,7 +467,11 @@
                         <StackPanel Width="260">
                             <TextBlock Text="Area Navigator" Foreground="White" FontWeight="Bold" Margin="0,0,0,4"/>
                             <TextBlock x:Name="txtCurrentArea" Text="Current: Unknown" Foreground="White" Margin="0,0,0,6"/>
-                            <ListBox x:Name="lstAreas" Height="210" Margin="0,0,0,6" MouseDoubleClick="lstAreas_MouseDoubleClick">
+                            <ListBox x:Name="lstAreas"
+                                     AutomationProperties.AutomationId="Main.AreaNavigator.List"
+                                     Height="210"
+                                     Margin="0,0,0,6"
+                                     MouseDoubleClick="lstAreas_MouseDoubleClick">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
                                         <Border Margin="0,0,0,4"
@@ -479,6 +500,7 @@
                             </ListBox>
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                                 <Button x:Name="btnGoToArea"
+                                        AutomationProperties.AutomationId="Main.AreaNavigator.Go"
                                         Content="Go"
                                         Click="btnGoToArea_Click"/>
                             </StackPanel>
@@ -497,7 +519,7 @@
                                         <Grid>
                                             <Rectangle x:Name="ButtonImage" Stretch="Fill" Fill="#FF36393F">
                                                 <Rectangle.OpacityMask>
-                                                    <ImageBrush ImageSource="/Resources/Buttons/Ding.png"/>
+                                                    <ImageBrush ImageSource="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Ding.png"/>
                                                 </Rectangle.OpacityMask>
                                             </Rectangle>
                                         </Grid>

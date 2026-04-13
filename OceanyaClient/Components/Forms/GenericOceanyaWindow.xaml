@@ -76,6 +76,16 @@
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
+                <TextBlock x:Name="AutomationReadyMarker"
+                           Width="1"
+                           Height="1"
+                           Opacity="0.01"
+                           IsHitTestVisible="False"
+                           Focusable="False"
+                           HorizontalAlignment="Left"
+                           VerticalAlignment="Top"
+                           AutomationProperties.AutomationId="{x:Static local:OceanyaWindowContentControl.AutomationReadyMarkerAutomationId}"/>
+
                 <Border Grid.Row="0" Background="#CC000000" MouseLeftButtonDown="DragWindow">
                     <Grid x:Name="HeaderGrid">
                         <Rectangle x:Name="OceanyaLogoRectangle"

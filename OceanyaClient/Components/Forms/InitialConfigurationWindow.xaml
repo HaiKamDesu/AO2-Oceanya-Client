@@ -227,10 +227,12 @@
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <TextBox x:Name="ConfigINIPathTextBox"
+                             AutomationProperties.AutomationId="InitialConfig.ConfigIniPath"
                              Grid.Column="0"
                              Style="{StaticResource ModernTextBox}"
                              Background="#FF262626"/>
                     <Button x:Name="BrowseButton"
+                            AutomationProperties.AutomationId="InitialConfig.BrowseConfigIni"
                             Content="Browse"
                             Grid.Column="1"
                             Style="{StaticResource ModernButton}"
@@ -241,6 +243,7 @@
 
                 <TextBlock Text="FUNCTIONALITY" Style="{StaticResource LabelText}"/>
                 <ComboBox x:Name="StartupFunctionalityComboBox"
+                          AutomationProperties.AutomationId="InitialConfig.StartupFunctionality"
                           Style="{StaticResource DarkComboBoxStyle}"
                           SelectionChanged="StartupFunctionalityComboBox_SelectionChanged"
                           DisplayMemberPath="DisplayName"
@@ -254,12 +257,14 @@
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <TextBox x:Name="SelectedServerTextBox"
+                                 AutomationProperties.AutomationId="InitialConfig.SelectedServerText"
                                  Grid.Column="0"
                                  Style="{StaticResource ModernTextBox}"
                                  Background="#FF262626"
                                  IsReadOnly="True"
                                  Text="No server selected."/>
                         <Button x:Name="SelectServerButton"
+                                AutomationProperties.AutomationId="InitialConfig.SelectServer"
                                 Grid.Column="1"
                                 Content="Select..."
                                 Width="100"
@@ -270,12 +275,14 @@
                 </StackPanel>
 
                 <CheckBox x:Name="RefreshInfoCheckBox"
+                          AutomationProperties.AutomationId="InitialConfig.RefreshAssets"
                           Content="Refresh character and background info"
                           Style="{StaticResource ModernCheckBox}"
                           Margin="0,10,0,0"/>
 
                 <StackPanel x:Name="MultiClientSingleClientPanel">
                     <CheckBox x:Name="UseSingleClientCheckBox"
+                              AutomationProperties.AutomationId="InitialConfig.UseSingleInternalClient"
                               Content="Use only one internal client"
                               Style="{StaticResource ModernCheckBox}"
                               IsChecked="True"
@@ -283,6 +290,7 @@
                 </StackPanel>
 
                 <Button x:Name="OkButton"
+                        AutomationProperties.AutomationId="InitialConfig.Launch"
                         Content="Launch"
                         Style="{StaticResource ModernButton}"
                         Width="220"

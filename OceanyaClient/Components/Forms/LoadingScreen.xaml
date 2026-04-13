@@ -53,7 +53,7 @@
                        HorizontalAlignment="Center" Width="400" Height="300" 
                        VerticalAlignment="Center">
                 <Rectangle.Fill>
-                    <ImageBrush ImageSource="/Resources/scoienceblur.jpg" Opacity="0.5"/>
+                    <ImageBrush ImageSource="pack://application:,,,/OceanyaClient;component/Resources/scoienceblur.jpg" Opacity="0.5"/>
                 </Rectangle.Fill>
             </Rectangle>
 

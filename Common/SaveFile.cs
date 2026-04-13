@@ -383,11 +383,12 @@ namespace OceanyaClient
 
     public static class SaveFile
     {
-        private static readonly string saveFilePath = Path.Combine(
+        private static readonly string defaultSaveFilePath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "OceanyaClient",
             "savefile.json"
         );
+        private static string saveFilePath = defaultSaveFilePath;
 
         private static SaveData _data = new SaveData();
 
@@ -404,6 +405,29 @@ namespace OceanyaClient
                 _data = value;
                 Save();
             }
+        }
+
+        public static string CurrentStoragePath => saveFilePath;
+
+        public static void ConfigureStoragePathForTests(string path)
+        {
+            saveFilePath = string.IsNullOrWhiteSpace(path) ? defaultSaveFilePath : path.Trim();
+            Load();
+        }
+
+        public static void ResetForTests(SaveData? seed = null, bool persist = true)
+        {
+            _data = seed ?? new SaveData();
+            NormalizeLoadedData(_data);
+            if (persist)
+            {
+                Save();
+            }
+        }
+
+        public static void ReloadFromDiskForTests()
+        {
+            Load();
         }
 
         public static SaveData LoadSnapshotFromDisk()

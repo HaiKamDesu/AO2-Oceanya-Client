@@ -427,6 +427,7 @@ namespace OceanyaClient
         {
             ApplyWorkAreaMaxBounds();
             RefreshChatPreview();
+            MarkAutomationReady();
             FinishedLoading?.Invoke();
         }
 

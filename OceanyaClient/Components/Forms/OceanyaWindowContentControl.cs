@@ -2,6 +2,7 @@ using System;
 using System.ComponentModel;
 using System.Runtime;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Media;
@@ -13,6 +14,30 @@ namespace OceanyaClient
     /// </summary>
     public abstract class OceanyaWindowContentControl : UserControl
     {
+        /// <summary>
+        /// Shared automation id used by the hidden ready marker hosted inside <see cref="GenericOceanyaWindow"/>.
+        /// </summary>
+        public static string AutomationReadyMarkerAutomationId => "Oceanya.ReadyMarker";
+
+        /// <summary>
+        /// Default ready-state value used while content is still loading.
+        /// </summary>
+        public static string AutomationReadyStateLoading => "Loading";
+
+        /// <summary>
+        /// Ready-state value used once content has completed its deterministic startup work.
+        /// </summary>
+        public static string AutomationReadyStateReady => "Ready";
+
+        /// <summary>
+        /// Automation-ready state exposed to the shared host chrome and UI automation.
+        /// </summary>
+        public static readonly DependencyProperty AutomationReadyStateProperty = DependencyProperty.Register(
+            nameof(AutomationReadyState),
+            typeof(string),
+            typeof(OceanyaWindowContentControl),
+            new PropertyMetadata(AutomationReadyStateLoading, OnAutomationReadyStateChanged));
+
         private Window? hostWindow;
         private Window? pendingOwner;
         private bool suppressHostCloseNotification;
@@ -78,6 +103,15 @@ namespace OceanyaClient
         /// Gets the current host window instance, if attached.
         /// </summary>
         public Window? HostWindow => hostWindow ?? Window.GetWindow(this);
+
+        /// <summary>
+        /// Gets or sets the current automation-ready state for this hosted content.
+        /// </summary>
+        public string AutomationReadyState
+        {
+            get => (string)GetValue(AutomationReadyStateProperty);
+            set => SetValue(AutomationReadyStateProperty, value);
+        }
 
         /// <summary>
         /// Gets or sets the window title used by the host.
@@ -347,6 +381,8 @@ namespace OceanyaClient
             {
                 hostWindow.WindowState = pendingWindowState.Value;
             }
+
+            ApplyAutomationReadyStateDecorations(AutomationReadyState);
         }
 
         internal void DetachHost(Window window)
@@ -395,6 +431,52 @@ namespace OceanyaClient
             Closed?.Invoke(sender, e);
             ReleaseVisualResourcesForHostClose(this);
             ForceManagedCleanupAfterClose();
+        }
+
+        /// <summary>
+        /// Resets the automation-ready state to <c>Loading</c>.
+        /// </summary>
+        protected void ResetAutomationReadyState()
+        {
+            AutomationReadyState = AutomationReadyStateLoading;
+        }
+
+        /// <summary>
+        /// Marks the hosted content as automation-ready.
+        /// </summary>
+        protected void MarkAutomationReady()
+        {
+            AutomationReadyState = AutomationReadyStateReady;
+        }
+
+        private static void OnAutomationReadyStateChanged(DependencyObject dependencyObject, DependencyPropertyChangedEventArgs e)
+        {
+            if (dependencyObject is OceanyaWindowContentControl control)
+            {
+                string state = e.NewValue as string ?? AutomationReadyStateLoading;
+                control.ApplyAutomationReadyStateDecorations(state);
+            }
+        }
+
+        private void ApplyAutomationReadyStateDecorations(string state)
+        {
+            string normalizedState = string.IsNullOrWhiteSpace(state) ? AutomationReadyStateLoading : state.Trim();
+            ApplyAutomationReadyStateDecorations(this, normalizedState);
+
+            if (HostWindow != null)
+            {
+                ApplyAutomationReadyStateDecorations(HostWindow, normalizedState);
+                if (HostWindow is GenericOceanyaWindow genericWindow)
+                {
+                    genericWindow.UpdateAutomationReadyMarker(normalizedState);
+                }
+            }
+        }
+
+        private static void ApplyAutomationReadyStateDecorations(DependencyObject target, string state)
+        {
+            AutomationProperties.SetItemStatus(target, state);
+            AutomationProperties.SetHelpText(target, state);
         }
 
         private OceanyaWindowPresentationOptions BuildDefaultPresentationOptions(bool modal)

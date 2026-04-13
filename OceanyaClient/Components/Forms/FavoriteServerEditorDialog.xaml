@@ -105,6 +105,7 @@
         <StackPanel Grid.Row="1" Margin="0,0,0,12">
             <TextBlock Text="SERVER NAME" Style="{StaticResource FieldLabelStyle}"/>
             <TextBox x:Name="ServerNameTextBox"
+                     AutomationProperties.AutomationId="FavoriteServer.Name"
                      Style="{StaticResource ModernTextBox}"
                      Background="#FF262626"/>
             <TextBlock Text="Use a short label that is easy to recognize from the launch screen."
@@ -114,6 +115,7 @@
         <StackPanel Grid.Row="2" Margin="0,0,0,12">
             <TextBlock Text="SERVER ENDPOINT" Style="{StaticResource FieldLabelStyle}"/>
             <TextBox x:Name="ServerEndpointTextBox"
+                     AutomationProperties.AutomationId="FavoriteServer.Endpoint"
                      Style="{StaticResource ModernTextBox}"
                      Background="#FF262626"/>
             <TextBlock Text="Examples: tcp://127.0.0.1:27016, ws://127.0.0.1:27016, or wss://example.com:443"
@@ -123,6 +125,7 @@
         <StackPanel Grid.Row="3">
             <TextBlock Text="DESCRIPTION" Style="{StaticResource FieldLabelStyle}"/>
             <TextBox x:Name="ServerDescriptionTextBox"
+                     AutomationProperties.AutomationId="FavoriteServer.Description"
                      Style="{StaticResource DescriptionTextBox}"
                      Background="#FF262626"/>
             <TextBlock Text="Optional notes for the server list. URLs remain clickable from the selection popup."
@@ -148,6 +151,7 @@
                     Style="{StaticResource ModernButton}"
                     Click="CancelButton_Click"/>
             <Button x:Name="ActionButton"
+                    AutomationProperties.AutomationId="FavoriteServer.Save"
                     Grid.Column="2"
                     Content="SAVE"
                     Style="{StaticResource ModernButton}"
