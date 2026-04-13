@@ -1,0 +1,141 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="ade6a164-6301-4653-a67e-339256e6a226" name="Usuario@KAM-DESKTOP-PC 2026-04-13 00:14:28" runUser="KAM-DESKTOP-PC\Usuario" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-04-13T00:14:28.9337254-03:00" queuing="2026-04-13T00:14:28.9337257-03:00" start="2026-04-13T00:14:16.9110291-03:00" finish="2026-04-13T00:14:45.4378467-03:00" />
+  <TestSettings name="default" id="9a5b8a1d-a43c-449d-a7db-2f75d571b6a5">
+    <Deployment runDeploymentRoot="Usuario_KAM-DESKTOP-PC_2026-04-13_00_14_28" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="63438b6f-5ee3-4937-8911-d366981ea027" testId="a32a259f-d622-61bf-3f2d-e06a09505fa3" testName="OnlineConnect_HandshakePacketSequence_IsAo2Compliant" computerName="KAM-DESKTOP-PC" duration="00:00:11.5454990" startTime="2026-04-13T00:14:17.3516785-03:00" endTime="2026-04-13T00:14:28.8971318-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="63438b6f-5ee3-4937-8911-d366981ea027">
+      <Output>
+        <StdOut>[Online] Server received 9 packet(s):&#xD;
+  HI#5dc1d6cf-7688-4287-9aeb-da01100d0798#%&#xD;
+  ID#AO2#2.11.0#%&#xD;
+  askchaa#%&#xD;
+  RC#%&#xD;
+  RM#%&#xD;
+  RD#%&#xD;
+  CT#HandshakeClient##%&#xD;
+  CH#1#%&#xD;
+  RM#%&#xD;
+Application failed to exit</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="a4796b8f-70aa-494e-a376-cd237acdb09e" testId="88fb05f3-9fc2-2da7-4d0c-02bdf89e3dce" testName="OnlineOocSend_MessageArrivesAtServer_AsCtPacket" computerName="KAM-DESKTOP-PC" duration="00:00:16.4896509" startTime="2026-04-13T00:14:28.8980851-03:00" endTime="2026-04-13T00:14:45.3877360-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="a4796b8f-70aa-494e-a376-cd237acdb09e">
+      <Output>
+        <StdOut>[Online] Server received 10 packet(s):&#xD;
+  HI#e4ac5421-6031-4313-938b-8626293a0c58#%&#xD;
+  ID#AO2#2.11.0#%&#xD;
+  askchaa#%&#xD;
+  RC#%&#xD;
+  RM#%&#xD;
+  RD#%&#xD;
+  CT#OocTestClient##%&#xD;
+  CH#1#%&#xD;
+  RM#%&#xD;
+  CT#OnlineTest#hello from online lane#%&#xD;
+Application failed to exit</StdOut>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="OnlineConnect_HandshakePacketSequence_IsAo2Compliant" storage="d:\programs\attorney online\rpg\ao2-oceanya-bot\uiautomationtests\bin\debug\net8.0-windows7.0\uiautomationtests.dll" id="a32a259f-d622-61bf-3f2d-e06a09505fa3">
+      <Execution id="63438b6f-5ee3-4937-8911-d366981ea027" />
+      <TestMethod codeBase="D:\Programs\Attorney Online\RPG\AO2-Oceanya-Bot\UiAutomationTests\bin\Debug\net8.0-windows7.0\UiAutomationTests.dll" adapterTypeName="executor://nunit3testexecutor/" className="UiAutomationTests.OnlineLaneTests" name="OnlineConnect_HandshakePacketSequence_IsAo2Compliant" />
+    </UnitTest>
+    <UnitTest name="OnlineOocSend_MessageArrivesAtServer_AsCtPacket" storage="d:\programs\attorney online\rpg\ao2-oceanya-bot\uiautomationtests\bin\debug\net8.0-windows7.0\uiautomationtests.dll" id="88fb05f3-9fc2-2da7-4d0c-02bdf89e3dce">
+      <Execution id="a4796b8f-70aa-494e-a376-cd237acdb09e" />
+      <TestMethod codeBase="D:\Programs\Attorney Online\RPG\AO2-Oceanya-Bot\UiAutomationTests\bin\Debug\net8.0-windows7.0\UiAutomationTests.dll" adapterTypeName="executor://nunit3testexecutor/" className="UiAutomationTests.OnlineLaneTests" name="OnlineOocSend_MessageArrivesAtServer_AsCtPacket" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="a32a259f-d622-61bf-3f2d-e06a09505fa3" executionId="63438b6f-5ee3-4937-8911-d366981ea027" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="88fb05f3-9fc2-2da7-4d0c-02bdf89e3dce" executionId="a4796b8f-70aa-494e-a376-cd237acdb09e" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="2" executed="2" passed="2" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>NUnit Adapter 5.0.0.0: Test execution started&#xD;
+Running selected tests in D:\Programs\Attorney Online\RPG\AO2-Oceanya-Bot\UiAutomationTests\bin\Debug\net8.0-windows7.0\UiAutomationTests.dll&#xD;
+   NUnit3TestExecutor discovered 2 of 2 NUnit test cases using Current Discovery mode, Non-Explicit run&#xD;
+[2026-04-13 00:14:18] ?? Loaded 1 characters from cache.&#xD;
+[2026-04-13 00:14:21] ?? ===========================&#xD;
+[2026-04-13 00:14:21] ?? Connected to AO server via TCP.&#xD;
+[2026-04-13 00:14:21] ?? ===========================&#xD;
+[2026-04-13 00:14:21] ?? Assigned Player ID: 1 | Server Version: tsuserver&#xD;
+[2026-04-13 00:14:21] ?? Server features: fastloading, noencryption [AOClient.cs:504]&#xD;
+[2026-04-13 00:14:21] ?? Server Character List updated.&#xD;
+[2026-04-13 00:14:21] ?? Handshake completed successfully!&#xD;
+[2026-04-13 00:14:21] ?? ===========================&#xD;
+[2026-04-13 00:14:22] ?? Server did not provide CharsCheck during connect. Skipping automatic INI selection. [AOClient.cs:1501]&#xD;
+[2026-04-13 00:14:22] ?? No available INI Puppets to select. [AOClient.cs:1504]&#xD;
+[2026-04-13 00:14:22] ?? ===========================&#xD;
+[2026-04-13 00:14:23] ?? TCP connection lost. Attempting to reconnect... [AOClient.cs:1620]&#xD;
+[2026-04-13 00:14:23] ?? ===========================&#xD;
+[2026-04-13 00:14:25] ? Connection Error [AOClient.cs:666]&#xD;
+[2026-04-13 00:14:25]    Exception: SocketException&#xD;
+[2026-04-13 00:14:25]    Message: No connection could be made because the target machine actively refused it.&#xD;
+[2026-04-13 00:14:25]    Location: unknown:0&#xD;
+[2026-04-13 00:14:25]    Stack: at System.Net.Sockets.Socket.AwaitableSocketAsyncEventArgs.ThrowException(SocketError error, CancellationToken cancellationToken)&#xD;
+[2026-04-13 00:14:25] ? Reconnection attempt 1 failed [AOClient.cs:1389]&#xD;
+[2026-04-13 00:14:25]    Exception: SocketException&#xD;
+[2026-04-13 00:14:25]    Message: No connection could be made because the target machine actively refused it.&#xD;
+[2026-04-13 00:14:25]    Location: unknown:0&#xD;
+[2026-04-13 00:14:25]    Stack: at System.Net.Sockets.Socket.AwaitableSocketAsyncEventArgs.ThrowException(SocketError error, CancellationToken cancellationToken)&#xD;
+[Online] Server received 9 packet(s):&#xD;
+  HI#5dc1d6cf-7688-4287-9aeb-da01100d0798#%&#xD;
+  ID#AO2#2.11.0#%&#xD;
+  askchaa#%&#xD;
+  RC#%&#xD;
+  RM#%&#xD;
+  RD#%&#xD;
+  CT#HandshakeClient##%&#xD;
+  CH#1#%&#xD;
+  RM#%&#xD;
+Application failed to exit&#xD;
+&#xD;
+[2026-04-13 00:14:29] ?? Loaded 1 characters from cache.&#xD;
+[2026-04-13 00:14:32] ?? ===========================&#xD;
+[2026-04-13 00:14:32] ?? Connected to AO server via TCP.&#xD;
+[2026-04-13 00:14:32] ?? ===========================&#xD;
+[2026-04-13 00:14:32] ?? Assigned Player ID: 1 | Server Version: tsuserver&#xD;
+[2026-04-13 00:14:32] ?? Server features: fastloading, noencryption [AOClient.cs:504]&#xD;
+[2026-04-13 00:14:32] ?? Server Character List updated.&#xD;
+[2026-04-13 00:14:32] ?? Handshake completed successfully!&#xD;
+[2026-04-13 00:14:32] ?? ===========================&#xD;
+[2026-04-13 00:14:33] ?? Server did not provide CharsCheck during connect. Skipping automatic INI selection. [AOClient.cs:1501]&#xD;
+[2026-04-13 00:14:33] ?? No available INI Puppets to select. [AOClient.cs:1504]&#xD;
+[2026-04-13 00:14:33] ?? ===========================&#xD;
+[2026-04-13 00:14:40] ?? TCP connection lost. Attempting to reconnect... [AOClient.cs:1620]&#xD;
+[2026-04-13 00:14:40] ?? ===========================&#xD;
+[2026-04-13 00:14:42] ? Connection Error [AOClient.cs:666]&#xD;
+[2026-04-13 00:14:42]    Exception: SocketException&#xD;
+[2026-04-13 00:14:42]    Message: No connection could be made because the target machine actively refused it.&#xD;
+[2026-04-13 00:14:42]    Location: unknown:0&#xD;
+[2026-04-13 00:14:42]    Stack: at System.Net.Sockets.Socket.AwaitableSocketAsyncEventArgs.ThrowException(SocketError error, CancellationToken cancellationToken)&#xD;
+[2026-04-13 00:14:42] ? Reconnection attempt 1 failed [AOClient.cs:1389]&#xD;
+[2026-04-13 00:14:42]    Exception: SocketException&#xD;
+[2026-04-13 00:14:42]    Message: No connection could be made because the target machine actively refused it.&#xD;
+[2026-04-13 00:14:42]    Location: unknown:0&#xD;
+[2026-04-13 00:14:42]    Stack: at System.Net.Sockets.Socket.AwaitableSocketAsyncEventArgs.ThrowException(SocketError error, CancellationToken cancellationToken)&#xD;
+[Online] Server received 10 packet(s):&#xD;
+  HI#e4ac5421-6031-4313-938b-8626293a0c58#%&#xD;
+  ID#AO2#2.11.0#%&#xD;
+  askchaa#%&#xD;
+  RC#%&#xD;
+  RM#%&#xD;
+  RD#%&#xD;
+  CT#OocTestClient##%&#xD;
+  CH#1#%&#xD;
+  RM#%&#xD;
+  CT#OnlineTest#hello from online lane#%&#xD;
+Application failed to exit&#xD;
+&#xD;
+NUnit Adapter 5.0.0.0: Test execution complete&#xD;
+</StdOut>
+    </Output>
+  </ResultSummary>
+</TestRun>

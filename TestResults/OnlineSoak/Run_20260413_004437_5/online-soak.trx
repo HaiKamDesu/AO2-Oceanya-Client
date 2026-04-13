@@ -1,0 +1,115 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="4c4c5201-9427-4a6c-a39d-dbd28821e54c" name="Usuario@KAM-DESKTOP-PC 2026-04-13 00:44:45" runUser="KAM-DESKTOP-PC\Usuario" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-04-13T00:44:45.5925920-03:00" queuing="2026-04-13T00:44:45.5925924-03:00" start="2026-04-13T00:44:38.7176707-03:00" finish="2026-04-13T00:44:56.9194363-03:00" />
+  <TestSettings name="default" id="94497f90-06e5-4a6d-974f-7deb9b7be844">
+    <Deployment runDeploymentRoot="Usuario_KAM-DESKTOP-PC_2026-04-13_00_44_45" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="870adb69-62a3-41d5-bca0-c6e492432b85" testId="a32a259f-d622-61bf-3f2d-e06a09505fa3" testName="OnlineConnect_HandshakePacketSequence_IsAo2Compliant" computerName="KAM-DESKTOP-PC" duration="00:00:06.3886580" startTime="2026-04-13T00:44:39.1640873-03:00" endTime="2026-04-13T00:44:45.5526994-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="870adb69-62a3-41d5-bca0-c6e492432b85">
+      <Output>
+        <StdOut>[Online] Server received 9 packet(s):&#xD;
+  HI#e9e7419f-f233-4e2f-aef8-1de842033acc#%&#xD;
+  ID#AO2#2.11.0#%&#xD;
+  askchaa#%&#xD;
+  RC#%&#xD;
+  RM#%&#xD;
+  RD#%&#xD;
+  CT#HandshakeClient##%&#xD;
+  CH#1#%&#xD;
+  RM#%</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="407eed5d-e14f-4d6f-ad24-6baeb8c7c27c" testId="88fb05f3-9fc2-2da7-4d0c-02bdf89e3dce" testName="OnlineOocSend_MessageArrivesAtServer_AsCtPacket" computerName="KAM-DESKTOP-PC" duration="00:00:11.3078800" startTime="2026-04-13T00:44:45.5535936-03:00" endTime="2026-04-13T00:44:56.8614732-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="407eed5d-e14f-4d6f-ad24-6baeb8c7c27c">
+      <Output>
+        <StdOut>[Online] Server received 10 packet(s):&#xD;
+  HI#44771f1c-237c-4c6c-9583-8676f36f3a66#%&#xD;
+  ID#AO2#2.11.0#%&#xD;
+  askchaa#%&#xD;
+  RC#%&#xD;
+  RM#%&#xD;
+  RD#%&#xD;
+  CT#OocTestClient##%&#xD;
+  CH#1#%&#xD;
+  RM#%&#xD;
+  CT#OnlineTest#hello from online lane#%</StdOut>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="OnlineConnect_HandshakePacketSequence_IsAo2Compliant" storage="d:\programs\attorney online\rpg\ao2-oceanya-bot\uiautomationtests\bin\debug\net8.0-windows7.0\uiautomationtests.dll" id="a32a259f-d622-61bf-3f2d-e06a09505fa3">
+      <Execution id="870adb69-62a3-41d5-bca0-c6e492432b85" />
+      <TestMethod codeBase="D:\Programs\Attorney Online\RPG\AO2-Oceanya-Bot\UiAutomationTests\bin\Debug\net8.0-windows7.0\UiAutomationTests.dll" adapterTypeName="executor://nunit3testexecutor/" className="UiAutomationTests.OnlineLaneTests" name="OnlineConnect_HandshakePacketSequence_IsAo2Compliant" />
+    </UnitTest>
+    <UnitTest name="OnlineOocSend_MessageArrivesAtServer_AsCtPacket" storage="d:\programs\attorney online\rpg\ao2-oceanya-bot\uiautomationtests\bin\debug\net8.0-windows7.0\uiautomationtests.dll" id="88fb05f3-9fc2-2da7-4d0c-02bdf89e3dce">
+      <Execution id="407eed5d-e14f-4d6f-ad24-6baeb8c7c27c" />
+      <TestMethod codeBase="D:\Programs\Attorney Online\RPG\AO2-Oceanya-Bot\UiAutomationTests\bin\Debug\net8.0-windows7.0\UiAutomationTests.dll" adapterTypeName="executor://nunit3testexecutor/" className="UiAutomationTests.OnlineLaneTests" name="OnlineOocSend_MessageArrivesAtServer_AsCtPacket" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="a32a259f-d622-61bf-3f2d-e06a09505fa3" executionId="870adb69-62a3-41d5-bca0-c6e492432b85" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="88fb05f3-9fc2-2da7-4d0c-02bdf89e3dce" executionId="407eed5d-e14f-4d6f-ad24-6baeb8c7c27c" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="2" executed="2" passed="2" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>NUnit Adapter 5.0.0.0: Test execution started&#xD;
+Running selected tests in D:\Programs\Attorney Online\RPG\AO2-Oceanya-Bot\UiAutomationTests\bin\Debug\net8.0-windows7.0\UiAutomationTests.dll&#xD;
+   NUnit3TestExecutor discovered 2 of 2 NUnit test cases using Current Discovery mode, Non-Explicit run&#xD;
+[2026-04-13 00:44:40] ?? Loaded 1 characters from cache.&#xD;
+[2026-04-13 00:44:43] ?? ===========================&#xD;
+[2026-04-13 00:44:43] ?? Connected to AO server via TCP.&#xD;
+[2026-04-13 00:44:43] ?? ===========================&#xD;
+[2026-04-13 00:44:43] ?? Assigned Player ID: 1 | Server Version: tsuserver&#xD;
+[2026-04-13 00:44:43] ?? Server features: fastloading, noencryption [AOClient.cs:504]&#xD;
+[2026-04-13 00:44:43] ?? Server Character List updated.&#xD;
+[2026-04-13 00:44:43] ?? Handshake completed successfully!&#xD;
+[2026-04-13 00:44:43] ?? ===========================&#xD;
+[2026-04-13 00:44:44] ?? Server did not provide CharsCheck during connect. Skipping automatic INI selection. [AOClient.cs:1501]&#xD;
+[2026-04-13 00:44:44] ?? No available INI Puppets to select. [AOClient.cs:1504]&#xD;
+[2026-04-13 00:44:44] ?? ===========================&#xD;
+[2026-04-13 00:44:45] ?? TCP connection lost. Attempting to reconnect... [AOClient.cs:1620]&#xD;
+[2026-04-13 00:44:45] ?? ===========================&#xD;
+[Online] Server received 9 packet(s):&#xD;
+  HI#e9e7419f-f233-4e2f-aef8-1de842033acc#%&#xD;
+  ID#AO2#2.11.0#%&#xD;
+  askchaa#%&#xD;
+  RC#%&#xD;
+  RM#%&#xD;
+  RD#%&#xD;
+  CT#HandshakeClient##%&#xD;
+  CH#1#%&#xD;
+  RM#%&#xD;
+&#xD;
+[2026-04-13 00:44:46] ?? Loaded 1 characters from cache.&#xD;
+[2026-04-13 00:44:49] ?? ===========================&#xD;
+[2026-04-13 00:44:49] ?? Connected to AO server via TCP.&#xD;
+[2026-04-13 00:44:49] ?? ===========================&#xD;
+[2026-04-13 00:44:49] ?? Assigned Player ID: 1 | Server Version: tsuserver&#xD;
+[2026-04-13 00:44:49] ?? Server features: fastloading, noencryption [AOClient.cs:504]&#xD;
+[2026-04-13 00:44:49] ?? Server Character List updated.&#xD;
+[2026-04-13 00:44:49] ?? Handshake completed successfully!&#xD;
+[2026-04-13 00:44:49] ?? ===========================&#xD;
+[2026-04-13 00:44:50] ?? Server did not provide CharsCheck during connect. Skipping automatic INI selection. [AOClient.cs:1501]&#xD;
+[2026-04-13 00:44:50] ?? No available INI Puppets to select. [AOClient.cs:1504]&#xD;
+[2026-04-13 00:44:50] ?? ===========================&#xD;
+[Online] Server received 10 packet(s):&#xD;
+  HI#44771f1c-237c-4c6c-9583-8676f36f3a66#%&#xD;
+  ID#AO2#2.11.0#%&#xD;
+  askchaa#%&#xD;
+  RC#%&#xD;
+  RM#%&#xD;
+  RD#%&#xD;
+  CT#OocTestClient##%&#xD;
+  CH#1#%&#xD;
+  RM#%&#xD;
+  CT#OnlineTest#hello from online lane#%&#xD;
+&#xD;
+NUnit Adapter 5.0.0.0: Test execution complete&#xD;
+</StdOut>
+    </Output>
+  </ResultSummary>
+</TestRun>

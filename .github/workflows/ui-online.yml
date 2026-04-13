@@ -1,0 +1,76 @@
+name: UI Online Integration Tests
+
+# Online lane — real AO2 TCP transport via in-process loopback server.
+# Requires an interactive Windows desktop session on a self-hosted runner.
+#
+# ── Runner prerequisites ───────────────────────────────────────────────────────
+#   - Windows 10/11 with an ACTIVE INTERACTIVE DESKTOP SESSION.
+#     UIA3 and SendKeys do not work in headless or Windows Service contexts.
+#   - .NET SDK 8.0 installed and available on PATH.
+#   - Runner registered with labels: self-hosted, windows
+#   - Dedicated desktop during the run — other interactive windows can steal
+#     keyboard focus and cause SendKeys-based tests to fail.
+#
+# ── Relationship to Smoke workflow ────────────────────────────────────────────
+#   Do NOT merge this into ui-smoke.yml. The two lanes have different stability
+#   contracts: Smoke runs on github-hosted windows-latest (no real server needed);
+#   Online requires an interactive self-hosted runner and exercises real TCP.
+# ──────────────────────────────────────────────────────────────────────────────
+on:
+  workflow_dispatch:
+
+jobs:
+  ui-online:
+    runs-on: [self-hosted, windows]
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Verify interactive session
+        shell: pwsh
+        run: |
+          $session = (query session $env:USERNAME 2>$null) -join " "
+          if ($session -notmatch "Active") {
+            Write-Warning "Runner may not be in an interactive desktop session. UIA3/SendKeys tests may be unreliable."
+          } else {
+            Write-Host "Interactive session confirmed."
+          }
+
+      # Build and test must be separate steps — chaining them can cause
+      # lock contention on obj/ output files (see AGENTS.md).
+      - name: Build solution
+        shell: pwsh
+        run: dotnet build "Oceanya Client.sln" --configuration Debug
+
+      - name: Run UI Online integration tests
+        shell: pwsh
+        run: |
+          dotnet test UiAutomationTests/UiAutomationTests.csproj `
+            --configuration Debug `
+            --no-build `
+            --filter "Category=Online" `
+            --logger "trx;LogFileName=ui-online-results.trx" `
+            --results-directory TestResults/UiOnline
+        timeout-minutes: 15
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-online-results
+          path: TestResults/UiOnline/*.trx
+          if-no-files-found: warn
+
+      - name: Upload failure screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-online-screenshots
+          # NUnit WorkDirectory resolves to --results-directory; FlaUiSmokeApp
+          # writes screenshots under WorkDirectory/UiAutomationArtifacts/Screenshots.
+          path: TestResults/UiOnline/UiAutomationArtifacts/Screenshots/
+          if-no-files-found: ignore

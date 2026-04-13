@@ -94,6 +94,10 @@ internal sealed class FlaUiSmokeApp : IDisposable
         }
     }
 
+    /// <summary>
+    /// Attempts a graceful close (WM_CLOSE), waits up to 2 s, then kills if needed.
+    /// Safe for Smoke tests where the app is idle and exits cleanly on close.
+    /// </summary>
     public void Dispose()
     {
         if (disposed)
@@ -139,6 +143,39 @@ internal sealed class FlaUiSmokeApp : IDisposable
                     process.Kill(entireProcessTree: true);
                     process.WaitForExit(2000);
                 }
+            }
+        }
+        catch
+        {
+            // Best-effort kill only.
+        }
+
+        Automation.Dispose();
+    }
+
+    /// <summary>
+    /// Kills the application process immediately without attempting a graceful close.
+    /// Use in Online tests where the loopback server has already closed and the app is
+    /// in an active reconnect loop — a graceful WM_CLOSE would block in FlaUI for
+    /// several seconds and emit "Application failed to exit" trace noise before the
+    /// process is eventually killed anyway.
+    /// </summary>
+    public void KillImmediately()
+    {
+        if (disposed)
+        {
+            return;
+        }
+
+        disposed = true;
+
+        try
+        {
+            using Process process = Process.GetProcessById(App.ProcessId);
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                process.WaitForExit(2000);
             }
         }
         catch

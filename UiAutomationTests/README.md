@@ -83,11 +83,10 @@ Screenshots on test failure are written to `<results-directory>/UiAutomationArti
 **Smoke suite** — see `.github/workflows/ui-smoke.yml`. Runs on `windows-latest` and
 uploads TRX results and failure screenshots. Trigger manually or on `push` to `main`.
 
-**Online lane** — not included in the CI workflow. It is suitable for Windows
-interactive-session runners (including self-hosted) but has higher variance than the
-smoke suite because it exercises real TCP stack behavior. Run it locally or on a
-dedicated self-hosted Windows runner; do not add it to shared CI gating until several
-passes have been observed in a stable environment.
+**Online lane** — see `.github/workflows/ui-online.yml`. Runs on a self-hosted Windows
+runner (labels: `self-hosted`, `windows`). Trigger manually via `workflow_dispatch`.
+The runner must be in an interactive desktop session; see the workflow comments for
+full prerequisites. TRX results and failure screenshots are uploaded as artifacts.
 
 ## Test Infrastructure Notes
 
@@ -103,6 +102,40 @@ passes have been observed in a stable environment.
 - **App cleanup**: `FlaUiSmokeApp.Dispose()` attempts a graceful close, waits up to
   2 seconds, then kills the process tree if needed.
 
+## Soak Procedure (Online Lane)
+
+Run the soak script to validate pass rate on the target machine before
+relying on the self-hosted CI gate:
+
+```powershell
+# From the repo root — build once first, then soak-run 20 iterations.
+dotnet build "Oceanya Client.sln" --configuration Debug
+
+.\UiAutomationTests\soak-online.ps1 -Iterations 20 -Configuration Debug
+```
+
+Results land in `TestResults\OnlineSoak\`. Each iteration gets its own
+timestamped sub-directory with a TRX file and any failure screenshots.
+
+**Target threshold**: 20/20 passes in two separate soak sessions (different
+machines or times of day).
+
+### Soak history
+
+| Session | Machine / context | Result |
+|---|---|---|
+| 2026-04-13 | dev machine, interactive desktop | 20/20 PASS |
+
+## Promotion Criteria (Online → Self-Hosted CI Gate)
+
+| Criterion | Status |
+|---|---|
+| ≥ 20 consecutive passes in two soak runs | One session complete (20/20); second session pending |
+| No timing-related failures on target runner hardware | Met (soak session 1) |
+| Runner is interactive-desktop | Required — UIA3 and `SendKeys` need a visible desktop |
+| Dedicated runner (no focus-steal from other apps) | Required — enforce via runner configuration |
+| Separate `ui-online.yml` workflow (not merged into `ui-smoke.yml`) | **Done** — see `.github/workflows/ui-online.yml` |
+
 ## Known Constraints
 
 - Requires a real Windows interactive session. Not reliable in pure headless/WSL
@@ -111,5 +144,5 @@ passes have been observed in a stable environment.
   control types.
 - OOC/IC Enter-send tests rely on `SendKeys` focus behavior; avoid running other
   interactive windows on top of the test runner.
-- Tests do not validate real AO2 transport — the add-client path uses a test-mode
-  offline stub in `MainWindow.xaml.cs`.
+- The Online lane exercises real TCP transport; the Smoke lane uses a test-mode
+  offline stub (`UseSingleInternalClient: true` in the smoke save file).

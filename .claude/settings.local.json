@@ -12,7 +12,8 @@
       "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" build OceanyaClient/OceanyaClient.csproj -c Debug -v minimal)",
       "Bash(ls *.sln)",
       "Bash(find . -maxdepth 2 -name \"*.sln\")",
-      "Bash(xargs ls:*)"
+      "Bash(xargs ls:*)",
+      "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" build \"Oceanya Client.sln\" --configuration Debug)"
     ]
   },
   "enableAllProjectMcpServers": false

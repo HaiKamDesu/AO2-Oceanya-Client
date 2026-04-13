@@ -36,7 +36,11 @@ public sealed class OnlineLaneTests
             app?.CaptureFailureScreenshot(TestContext.CurrentContext.Test.Name);
         }
 
-        app?.Dispose();
+        // KillImmediately rather than Dispose: the loopback server is already closed
+        // at this point, so a graceful WM_CLOSE would block for several seconds in
+        // FlaUI's internal WaitForExit and emit "Application failed to exit" trace
+        // noise before the process is killed anyway.
+        app?.KillImmediately();
         app = null;
     }
 
@@ -53,7 +57,8 @@ public sealed class OnlineLaneTests
         int port = ((IPEndPoint)listener.LocalEndpoint).Port;
 
         using CancellationTokenSource cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        Task<List<string>> serverTask = Task.Run(() => RunServerAsync(listener, cts.Token));
+        Task<(List<string> Packets, string? ServerError)> serverTask =
+            Task.Run(() => RunServerAsync(listener, cts.Token));
 
         app = FlaUiSmokeApp.Launch(OnlineFixturePaths.BuildArguments(port));
         Window mainWindow = app.WaitForReadyWindow("Main.AddClient");
@@ -63,7 +68,19 @@ public sealed class OnlineLaneTests
         WaitForElementEnabled(mainWindow, "Main.Ooc.Message", expectedEnabled: true);
 
         cts.Cancel();
-        List<string> received = await serverTask;
+        (List<string> received, string? serverError) = await serverTask;
+
+        // Always log received packets so failures show exactly what the server saw.
+        TestContext.WriteLine($"[Online] Server received {received.Count} packet(s):");
+        foreach (string p in received)
+        {
+            TestContext.WriteLine("  " + p);
+        }
+
+        if (serverError != null)
+        {
+            TestContext.WriteLine("[Online] Server error: " + serverError);
+        }
 
         int hiIndex       = received.FindIndex(p => p.StartsWith("HI#", StringComparison.Ordinal));
         int idIndex       = received.FindIndex(p => string.Equals(p, "ID#AO2#2.11.0#%", StringComparison.Ordinal));
@@ -96,7 +113,8 @@ public sealed class OnlineLaneTests
         int port = ((IPEndPoint)listener.LocalEndpoint).Port;
 
         using CancellationTokenSource cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        Task<List<string>> serverTask = Task.Run(() => RunServerAsync(listener, cts.Token));
+        Task<(List<string> Packets, string? ServerError)> serverTask =
+            Task.Run(() => RunServerAsync(listener, cts.Token));
 
         app = FlaUiSmokeApp.Launch(OnlineFixturePaths.BuildArguments(port));
         Window mainWindow = app.WaitForReadyWindow("Main.AddClient");
@@ -108,9 +126,23 @@ public sealed class OnlineLaneTests
         PressEnter(messageBox);
 
         // Allow time for the CT# packet to travel through the loopback transport.
-        await Task.Delay(TimeSpan.FromSeconds(3));
+        // 5 s gives headroom for WPF-dispatch + SendKeys latency on loaded machines;
+        // on a fast machine this completes in well under 1 s.
+        await Task.Delay(TimeSpan.FromSeconds(5));
         cts.Cancel();
-        List<string> received = await serverTask;
+        (List<string> received, string? serverError) = await serverTask;
+
+        // Always log received packets so failures show exactly what the server saw.
+        TestContext.WriteLine($"[Online] Server received {received.Count} packet(s):");
+        foreach (string p in received)
+        {
+            TestContext.WriteLine("  " + p);
+        }
+
+        if (serverError != null)
+        {
+            TestContext.WriteLine("[Online] Server error: " + serverError);
+        }
 
         Assert.That(
             received,
@@ -175,11 +207,12 @@ public sealed class OnlineLaneTests
     // TCP-scheme clients send HI# immediately before the server speaks; the server
     // drains that first before sending decryptor.
 
-    private static async Task<List<string>> RunServerAsync(
+    private static async Task<(List<string> Packets, string? ServerError)> RunServerAsync(
         TcpListener listener,
         CancellationToken cancellationToken)
     {
         List<string> receivedPackets = new List<string>();
+        string? serverError = null;
 
         try
         {
@@ -239,12 +272,14 @@ public sealed class OnlineLaneTests
         {
             // Expected on graceful test shutdown.
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            // Swallow transport teardown noise; test assertions drive the result.
+            // Capture unexpected transport errors so the test body can log them.
+            // Assertions remain the source of truth for pass/fail.
+            serverError = ex.GetType().Name + ": " + ex.Message;
         }
 
-        return receivedPackets;
+        return (receivedPackets, serverError);
     }
 
     private static async Task<string?> ReadPacketAsync(
