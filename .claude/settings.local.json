@@ -13,7 +13,10 @@
       "Bash(ls *.sln)",
       "Bash(find . -maxdepth 2 -name \"*.sln\")",
       "Bash(xargs ls:*)",
-      "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" build \"Oceanya Client.sln\" --configuration Debug)"
+      "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" build \"Oceanya Client.sln\" --configuration Debug)",
+      "Bash(mkdir -p \"/mnt/d/Programs/Attorney Online/RPG/AO2-Oceanya-Bot/.claude/commands\")",
+      "Bash(echo \"exit: $?\")",
+      "Bash(powershell.exe -Command 'Get-ChildItem \"D:\\\\Programs\\\\Attorney Online\\\\RPG\\\\AO2-Oceanya-Bot\\\\.claude\" -Force | Select Name')"
     ]
   },
   "enableAllProjectMcpServers": false
