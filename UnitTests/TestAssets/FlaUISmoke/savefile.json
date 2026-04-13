@@ -1,15 +1,488 @@
 {
-  "ConfigIniPath": "",
+  "ConfigIniPath": "D:\\Programs\\Attorney Online\\RPG\\AO2-Oceanya-Bot\\UnitTests\\TestAssets\\FlaUISmoke\\config.ini",
   "StartupFunctionalityId": "gm_multi_client",
   "UseSingleInternalClient": true,
   "SelectedServerEndpoint": "ws://127.0.0.1:27016",
-  "SelectedServerName": "Smoke Favorite",
+  "SelectedServerName": "ws://127.0.0.1:27016",
+  "CustomServerEndpoints": [],
+  "CustomServerEntries": [],
+  "AdvancedFeatures": {
+    "EnabledFeatures": {}
+  },
+  "DreddBackgroundOverlayOverride": {
+    "OverlayDatabase": [],
+    "SelectedOverlayName": "",
+    "StickyOverlay": false,
+    "MutationCache": []
+  },
+  "AO2AiBot": {
+    "Provider": "Ollama",
+    "OllamaEndpoint": "http://127.0.0.1:11434",
+    "OllamaModel": "llama3.1:8b",
+    "OpenAIModel": "gpt-4o-mini",
+    "OpenAIApiKeyEnvironmentVariable": "OPENAI_API_KEY",
+    "Temperature": 0.2,
+    "MaxTokens": 450,
+    "MaxPromptMessages": 0,
+    "PersonalityPrompt": "",
+    "OllamaContextSize": 16384,
+    "UseOllamaJsonSchema": false
+  },
+  "FileHivemind": {
+    "Connections": [],
+    "GoogleDriveAccounts": [],
+    "LastSelectedGoogleDriveAccountTokenStoreKey": "",
+    "SelectedConnectionId": "",
+    "RunAgentAtStartup": false,
+    "ShowDesktopToasts": true,
+    "DesktopToastPreferenceConfigured": true,
+    "BackgroundStartupPreferenceConfigured": false,
+    "RemotePollIntervalSeconds": 20
+  },
+  "GoogleDriveSync": {
+    "OAuthClientId": "",
+    "OAuthClientSecret": "",
+    "OAuthClientSecretStoreKey": "07d9ec8b8f234e66a1f100f965f9865c",
+    "TokenStoreKey": "c6d3a43234bc48349c952f359ecc5c08",
+    "LastSignedInEmail": "",
+    "LastSignedInDisplayName": "",
+    "RemoteFolderId": "",
+    "RemoteFolderName": "",
+    "LocalFolderPath": "",
+    "IsOceanyaManagedLocalFolder": false,
+    "AutoAddMountPath": true,
+    "MirrorDeletes": true,
+    "UseExistingMountPath": false,
+    "LastSyncUtc": null
+  },
   "OOCName": "SmokeOOC",
+  "StickyEffect": false,
+  "SwitchPosOnIniSwap": false,
+  "InvertICLog": false,
+  "LogMaxMessages": 0,
   "FolderVisualizer": {
-    "SelectedPresetId": ""
+    "SelectedPresetId": "large",
+    "SelectedPresetName": "Grid",
+    "Presets": [
+      {
+        "Id": "details",
+        "Name": "Details",
+        "Mode": 1,
+        "Normal": {
+          "TileWidth": 170,
+          "TileHeight": 182,
+          "IconSize": 18,
+          "NameFontSize": 12,
+          "InternalTilePadding": 2,
+          "ScrollWheelStep": 90,
+          "TilePadding": 8,
+          "TileMargin": 4
+        },
+        "Table": {
+          "RowHeight": 49.66765578635016,
+          "FontSize": 17.29970326409495,
+          "Columns": [
+            {
+              "Key": 0,
+              "IsVisible": true,
+              "Order": 0,
+              "Width": 56
+            },
+            {
+              "Key": 1,
+              "IsVisible": true,
+              "Order": 1,
+              "Width": 61
+            },
+            {
+              "Key": 2,
+              "IsVisible": false,
+              "Order": 2,
+              "Width": 150
+            },
+            {
+              "Key": 3,
+              "IsVisible": true,
+              "Order": 3,
+              "Width": 311.4083086053413
+            },
+            {
+              "Key": 4,
+              "IsVisible": true,
+              "Order": 4,
+              "Width": 260
+            },
+            {
+              "Key": 5,
+              "IsVisible": false,
+              "Order": 5,
+              "Width": 480
+            },
+            {
+              "Key": 6,
+              "IsVisible": false,
+              "Order": 6,
+              "Width": 480
+            },
+            {
+              "Key": 8,
+              "IsVisible": true,
+              "Order": 7,
+              "Width": 93
+            },
+            {
+              "Key": 9,
+              "IsVisible": true,
+              "Order": 8,
+              "Width": 110
+            },
+            {
+              "Key": 7,
+              "IsVisible": true,
+              "Order": 9,
+              "Width": 170
+            },
+            {
+              "Key": 10,
+              "IsVisible": true,
+              "Order": 10,
+              "Width": 900
+            },
+            {
+              "Key": 11,
+              "IsVisible": true,
+              "Order": 11,
+              "Width": 120
+            },
+            {
+              "Key": 12,
+              "IsVisible": true,
+              "Order": 12,
+              "Width": 120
+            }
+          ]
+        }
+      },
+      {
+        "Id": "large",
+        "Name": "Grid",
+        "Mode": 0,
+        "Normal": {
+          "TileWidth": 299.8635014836795,
+          "TileHeight": 295.1394658753709,
+          "IconSize": 39.76261127596439,
+          "NameFontSize": 14.80712166172107,
+          "InternalTilePadding": 0,
+          "ScrollWheelStep": 200.385756676558,
+          "TilePadding": 10,
+          "TileMargin": 4
+        },
+        "Table": {
+          "RowHeight": 34,
+          "FontSize": 13,
+          "Columns": [
+            {
+              "Key": 0,
+              "IsVisible": true,
+              "Order": 0,
+              "Width": 56
+            },
+            {
+              "Key": 1,
+              "IsVisible": true,
+              "Order": 1,
+              "Width": 42
+            },
+            {
+              "Key": 2,
+              "IsVisible": false,
+              "Order": 2,
+              "Width": 150
+            },
+            {
+              "Key": 3,
+              "IsVisible": true,
+              "Order": 3,
+              "Width": 320
+            },
+            {
+              "Key": 4,
+              "IsVisible": true,
+              "Order": 4,
+              "Width": 260
+            },
+            {
+              "Key": 5,
+              "IsVisible": false,
+              "Order": 5,
+              "Width": 460
+            },
+            {
+              "Key": 6,
+              "IsVisible": false,
+              "Order": 6,
+              "Width": 460
+            },
+            {
+              "Key": 7,
+              "IsVisible": true,
+              "Order": 7,
+              "Width": 170
+            },
+            {
+              "Key": 8,
+              "IsVisible": true,
+              "Order": 8,
+              "Width": 110
+            },
+            {
+              "Key": 9,
+              "IsVisible": true,
+              "Order": 9,
+              "Width": 110
+            },
+            {
+              "Key": 10,
+              "IsVisible": true,
+              "Order": 10,
+              "Width": 120
+            },
+            {
+              "Key": 11,
+              "IsVisible": true,
+              "Order": 11,
+              "Width": 120
+            },
+            {
+              "Key": 12,
+              "IsVisible": true,
+              "Order": 12,
+              "Width": 120
+            }
+          ]
+        }
+      }
+    ]
   },
   "EmoteVisualizer": {
-    "SelectedPresetId": ""
+    "SelectedPresetId": "normal",
+    "SelectedPresetName": "Normal",
+    "Presets": [
+      {
+        "Id": "detailed",
+        "Name": "Detailed",
+        "Mode": 1,
+        "Normal": {
+          "TileWidth": 170,
+          "TileHeight": 182,
+          "IconSize": 18,
+          "NameFontSize": 12,
+          "InternalTilePadding": 2,
+          "ScrollWheelStep": 90,
+          "TilePadding": 8,
+          "TileMargin": 4
+        },
+        "Table": {
+          "RowHeight": 69.19881305637982,
+          "FontSize": 24.952522255192875,
+          "Columns": [
+            {
+              "Key": 1,
+              "IsVisible": true,
+              "Order": 0,
+              "Width": 59.831157270029664
+            },
+            {
+              "Key": 0,
+              "IsVisible": true,
+              "Order": 1,
+              "Width": 81
+            },
+            {
+              "Key": 2,
+              "IsVisible": true,
+              "Order": 2,
+              "Width": 367.53234421364976
+            },
+            {
+              "Key": 3,
+              "IsVisible": true,
+              "Order": 3,
+              "Width": 86
+            },
+            {
+              "Key": 4,
+              "IsVisible": true,
+              "Order": 4,
+              "Width": 101
+            },
+            {
+              "Key": 5,
+              "IsVisible": false,
+              "Order": 5,
+              "Width": 320
+            },
+            {
+              "Key": 6,
+              "IsVisible": false,
+              "Order": 6,
+              "Width": 320
+            },
+            {
+              "Key": 7,
+              "IsVisible": true,
+              "Order": 7,
+              "Width": 110
+            },
+            {
+              "Key": 8,
+              "IsVisible": false,
+              "Order": 8,
+              "Width": 320
+            },
+            {
+              "Key": 9,
+              "IsVisible": false,
+              "Order": 9,
+              "Width": 320
+            }
+          ]
+        }
+      },
+      {
+        "Id": "normal",
+        "Name": "Normal",
+        "Mode": 0,
+        "Normal": {
+          "TileWidth": 400.2225519287834,
+          "TileHeight": 357.15133531157267,
+          "IconSize": 48,
+          "NameFontSize": 18.293768545994062,
+          "InternalTilePadding": 0,
+          "ScrollWheelStep": 90,
+          "TilePadding": 2,
+          "TileMargin": 4
+        },
+        "Table": {
+          "RowHeight": 58,
+          "FontSize": 13,
+          "Columns": [
+            {
+              "Key": 0,
+              "IsVisible": true,
+              "Order": 0,
+              "Width": 40
+            },
+            {
+              "Key": 1,
+              "IsVisible": true,
+              "Order": 1,
+              "Width": 230
+            },
+            {
+              "Key": 2,
+              "IsVisible": true,
+              "Order": 2,
+              "Width": 110
+            },
+            {
+              "Key": 3,
+              "IsVisible": true,
+              "Order": 3,
+              "Width": 110
+            },
+            {
+              "Key": 4,
+              "IsVisible": false,
+              "Order": 4,
+              "Width": 320
+            },
+            {
+              "Key": 5,
+              "IsVisible": false,
+              "Order": 5,
+              "Width": 320
+            },
+            {
+              "Key": 6,
+              "IsVisible": false,
+              "Order": 6,
+              "Width": 320
+            },
+            {
+              "Key": 7,
+              "IsVisible": true,
+              "Order": 7,
+              "Width": 110
+            },
+            {
+              "Key": 8,
+              "IsVisible": false,
+              "Order": 8,
+              "Width": 320
+            },
+            {
+              "Key": 9,
+              "IsVisible": false,
+              "Order": 9,
+              "Width": 320
+            }
+          ]
+        }
+      }
+    ]
   },
-  "PopupWindowStates": {}
+  "FolderVisualizerWindowState": {
+    "Width": 980,
+    "Height": 690,
+    "Left": null,
+    "Top": null,
+    "IsMaximized": false
+  },
+  "EmoteVisualizerWindowState": {
+    "Width": 980,
+    "Height": 690,
+    "Left": null,
+    "Top": null,
+    "IsMaximized": false
+  },
+  "CharacterCreatorWindowState": {
+    "Width": 1220,
+    "Height": 760,
+    "Left": null,
+    "Top": null,
+    "IsMaximized": false
+  },
+  "CharacterCreatorPreviewVolume": 1,
+  "CharacterCreatorEmoteTileWidth": 420,
+  "CharacterCreatorEmoteTileHeight": 430,
+  "CharacterCreatorCuttingPreviewHeight": 170,
+  "CharacterCreatorViewImageBounds": false,
+  "LoopEmoteVisualizerAnimations": true,
+  "ViewFolderIntegrityVerifierResults": false,
+  "CharacterFolderPreviewEmoteOverrides": {},
+  "CharacterFolderTags": {},
+  "CharacterFolderActiveTagFilters": [],
+  "CharacterFolderTagPanelWidth": 260,
+  "CharacterFolderTagPanelCollapsed": false,
+  "PopupWindowStates": {
+    "OceanyaClient.GenericOceanyaWindow|Character Folder Visualizer": {
+      "Width": 982,
+      "Height": 722,
+      "Left": 469,
+      "Top": 179,
+      "IsMaximized": false
+    },
+    "OceanyaClient.GenericOceanyaWindow|Select Server": {
+      "Width": 762,
+      "Height": 622,
+      "Left": 579,
+      "Top": 229,
+      "IsMaximized": false
+    }
+  },
+  "CharacterCreatorCutSelections": {},
+  "CharacterCreatorButtonBackgroundPresets": [],
+  "CharacterCreatorButtonEffectPresets": [],
+  "CharacterCreatorLastBulkButtonIconConfig": null
 }

@@ -51,6 +51,7 @@ namespace OceanyaClient
         private async void Window_Loaded(object sender, RoutedEventArgs e)
         {
             await RefreshServersAsync(selectEndpoint: initiallySelectedEndpoint);
+            MarkAutomationReady();
         }
 
         private async void RefreshPollButton_Click(object sender, RoutedEventArgs e)
@@ -267,7 +268,7 @@ namespace OceanyaClient
 
         private void ServerListView_MouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
-            if (GetCurrentSelection() is not ServerEndpointDefinition selected || !selected.IsSelectable)
+            if (GetCurrentSelection() is not ServerEndpointDefinition selected || !IsSelectableForCurrentMode(selected))
             {
                 return;
             }
@@ -590,7 +591,7 @@ namespace OceanyaClient
 
         private void SelectButton_Click(object sender, RoutedEventArgs e)
         {
-            if (GetCurrentSelection() is not ServerEndpointDefinition selected || !selected.IsSelectable)
+            if (GetCurrentSelection() is not ServerEndpointDefinition selected || !IsSelectableForCurrentMode(selected))
             {
                 return;
             }
@@ -1088,7 +1089,7 @@ namespace OceanyaClient
             EditFavoriteButton.IsEnabled = canManageFavorite;
             RemoveFavoriteButton.IsEnabled = canManageFavorite;
 
-            bool canSelect = hasSelection && selected!.IsSelectable;
+            bool canSelect = hasSelection && IsSelectableForCurrentMode(selected!);
             SelectButton.IsEnabled = canSelect;
 
             if (!hasSelection)
@@ -1100,18 +1101,32 @@ namespace OceanyaClient
                 return;
             }
 
-            string selectionState = selected!.IsSelectable
+            bool isSelectable = IsSelectableForCurrentMode(selected!);
+
+            string selectionState = isSelectable
                 ? "Selectable"
                 : "Not selectable";
 
             SelectionSummaryTextBlock.Text = $"{selected.SourceDisplayName} | {selected.AvailabilityText} | {selectionState}";
             SelectedEndpointTextBlock.Text = selected.Endpoint;
-            NotSelectableReasonTextBlock.Text = selected.IsSelectable
+            NotSelectableReasonTextBlock.Text = isSelectable
                 ? string.Empty
                 : ServerEndpointCatalog.GetNotSelectableReason(selected);
             SetDescriptionWithLinks(string.IsNullOrWhiteSpace(selected.Description)
                 ? "No description provided."
                 : selected.Description);
+        }
+
+        private static bool IsSelectableForCurrentMode(ServerEndpointDefinition selected)
+        {
+            if (selected.IsSelectable)
+            {
+                return true;
+            }
+
+            return OceanyaTestMode.Current.IsEnabled
+                && OceanyaTestMode.Current.SkipServerValidation
+                && selected.SupportsDirectConnection;
         }
 
         private void SetDescriptionWithLinks(string description)
