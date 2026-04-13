@@ -29,9 +29,9 @@ Use this file as the first stop before broad repository searches. It should poin
 - Main code: `OceanyaClient/Features/FileHivemind/*`, `OceanyaHivemindAgent/Program.cs`, `Common/SaveFile.cs`
 - Notes: Background agent lifecycle, saved connection state, and parent/child shutdown signaling live here.
 
-## UI Automation Smoke Tests
+## UI Automation Tests (Smoke + Online)
 - Doc: `UiAutomationTests/README.md`
-- Main code: `UiAutomationTests/FirstWaveSmokeTests.cs`, `UiAutomationTests/FlaUiSmokeApp.cs`, `UiAutomationTests/SmokeFixturePaths.cs`
-- Fixture assets: `UnitTests/TestAssets/FlaUISmoke/`
-- CI: `.github/workflows/ui-smoke.yml`
-- Notes: FlaUI UIA3 offline smoke suite. 10 tests tagged `[Category("Smoke")]`. Requires interactive Windows desktop. Filter: `--filter "Category=Smoke"`. Readiness polling via `Oceanya.ReadyMarker` descendant. Screenshots on failure in `<results-dir>/UiAutomationArtifacts/Screenshots/`.
+- Main code: `UiAutomationTests/FirstWaveSmokeTests.cs`, `UiAutomationTests/OnlineLaneTests.cs`, `UiAutomationTests/FlaUiSmokeApp.cs`, `UiAutomationTests/SmokeFixturePaths.cs`, `UiAutomationTests/OnlineFixturePaths.cs`
+- Fixture assets: `UnitTests/TestAssets/FlaUISmoke/` (smoke + shared), `UnitTests/TestAssets/FlaUIOnline/` (online savefile)
+- CI: `.github/workflows/ui-smoke.yml` (Smoke only; Online is local/self-hosted only)
+- Notes: Two categories. **Smoke** (10 tests, `[Category("Smoke")]`): offline, deterministic, CI-safe on windows-latest. **Online** (2 tests, `[Category("Online")]`): spins up an in-process AO2-compatible TCP server, validates real handshake packet sequence and OOC send transport. Requires interactive Windows desktop for both. Readiness polling via `Oceanya.ReadyMarker` descendant. Screenshots on failure in `<results-dir>/UiAutomationArtifacts/Screenshots/`.

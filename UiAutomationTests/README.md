@@ -1,23 +1,29 @@
-# UiAutomationTests — Smoke Suite
+# UiAutomationTests — Smoke and Online Lanes
 
-FlaUI UIA3-based UI automation tests for OceanyaClient. All tests are offline and
-deterministic — no real AO2 server connection is made. Tests use seeded fixture
-data under `UnitTests/TestAssets/FlaUISmoke/`.
+FlaUI UIA3-based UI automation tests for OceanyaClient. Tests are organized into
+two categories:
 
-## Category
+| Category | Transport | Fixture | Description |
+|---|---|---|---|
+| `Smoke` | Offline (stubbed) | `UnitTests/TestAssets/FlaUISmoke/` | Deterministic regression suite; no real server needed |
+| `Online` | Real TCP (in-process server) | `UnitTests/TestAssets/FlaUIOnline/` + FlaUISmoke shared | Integration lane; validates real AO2 packet flow |
 
-All tests carry `[Category("Smoke")]`. Use this category filter to run only the smoke
-suite without touching the rest of the solution's unit tests.
+## Categories
+
+| Category | Attribute | Filter |
+|---|---|---|
+| Smoke | `[Category("Smoke")]` | `--filter "Category=Smoke"` |
+| Online | `[Category("Online")]` | `--filter "Category=Online"` |
 
 ## Prerequisites
 
-| Requirement | Details |
-|---|---|
-| OS | Windows with an interactive desktop session. Tests use FlaUI UIA3 which needs a visible desktop. WSL-only headless execution is not supported. |
-| .NET SDK | 8.0 |
-| Build | OceanyaClient must be built in `Debug` configuration before running tests. The test harness launches `OceanyaClient/bin/Debug/net8.0-windows/OceanyaClient.exe`. |
-| Screen resolution | Any; screenshots are full-screen captures of the primary display. |
-| No AO2 server | The tests pass `--test-mode` startup args that skip all network connections. |
+| Requirement | Smoke | Online |
+|---|---|---|
+| OS — interactive Windows desktop | Required | Required |
+| .NET SDK 8.0 | Required | Required |
+| OceanyaClient built in `Debug` | Required | Required |
+| Real AO2 server | Not needed | Not needed — uses in-process TCP server |
+| Loopback TCP available | Not needed | Required (standard on all platforms) |
 
 ## Running Locally
 
@@ -30,21 +36,31 @@ lock contention on `obj/` files.
 # 1. Build
 dotnet build "Oceanya Client.sln" --configuration Debug
 
-# 2. Run only the smoke suite
+# 2a. Run only the smoke suite
 dotnet test UiAutomationTests/UiAutomationTests.csproj `
     --configuration Debug `
     --no-build `
     --filter "Category=Smoke"
+
+# 2b. Run only the online lane
+dotnet test UiAutomationTests/UiAutomationTests.csproj `
+    --configuration Debug `
+    --no-build `
+    --filter "Category=Online"
 ```
 
 On WSL, replace `dotnet` with the full path:
 
 ```bash
 /mnt/c/Program\ Files/dotnet/dotnet.exe build "Oceanya Client.sln" --configuration Debug
+
+# Smoke
 /mnt/c/Program\ Files/dotnet/dotnet.exe test UiAutomationTests/UiAutomationTests.csproj \
-    --configuration Debug \
-    --no-build \
-    --filter "Category=Smoke"
+    --configuration Debug --no-build --filter "Category=Smoke"
+
+# Online
+/mnt/c/Program\ Files/dotnet/dotnet.exe test UiAutomationTests/UiAutomationTests.csproj \
+    --configuration Debug --no-build --filter "Category=Online"
 ```
 
 ### Collecting artifacts locally
@@ -64,10 +80,14 @@ Screenshots on test failure are written to `<results-directory>/UiAutomationArti
 
 ## Running in CI
 
-The workflow `.github/workflows/ui-smoke.yml` runs on `windows-latest` (which has an
-interactive desktop session) and uploads both TRX results and failure screenshots as
-artifacts. Trigger it manually from the Actions tab, or it fires automatically on `push`
-to `main` when relevant files change.
+**Smoke suite** — see `.github/workflows/ui-smoke.yml`. Runs on `windows-latest` and
+uploads TRX results and failure screenshots. Trigger manually or on `push` to `main`.
+
+**Online lane** — not included in the CI workflow. It is suitable for Windows
+interactive-session runners (including self-hosted) but has higher variance than the
+smoke suite because it exercises real TCP stack behavior. Run it locally or on a
+dedicated self-hosted Windows runner; do not add it to shared CI gating until several
+passes have been observed in a stable environment.
 
 ## Test Infrastructure Notes
 
