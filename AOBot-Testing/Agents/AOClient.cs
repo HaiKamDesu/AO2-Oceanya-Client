@@ -380,6 +380,18 @@ namespace AOBot_Testing.Agents
                 CustomConsole.Error("Server connection is not active. Cannot switch rooms.");
             }
         }
+
+        /// <summary>
+        /// Applies deterministic local area state without requiring a live transport connection.
+        /// </summary>
+        /// <param name="currentAreaName">Current area to expose.</param>
+        /// <param name="areas">Available area names to expose.</param>
+        public void ApplyAreaStateForTests(string currentAreaName, IEnumerable<string> areas)
+        {
+            ReplaceAvailableAreas(areas);
+            SetCurrentArea(currentAreaName);
+        }
+
         public void SetCharacter(string characterName)
         {
             CharacterFolder? newChar = CharacterFolder.FullList.FirstOrDefault(c => c.Name == characterName)

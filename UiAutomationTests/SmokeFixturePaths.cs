@@ -21,6 +21,10 @@ internal static class SmokeFixturePaths
 
     public static string FixtureRoot => Path.Combine(RepositoryRoot, "UnitTests", "TestAssets", "FlaUISmoke");
 
+    public static string ArtifactsRoot => Path.Combine(TestContext.CurrentContext.WorkDirectory, "UiAutomationArtifacts");
+
+    public static string ScreenshotsRoot => Path.Combine(ArtifactsRoot, "Screenshots");
+
     public static string ConfigIniPath => Path.Combine(FixtureRoot, "config.ini");
 
     public static string ServerJsonPath => Path.Combine(FixtureRoot, "server.json");
@@ -70,6 +74,17 @@ internal static class SmokeFixturePaths
     public static string BuildFolderVisualizerArguments()
     {
         return BuildAutoLaunchArguments(StartupFunctionalityIds.CharacterDatabaseViewer);
+    }
+
+    public static string GetScreenshotPath(string testName)
+    {
+        Directory.CreateDirectory(ScreenshotsRoot);
+
+        string sanitizedName = string.Concat(testName.Select(ch =>
+            Path.GetInvalidFileNameChars().Contains(ch) ? '_' : ch));
+        return Path.Combine(
+            ScreenshotsRoot,
+            sanitizedName + "_" + DateTime.UtcNow.ToString("yyyyMMdd_HHmmss") + ".png");
     }
 
     private static string Quote(string value)

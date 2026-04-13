@@ -466,7 +466,11 @@
                             Padding="8">
                         <StackPanel Width="260">
                             <TextBlock Text="Area Navigator" Foreground="White" FontWeight="Bold" Margin="0,0,0,4"/>
-                            <TextBlock x:Name="txtCurrentArea" Text="Current: Unknown" Foreground="White" Margin="0,0,0,6"/>
+                            <TextBlock x:Name="txtCurrentArea"
+                                       AutomationProperties.AutomationId="Main.AreaNavigator.CurrentArea"
+                                       Text="Current: Unknown"
+                                       Foreground="White"
+                                       Margin="0,0,0,6"/>
                             <ListBox x:Name="lstAreas"
                                      AutomationProperties.AutomationId="Main.AreaNavigator.List"
                                      Height="210"

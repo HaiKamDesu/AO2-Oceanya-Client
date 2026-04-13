@@ -28,6 +28,7 @@ namespace OceanyaClient
             {
                 InputTextBox.Focus();
                 InputTextBox.SelectAll();
+                MarkAutomationReady();
             };
         }
 

@@ -119,6 +119,7 @@ namespace OceanyaClient
                 {
                     return;
                 }
+
                 if (useSingleInternalClient)
                 {
                     if (currentClient != null)
@@ -226,9 +227,24 @@ namespace OceanyaClient
                 {
                     return;
                 }
+
                 if (useSingleInternalClient)
                 {
                     ApplyProfileToSingleInternalClient(client);
+                }
+
+                if (OceanyaTestMode.Current.IsEnabled && !networkClient.IsTransportConnected)
+                {
+                    ICMessageSettingsControl.Dispatcher.Invoke(() =>
+                    {
+                        ICMessageSettingsControl.txtICMessage.Text = string.Empty;
+
+                        if (!ICMessageSettingsControl.stickyEffects)
+                        {
+                            ICMessageSettingsControl.ResetMessageEffects();
+                        }
+                    });
+                    return;
                 }
 
                 networkClient.OnICMessageReceived -= OnICMessageReceivedHandler;
@@ -1592,6 +1608,25 @@ namespace OceanyaClient
             }
         }
 
+        private void EnsureSingleInternalClientConnectedForTests()
+        {
+            if (singleInternalClient != null)
+            {
+                return;
+            }
+
+            singleInternalClient = new AOClient(Globals.GetSelectedServerEndpoint());
+            singleInternalClient.clientName = "InternalClient";
+            singleInternalClient.ApplyAreaStateForTests(
+                "Lobby",
+                new[]
+                {
+                    "Lobby",
+                    "Courtroom 2",
+                    "Detention Center"
+                });
+        }
+
         private void InitializeDreddFeatureUi()
         {
             isDreddFeatureEnabled = SaveFile.Data.AdvancedFeatures.IsEnabled(AdvancedFeatureIds.DreddBackgroundOverlayOverride);
@@ -2248,7 +2283,14 @@ namespace OceanyaClient
                         boundSingleClientProfile = bot;
                     }
 
-                    await EnsureSingleInternalClientConnectedAsync();
+                    if (OceanyaTestMode.Current.IsEnabled)
+                    {
+                        EnsureSingleInternalClientConnectedForTests();
+                    }
+                    else
+                    {
+                        await EnsureSingleInternalClientConnectedAsync();
+                    }
                 }
                 else
                 {
@@ -3132,6 +3174,15 @@ namespace OceanyaClient
             if (useSingleInternalClient)
             {
                 ApplyProfileToSingleInternalClient(profileClient);
+            }
+
+            if (OceanyaTestMode.Current.IsEnabled && !networkClient.IsTransportConnected)
+            {
+                networkClient.ApplyAreaStateForTests(
+                    selectedAreaItem.Name,
+                    networkClient.AvailableAreaInfos.Select(areaInfo => areaInfo.Name));
+                RefreshAreaNavigatorForCurrentClient();
+                return;
             }
 
             await networkClient.SetArea(selectedAreaItem.Name);

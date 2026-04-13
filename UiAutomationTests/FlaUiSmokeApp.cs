@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using FlaUI.Core;
@@ -59,35 +60,26 @@ internal sealed class FlaUiSmokeApp : IDisposable
 
     public AutomationElement WaitForDescendantById(Window window, string automationId, int timeoutMs = 10000)
     {
-        RetryResult<AutomationElement?> result = Retry.WhileNull(
+        AutomationElement? result = Retry.WhileNull(
             () => window.FindFirstDescendant(cf => cf.ByAutomationId(automationId)),
             timeout: TimeSpan.FromMilliseconds(timeoutMs),
             interval: TimeSpan.FromMilliseconds(150),
             throwOnTimeout: false,
-            ignoreException: true);
+            ignoreException: true).Result;
 
-        if (!result.Success || result.Result == null)
+        if (result == null)
         {
             throw new TimeoutException($"Timed out waiting for descendant '{automationId}'.");
         }
 
-        return result.Result;
+        return result;
     }
 
     public void CaptureFailureScreenshot(string testName)
     {
         try
         {
-            string screenshotsDirectory = Path.Combine(
-                TestContext.CurrentContext.WorkDirectory,
-                "UiAutomationScreenshots");
-            Directory.CreateDirectory(screenshotsDirectory);
-
-            string sanitizedName = string.Concat(testName.Select(ch =>
-                Path.GetInvalidFileNameChars().Contains(ch) ? '_' : ch));
-            string filePath = Path.Combine(
-                screenshotsDirectory,
-                sanitizedName + "_" + DateTime.UtcNow.ToString("yyyyMMdd_HHmmss") + ".png");
+            string filePath = SmokeFixturePaths.GetScreenshotPath(testName);
 
             Rectangle bounds = System.Windows.Forms.Screen.PrimaryScreen?.Bounds ?? new Rectangle(0, 0, 1600, 900);
             using Bitmap bitmap = new Bitmap(bounds.Width, bounds.Height);
@@ -124,7 +116,29 @@ internal sealed class FlaUiSmokeApp : IDisposable
         {
             if (!App.HasExited)
             {
-                App.Kill();
+                Retry.WhileFalse(
+                    () => App.HasExited,
+                    timeout: TimeSpan.FromSeconds(2),
+                    interval: TimeSpan.FromMilliseconds(100),
+                    throwOnTimeout: false,
+                    ignoreException: true);
+            }
+        }
+        catch
+        {
+            // Best-effort wait only.
+        }
+
+        try
+        {
+            if (!App.HasExited)
+            {
+                using Process process = Process.GetProcessById(App.ProcessId);
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                    process.WaitForExit(2000);
+                }
             }
         }
         catch
