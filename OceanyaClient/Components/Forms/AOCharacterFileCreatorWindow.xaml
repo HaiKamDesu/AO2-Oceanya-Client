@@ -757,6 +757,7 @@
                                     Width="62"
                                     BorderThickness="1"
                                     CornerRadius="4"
+                                    Padding="2"
                                     AllowDrop="True"
                                     Tag="button"
                                     PreviewMouseLeftButtonDown="EmoteButtonDropZone_PreviewMouseLeftButtonDown"
@@ -1179,6 +1180,8 @@
                                             <TextBlock Text="Character base mount path" Style="{StaticResource FieldTitleStyle}"/>
                                         </DockPanel>
                                         <local:AutoCompleteDropdownField x:Name="MountPathComboBox"
+                                                                         IsTextReadOnly="True"
+                                                                         PreserveItemOrder="True"
                                                                          TextValueChanged="MountPathComboBox_TextValueChanged"/>
                                     </StackPanel>
 

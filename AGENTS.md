@@ -33,6 +33,13 @@ Run from the project root. Use this exact dotnet path on WSL:
 /mnt/c/Program\ Files/dotnet/dotnet.exe test "Oceanya Client.sln"
 ```
 
+**IMPORTANT — run build and test as separate commands, never chained.**
+Chaining them with `&&` (e.g. `build ... && test ...`) causes a race on the
+`obj/` output directory: the test runner can lock files that the build just
+wrote, producing spurious lock errors and making it look like tests failed
+when they did not. Always issue the build command first, wait for it to
+succeed, then issue the test command in a separate call.
+
 Run a single test class or method:
 
 ```bash

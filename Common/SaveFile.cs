@@ -360,6 +360,7 @@ namespace OceanyaClient
         public double CharacterCreatorEmoteTileWidth { get; set; } = 420;
         public double CharacterCreatorEmoteTileHeight { get; set; } = 430;
         public double CharacterCreatorCuttingPreviewHeight { get; set; } = 170;
+        public bool CharacterCreatorViewImageBounds { get; set; } = false;
         public bool LoopEmoteVisualizerAnimations { get; set; } = true;
         public bool ViewFolderIntegrityVerifierResults { get; set; }
         public Dictionary<string, int> CharacterFolderPreviewEmoteOverrides { get; set; } =
