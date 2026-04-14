@@ -208,6 +208,88 @@ public class NetworkTests
         });
     }
 
+    /// <summary>
+    /// R-004 — Feature flags from a prior connection must be cleared on disconnect/reconnect.
+    /// Stale flags caused unsupported IC extensions to be sent to servers that never
+    /// advertised them, resulting in silently rejected IC messages.
+    /// The minimal IC packet (no options) must have exactly 15 payload fields (MS + 15 + %).
+    /// </summary>
+    [Test]
+    public async Task FeatureFlags_ClearedOnReconnect_ProducesMinimalIcPacket()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+
+        await client.HandleMessage("FL#noencryption#cccc_ic_support#looping_sfx#additive#effects#custom_blips#%");
+        Assert.That(client.ServerFeatures, Is.Not.Empty, "Pre-condition: FL# must populate ServerFeatures");
+
+        // DisconnectWebsocket clears serverFeatures even without an active transport.
+        await client.DisconnectWebsocket();
+
+        Assert.That(client.ServerFeatures, Is.Empty,
+            "Feature flags must be cleared after disconnect; stale flags corrupt IC on next server");
+
+        // Serializing with no features enabled must yield a minimal 15-field packet.
+        ICMessage msg = new ICMessage
+        {
+            Character = "Franziska",
+            Emote = "normal",
+            CharId = 0,
+            ShowName = "von Karma",
+            OtherCharId = -1
+        };
+        string command = ICMessage.GetCommand(msg, new ICMessage.SerializationOptions());
+        string[] parts = command.Split('#');
+
+        // MS + 15 payload fields + % = 17 parts
+        Assert.That(parts.Length, Is.EqualTo(17),
+            "Minimal IC packet (no feature flags) must have exactly 15 payload fields");
+    }
+
+    /// <summary>
+    /// R-005 — When ICShowname is blank, the outgoing IC packet showname field must fall
+    /// back to the char.ini ShowName value. Blank showname displayed as empty string was
+    /// visible to all players in the chat log.
+    /// ResolveShowNameForPacket is private; tested via reflection as the nearest stable seam.
+    /// </summary>
+    [Test]
+    public void ShowName_BlankShowname_FallsBackToCharIniShowname()
+    {
+        string baseRoot = CreateAoBaseRoot();
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(baseRoot, "characters", "Franziska"));
+            File.WriteAllText(
+                Path.Combine(baseRoot, "characters", "Franziska", "char.ini"),
+                "[Options]\nshowname=von Karma\nside=pro\ngender=female\n[Emotions]\nnumber=1\n1=normal#-#normal#0#1\n");
+
+            Globals.BaseFolders = new List<string> { baseRoot };
+            CharacterFolder.RefreshCharacterList();
+
+            AOClient client = new AOClient("ws://localhost:10001/");
+            client.SetCharacter("Franziska");
+            client.ICShowname = string.Empty;
+
+            MethodInfo? resolveMethod = typeof(AOClient).GetMethod(
+                "ResolveShowNameForPacket",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(resolveMethod, Is.Not.Null, "ResolveShowNameForPacket must exist on AOClient");
+
+            string? resolved = resolveMethod!.Invoke(client, null) as string;
+
+            Assert.That(resolved, Is.EqualTo("von Karma"),
+                "Blank ICShowname must fall back to char.ini ShowName, not display as empty string");
+        }
+        finally
+        {
+            Globals.BaseFolders = new List<string>();
+            CharacterFolder.RefreshCharacterList();
+            if (Directory.Exists(baseRoot))
+            {
+                Directory.Delete(baseRoot, true);
+            }
+        }
+    }
+
     [Test]
     [CancelAfter(15000)]
     public async Task Connect_TcpEndpoint_UsesAoCompatibleHandshakeFlow()
@@ -296,6 +378,131 @@ public class NetworkTests
         Assert.That(ex.Message, Does.Contain("HTTP response"));
 
         serverTask.GetAwaiter().GetResult();
+    }
+
+    /// <summary>
+    /// R-002 — The CC# character-select packet must match the AO2-compliant format
+    /// CC#playerID#charID#hdid#%. Sending the wrong format (e.g. CC#0#...) prevented
+    /// servers from registering the character selection.
+    /// A local character folder is created so SelectFirstAvailableINIPuppet can select it
+    /// and actually emit the CC# packet.
+    /// </summary>
+    [Test]
+    [CancelAfter(15000)]
+    public async Task SendCharacterSelect_EmitsCorrectCcPacketFormat()
+    {
+        const string testCharName = "R002CcPacketTestChar";
+        string baseRoot = CreateAoBaseRoot();
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(baseRoot, "characters", testCharName));
+            File.WriteAllText(
+                Path.Combine(baseRoot, "characters", testCharName, "char.ini"),
+                "[Options]\nshowname=TestChar\nside=def\ngender=male\n[Emotions]\nnumber=1\n1=normal#-#normal#0#1\n");
+            Globals.BaseFolders = new List<string> { baseRoot };
+            CharacterFolder.RefreshCharacterList();
+
+            using TcpListener listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+
+            int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            List<string> receivedPackets = new List<string>();
+            Task serverTask = RunR002TcpServerAsync(listener, receivedPackets, testCharName, CancellationToken.None);
+
+            AOClient client = new AOClient($"tcp://127.0.0.1:{port}");
+            try
+            {
+                await client.Connect(0, 0, 0, 0);
+            }
+            finally
+            {
+                await client.Disconnect();
+                await serverTask;
+            }
+
+            // SelectFirstAvailableINIPuppet (called during Connect) emits CC#.
+            string? ccPacket = receivedPackets.FirstOrDefault(
+                p => p.StartsWith("CC#", StringComparison.Ordinal));
+            Assert.That(ccPacket, Is.Not.Null, "CC# packet must be emitted after character selection");
+
+            string[] parts = ccPacket!.Split('#');
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(parts[0], Is.EqualTo("CC"), "Packet header must be CC");
+                // CC#<playerID>#<charID>#<hdid>#% → 5 parts when split by '#'
+                Assert.That(parts.Length, Is.EqualTo(5),
+                    "CC packet must contain exactly 3 fields: CC#playerID#charID#hdid#%");
+                Assert.That(parts[4], Is.EqualTo("%"), "Packet must terminate with %");
+                Assert.That(int.TryParse(parts[1], out int parsedPlayerId), Is.True,
+                    "playerID field must be a parseable integer");
+                // The test server's ID response sets playerID = 42
+                Assert.That(parsedPlayerId, Is.EqualTo(42),
+                    "playerID in CC# must match the ID assigned by the server");
+                Assert.That(int.TryParse(parts[2], out _), Is.True,
+                    "charID field must be a parseable integer");
+            });
+        }
+        finally
+        {
+            Globals.BaseFolders = new List<string>();
+            CharacterFolder.RefreshCharacterList();
+            if (Directory.Exists(baseRoot))
+            {
+                Directory.Delete(baseRoot, true);
+            }
+        }
+    }
+
+    private static async Task RunR002TcpServerAsync(
+        TcpListener listener,
+        List<string> receivedPackets,
+        string characterName,
+        CancellationToken cancellationToken)
+    {
+        using TcpClient serverClient = await listener.AcceptTcpClientAsync(cancellationToken);
+        using NetworkStream stream = serverClient.GetStream();
+        StringBuilder packetBuffer = new StringBuilder();
+        await SendPacketAsync(stream, "decryptor#NOENCRYPT#%", cancellationToken);
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            string? packet = await ReadPacketAsync(stream, packetBuffer, cancellationToken);
+            if (string.IsNullOrEmpty(packet))
+            {
+                return;
+            }
+
+            receivedPackets.Add(packet);
+
+            if (packet.StartsWith("HI#", StringComparison.Ordinal))
+            {
+                await SendPacketAsync(stream, "ID#42#tsuserver#7#%", cancellationToken);
+            }
+            else if (string.Equals(packet, "ID#AO2#2.11.0#%", StringComparison.Ordinal))
+            {
+                await SendPacketAsync(stream, "PN#1#100#%", cancellationToken);
+                await SendPacketAsync(stream, "FL#noencryption#%", cancellationToken);
+            }
+            else if (string.Equals(packet, "askchaa#%", StringComparison.Ordinal))
+            {
+                await SendPacketAsync(stream, "SI#1#0#1#%", cancellationToken);
+            }
+            else if (string.Equals(packet, "RC#%", StringComparison.Ordinal))
+            {
+                await SendPacketAsync(stream, $"SC#{characterName}#%", cancellationToken);
+            }
+            else if (string.Equals(packet, "RM#%", StringComparison.Ordinal))
+            {
+                await SendPacketAsync(stream, "SM#Lobby#%", cancellationToken);
+            }
+            else if (string.Equals(packet, "RD#%", StringComparison.Ordinal))
+            {
+                // Send CharsCheck marking the character as available (0 = available)
+                await SendPacketAsync(stream, "CharsCheck#0#%", cancellationToken);
+                await SendPacketAsync(stream, "DONE#%", cancellationToken);
+            }
+        }
     }
 
     private static Dictionary<string, bool> GetServerCharacterList(AOClient client)

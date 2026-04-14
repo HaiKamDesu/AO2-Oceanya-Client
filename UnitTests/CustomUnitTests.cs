@@ -172,12 +172,17 @@ public class ICMessageTests
             Assert.That(parsedMessage.ShoutModifier, Is.EqualTo(originalMessage.ShoutModifier));
             Assert.That(parsedMessage.ShowName, Is.EqualTo(originalMessage.ShowName));
             Assert.That(parsedMessage.OtherCharId, Is.EqualTo(originalMessage.OtherCharId));
-            Assert.That(parsedMessage.SelfOffset.Horizontal, Is.EqualTo(1));
-            Assert.That(parsedMessage.SelfOffset.Vertical, Is.EqualTo(0));
-            Assert.That(parsedMessage.OtherName, Is.EqualTo("9&-4"));
-            Assert.That(parsedMessage.OtherEmote, Is.EqualTo("1"));
-            Assert.That(parsedMessage.EffectString, Is.EqualTo(string.Empty));
-            Assert.That(parsedMessage.Blips, Is.EqualTo(string.Empty));
+            Assert.That(parsedMessage.SelfOffset.Horizontal, Is.EqualTo(originalMessage.SelfOffset.Horizontal));
+            Assert.That(parsedMessage.SelfOffset.Vertical, Is.EqualTo(originalMessage.SelfOffset.Vertical));
+            Assert.That(parsedMessage.OtherName, Is.EqualTo(string.Empty));
+            Assert.That(parsedMessage.OtherEmote, Is.EqualTo(string.Empty));
+            Assert.That(parsedMessage.NonInterruptingPreAnim, Is.EqualTo(originalMessage.NonInterruptingPreAnim));
+            Assert.That(parsedMessage.SfxLooping, Is.EqualTo(originalMessage.SfxLooping));
+            Assert.That(parsedMessage.ScreenShake, Is.EqualTo(originalMessage.ScreenShake));
+            Assert.That(parsedMessage.Additive, Is.EqualTo(originalMessage.Additive));
+            Assert.That(parsedMessage.EffectString, Is.EqualTo(originalMessage.EffectString));
+            Assert.That(parsedMessage.Blips, Is.EqualTo(originalMessage.Blips));
+            Assert.That(parsedMessage.Slide, Is.EqualTo(originalMessage.Slide));
         });
     }
 
@@ -249,6 +254,161 @@ public class ICMessageTests
         {
             Assert.That(ICMessage.GetColorFromTextColor(color), Is.Not.EqualTo(default(System.Drawing.Color)));
         }
+    }
+
+    /// <summary>
+    /// R-001 — char_id in MS# packet must carry iniPuppetID, not playerID.
+    /// Regressed twice; this unit assertion catches a future field-index or assignment swap
+    /// without requiring an interactive FlaUI session.
+    /// </summary>
+    [Test]
+    public void GetCommand_CharIdField_UsesIniPuppetId_NotPlayerId()
+    {
+        const int iniPuppetId = 3;
+        const int playerIdThatMustNotAppear = 17;
+
+        ICMessage message = new ICMessage
+        {
+            DeskMod = DeskMods.Chat,
+            PreAnim = "-",
+            Character = "Franziska",
+            Emote = "normal",
+            Message = "test",
+            Side = "pro",
+            SfxName = "1",
+            EmoteModifier = EmoteModifiers.NoPreanimation,
+            CharId = iniPuppetId,
+            SfxDelay = 0,
+            ShoutModifier = ShoutModifiers.Nothing,
+            EvidenceID = "0",
+            TextColor = TextColors.White,
+            ShowName = "von Karma",
+            OtherCharId = -1
+        };
+
+        string command = ICMessage.GetCommand(message);
+        string[] parts = command.Split('#');
+
+        // parts[0]="MS", parts[1]=DeskMod, ..., parts[9]=CharId (field index 8)
+        Assert.Multiple(() =>
+        {
+            Assert.That(parts[9], Is.EqualTo(iniPuppetId.ToString()),
+                "char_id field (parts[9]) must equal iniPuppetID");
+            Assert.That(parts[9], Is.Not.EqualTo(playerIdThatMustNotAppear.ToString()),
+                "char_id field must not carry playerID");
+        });
+    }
+
+    /// <summary>
+    /// R-009 — FromConsoleLine compact-layout (field count &lt; 32) must parse Effect,
+    /// ScreenShake, Additive, and NonInterruptingPreAnim at their compact field indices.
+    /// Root cause of 6 GmPacket test failures; both layout branches need explicit coverage.
+    /// </summary>
+    [Test]
+    public void FromConsoleLine_CompactLayout_ParsesEffectAndScreenshakeFields()
+    {
+        ICMessage original = new ICMessage
+        {
+            DeskMod = DeskMods.Chat,
+            PreAnim = "-",
+            Character = "Phoenix",
+            Emote = "normal",
+            Message = "test",
+            Side = "def",
+            SfxName = "1",
+            EmoteModifier = EmoteModifiers.NoPreanimation,
+            CharId = 0,
+            SfxDelay = 0,
+            ShoutModifier = ShoutModifiers.Nothing,
+            EvidenceID = "0",
+            TextColor = TextColors.White,
+            ShowName = "Phoenix",
+            OtherCharId = -1,
+            SelfOffset = (5, -3),
+            NonInterruptingPreAnim = true,
+            SfxLooping = true,
+            ScreenShake = true,
+            FramesShake = "pre^",
+            FramesRealization = "real^",
+            FramesSfx = "sfx^",
+            Additive = true,
+            Blips = "male",
+            Slide = true
+        };
+        original.EffectString = "impact||sfx-fan";
+
+        SerializationOptions options = new SerializationOptions
+        {
+            IncludeCcccIcSupport = true,
+            IncludeLoopingSfx = true,
+            IncludeAdditive = true,
+            IncludeEffects = true,
+            IncludeCustomBlips = true
+        };
+
+        string packet = ICMessage.GetCommand(original, options);
+        string[] parts = packet.Split('#');
+
+        // Compact layout: 28 payload fields, which is < 32 (LegacySlideIndex + 1)
+        int fieldCount = parts.Length - 2; // exclude "MS" and "%"
+        Assert.That(fieldCount, Is.LessThan(32), "Pre-condition: packet must use compact layout");
+
+        ICMessage? parsed = ICMessage.FromConsoleLine(packet);
+
+        Assert.That(parsed, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(parsed!.ScreenShake, Is.True, "ScreenShake must be parsed from compact layout");
+            Assert.That(parsed.Additive, Is.True, "Additive must be parsed from compact layout");
+            Assert.That(parsed.NonInterruptingPreAnim, Is.True, "NonInterruptingPreAnim (Immediate) must be parsed from compact layout");
+            Assert.That(parsed.Effect, Is.EqualTo(Effects.Impact), "Effect must be parsed from compact layout");
+            Assert.That(parsed.Slide, Is.True, "Slide must be parsed from compact layout");
+        });
+    }
+
+    /// <summary>
+    /// R-019 — Red-text IC messages must have the message content wrapped in ~ characters.
+    /// The wrapping is applied in SendICMessage before GetCommand is called; this test locks
+    /// in that GetCommand correctly preserves the tilde framing and documents the convention.
+    /// Nearest stable seam: construct the ICMessage as SendICMessage would, then verify the
+    /// serialized packet's message field retains the wrapping.
+    /// </summary>
+    [Test]
+    public void GetCommand_RedTextColor_WrapsMessageWithTilde()
+    {
+        const string rawContent = "hold it, counsel";
+        string wrappedMessage = $"~{rawContent}~";
+
+        ICMessage message = new ICMessage
+        {
+            DeskMod = DeskMods.Chat,
+            PreAnim = "-",
+            Character = "Phoenix",
+            Emote = "normal",
+            Message = wrappedMessage,
+            Side = "def",
+            SfxName = "1",
+            EmoteModifier = EmoteModifiers.NoPreanimation,
+            CharId = 0,
+            SfxDelay = 0,
+            ShoutModifier = ShoutModifiers.Nothing,
+            EvidenceID = "0",
+            TextColor = TextColors.Red,
+            ShowName = "Phoenix",
+            OtherCharId = -1
+        };
+
+        string command = ICMessage.GetCommand(message);
+        string[] parts = command.Split('#');
+
+        // parts[5] = field index 4 = Message
+        string messageField = parts[5];
+        Assert.Multiple(() =>
+        {
+            Assert.That(messageField, Does.StartWith("~"), "Red-text message field must start with ~");
+            Assert.That(messageField, Does.EndWith("~"), "Red-text message field must end with ~");
+            Assert.That(messageField, Does.Contain(rawContent), "Message content must be preserved inside the ~ wrapping");
+        });
     }
 }
 

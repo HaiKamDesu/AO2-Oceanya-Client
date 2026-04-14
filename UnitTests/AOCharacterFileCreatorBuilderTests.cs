@@ -199,6 +199,45 @@ namespace UnitTests
                 Assert.That(resolved["emote:1:splitbase"], Is.EqualTo("Images/attack.png"));
             });
         }
+
+        /// <summary>
+        /// R-012 — Two emotes whose source files share the same filename but come from
+        /// different directories must be assigned distinct output paths. Without
+        /// disambiguation, one file silently overwrites the other in the generated folder.
+        /// </summary>
+        [Test]
+        public void GenerateFiles_DuplicateAssetFilenames_AreSuffixDisambiguated()
+        {
+            List<GeneratedAssetPathCollisionCandidate> candidates = new List<GeneratedAssetPathCollisionCandidate>
+            {
+                new GeneratedAssetPathCollisionCandidate
+                {
+                    AssetKey = "emote:1:anim",
+                    DefaultRelativePath = "images/attack.png",
+                    PreferredRelativePath = "images/attack.png",
+                    SourceIdentity = @"D:\project\charA\attack.png"
+                },
+                new GeneratedAssetPathCollisionCandidate
+                {
+                    AssetKey = "emote:2:anim",
+                    DefaultRelativePath = "images/attack.png",
+                    PreferredRelativePath = "images/attack.png",
+                    SourceIdentity = @"D:\project\charB\attack.png"
+                }
+            };
+
+            Dictionary<string, string> resolved = GeneratedAssetPathCollisionResolver.Resolve(candidates);
+
+            string path1 = resolved["emote:1:anim"];
+            string path2 = resolved["emote:2:anim"];
+
+            Assert.That(path1, Is.Not.EqualTo(path2),
+                "Two emotes from different source files with the same filename must resolve to distinct output paths");
+            Assert.That(
+                resolved.Values.All(p => p.EndsWith(".png", StringComparison.OrdinalIgnoreCase)),
+                Is.True,
+                "All resolved paths must retain their file extension");
+        }
     }
 
     [TestFixture]
@@ -412,10 +451,46 @@ namespace UnitTests
             Assert.That(onCenter.B, Is.GreaterThan(offCenter.B));
         }
 
+        /// <summary>
+        /// R-023 — Button icon generation must always produce square output regardless of
+        /// the source image's aspect ratio. AO2 button icons must be square; rectangular
+        /// output breaks the emote grid display. This regressed when agent changes dropped
+        /// the square-canvas constraint.
+        /// </summary>
+        [Test]
+        public void ButtonIconGeneration_NonSquareInput_ProducesSquareOutput()
+        {
+            // 200 × 40 is strongly non-square; the generator must fit it into a square canvas.
+            string nonSquarePath = CreateSolidPng(Path.Combine(tempRoot, "wide.png"), Colors.SteelBlue, width: 200, height: 40);
+
+            ButtonIconGenerationConfig config = new ButtonIconGenerationConfig
+            {
+                Mode = ButtonIconMode.SingleImage,
+                SingleImagePath = nonSquarePath
+            };
+
+            MethodInfo? buildPairMethod = typeof(AOCharacterFileCreatorWindow).GetMethod(
+                "TryBuildButtonIconPair",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(buildPairMethod, Is.Not.Null, "TryBuildButtonIconPair must exist on AOCharacterFileCreatorWindow");
+
+            object?[] args = { config, null, null, null };
+            object? result = buildPairMethod!.Invoke(null, args);
+            Assert.That(result, Is.EqualTo(true), "Button icon generation must succeed with a valid source image");
+
+            BitmapSource? onImage = args[1] as BitmapSource;
+            Assert.That(onImage, Is.Not.Null, "button_on image must be produced");
+            Assert.That(onImage!.PixelWidth, Is.EqualTo(onImage.PixelHeight),
+                "Button icon output must be square (PixelWidth == PixelHeight) regardless of input aspect ratio");
+        }
+
         private static string CreateSolidPng(string path, Color color)
         {
-            int width = 16;
-            int height = 16;
+            return CreateSolidPng(path, color, width: 16, height: 16);
+        }
+
+        private static string CreateSolidPng(string path, Color color, int width, int height)
+        {
             byte[] pixels = new byte[width * height * 4];
             for (int i = 0; i < pixels.Length; i += 4)
             {
