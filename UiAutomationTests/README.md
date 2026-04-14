@@ -6,7 +6,8 @@ two categories:
 | Category | Transport | Fixture | Description |
 |---|---|---|---|
 | `Smoke` | Offline (stubbed) | `UnitTests/TestAssets/FlaUISmoke/` | Deterministic regression suite; no real server needed |
-| `Online` | Real TCP (in-process server) | `UnitTests/TestAssets/FlaUIOnline/` + FlaUISmoke shared | Integration lane; validates real AO2 packet flow |
+| `Online` | Real TCP (in-process server) | `UnitTests/TestAssets/FlaUIOnline/` + FlaUISmoke shared | Integration lane; validates real AO2 packet flow, including GM multi client `MS#` packet assertions after UI interactions |
+| `OnlineLocalhost` | Real WebSocket (`ws://localhost:50001`) | `UnitTests/TestAssets/FlaUIOnline/` + FlaUISmoke shared | Optional localhost tsuserver3 lane; skips cleanly when the local server is unavailable |
 
 ## Categories
 
@@ -14,6 +15,8 @@ two categories:
 |---|---|---|
 | Smoke | `[Category("Smoke")]` | `--filter "Category=Smoke"` |
 | Online | `[Category("Online")]` | `--filter "Category=Online"` |
+| OnlineLocalhost | `[Category("OnlineLocalhost")]` | `--filter "Category=OnlineLocalhost"` |
+| GmPacket | `[Category("GmPacket")]` | `--filter "Category=GmPacket"` |
 
 ## Prerequisites
 
@@ -24,6 +27,8 @@ two categories:
 | OceanyaClient built in `Debug` | Required | Required |
 | Real AO2 server | Not needed | Not needed — uses in-process TCP server |
 | Loopback TCP available | Not needed | Required (standard on all platforms) |
+
+`OnlineLocalhost` additionally requires a reachable local tsuserver3 at `ws://localhost:50001`; otherwise those tests are skipped with `Assert.Ignore`. The deterministic `GmPacket` subset does not depend on localhost availability.
 
 ## Running Locally
 
@@ -47,6 +52,18 @@ dotnet test UiAutomationTests/UiAutomationTests.csproj `
     --configuration Debug `
     --no-build `
     --filter "Category=Online"
+
+# 2c. Run the optional localhost tsuserver3 lane
+dotnet test UiAutomationTests/UiAutomationTests.csproj `
+    --configuration Debug `
+    --no-build `
+    --filter "Category=OnlineLocalhost"
+
+# 2d. Run only the GM multi client packet-validation subset
+dotnet test UiAutomationTests/UiAutomationTests.csproj `
+    --configuration Debug `
+    --no-build `
+    --filter "Category=GmPacket"
 ```
 
 On WSL, replace `dotnet` with the full path:
@@ -61,6 +78,14 @@ On WSL, replace `dotnet` with the full path:
 # Online
 /mnt/c/Program\ Files/dotnet/dotnet.exe test UiAutomationTests/UiAutomationTests.csproj \
     --configuration Debug --no-build --filter "Category=Online"
+
+# Optional localhost tsuserver3
+/mnt/c/Program\ Files/dotnet/dotnet.exe test UiAutomationTests/UiAutomationTests.csproj \
+    --configuration Debug --no-build --filter "Category=OnlineLocalhost"
+
+# GM multi client packet-validation subset
+/mnt/c/Program\ Files/dotnet/dotnet.exe test UiAutomationTests/UiAutomationTests.csproj \
+    --configuration Debug --no-build --filter "Category=GmPacket"
 ```
 
 ### Collecting artifacts locally
@@ -101,6 +126,12 @@ full prerequisites. TRX results and failure screenshots are uploaded as artifact
 - **No parallelism**: `[NonParallelizable]` on the fixture; tests run sequentially.
 - **App cleanup**: `FlaUiSmokeApp.Dispose()` attempts a graceful close, waits up to
   2 seconds, then kills the process tree if needed.
+- **GM packet assertions**: the GM multi client coverage uses the repository’s real
+  `AOClient.SendICMessage()` path and parses captured `MS#` packets with
+  `AOBot-Testing/Structures/ICMessage.cs`. The loopback server advertises
+  `CCCC_IC_SUPPORT`, `LOOPING_SFX`, `ADDITIVE`, `EFFECTS`, `CUSTOM_BLIPS`,
+  `Y_OFFSET`, `FLIPPING`, `PREZOOM`, `DESKMOD`, `EXPANDED_DESK_MODS`, and
+  `CUSTOMOBJECTIONS` so the full packet shape is exercised.
 
 ## Soak Procedure (Online Lane)
 

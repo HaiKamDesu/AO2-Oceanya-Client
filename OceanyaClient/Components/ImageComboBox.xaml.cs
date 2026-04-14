@@ -5,9 +5,11 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Text;
 
 namespace OceanyaClient.Components
 {
@@ -101,9 +103,19 @@ namespace OceanyaClient.Components
                     editableTextBox.TextChanged += cboINISelect_TextChanged;
                     editableTextBox.AcceptsTab = false;
                 }
+
+                ApplyAutomationIdentifiers();
             };
 
             this.PreviewKeyDown += ImageComboBox_PreviewKeyDown;
+            cboINISelect.DropDownOpened += (_, _) =>
+            {
+                RestoreAllItemsIfShowingConfirmedText();
+                cboINISelect.Dispatcher.BeginInvoke(
+                    new Action(AssignItemAutomationIdentifiers),
+                    System.Windows.Threading.DispatcherPriority.Loaded);
+            };
+            cboINISelect.SelectionChanged += (_, _) => AssignItemAutomationIdentifiers();
             ApplyAutomationIdentifiers();
         }
         #endregion
@@ -121,6 +133,64 @@ namespace OceanyaClient.Components
             string automationId = AutomationId?.Trim() ?? string.Empty;
             AutomationProperties.SetAutomationId(this, automationId);
             AutomationProperties.SetAutomationId(cboINISelect, string.IsNullOrWhiteSpace(automationId) ? string.Empty : automationId + ".ComboBox");
+
+            if (editableTextBox != null)
+            {
+                AutomationProperties.SetAutomationId(
+                    editableTextBox,
+                    string.IsNullOrWhiteSpace(automationId) ? string.Empty : automationId + ".Input");
+            }
+
+            if (cboINISelect.Template.FindName("btnDropdown", cboINISelect) is ToggleButton dropDownButton)
+            {
+                AutomationProperties.SetAutomationId(
+                    dropDownButton,
+                    string.IsNullOrWhiteSpace(automationId) ? string.Empty : automationId + ".Toggle");
+            }
+
+            AssignItemAutomationIdentifiers();
+        }
+
+        private void AssignItemAutomationIdentifiers()
+        {
+            string automationId = AutomationId?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(automationId))
+            {
+                return;
+            }
+
+            for (int index = 0; index < cboINISelect.Items.Count; index++)
+            {
+                if (cboINISelect.ItemContainerGenerator.ContainerFromIndex(index) is not ComboBoxItem comboBoxItem)
+                {
+                    continue;
+                }
+
+                if (cboINISelect.Items[index] is not DropdownItem dropdownItem)
+                {
+                    continue;
+                }
+
+                string itemAutomationId = automationId + ".Item." + SanitizeAutomationSegment(dropdownItem.Name);
+                AutomationProperties.SetAutomationId(comboBoxItem, itemAutomationId);
+                AutomationProperties.SetName(comboBoxItem, dropdownItem.Name ?? string.Empty);
+            }
+        }
+
+        private static string SanitizeAutomationSegment(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return "Empty";
+            }
+
+            StringBuilder builder = new StringBuilder(value.Length);
+            foreach (char c in value.Trim())
+            {
+                builder.Append(char.IsLetterOrDigit(c) ? c : '_');
+            }
+
+            return builder.ToString();
         }
 
         #region Event Handlers
@@ -343,6 +413,16 @@ namespace OceanyaClient.Components
             cboINISelect.IsDropDownOpen = filteredItems.Count > 0;
         }
 
+        private void RestoreAllItemsIfShowingConfirmedText()
+        {
+            if (!string.Equals(cboINISelect.Text, lastConfirmedText, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            cboINISelect.ItemsSource = allItems;
+        }
+
         private void HandleArrowKey(KeyEventArgs e)
         {
 
@@ -435,13 +515,10 @@ namespace OceanyaClient.Components
                 editableTextBox.SelectionLength = 0;
             }
 
-            cboINISelect.Dispatcher.BeginInvoke(new Action(() =>
-            {
-                cboINISelect.ItemsSource = allItems;
-                cboINISelect.SelectedItem = selectedItem;
-                isInternalUpdate = false;
-                OnConfirm?.Invoke(this, confirmedValue);
-            }), System.Windows.Threading.DispatcherPriority.Background);
+            cboINISelect.ItemsSource = allItems;
+            cboINISelect.SelectedItem = selectedItem;
+            isInternalUpdate = false;
+            OnConfirm?.Invoke(this, confirmedValue);
         }
 
         public void Clear()

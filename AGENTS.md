@@ -51,6 +51,34 @@ Always run build and test after any code change to verify the work.
 
 The app version is centrally defined in `Directory.Build.props` via `OceanyaAppVersion`.
 
+## UI Automation Execution
+- FlaUI/UIA3 tests must be run on the **Windows side** in an **active interactive desktop session**. Do not treat WSL-only execution as a valid runtime check for these tests.
+- Verified desktop check: `query session` should show the target user (usually `Usuario`) on `console` or another `Active` session.
+- Preferred invocation method from this repo when working through WSL/Codex:
+
+```bash
+/bin/bash -lc '"/mnt/c/Windows/System32/query.exe" session'
+/bin/bash -lc '"/mnt/c/Program Files/dotnet/dotnet.exe" build "Oceanya Client.sln" --configuration Debug'
+/bin/bash -lc '"/mnt/c/Program Files/dotnet/dotnet.exe" test "UiAutomationTests/UiAutomationTests.csproj" --configuration Debug --no-build --filter "Category=Smoke" --logger "trx;LogFileName=ui-smoke-results.trx" --results-directory TestResults/UiSmoke'
+/bin/bash -lc '"/mnt/c/Program Files/dotnet/dotnet.exe" test "UiAutomationTests/UiAutomationTests.csproj" --configuration Debug --no-build --filter "Category=GmPacket" --logger "trx;LogFileName=ui-gmpacket-results.trx" --results-directory TestResults/UiGmPacket'
+/bin/bash -lc '"/mnt/c/Program Files/dotnet/dotnet.exe" test "UiAutomationTests/UiAutomationTests.csproj" --configuration Debug --no-build --filter "Category=OnlineLocalhost" --logger "trx;LogFileName=ui-online-localhost-results.trx" --results-directory TestResults/UiOnlineLocalhost'
+```
+
+- The same Windows-native commands can also be run directly from PowerShell/CMD on Windows if preferred.
+- Results and artifacts:
+  - TRX files go under the `--results-directory` you pass, e.g. `TestResults/UiGmPacket/`.
+  - Failure screenshots go under `<results-directory>/UiAutomationArtifacts/Screenshots/`.
+- Do not do these:
+  - Do **not** chain build and test with `&&`.
+  - Do **not** rely on the plain WSL `dotnet test` path for FlaUI validation.
+  - Do **not** run UIA3/SendKeys tests in headless/service-only/non-interactive sessions.
+  - Do **not** run other interactive apps over the desktop while the tests are active; they can steal focus and break `SendKeys`.
+- Category targeting:
+  - `Smoke`: deterministic offline suite
+  - `Online`: generic loopback integration suite
+  - `GmPacket`: deterministic GM multi client packet-validation subset
+  - `OnlineLocalhost`: optional localhost `ws://localhost:50001` lane
+
 ## Project Structure
 
 | Project | Purpose |

@@ -11,7 +11,7 @@ namespace AOBot_Testing.Structures
     public class CharacterFolder
     {
         #region Static methods
-        private const int CacheVersion = 2;
+        private const int CacheVersion = 3;
         public static List<string> CharacterFolders => Globals.BaseFolders.Select(x => Path.Combine(x, "characters")).ToList();
         static string cacheFile = Path.Combine(Path.GetTempPath(), "characters.json");
         static List<CharacterFolder> characterConfigs = new List<CharacterFolder>();
@@ -254,6 +254,44 @@ namespace AOBot_Testing.Structures
             return Convert.ToHexString(hashBytes).ToLowerInvariant();
         }
 
+        private static string BuildSourceSignature()
+        {
+            List<string> entries = new List<string>();
+
+            foreach (string characterFolder in CharacterFolders)
+            {
+                if (!Directory.Exists(characterFolder))
+                {
+                    continue;
+                }
+
+                IEnumerable<string> directories;
+                try
+                {
+                    directories = Directory.EnumerateDirectories(characterFolder);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                foreach (string directory in directories)
+                {
+                    string iniFilePath = Path.Combine(directory, "char.ini");
+                    if (!File.Exists(iniFilePath))
+                    {
+                        continue;
+                    }
+
+                    long lastWriteTicksUtc = File.GetLastWriteTimeUtc(iniFilePath).Ticks;
+                    entries.Add(Path.GetFileName(directory) + "|" + lastWriteTicksUtc.ToString());
+                }
+            }
+
+            entries.Sort(StringComparer.OrdinalIgnoreCase);
+            return string.Join(";", entries);
+        }
+
         private static string ResolveCharacterIniPath(string characterDirectoryPath)
         {
             string rootIni = Path.Combine(characterDirectoryPath, "char.ini");
@@ -291,6 +329,7 @@ namespace AOBot_Testing.Structures
                 Version = CacheVersion,
                 ConfigPath = Globals.PathToConfigINI,
                 BaseFolders = new List<string>(Globals.BaseFolders),
+                SourceSignature = BuildSourceSignature(),
                 Characters = characters
             };
 
@@ -350,6 +389,14 @@ namespace AOBot_Testing.Structures
                 {
                     return false;
                 }
+            }
+
+            if (!string.Equals(
+                    container.SourceSignature ?? string.Empty,
+                    BuildSourceSignature(),
+                    StringComparison.Ordinal))
+            {
+                return false;
             }
 
             return true;
@@ -754,6 +801,7 @@ namespace AOBot_Testing.Structures
         public int Version { get; set; }
         public string ConfigPath { get; set; } = string.Empty;
         public List<string> BaseFolders { get; set; } = new List<string>();
+        public string SourceSignature { get; set; } = string.Empty;
         public List<CharacterFolder> Characters { get; set; } = new List<CharacterFolder>();
     }
 }

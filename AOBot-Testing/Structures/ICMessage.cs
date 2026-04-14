@@ -41,21 +41,33 @@ namespace AOBot_Testing.Structures
         private const int TextColorIndex = 14;
         private const int ShowNameIndex = 15;
         private const int OtherCharIdIndex = 16;
-        private const int OtherNameIndex = 17;
-        private const int OtherEmoteIndex = 18;
-        private const int SelfOffsetIndex = 19;
-        private const int OtherOffsetIndex = 20;
-        private const int OtherFlipIndex = 21;
-        private const int ImmediateIndex = 22;
-        private const int SfxLoopingIndex = 23;
-        private const int ScreenShakeIndex = 24;
-        private const int FramesShakeIndex = 25;
-        private const int FramesRealizationIndex = 26;
-        private const int FramesSfxIndex = 27;
-        private const int AdditiveIndex = 28;
-        private const int EffectIndex = 29;
-        private const int BlipsIndex = 30;
-        private const int SlideIndex = 31;
+        private const int LegacyOtherNameIndex = 17;
+        private const int LegacyOtherEmoteIndex = 18;
+        private const int LegacySelfOffsetIndex = 19;
+        private const int LegacyOtherOffsetIndex = 20;
+        private const int LegacyOtherFlipIndex = 21;
+        private const int LegacyImmediateIndex = 22;
+        private const int LegacySfxLoopingIndex = 23;
+        private const int LegacyScreenShakeIndex = 24;
+        private const int LegacyFramesShakeIndex = 25;
+        private const int LegacyFramesRealizationIndex = 26;
+        private const int LegacyFramesSfxIndex = 27;
+        private const int LegacyAdditiveIndex = 28;
+        private const int LegacyEffectIndex = 29;
+        private const int LegacyBlipsIndex = 30;
+        private const int LegacySlideIndex = 31;
+
+        private const int CompactSelfOffsetIndex = 17;
+        private const int CompactImmediateIndex = 18;
+        private const int CompactSfxLoopingIndex = 19;
+        private const int CompactScreenShakeIndex = 20;
+        private const int CompactFramesShakeIndex = 21;
+        private const int CompactFramesRealizationIndex = 22;
+        private const int CompactFramesSfxIndex = 23;
+        private const int CompactAdditiveIndex = 24;
+        private const int CompactEffectIndex = 25;
+        private const int CompactBlipsIndex = 26;
+        private const int CompactSlideIndex = 27;
 
         private string effectString = string.Empty;
 
@@ -255,7 +267,8 @@ namespace AOBot_Testing.Structures
 
             try
             {
-                (int Horizontal, int Vertical) selfOffset = ParseOffset(GetField(fields, SelfOffsetIndex));
+                PacketFieldLayout layout = ResolvePacketFieldLayout(fields.Length);
+                (int Horizontal, int Vertical) selfOffset = ParseOffset(GetField(fields, layout.SelfOffsetIndex));
 
                 return new ICMessage
                 {
@@ -276,21 +289,21 @@ namespace AOBot_Testing.Structures
                     TextColor = ParseEnum(GetField(fields, TextColorIndex), TextColors.White),
                     ShowName = ResolveShowName(fields),
                     OtherCharId = ParsePairCharId(GetField(fields, OtherCharIdIndex)),
-                    OtherName = DecodePacketField(GetField(fields, OtherNameIndex)),
-                    OtherEmote = DecodePacketField(GetField(fields, OtherEmoteIndex)),
+                    OtherName = DecodePacketField(GetField(fields, layout.OtherNameIndex)),
+                    OtherEmote = DecodePacketField(GetField(fields, layout.OtherEmoteIndex)),
                     SelfOffset = selfOffset,
-                    OtherOffset = ParseInt(GetField(fields, OtherOffsetIndex), 0),
-                    OtherFlip = ParseBoolean(GetField(fields, OtherFlipIndex)),
-                    NonInterruptingPreAnim = ParseBoolean(GetField(fields, ImmediateIndex)),
-                    SfxLooping = ParseBoolean(GetField(fields, SfxLoopingIndex)),
-                    ScreenShake = ParseBoolean(GetField(fields, ScreenShakeIndex)),
-                    FramesShake = DecodePacketField(GetField(fields, FramesShakeIndex)),
-                    FramesRealization = DecodePacketField(GetField(fields, FramesRealizationIndex)),
-                    FramesSfx = DecodePacketField(GetField(fields, FramesSfxIndex)),
-                    Additive = ParseBoolean(GetField(fields, AdditiveIndex)),
-                    EffectString = DecodePacketField(GetField(fields, EffectIndex)),
-                    Blips = DecodePacketField(GetField(fields, BlipsIndex)),
-                    Slide = ParseBoolean(GetField(fields, SlideIndex)),
+                    OtherOffset = ParseInt(GetField(fields, layout.OtherOffsetIndex), 0),
+                    OtherFlip = ParseBoolean(GetField(fields, layout.OtherFlipIndex)),
+                    NonInterruptingPreAnim = ParseBoolean(GetField(fields, layout.ImmediateIndex)),
+                    SfxLooping = ParseBoolean(GetField(fields, layout.SfxLoopingIndex)),
+                    ScreenShake = ParseBoolean(GetField(fields, layout.ScreenShakeIndex)),
+                    FramesShake = DecodePacketField(GetField(fields, layout.FramesShakeIndex)),
+                    FramesRealization = DecodePacketField(GetField(fields, layout.FramesRealizationIndex)),
+                    FramesSfx = DecodePacketField(GetField(fields, layout.FramesSfxIndex)),
+                    Additive = ParseBoolean(GetField(fields, layout.AdditiveIndex)),
+                    EffectString = DecodePacketField(GetField(fields, layout.EffectIndex)),
+                    Blips = DecodePacketField(GetField(fields, layout.BlipsIndex)),
+                    Slide = ParseBoolean(GetField(fields, layout.SlideIndex)),
                     OriginalCommand = message
                 };
             }
@@ -483,6 +496,65 @@ namespace AOBot_Testing.Structures
             }
 
             return $"{offset.Horizontal.ToString(CultureInfo.InvariantCulture)}&{offset.Vertical.ToString(CultureInfo.InvariantCulture)}";
+        }
+
+        private static PacketFieldLayout ResolvePacketFieldLayout(int fieldCount)
+        {
+            return fieldCount >= LegacySlideIndex + 1
+                ? PacketFieldLayout.Legacy
+                : PacketFieldLayout.Compact;
+        }
+
+        private readonly record struct PacketFieldLayout(
+            int OtherNameIndex,
+            int OtherEmoteIndex,
+            int SelfOffsetIndex,
+            int OtherOffsetIndex,
+            int OtherFlipIndex,
+            int ImmediateIndex,
+            int SfxLoopingIndex,
+            int ScreenShakeIndex,
+            int FramesShakeIndex,
+            int FramesRealizationIndex,
+            int FramesSfxIndex,
+            int AdditiveIndex,
+            int EffectIndex,
+            int BlipsIndex,
+            int SlideIndex)
+        {
+            public static PacketFieldLayout Legacy { get; } = new(
+                LegacyOtherNameIndex,
+                LegacyOtherEmoteIndex,
+                LegacySelfOffsetIndex,
+                LegacyOtherOffsetIndex,
+                LegacyOtherFlipIndex,
+                LegacyImmediateIndex,
+                LegacySfxLoopingIndex,
+                LegacyScreenShakeIndex,
+                LegacyFramesShakeIndex,
+                LegacyFramesRealizationIndex,
+                LegacyFramesSfxIndex,
+                LegacyAdditiveIndex,
+                LegacyEffectIndex,
+                LegacyBlipsIndex,
+                LegacySlideIndex);
+
+            public static PacketFieldLayout Compact { get; } = new(
+                -1,
+                -1,
+                CompactSelfOffsetIndex,
+                -1,
+                -1,
+                CompactImmediateIndex,
+                CompactSfxLoopingIndex,
+                CompactScreenShakeIndex,
+                CompactFramesShakeIndex,
+                CompactFramesRealizationIndex,
+                CompactFramesSfxIndex,
+                CompactAdditiveIndex,
+                CompactEffectIndex,
+                CompactBlipsIndex,
+                CompactSlideIndex);
         }
 
         public static Color GetColorFromTextColor(TextColors textColor)

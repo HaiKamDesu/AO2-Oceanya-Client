@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Automation;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
@@ -2354,6 +2355,8 @@ namespace OceanyaClient
                     Width = 40,
                     Height = 40
                 };
+                AutomationProperties.SetAutomationId(toggleBtn, "Main.Client." + (clients.Count + 1).ToString());
+                AutomationProperties.SetName(toggleBtn, bot.clientName);
                 
                 toggleBtn.Checked += ClientToggleButton_Checked;
                 toggleBtn.Unchecked += ClientToggleButton_Unchecked;

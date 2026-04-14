@@ -119,7 +119,6 @@
                     <VirtualizingStackPanel />
                 </ItemsPanelTemplate>
             </ComboBox.ItemsPanel>
-
         </ComboBox>
     </Grid>
 </UserControl>

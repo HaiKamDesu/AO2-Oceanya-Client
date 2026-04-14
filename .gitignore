@@ -16,3 +16,7 @@ obj/
 .env
 appsettings.json
 OceanyaClient/Features/GoogleDriveSync/google-drive-oauth.local.json
+
+# Ignore test result artifacts (TRX files, screenshots, etc.)
+[Tt]est[Rr]esult*/
+*.trx

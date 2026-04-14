@@ -392,6 +392,7 @@
 
                 <Rectangle x:Name="BottomStatusBar" Height="24" Canvas.Top="603" Width="509" Fill="#FF36393F" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 <CheckBox x:Name="chkSticky" Content="Sticky Effects" 
+                          AutomationProperties.AutomationId="Main.Options.StickyEffects"
                           Canvas.Top="607" Foreground="White" FontFamily="Arial" FontSize="10" 
                           Width="82" Height="16" BorderBrush="Black" 
                           Checked="chkStickyEffects_Checked" Unchecked="chkStickyEffects_Checked" 
@@ -428,6 +429,7 @@
                 </Button>
 
                 <CheckBox x:Name="chkPosOnIniSwap" Content="Switch Pos on INISwap" 
+                          AutomationProperties.AutomationId="Main.Options.SwitchPosOnIniSwap"
                           Canvas.Top="607" Foreground="White" FontFamily="Arial" FontSize="10" 
                           Width="127" Height="16" BorderBrush="Black" 
                           Checked="chkPosOnIniSwap_Checked" Unchecked="chkPosOnIniSwap_Checked" 
@@ -437,6 +439,7 @@
                         Canvas.Left="442" Canvas.Top="607" Width="38" 
                         Click="Button_Click" Visibility="Collapsed"/>
                 <CheckBox x:Name="chkInvertLog" Content="Invert IC Logs" 
+                    AutomationProperties.AutomationId="Main.Options.InvertIcLogs"
                     Canvas.Top="607" Foreground="White" FontFamily="Arial" FontSize="10" 
                     Width="127" Height="16" BorderBrush="Black" 
                     Checked="chkInvertLog_Checked" Unchecked="chkInvertLog_Checked" 

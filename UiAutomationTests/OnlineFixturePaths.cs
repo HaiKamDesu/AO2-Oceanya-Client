@@ -27,6 +27,11 @@ internal static class OnlineFixturePaths
     /// </summary>
     public static string BuildArguments(int serverPort)
     {
+        return BuildArguments("tcp://127.0.0.1:" + serverPort);
+    }
+
+    public static string BuildArguments(string serverEndpoint)
+    {
         List<string> args = new List<string>
         {
             "--test-mode",
@@ -40,7 +45,7 @@ internal static class OnlineFixturePaths
             "--test-savefile=" + Quote(SaveFilePath),
             "--test-config-ini=" + Quote(SmokeFixturePaths.ConfigIniPath),
             "--test-server-json=" + Quote(SmokeFixturePaths.ServerJsonPath),
-            "--test-server-endpoint=tcp://127.0.0.1:" + serverPort
+            "--test-server-endpoint=" + serverEndpoint
         };
 
         return string.Join(" ", args);

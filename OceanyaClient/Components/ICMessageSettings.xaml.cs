@@ -22,6 +22,7 @@ using System.ComponentModel;
 using static OceanyaClient.Components.ImageComboBox;
 using System.Xml.Linq;
 using OceanyaClient.Utilities;
+using System.Windows.Automation;
 
 namespace OceanyaClient.Components
 {
@@ -490,6 +491,8 @@ namespace OceanyaClient.Components
                 Focusable = false,
                 IsTabStop = false
             };
+            AutomationProperties.SetAutomationId(toggleBtn, "Main.Ic.EmoteGrid." + SanitizeAutomationSegment(emote.DisplayID));
+            AutomationProperties.SetName(toggleBtn, emote.DisplayID);
             toggleBtn.Checked += EmoteToggleBtn_Checked;
             toggleBtn.Unchecked += EmoteToggleBtn_Unchecked;
 
@@ -561,6 +564,22 @@ namespace OceanyaClient.Components
             EmoteDropdown.Add(emote.DisplayID, emote.PathToImage_off);
             EmoteGrid.AddElement(toggleBtn);
             emotes.Add(emote, toggleBtn);
+        }
+
+        private static string SanitizeAutomationSegment(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return "Empty";
+            }
+
+            StringBuilder builder = new StringBuilder(value.Length);
+            foreach (char c in value.Trim())
+            {
+                builder.Append(char.IsLetterOrDigit(c) ? c : '_');
+            }
+
+            return builder.ToString();
         }
 
         /// <summary>

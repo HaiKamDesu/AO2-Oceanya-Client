@@ -2,8 +2,8 @@
   "ConfigIniPath": "D:\\Programs\\Attorney Online\\RPG\\AO2-Oceanya-Bot\\UnitTests\\TestAssets\\FlaUISmoke\\config.ini",
   "StartupFunctionalityId": "gm_multi_client",
   "UseSingleInternalClient": false,
-  "SelectedServerEndpoint": "tcp://127.0.0.1:63181",
-  "SelectedServerName": "tcp://127.0.0.1:63181",
+  "SelectedServerEndpoint": "tcp://127.0.0.1:58308",
+  "SelectedServerName": "tcp://127.0.0.1:58308",
   "CustomServerEndpoints": [],
   "CustomServerEntries": [],
   "AdvancedFeatures": {
@@ -56,8 +56,8 @@
     "LastSyncUtc": null
   },
   "OOCName": "OnlineTest",
-  "StickyEffect": false,
-  "SwitchPosOnIniSwap": false,
+  "StickyEffect": true,
+  "SwitchPosOnIniSwap": true,
   "InvertICLog": false,
   "LogMaxMessages": 0,
   "FolderVisualizer": {
