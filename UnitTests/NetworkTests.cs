@@ -195,6 +195,48 @@ public class NetworkTests
     }
 
     [Test]
+    public async Task HandleMessage_ShoutModifier_ProducesAo2StyleActionLine()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+        await client.HandleMessage("SC#Phoenix#%");
+
+        string? showName = null;
+        string? action = null;
+
+        client.OnIcActionReceived += (sn, msg, _, _) =>
+        {
+            showName = sn;
+            action = msg;
+        };
+
+        ICMessage message = new ICMessage
+        {
+            DeskMod = ICMessage.DeskMods.Chat,
+            PreAnim = "-",
+            Character = "Phoenix",
+            Emote = "normal",
+            Message = "Take that",
+            Side = "wit",
+            SfxName = "1",
+            EmoteModifier = ICMessage.EmoteModifiers.NoPreanimation,
+            CharId = 0,
+            SfxDelay = 0,
+            ShoutModifier = ICMessage.ShoutModifiers.Objection,
+            EvidenceID = "0",
+            TextColor = ICMessage.TextColors.White,
+            ShowName = "Phoenix"
+        };
+
+        await client.HandleMessage(ICMessage.GetCommand(message));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(showName, Is.EqualTo("Phoenix"));
+            Assert.That(action, Is.EqualTo("shouts OBJECTION!"));
+        });
+    }
+
+    [Test]
     public void HandleMessage_IgnoresMalformedOrUnknownPackets()
     {
         var client = new AOClient("ws://localhost:10001/");

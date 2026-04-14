@@ -24,6 +24,9 @@ namespace OceanyaClient
     {
         private const double MultiClientWindowHeight = 358;
         private const double CharacterViewerWindowHeight = 286;
+        private static Func<string, string, MessageBoxButton, MessageBoxImage, MessageBoxResult>? testMessageBoxOverride = null;
+        private static Func<Window, Task>? testRefreshCharactersAndBackgroundsAsyncOverride = null;
+        private static Func<Window, TargetedAssetRefreshPlan, Task>? testRefreshTargetedAssetsAsyncOverride = null;
 
         private ServerEndpointDefinition? selectedServer;
         private bool ignoreStartupFunctionalitySelectionChanged;
@@ -59,6 +62,11 @@ namespace OceanyaClient
         }
 
         private async void OkButton_Click(object sender, RoutedEventArgs e)
+        {
+            await ExecuteOkButtonClickAsync();
+        }
+
+        private async Task ExecuteOkButtonClickAsync()
         {
             string configIniPath = ConfigINIPathTextBox.Text?.Trim() ?? string.Empty;
             StartupFunctionalityOption selectedFunctionality = GetSelectedStartupFunctionality();
@@ -214,7 +222,7 @@ namespace OceanyaClient
                 {
                     await CloseLaunchWaitFormAsync();
 
-                    MessageBoxResult refreshDecision = OceanyaMessageBox.Show(
+                    MessageBoxResult refreshDecision = ShowMessageBox(
                         BuildForcedRefreshPrompt(forcedRefreshReason),
                         "Refresh Required",
                         MessageBoxButton.YesNo,
@@ -230,7 +238,7 @@ namespace OceanyaClient
                 {
                     await CloseLaunchWaitFormAsync();
 
-                    MessageBoxResult refreshDecision = OceanyaMessageBox.Show(
+                    MessageBoxResult refreshDecision = ShowMessageBox(
                         BuildTrackedRefreshPrompt(),
                         "Refresh Changed Assets",
                         MessageBoxButton.YesNo,
@@ -257,7 +265,7 @@ namespace OceanyaClient
                     }
 
                     await CloseLaunchWaitFormAsync();
-                    await ClientAssetRefreshService.RefreshCharactersAndBackgroundsAsync(refreshOwner);
+                    await RefreshCharactersAndBackgroundsAsync(refreshOwner);
                     RefreshInfoCheckBox.IsChecked = false;
                 }
                 else if (shouldRunTargetedRefresh)
@@ -269,7 +277,7 @@ namespace OceanyaClient
                     }
 
                     await CloseLaunchWaitFormAsync();
-                    await ClientAssetRefreshService.RefreshTargetedAssetsAsync(refreshOwner, trackedChangePlan);
+                    await RefreshTargetedAssetsAsync(refreshOwner, trackedChangePlan);
                     RefreshInfoCheckBox.IsChecked = false;
                 }
 
@@ -760,6 +768,44 @@ namespace OceanyaClient
         private static string BuildTrackedRefreshPrompt()
         {
             return "Asset files changed since the last refresh. Oceanya can refresh only the affected items. Do you want to continue?";
+        }
+
+        private static MessageBoxResult ShowMessageBox(
+            string messageBoxText,
+            string caption,
+            MessageBoxButton buttons,
+            MessageBoxImage icon)
+        {
+            Func<string, string, MessageBoxButton, MessageBoxImage, MessageBoxResult>? overrideHandler =
+                testMessageBoxOverride;
+            if (overrideHandler != null)
+            {
+                return overrideHandler(messageBoxText, caption, buttons, icon);
+            }
+
+            return OceanyaMessageBox.Show(messageBoxText, caption, buttons, icon);
+        }
+
+        private static Task RefreshCharactersAndBackgroundsAsync(Window owner)
+        {
+            Func<Window, Task>? overrideHandler = testRefreshCharactersAndBackgroundsAsyncOverride;
+            if (overrideHandler != null)
+            {
+                return overrideHandler(owner);
+            }
+
+            return ClientAssetRefreshService.RefreshCharactersAndBackgroundsAsync(owner);
+        }
+
+        private static Task RefreshTargetedAssetsAsync(Window owner, TargetedAssetRefreshPlan plan)
+        {
+            Func<Window, TargetedAssetRefreshPlan, Task>? overrideHandler = testRefreshTargetedAssetsAsyncOverride;
+            if (overrideHandler != null)
+            {
+                return overrideHandler(owner, plan);
+            }
+
+            return ClientAssetRefreshService.RefreshTargetedAssetsAsync(owner, plan);
         }
 
         private void ReopenConfigurationWindow()

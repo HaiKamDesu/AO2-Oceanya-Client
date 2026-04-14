@@ -48,6 +48,7 @@ namespace UnitTests
             SaveFile.ResetForTests(new SaveData(), persist: false);
             Globals.ReloadServerIpsForTests(null);
             OceanyaTestMode.Reset();
+            ResetInitialConfigurationWindowTestHooks();
         }
 
         [TearDown]
@@ -59,6 +60,7 @@ namespace UnitTests
             Globals.SelectedServerEndpoint = originalSelectedServerEndpoint;
             Globals.ReloadServerIpsForTests(null);
             SaveFile.ConfigureStoragePathForTests(originalSaveFilePath);
+            ResetInitialConfigurationWindowTestHooks();
 
             try
             {
@@ -235,6 +237,94 @@ namespace UnitTests
                 Assert.That(((ComboBox)window.FindName("StartupFunctionalityComboBox")).SelectedValue?.ToString(),
                     Is.EqualTo(StartupFunctionalityIds.CharacterDatabaseViewer));
                 Assert.That(((TextBox)window.FindName("SelectedServerTextBox")).Text, Is.EqualTo("ws://127.0.0.1:27016"));
+            });
+        }
+
+        [Test]
+        public async Task StartupRefreshPrompt_WhenUserDeclines_DoesNotRefreshAssets()
+        {
+            string configIniPath = CreateConfigIni();
+            SaveFile.ResetForTests(
+                new SaveData
+                {
+                    ConfigIniPath = "stale.ini",
+                    StartupFunctionalityId = StartupFunctionalityIds.GmMultiClient,
+                    UseSingleInternalClient = true,
+                    SelectedServerEndpoint = "ws://stale-server:27016",
+                    SelectedServerName = "Stale Server"
+                },
+                persist: false);
+
+            OceanyaTestMode.SetCurrent(new OceanyaTestModeOptions
+            {
+                IsEnabled = true,
+                DisableWaitForms = true,
+                DisableFakeLoading = true,
+                SkipServerValidation = true
+            });
+
+            Globals.UpdateConfigINI(configIniPath);
+            ResetCharacterCache();
+            CharacterFolder.RefreshCharacterList();
+            Assert.That(CharacterFolder.FullList, Is.Empty);
+
+            InitialConfigurationWindow window = new InitialConfigurationWindow();
+            ((TextBox)window.FindName("ConfigINIPathTextBox")).Text = configIniPath;
+            ((ComboBox)window.FindName("StartupFunctionalityComboBox")).SelectedValue =
+                StartupFunctionalityIds.CharacterDatabaseViewer;
+            ((CheckBox)window.FindName("RefreshInfoCheckBox")).IsChecked = false;
+
+            int promptCalls = 0;
+            int fullRefreshCalls = 0;
+            int targetedRefreshCalls = 0;
+
+            SetNonPublicStaticField(
+                typeof(InitialConfigurationWindow),
+                "testMessageBoxOverride",
+                new Func<string, string, MessageBoxButton, MessageBoxImage, MessageBoxResult>(
+                    (message, caption, buttons, image) =>
+                    {
+                        promptCalls++;
+
+                        Assert.Multiple(() =>
+                        {
+                            Assert.That(caption, Is.EqualTo("Refresh Required"));
+                            Assert.That(buttons, Is.EqualTo(MessageBoxButton.YesNo));
+                            Assert.That(image, Is.EqualTo(MessageBoxImage.Question));
+                            Assert.That(message, Does.Contain("full asset refresh is required").IgnoreCase);
+                        });
+
+                        return MessageBoxResult.No;
+                    }));
+
+            SetNonPublicStaticField(
+                typeof(InitialConfigurationWindow),
+                "testRefreshCharactersAndBackgroundsAsyncOverride",
+                new Func<Window, Task>(_ =>
+                {
+                    fullRefreshCalls++;
+                    return Task.CompletedTask;
+                }));
+
+            SetNonPublicStaticField(
+                typeof(InitialConfigurationWindow),
+                "testRefreshTargetedAssetsAsyncOverride",
+                new Func<Window, TargetedAssetRefreshPlan, Task>((_, _) =>
+                {
+                    targetedRefreshCalls++;
+                    return Task.CompletedTask;
+                }));
+
+            await InvokeNonPublicInstanceMethodAsync(window, "ExecuteOkButtonClickAsync");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(promptCalls, Is.EqualTo(1));
+                Assert.That(fullRefreshCalls, Is.EqualTo(0));
+                Assert.That(targetedRefreshCalls, Is.EqualTo(0));
+                Assert.That(SaveFile.Data.ConfigIniPath, Is.EqualTo("stale.ini"));
+                Assert.That(SaveFile.Data.StartupFunctionalityId, Is.EqualTo(StartupFunctionalityIds.GmMultiClient));
+                Assert.That(SaveFile.Data.SelectedServerEndpoint, Is.EqualTo("ws://stale-server:27016"));
             });
         }
 
@@ -537,6 +627,30 @@ namespace UnitTests
             MethodInfo? method = target.GetType().GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Instance);
             Assert.That(method, Is.Not.Null, $"Expected method '{methodName}' on {target.GetType().Name}.");
             method!.Invoke(target, parameters);
+        }
+
+        private static async Task InvokeNonPublicInstanceMethodAsync(object target, string methodName, params object[] parameters)
+        {
+            MethodInfo? method = target.GetType().GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(method, Is.Not.Null, $"Expected method '{methodName}' on {target.GetType().Name}.");
+
+            object? result = method!.Invoke(target, parameters);
+            Assert.That(result, Is.AssignableTo<Task>(), $"Expected '{methodName}' to return a Task.");
+            await (Task)result!;
+        }
+
+        private static void SetNonPublicStaticField(Type declaringType, string fieldName, object? value)
+        {
+            FieldInfo? field = declaringType.GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.That(field, Is.Not.Null, $"Expected static field '{fieldName}' on {declaringType.Name}.");
+            field!.SetValue(null, value);
+        }
+
+        private static void ResetInitialConfigurationWindowTestHooks()
+        {
+            SetNonPublicStaticField(typeof(InitialConfigurationWindow), "testMessageBoxOverride", null);
+            SetNonPublicStaticField(typeof(InitialConfigurationWindow), "testRefreshCharactersAndBackgroundsAsyncOverride", null);
+            SetNonPublicStaticField(typeof(InitialConfigurationWindow), "testRefreshTargetedAssetsAsyncOverride", null);
         }
 
         private static void ResetCharacterCache()

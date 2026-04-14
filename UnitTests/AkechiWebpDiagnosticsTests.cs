@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using ImageMagick;
 using NUnit.Framework;
 using OceanyaClient;
 
@@ -32,6 +33,42 @@ namespace UnitTests
 
             AssertWebpPreviewFrameLooksValid(normalPath, requireAnimationPlayer: true);
             AssertWebpPreviewFrameLooksValid(happyPath, requireAnimationPlayer: false);
+        }
+
+        [Test]
+        public void WebpAnimation_SyntheticTransparentFrame_PreservesTransparency()
+        {
+            string tempDirectory = Path.Combine(Path.GetTempPath(), "oceanya_webp_test_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDirectory);
+            string webpPath = Path.Combine(tempDirectory, "transparent.webp");
+
+            try
+            {
+                using (MagickImage image = new MagickImage(MagickColors.Transparent, 32, 32))
+                {
+                    using MagickImage redSquare = new MagickImage(MagickColors.Red, 16, 16);
+                    image.Composite(redSquare, 8, 8, CompositeOperator.Over);
+
+                    image.Format = MagickFormat.WebP;
+                    image.Write(webpPath);
+                }
+
+                AssertWebpPreviewFrameLooksValid(webpPath, requireAnimationPlayer: false);
+            }
+            finally
+            {
+                try
+                {
+                    if (Directory.Exists(tempDirectory))
+                    {
+                        Directory.Delete(tempDirectory, recursive: true);
+                    }
+                }
+                catch
+                {
+                    // Best-effort cleanup only.
+                }
+            }
         }
 
         [Test]
