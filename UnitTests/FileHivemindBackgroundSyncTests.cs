@@ -841,6 +841,95 @@ namespace UnitTests
             }
         }
 
+        /// <summary>
+        /// R-015 — concurrent background-agent.log writers must not throw IOException or
+        /// lose entries when they hit the same file at the same time.
+        /// </summary>
+        [Test]
+        public void BackgroundLogStore_ConcurrentAppends_DoNotThrowOrLoseEntries()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "file_hivemind_log_" + Guid.NewGuid().ToString("N"));
+            string filePath = Path.Combine(root, "background-agent.log");
+
+            try
+            {
+                FileHivemindBackgroundLogStore storeA = new FileHivemindBackgroundLogStore(filePath);
+                FileHivemindBackgroundLogStore storeB = new FileHivemindBackgroundLogStore(filePath);
+                List<Exception> failures = new List<Exception>();
+                using ManualResetEventSlim startGate = new ManualResetEventSlim(false);
+
+                Task writerA = Task.Run(() =>
+                {
+                    try
+                    {
+                        startGate.Wait();
+                        for (int index = 0; index < 25; index++)
+                        {
+                            storeA.Append(new FileHivemindBackgroundLogEntry
+                            {
+                                Level = "Action",
+                                ConnectionId = "connection-a",
+                                ConnectionName = "Campaign A",
+                                Message = "writer-a-" + index
+                            });
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        lock (failures)
+                        {
+                            failures.Add(ex);
+                        }
+                    }
+                });
+
+                Task writerB = Task.Run(() =>
+                {
+                    try
+                    {
+                        startGate.Wait();
+                        for (int index = 0; index < 25; index++)
+                        {
+                            storeB.Append(new FileHivemindBackgroundLogEntry
+                            {
+                                Level = "Action",
+                                ConnectionId = "connection-b",
+                                ConnectionName = "Campaign B",
+                                Message = "writer-b-" + index
+                            });
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        lock (failures)
+                        {
+                            failures.Add(ex);
+                        }
+                    }
+                });
+
+                startGate.Set();
+                Task.WaitAll(writerA, writerB);
+
+                FileHivemindBackgroundLogReadResult result = new FileHivemindBackgroundLogStore(filePath).ReadFrom(0);
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(failures, Is.Empty, "Concurrent log writers must not throw");
+                    Assert.That(result.Entries.Count, Is.EqualTo(50), "All concurrent log entries must be preserved");
+                    Assert.That(result.Entries.Count(entry => entry.ConnectionId == "connection-a"), Is.EqualTo(25));
+                    Assert.That(result.Entries.Count(entry => entry.ConnectionId == "connection-b"), Is.EqualTo(25));
+                });
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
         [Test]
         public void LocalMirrorStateSupport_HasDifferences_DetectsLocalDeletion()
         {

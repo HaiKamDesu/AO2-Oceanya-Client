@@ -1990,6 +1990,61 @@ namespace UnitTests
             }
         }
 
+        /// <summary>
+        /// R-016 — a cancelled pull must surface cancellation promptly instead of hanging
+        /// indefinitely after a mid-transfer interruption.
+        /// </summary>
+        [Test]
+        public void PullFromDriveAsync_CancellationDuringDownload_ThrowsWithoutHanging()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "drive_pull_cancel_test_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                Directory.CreateDirectory(root);
+
+                FakeGoogleDriveRemoteClient client = new FakeGoogleDriveRemoteClient
+                {
+                    DownloadDelay = TimeSpan.FromMilliseconds(300)
+                };
+                client.AddFolder("characters", "folder-characters");
+                client.AddFolder("characters/phoenix", "folder-phoenix");
+                for (int index = 0; index < 6; index++)
+                {
+                    client.AddFile($"characters/phoenix/file{index}.txt", "file-" + index, "content-" + index);
+                }
+
+                GoogleDriveSyncSettings settings = new GoogleDriveSyncSettings
+                {
+                    LocalFolderPath = root,
+                    RemoteFolderId = client.RootFolderId,
+                    MirrorDeletes = true
+                };
+
+                GoogleDriveSyncService service = new GoogleDriveSyncService();
+                using CancellationTokenSource cancellationTokenSource = new CancellationTokenSource(TimeSpan.FromMilliseconds(75));
+                DateTime utcStart = DateTime.UtcNow;
+
+                Assert.That(
+                    async () => await service.PullFromDriveAsync(
+                        client,
+                        settings,
+                        _ => { },
+                        cancellationTokenSource.Token),
+                    Throws.InstanceOf<OperationCanceledException>());
+
+                TimeSpan elapsed = DateTime.UtcNow - utcStart;
+                Assert.That(elapsed, Is.LessThan(TimeSpan.FromSeconds(2)),
+                    "Cancelled Drive pull must unblock promptly instead of hanging");
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
         [Test]
         public async Task PushLocalFolderAsync_UploadsMultipleFilesInParallel()
         {

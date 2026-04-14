@@ -290,6 +290,50 @@ public class NetworkTests
         }
     }
 
+    /// <summary>
+    /// R-005 — If both ICShowname and char.ini ShowName are blank, the outgoing IC packet
+    /// must fall back to the selected character name instead of sending an empty showname.
+    /// ResolveShowNameForPacket is private; tested via reflection as the nearest stable seam.
+    /// </summary>
+    [Test]
+    public void ShowName_BlankCharIniShowname_FallsBackToCharacterName()
+    {
+        string baseRoot = CreateAoBaseRoot();
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(baseRoot, "characters", "Phoenix"));
+            File.WriteAllText(
+                Path.Combine(baseRoot, "characters", "Phoenix", "char.ini"),
+                "[Options]\nshowname=\nside=def\ngender=male\n[Emotions]\nnumber=1\n1=normal#-#normal#0#1\n");
+
+            Globals.BaseFolders = new List<string> { baseRoot };
+            CharacterFolder.RefreshCharacterList();
+
+            AOClient client = new AOClient("ws://localhost:10001/");
+            client.SetCharacter("Phoenix");
+            client.ICShowname = string.Empty;
+
+            MethodInfo? resolveMethod = typeof(AOClient).GetMethod(
+                "ResolveShowNameForPacket",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(resolveMethod, Is.Not.Null, "ResolveShowNameForPacket must exist on AOClient");
+
+            string? resolved = resolveMethod!.Invoke(client, null) as string;
+
+            Assert.That(resolved, Is.EqualTo("Phoenix"),
+                "Blank ICShowname and blank char.ini ShowName must fall back to the character name");
+        }
+        finally
+        {
+            Globals.BaseFolders = new List<string>();
+            CharacterFolder.RefreshCharacterList();
+            if (Directory.Exists(baseRoot))
+            {
+                Directory.Delete(baseRoot, true);
+            }
+        }
+    }
+
     [Test]
     [CancelAfter(15000)]
     public async Task Connect_TcpEndpoint_UsesAoCompatibleHandshakeFlow()
