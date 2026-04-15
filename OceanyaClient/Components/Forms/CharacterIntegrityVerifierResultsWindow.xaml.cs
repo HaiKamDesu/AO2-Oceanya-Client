@@ -16,6 +16,7 @@ namespace OceanyaClient
     /// </summary>
     public partial class CharacterIntegrityVerifierResultsWindow : OceanyaWindowContentControl
     {
+        private static Func<Window?, string, string, MessageBoxButton, MessageBoxImage, MessageBoxResult>? testMessageBoxOverride;
         private readonly string characterDirectoryPath;
         private readonly string characterName;
         private readonly Action<CharacterIntegrityReport>? onReportUpdated;
@@ -124,7 +125,7 @@ namespace OceanyaClient
 
             if (!CharacterIntegrityVerifier.TryApplyFix(report, row.Source, out string fixMessage))
             {
-                OceanyaMessageBox.Show(
+                ShowIntegrityMessage(
                     this,
                     fixMessage,
                     "Integrity Verifier",
@@ -148,7 +149,7 @@ namespace OceanyaClient
             RefreshUiFromReport();
             onReportUpdated?.Invoke(report);
 
-            OceanyaMessageBox.Show(
+            ShowIntegrityMessage(
                 this,
                 fixMessage,
                 "Integrity Verifier",
@@ -336,6 +337,28 @@ namespace OceanyaClient
             }
 
             return null;
+        }
+
+        private static MessageBoxResult ShowIntegrityMessage(
+            Window? owner,
+            string message,
+            string title,
+            MessageBoxButton buttons,
+            MessageBoxImage image)
+        {
+            Func<Window?, string, string, MessageBoxButton, MessageBoxImage, MessageBoxResult>? overrideHandler =
+                testMessageBoxOverride;
+            if (overrideHandler != null)
+            {
+                return overrideHandler(owner, message, title, buttons, image);
+            }
+
+            return OceanyaMessageBox.Show(owner, message, title, buttons, image);
+        }
+
+        internal static void ResetTestHooks()
+        {
+            testMessageBoxOverride = null;
         }
 
         private void Window_KeyDown(object sender, KeyEventArgs e)

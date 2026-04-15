@@ -20,6 +20,12 @@ namespace OceanyaClient
 {
     public partial class OceanyanFileHivemindWindow : OceanyaWindowContentControl, Features.Startup.IStartupFunctionalityWindow
     {
+        private static Func<OpenFileDialog, bool?>? testOpenFileDialogOverride;
+        private static Func<SaveFileDialog, bool?>? testSaveFileDialogOverride;
+        private static Func<Window, FileHivemindConnectionProfile, GoogleDriveSignedInAccount?>?
+            testPromptForImportedConnectionAccountOverride;
+        private static Func<string, FileHivemindConnectionProfile, Task<bool>>? testImportSyncOverride;
+        private static Func<Window?, string, string, MessageBoxButton, MessageBoxImage, MessageBoxResult>? testMessageBoxOverride;
         private sealed class ConnectionListEntry
         {
             public ConnectionListEntry(
@@ -694,7 +700,7 @@ namespace OceanyaClient
                 Filter = "Oceanyan Hivemind connection (*.oceanyahive.json)|*.oceanyahive.json|JSON files (*.json)|*.json|All files (*.*)|*.*",
                 CheckFileExists = true
             };
-            if (dialog.ShowDialog() != true)
+            if (ShowOpenFileDialog(dialog) != true)
             {
                 return;
             }
@@ -736,20 +742,30 @@ namespace OceanyaClient
 
                 PersistConnection(importConnection);
 
-                bool syncCompleted = await ExecuteConnectionSyncAsync(
-                    "Importing and syncing from Google Drive...",
-                    importConnection,
-                    settings => syncService.PullFromDriveAsync(
-                        settings,
-                        subtitle => WaitForm.SetSubtitle(importConnection.EffectiveDisplayName + ": " + subtitle),
-                        CancellationToken.None));
+                bool syncCompleted;
+                if (testImportSyncOverride != null)
+                {
+                    syncCompleted = await testImportSyncOverride(
+                        "Importing and syncing from Google Drive...",
+                        importConnection);
+                }
+                else
+                {
+                    syncCompleted = await ExecuteConnectionSyncAsync(
+                        "Importing and syncing from Google Drive...",
+                        importConnection,
+                        settings => syncService.PullFromDriveAsync(
+                            settings,
+                            subtitle => WaitForm.SetSubtitle(importConnection.EffectiveDisplayName + ": " + subtitle),
+                            CancellationToken.None));
+                }
                 if (!syncCompleted)
                 {
                     return;
                 }
 
                 RefreshConnections(importConnection.Id);
-                OceanyaMessageBox.Show(
+                ShowHivemindMessage(
                     owner,
                     "The shared connection was imported, signed in, and synced successfully.",
                     "Import Complete",
@@ -760,7 +776,7 @@ namespace OceanyaClient
             {
                 BringHostWindowToFront();
                 AppendStatus("Connection import failed: " + ex.Message, StatusLogLevel.Error);
-                OceanyaMessageBox.Show(
+                ShowHivemindMessage(
                     ResolveOwnerWindow(),
                     "Could not import the shared connection:\n" + ex.Message,
                     "Import Hivemind Connection",
@@ -789,7 +805,7 @@ namespace OceanyaClient
                     DefaultExt = ".oceanyahive.json",
                     OverwritePrompt = true
                 };
-                if (dialog.ShowDialog() != true)
+                if (ShowSaveFileDialog(dialog) != true)
                 {
                     return;
                 }
@@ -801,7 +817,7 @@ namespace OceanyaClient
             catch (Exception ex)
             {
                 AppendStatus("Connection export failed: " + ex.Message, StatusLogLevel.Error, connection.EffectiveDisplayName);
-                OceanyaMessageBox.Show(
+                ShowHivemindMessage(
                     ResolveOwnerWindow(),
                     "Could not export the shared connection:\n" + ex.Message,
                     "Export Hivemind Connection",
@@ -832,7 +848,7 @@ namespace OceanyaClient
                 return;
             }
 
-            MessageBoxResult result = OceanyaMessageBox.Show(
+            MessageBoxResult result = ShowHivemindMessage(
                 ResolveOwnerWindow(),
                 "Delete the selected hivemind connection. Its saved Google account will only be removed if no other connections use it.\n\n"
                     + connection.EffectiveDisplayName,
@@ -1036,13 +1052,18 @@ namespace OceanyaClient
             Window owner,
             FileHivemindConnectionProfile importConnection)
         {
+            if (testPromptForImportedConnectionAccountOverride != null)
+            {
+                return testPromptForImportedConnectionAccountOverride(owner, importConnection);
+            }
+
             List<GoogleDriveSignedInAccount> compatibleAccounts = GoogleDriveSignedInAccountManager.GetCompatibleAccounts(
                 SaveFile.Data.FileHivemind,
                 importConnection.GoogleDrive,
                 credentialStore);
             if (compatibleAccounts.Count == 0)
             {
-                MessageBoxResult signInDecision = OceanyaMessageBox.Show(
+                MessageBoxResult signInDecision = ShowHivemindMessage(
                     owner,
                     "Oceanya will import this shared connection, open Google sign-in, create the local mirror automatically, and sync it once. Continue?",
                     "Import Hivemind Connection",
@@ -1071,6 +1092,50 @@ namespace OceanyaClient
                 importConnection.GoogleDrive,
                 picker.SelectedAccount);
             return picker.SelectedAccount;
+        }
+
+        private static bool? ShowOpenFileDialog(OpenFileDialog dialog)
+        {
+            if (testOpenFileDialogOverride != null)
+            {
+                return testOpenFileDialogOverride(dialog);
+            }
+
+            return dialog.ShowDialog();
+        }
+
+        private static bool? ShowSaveFileDialog(SaveFileDialog dialog)
+        {
+            if (testSaveFileDialogOverride != null)
+            {
+                return testSaveFileDialogOverride(dialog);
+            }
+
+            return dialog.ShowDialog();
+        }
+
+        private static MessageBoxResult ShowHivemindMessage(
+            Window? owner,
+            string message,
+            string title,
+            MessageBoxButton buttons,
+            MessageBoxImage image)
+        {
+            if (testMessageBoxOverride != null)
+            {
+                return testMessageBoxOverride(owner, message, title, buttons, image);
+            }
+
+            return OceanyaMessageBox.Show(owner, message, title, buttons, image);
+        }
+
+        internal static void ResetTestHooks()
+        {
+            testOpenFileDialogOverride = null;
+            testSaveFileDialogOverride = null;
+            testPromptForImportedConnectionAccountOverride = null;
+            testImportSyncOverride = null;
+            testMessageBoxOverride = null;
         }
 
         private void TryDeleteUnusedGoogleAccount(string tokenStoreKey)

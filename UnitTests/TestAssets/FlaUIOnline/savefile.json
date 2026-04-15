@@ -2,8 +2,8 @@
   "ConfigIniPath": "D:\\Programs\\Attorney Online\\RPG\\AO2-Oceanya-Bot\\UnitTests\\TestAssets\\FlaUISmoke\\config.ini",
   "StartupFunctionalityId": "gm_multi_client",
   "UseSingleInternalClient": false,
-  "SelectedServerEndpoint": "tcp://127.0.0.1:51271",
-  "SelectedServerName": "tcp://127.0.0.1:51271",
+  "SelectedServerEndpoint": "tcp://127.0.0.1:54709",
+  "SelectedServerName": "tcp://127.0.0.1:54709",
   "CustomServerEndpoints": [],
   "CustomServerEntries": [],
   "AdvancedFeatures": {

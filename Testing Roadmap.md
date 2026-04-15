@@ -5,7 +5,7 @@ Establish a repo-specific release gate strong enough that, for a full new releas
 
 This file is the durable source of truth for testing progress, priority, and remaining work. Future agents should resume from here after context reset.
 
-Current implementation target: **Phase 1 - now we can trust releases**
+Current implementation target: **Phase 3 - broaden selective confidence**
 
 ## Current State
 - The repository already has meaningful unit, STA/in-process WPF, and FlaUI coverage.
@@ -50,20 +50,31 @@ Notes:
   - FlaUI only where true workflow coverage is required and the repo is already ready for that exact case
 
 ### Phase 2 - strengthen core feature confidence
-Not in scope for the current pass.
+Purpose: extend release confidence across the next highest-risk core workflows without broadening into end-to-end UI automation unless a lower layer cannot protect the regression.
 
-- GM reconnect state regression tests
-- Database viewer integrity-results/apply-fix coverage
-- Character creator edit-existing-folder and duplication workflow coverage
-- Character creator file-organization mutation coverage
-- Hivemind import/export/delete connection workflow coverage
-- AI `MainWindow` action execution and response-tagging coverage
+Scope for this pass:
+
+- [x] GM reconnect state regression tests
+- [x] Database viewer integrity-results/apply-fix coverage
+- [x] Character creator edit-existing-folder tests
+- [x] Character creator duplicate-folder tests
+- [x] Hivemind import/export/delete connection workflow coverage
+
+Note: Character creator file-organization mutation, AI executor, and AI raw-response tagging were
+promoted to Phase 3 scope and completed there.
 
 ### Phase 3 - broaden selective confidence
-Not in scope for the current pass.
+
+Scope for this pass:
+
+- [x] Character creator file-organization mutation tests
+- [x] Character creator emote reorder/delete tests
+- [x] AI `MainWindow` action executor tests
+- [x] AI raw-response tagging/log-link tests
+
+Remaining (not yet started):
 
 - Targeted FlaUI for viewer workflows that truly need end-to-end UI coverage
-- Additional AI wiring coverage
 - Hivemind agent-process integration coverage
 - CI workflow hardening and category strategy refinements
 
@@ -82,10 +93,10 @@ This backlog preserves the original roadmap ordering across the whole repo.
 10. Hivemind window settings persistence tests
 11. Hivemind import/export/delete connection tests
 12. Add always-on unit-test CI workflow
-13. Character creator file-organization mutation tests
-14. Character creator emote reorder/delete tests
-15. AI `MainWindow` action executor tests
-16. AI raw-response tagging/log-link tests
+13. ~~Character creator file-organization mutation tests~~ ✓ (Phase 3)
+14. ~~Character creator emote reorder/delete tests~~ ✓ (Phase 3)
+15. ~~AI `MainWindow` action executor tests~~ ✓ (Phase 3)
+16. ~~AI raw-response tagging/log-link tests~~ ✓ (Phase 3)
 17. Hivemind agent process/stop-signal integration tests
 18. Targeted FlaUI for database viewer search/open workflows
 19. Add creator AutomationIds and narrow test hooks where justified
@@ -161,12 +172,32 @@ Even after the roadmap is complete, these still require manual validation:
   - scope or rationale changes
   - a blocker is found that prevents completion
 
+### Phase 2 status
+- [x] GM reconnect state regression tests
+- [x] Character creator edit-existing-folder tests
+- [x] Character creator duplicate-folder tests
+- [x] Database viewer integrity-results/apply-fix tests
+- [x] Hivemind import/export/delete connection tests
+
+(File-org mutation, AI executor, and AI raw-response tagging were promoted to Phase 3 scope.)
+
+### Phase 3 status
+- [x] Character creator file-organization mutation tests
+- [x] Character creator emote reorder/delete tests
+- [x] AI `MainWindow` action executor tests
+- [x] AI raw-response tagging/log-link tests
+
 ### Current pass notes
 - Completed in repo:
-  - `UnitTests/Phase1ReleaseConfidenceTests.cs` now covers all six Phase 1 risks with explicit regression assertions.
-  - `MainWindow.SelectClient` now restores the selected client's OOC showname textbox when operators switch clients.
+  - `UnitTests/Phase1ReleaseConfidenceTests.cs` covers all six Phase 1 risks with explicit regression assertions.
+  - `MainWindow.SelectClient` restores the selected client's OOC showname textbox when operators switch clients.
   - `MainWindow` and `AOCharacterFileCreatorWindow` expose narrow internal test hooks for connection failure and creator success/error message interception.
   - `OceanyanFileHivemindWindow` constructor supports injected runtime/credential/background-agent collaborators so settings persistence can be tested without live Windows integration.
+  - `UnitTests/Phase2ReleaseConfidenceTests.cs` adds focused STA/unit coverage for GM reconnect logging/state sync, character creator edit and duplication workflows, database viewer integrity-results presentation plus blank-emotes rerun coverage, and Hivemind export/import/delete connection workflows.
+  - `CharacterIntegrityVerifierResultsWindow` and `OceanyanFileHivemindWindow` expose narrow message/dialog test hooks so those workflows can be verified without FlaUI or live Windows dialogs.
+  - `UnitTests/Phase3ReleaseConfidenceTests.cs` adds 16 STA/unit tests covering: (1) file-organization mutation — extra file and subdirectory become external entries, root-level animation recorded as override; (2) emote reorder/delete — MoveUp, MoveDown, Remove, boundary no-ops; (3) AI executor — SetTextColor, SetIcShowname, SetPosition, multiple actions; (4) AI raw-response tagging — QueuePendingAiOriginResponse IC+OOC entries, HandleAiFinalMessage success queues/error skips, BuildRawResponseLinks link text.
 - Verification notes:
-  - Phase 1 items were verified with focused `dotnet test UnitTests/UnitTests.csproj --no-build --filter ...` runs for each risk area.
-  - Character creator and database viewer coverage stay in-process/STA; FlaUI was not required for Phase 1.
+  - Phase 1 items verified with focused `FullyQualifiedName~Phase1ReleaseConfidenceTests` runs; all 10 pass.
+  - Phase 2 items verified with focused `FullyQualifiedName~Phase2ReleaseConfidenceTests` runs; all 10 pass.
+  - Phase 3 items verified with focused `FullyQualifiedName~Phase3ReleaseConfidenceTests` runs; all 16 pass.
+  - None of the four Phase 3 tasks were already fully covered at the correct layer; existing coverage only addressed higher-level integration or adjacent concerns.
