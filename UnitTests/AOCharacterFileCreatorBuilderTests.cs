@@ -248,10 +248,7 @@ namespace UnitTests
         [SetUp]
         public void SetUp()
         {
-            if (Application.Current == null)
-            {
-                _ = new Application();
-            }
+            _ = WpfTestApplicationContext.EnsureCreated();
         }
 
         [Test]
@@ -309,10 +306,7 @@ namespace UnitTests
             tempRoot = Path.Combine(Path.GetTempPath(), "ao_char_creator_window_tests_" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(tempRoot);
 
-            if (Application.Current == null)
-            {
-                _ = new Application();
-            }
+            _ = WpfTestApplicationContext.EnsureCreated();
         }
 
         [TearDown]

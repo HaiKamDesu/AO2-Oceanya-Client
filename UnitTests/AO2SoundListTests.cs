@@ -133,10 +133,7 @@ namespace UnitTests
             tempRoot = Path.Combine(Path.GetTempPath(), "ao_char_creator_soundlist_tests_" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(tempRoot);
 
-            if (Application.Current == null)
-            {
-                _ = new Application();
-            }
+            _ = WpfTestApplicationContext.EnsureCreated();
         }
 
         [TearDown]

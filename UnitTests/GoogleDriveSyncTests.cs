@@ -2092,25 +2092,31 @@ namespace UnitTests
 
         private sealed class FakeGoogleDriveRemoteClient : IGoogleDriveRemoteClient
         {
+            private readonly object stateLock = new object();
             private readonly Dictionary<string, string> fileContents = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             private readonly Dictionary<string, string> folderIdsToRelativePaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             private readonly Queue<GoogleDriveChangePage> changePages = new Queue<GoogleDriveChangePage>();
-            private int nextId = 1;
+            private int nextId;
             private int currentConcurrentDownloads;
             private int currentConcurrentUploads;
+            private int maxConcurrentDownloads;
+            private int maxConcurrentUploads;
 
             public FakeGoogleDriveRemoteClient()
             {
                 RootFolderId = "root";
-                folderIdsToRelativePaths[RootFolderId] = string.Empty;
+                lock (stateLock)
+                {
+                    folderIdsToRelativePaths[RootFolderId] = string.Empty;
+                }
             }
 
             public string RootFolderId { get; }
             public string StartPageToken { get; set; } = "token-0";
             public TimeSpan DownloadDelay { get; set; } = TimeSpan.Zero;
             public TimeSpan UploadDelay { get; set; } = TimeSpan.Zero;
-            public int MaxConcurrentDownloads { get; private set; }
-            public int MaxConcurrentUploads { get; private set; }
+            public int MaxConcurrentDownloads => Volatile.Read(ref maxConcurrentDownloads);
+            public int MaxConcurrentUploads => Volatile.Read(ref maxConcurrentUploads);
             public int GetSnapshotCallCount { get; private set; }
             public int GetStartPageTokenCallCount { get; private set; }
 
@@ -2124,25 +2130,35 @@ namespace UnitTests
 
             public void AddFolder(string relativePath, string folderId)
             {
-                Snapshot.Folders[relativePath] = new GoogleDriveSyncFolderEntry
+                GoogleDriveSyncFolderEntry folderEntry = new GoogleDriveSyncFolderEntry
                 {
                     RelativePath = relativePath,
                     ItemId = folderId
                 };
-                folderIdsToRelativePaths[folderId] = relativePath;
+
+                lock (stateLock)
+                {
+                    Snapshot.Folders[relativePath] = folderEntry;
+                    folderIdsToRelativePaths[folderId] = relativePath;
+                }
             }
 
             public void AddFile(string relativePath, string fileId, string content)
             {
                 string parentRelativePath = GetParentRelativePath(relativePath);
-                string parentId = string.IsNullOrWhiteSpace(parentRelativePath)
-                    ? RootFolderId
-                    : Snapshot.Folders[parentRelativePath].ItemId;
+                string parentId;
+                lock (stateLock)
+                {
+                    parentId = string.IsNullOrWhiteSpace(parentRelativePath)
+                        ? RootFolderId
+                        : Snapshot.Folders[parentRelativePath].ItemId;
+                }
+
                 string tempFile = Path.GetTempFileName();
                 try
                 {
                     File.WriteAllText(tempFile, content);
-                    Snapshot.Files[relativePath] = new GoogleDriveSyncFileEntry
+                    GoogleDriveSyncFileEntry fileEntry = new GoogleDriveSyncFileEntry
                     {
                         RelativePath = relativePath,
                         ItemId = fileId,
@@ -2150,23 +2166,33 @@ namespace UnitTests
                         Size = new FileInfo(tempFile).Length,
                         Hash = GoogleDriveLocalSnapshotBuilder.ComputeMd5(tempFile)
                     };
+
+                    lock (stateLock)
+                    {
+                        Snapshot.Files[relativePath] = fileEntry;
+                        fileContents[relativePath] = content;
+                    }
                 }
                 finally
                 {
                     File.Delete(tempFile);
                 }
-
-                fileContents[relativePath] = content;
             }
 
             public string GetFileText(string relativePath)
             {
-                return fileContents[relativePath];
+                lock (stateLock)
+                {
+                    return fileContents[relativePath];
+                }
             }
 
             public void QueueChangePage(GoogleDriveChangePage page)
             {
-                changePages.Enqueue(page);
+                lock (stateLock)
+                {
+                    changePages.Enqueue(page);
+                }
             }
 
             public Task<GoogleDriveUserInfo> GetCurrentUserAsync(CancellationToken cancellationToken)
@@ -2185,9 +2211,14 @@ namespace UnitTests
                     return Task.FromResult("Root Folder");
                 }
 
-                string relativePath = folderIdsToRelativePaths.TryGetValue(folderId, out string? value)
-                    ? value
-                    : string.Empty;
+                string relativePath;
+                lock (stateLock)
+                {
+                    relativePath = folderIdsToRelativePaths.TryGetValue(folderId, out string? value)
+                        ? value
+                        : string.Empty;
+                }
+
                 string folderName = string.IsNullOrWhiteSpace(relativePath)
                     ? "Root Folder"
                     : Path.GetFileName(relativePath.Replace('/', Path.DirectorySeparatorChar));
@@ -2202,40 +2233,46 @@ namespace UnitTests
 
             public Task<GoogleDriveChangePage> GetChangesAsync(string pageToken, CancellationToken cancellationToken)
             {
-                if (changePages.Count == 0)
+                lock (stateLock)
                 {
-                    return Task.FromResult(new GoogleDriveChangePage
+                    if (changePages.Count == 0)
                     {
-                        NewStartPageToken = pageToken
-                    });
-                }
+                        return Task.FromResult(new GoogleDriveChangePage
+                        {
+                            NewStartPageToken = pageToken
+                        });
+                    }
 
-                return Task.FromResult(changePages.Dequeue());
+                    return Task.FromResult(changePages.Dequeue());
+                }
             }
 
             public Task<GoogleDriveSyncSnapshot> GetSnapshotAsync(string rootFolderId, CancellationToken cancellationToken)
             {
                 GetSnapshotCallCount++;
                 GoogleDriveSyncSnapshot clone = new GoogleDriveSyncSnapshot();
-                foreach (KeyValuePair<string, GoogleDriveSyncFolderEntry> pair in Snapshot.Folders)
+                lock (stateLock)
                 {
-                    clone.Folders[pair.Key] = new GoogleDriveSyncFolderEntry
+                    foreach (KeyValuePair<string, GoogleDriveSyncFolderEntry> pair in Snapshot.Folders)
                     {
-                        RelativePath = pair.Value.RelativePath,
-                        ItemId = pair.Value.ItemId
-                    };
-                }
+                        clone.Folders[pair.Key] = new GoogleDriveSyncFolderEntry
+                        {
+                            RelativePath = pair.Value.RelativePath,
+                            ItemId = pair.Value.ItemId
+                        };
+                    }
 
-                foreach (KeyValuePair<string, GoogleDriveSyncFileEntry> pair in Snapshot.Files)
-                {
-                    clone.Files[pair.Key] = new GoogleDriveSyncFileEntry
+                    foreach (KeyValuePair<string, GoogleDriveSyncFileEntry> pair in Snapshot.Files)
                     {
-                        RelativePath = pair.Value.RelativePath,
-                        ItemId = pair.Value.ItemId,
-                        ParentId = pair.Value.ParentId,
-                        Size = pair.Value.Size,
-                        Hash = pair.Value.Hash
-                    };
+                        clone.Files[pair.Key] = new GoogleDriveSyncFileEntry
+                        {
+                            RelativePath = pair.Value.RelativePath,
+                            ItemId = pair.Value.ItemId,
+                            ParentId = pair.Value.ParentId,
+                            Size = pair.Value.Size,
+                            Hash = pair.Value.Hash
+                        };
+                    }
                 }
 
                 return Task.FromResult(clone);
@@ -2243,13 +2280,18 @@ namespace UnitTests
 
             public Task<GoogleDriveSyncFolderEntry> CreateFolderAsync(string? parentFolderId, string folderName, CancellationToken cancellationToken)
             {
-                string parentRelativePath = string.IsNullOrWhiteSpace(parentFolderId)
-                    ? string.Empty
-                    : folderIdsToRelativePaths[parentFolderId];
+                string parentRelativePath;
+                lock (stateLock)
+                {
+                    parentRelativePath = string.IsNullOrWhiteSpace(parentFolderId)
+                        ? string.Empty
+                        : folderIdsToRelativePaths[parentFolderId];
+                }
+
                 string relativePath = string.IsNullOrWhiteSpace(parentRelativePath)
                     ? folderName
                     : parentRelativePath + "/" + folderName;
-                string id = "folder-" + nextId++;
+                string id = "folder-" + Interlocked.Increment(ref nextId);
 
                 AddFolder(relativePath, id);
                 return Task.FromResult(new GoogleDriveSyncFolderEntry
@@ -2266,27 +2308,35 @@ namespace UnitTests
 
             public Task DownloadFileAsync(string fileId, string destinationPath, CancellationToken cancellationToken)
             {
-                string relativePath = Snapshot.Files.First(pair => string.Equals(pair.Value.ItemId, fileId, StringComparison.OrdinalIgnoreCase)).Key;
+                string relativePath;
+                lock (stateLock)
+                {
+                    relativePath = Snapshot.Files.First(pair => string.Equals(pair.Value.ItemId, fileId, StringComparison.OrdinalIgnoreCase)).Key;
+                }
+
                 return DownloadFileCoreAsync(relativePath, destinationPath, cancellationToken);
             }
 
             public Task DeleteItemAsync(string itemId, CancellationToken cancellationToken)
             {
-                KeyValuePair<string, GoogleDriveSyncFileEntry>? fileMatch = Snapshot.Files
-                    .FirstOrDefault(pair => string.Equals(pair.Value.ItemId, itemId, StringComparison.OrdinalIgnoreCase));
-                if (!string.IsNullOrWhiteSpace(fileMatch?.Key))
+                lock (stateLock)
                 {
-                    fileContents.Remove(fileMatch.Value.Key);
-                    Snapshot.Files.Remove(fileMatch.Value.Key);
-                    return Task.CompletedTask;
-                }
+                    KeyValuePair<string, GoogleDriveSyncFileEntry>? fileMatch = Snapshot.Files
+                        .FirstOrDefault(pair => string.Equals(pair.Value.ItemId, itemId, StringComparison.OrdinalIgnoreCase));
+                    if (!string.IsNullOrWhiteSpace(fileMatch?.Key))
+                    {
+                        fileContents.Remove(fileMatch.Value.Key);
+                        Snapshot.Files.Remove(fileMatch.Value.Key);
+                        return Task.CompletedTask;
+                    }
 
-                KeyValuePair<string, GoogleDriveSyncFolderEntry>? folderMatch = Snapshot.Folders
-                    .FirstOrDefault(pair => string.Equals(pair.Value.ItemId, itemId, StringComparison.OrdinalIgnoreCase));
-                if (!string.IsNullOrWhiteSpace(folderMatch?.Key))
-                {
-                    folderIdsToRelativePaths.Remove(folderMatch.Value.Value.ItemId);
-                    Snapshot.Folders.Remove(folderMatch.Value.Key);
+                    KeyValuePair<string, GoogleDriveSyncFolderEntry>? folderMatch = Snapshot.Folders
+                        .FirstOrDefault(pair => string.Equals(pair.Value.ItemId, itemId, StringComparison.OrdinalIgnoreCase));
+                    if (!string.IsNullOrWhiteSpace(folderMatch?.Key))
+                    {
+                        folderIdsToRelativePaths.Remove(folderMatch.Value.Value.ItemId);
+                        Snapshot.Folders.Remove(folderMatch.Value.Key);
+                    }
                 }
 
                 return Task.CompletedTask;
@@ -2298,13 +2348,30 @@ namespace UnitTests
                 return lastSlash < 0 ? string.Empty : relativePath[..lastSlash];
             }
 
+            private static void UpdateMaxConcurrency(ref int maxConcurrentOperations, int concurrentOperations)
+            {
+                while (true)
+                {
+                    int observedMaximum = Volatile.Read(ref maxConcurrentOperations);
+                    if (concurrentOperations <= observedMaximum)
+                    {
+                        return;
+                    }
+
+                    if (Interlocked.CompareExchange(
+                        ref maxConcurrentOperations,
+                        concurrentOperations,
+                        observedMaximum) == observedMaximum)
+                    {
+                        return;
+                    }
+                }
+            }
+
             private async Task DownloadFileCoreAsync(string relativePath, string destinationPath, CancellationToken cancellationToken)
             {
                 int concurrentDownloads = Interlocked.Increment(ref currentConcurrentDownloads);
-                if (concurrentDownloads > MaxConcurrentDownloads)
-                {
-                    MaxConcurrentDownloads = concurrentDownloads;
-                }
+                UpdateMaxConcurrency(ref maxConcurrentDownloads, concurrentDownloads);
 
                 try
                 {
@@ -2314,7 +2381,13 @@ namespace UnitTests
                     }
 
                     Directory.CreateDirectory(Path.GetDirectoryName(destinationPath) ?? string.Empty);
-                    await File.WriteAllTextAsync(destinationPath, fileContents[relativePath], cancellationToken);
+                    string content;
+                    lock (stateLock)
+                    {
+                        content = fileContents[relativePath];
+                    }
+
+                    await File.WriteAllTextAsync(destinationPath, content, cancellationToken);
                 }
                 finally
                 {
@@ -2330,10 +2403,7 @@ namespace UnitTests
                 CancellationToken cancellationToken)
             {
                 int concurrentUploads = Interlocked.Increment(ref currentConcurrentUploads);
-                if (concurrentUploads > MaxConcurrentUploads)
-                {
-                    MaxConcurrentUploads = concurrentUploads;
-                }
+                UpdateMaxConcurrency(ref maxConcurrentUploads, concurrentUploads);
 
                 try
                 {
@@ -2342,21 +2412,31 @@ namespace UnitTests
                         await Task.Delay(UploadDelay, cancellationToken);
                     }
 
-                    string parentRelativePath = folderIdsToRelativePaths[parentFolderId];
-                    string relativePath = string.IsNullOrWhiteSpace(parentRelativePath)
-                        ? fileName
-                        : parentRelativePath + "/" + fileName;
-                    string itemId = string.IsNullOrWhiteSpace(existingFileId) ? "file-" + nextId++ : existingFileId;
                     string content = await File.ReadAllTextAsync(localFilePath, cancellationToken);
-                    fileContents[relativePath] = content;
-                    Snapshot.Files[relativePath] = new GoogleDriveSyncFileEntry
+                    GoogleDriveSyncFileEntry fileEntry = new GoogleDriveSyncFileEntry
                     {
-                        RelativePath = relativePath,
-                        ItemId = itemId,
+                        RelativePath = string.Empty,
+                        ItemId = string.Empty,
                         ParentId = parentFolderId,
                         Size = new FileInfo(localFilePath).Length,
                         Hash = GoogleDriveLocalSnapshotBuilder.ComputeMd5(localFilePath)
                     };
+                    string itemId;
+
+                    lock (stateLock)
+                    {
+                        string parentRelativePath = folderIdsToRelativePaths[parentFolderId];
+                        string relativePath = string.IsNullOrWhiteSpace(parentRelativePath)
+                            ? fileName
+                            : parentRelativePath + "/" + fileName;
+                        itemId = string.IsNullOrWhiteSpace(existingFileId)
+                            ? "file-" + Interlocked.Increment(ref nextId)
+                            : existingFileId;
+                        fileEntry.RelativePath = relativePath;
+                        fileEntry.ItemId = itemId;
+                        fileContents[relativePath] = content;
+                        Snapshot.Files[relativePath] = fileEntry;
+                    }
 
                     return itemId;
                 }

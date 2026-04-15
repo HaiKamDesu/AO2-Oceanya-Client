@@ -32,6 +32,7 @@ namespace OceanyaClient
 {
     public partial class AOCharacterFileCreatorWindow : OceanyaWindowContentControl, IStartupFunctionalityWindow
     {
+        private static Action<Window?, string, string, MessageBoxButton, MessageBoxImage>? testGenerateMessageOverride;
         // AO2 hard-codes interjection maximum visual frame duration to 1500 ms (courtroom.h shout_max_time).
         private const int Ao2ShoutVisualCutoffMs = 1500;
         private const int Ao2TimingTickMs = 40;
@@ -18507,10 +18508,21 @@ namespace OceanyaClient
             await WaitForm.ShowFormAsync(isEditMode ? "Applying character folder edits..." : "Generating character folder...", this);
             string? successCharacterDirectory = null;
             Exception? generationException = null;
+            void ShowGenerateMessage(string text, string title, MessageBoxImage image)
+            {
+                Action<Window?, string, string, MessageBoxButton, MessageBoxImage>? overrideHandler = testGenerateMessageOverride;
+                if (overrideHandler != null)
+                {
+                    overrideHandler(this, text, title, MessageBoxButton.OK, image);
+                    return;
+                }
+
+                OceanyaMessageBox.Show(this, text, title, MessageBoxButton.OK, image);
+            }
             void ShowBlockingGenerateMessage(string text, string title, MessageBoxImage image)
             {
                 WaitForm.CloseForm();
-                OceanyaMessageBox.Show(this, text, title, MessageBoxButton.OK, image);
+                ShowGenerateMessage(text, title, image);
             }
             try
             {
@@ -18805,11 +18817,9 @@ namespace OceanyaClient
 
             if (generationException != null)
             {
-                OceanyaMessageBox.Show(
-                    this,
+                ShowGenerateMessage(
                     (isEditMode ? "Failed to edit character folder:\n" : "Failed to create character folder:\n") + generationException.Message,
                     isEditMode ? "Edit Error" : "Creation Error",
-                    MessageBoxButton.OK,
                     MessageBoxImage.Error);
                 return;
             }
@@ -18821,14 +18831,17 @@ namespace OceanyaClient
                     ? (originalEditCharacterDirectoryPath ?? string.Empty)
                     : string.Empty;
                 lastCommittedStateFingerprint = ComputeCurrentStateFingerprint();
-                OceanyaMessageBox.Show(
-                    this,
+                ShowGenerateMessage(
                     (isEditMode ? "Character folder edited successfully:\n" : "Character folder created successfully:\n")
                     + successCharacterDirectory,
                     "AO Character File Creator",
-                    MessageBoxButton.OK,
                     MessageBoxImage.Information);
             }
+        }
+
+        internal static void ResetGenerateTestHooks()
+        {
+            testGenerateMessageOverride = null;
         }
 
         private string ComputeCurrentStateFingerprint()

@@ -25,10 +25,7 @@ namespace UnitTests
         [SetUp]
         public void SetUp()
         {
-            if (Application.Current == null)
-            {
-                _ = new Application();
-            }
+            _ = WpfTestApplicationContext.EnsureCreated();
         }
 
         [Test]

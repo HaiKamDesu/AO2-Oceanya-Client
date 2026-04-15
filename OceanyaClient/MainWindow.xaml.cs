@@ -26,6 +26,8 @@ namespace OceanyaClient
 {
     public partial class MainWindow : OceanyaWindowContentControl, IStartupFunctionalityWindow
     {
+        private static Func<AOClient, Task>? testConnectClientAsyncOverride;
+        private static Action<Window?, string, string, MessageBoxButton, MessageBoxImage>? testMessageBoxOverride;
         public event Action? FinishedLoading;
 
         private readonly Dictionary<ToggleButton, AOClient> clients = new Dictionary<ToggleButton, AOClient>();
@@ -2255,6 +2257,62 @@ namespace OceanyaClient
         {
             _ = AddClientAsync(clientName);
         }
+
+        private static async Task ConnectClientAsync(AOClient bot)
+        {
+            if (testConnectClientAsyncOverride != null)
+            {
+                await testConnectClientAsyncOverride(bot);
+                return;
+            }
+
+            await bot.Connect();
+        }
+
+        private void ShowMainWindowMessage(string message, string title, MessageBoxButton buttons, MessageBoxImage image)
+        {
+            Action<Window?, string, string, MessageBoxButton, MessageBoxImage>? overrideHandler = testMessageBoxOverride;
+            if (overrideHandler != null)
+            {
+                overrideHandler(this, message, title, buttons, image);
+                return;
+            }
+
+            OceanyaMessageBox.Show(message, title, buttons, image);
+        }
+
+        private void AttachDirectClientMessageHandlers(AOClient bot)
+        {
+            bot.OnICMessageReceived += (ICMessage icMessage) =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    bool isSentFromSelf = clients.Select(x => x.Value.iniPuppetID).Contains(icMessage.CharId);
+
+                    AddLoggedIcMessage(bot, icMessage.ShowName, icMessage.Message, isSentFromSelf, icMessage.TextColor);
+                });
+            };
+            bot.OnIcActionReceived += (string showName, string action, bool isSentFromSelf, ICMessage.TextColors textColor) =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    AppendAo2ActionLog(bot, showName, action, isSentFromSelf, textColor);
+                });
+            };
+
+            bot.OnOOCMessageReceived += (string showName, string message, bool isFromServer) =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    AddLoggedOocMessage(bot, showName, message, isFromServer);
+                });
+            };
+
+            bot.OnMessageReceived += (string chatLogType, string characterName, string showName, string message, int iniPuppetId, bool isFromServer) =>
+            {
+                RecordAiMessageForClient(bot, bot, chatLogType, characterName, showName, message, iniPuppetId, isFromServer);
+            };
+        }
         private async Task AddClientAsync(string clientName)
         {
             IsEnabled = false;  
@@ -2295,35 +2353,7 @@ namespace OceanyaClient
                 }
                 else
                 {
-                    bot.OnICMessageReceived += (ICMessage icMessage) =>
-                    {
-                        Dispatcher.Invoke(() =>
-                        {
-                            bool isSentFromSelf = clients.Select(x => x.Value.iniPuppetID).Contains(icMessage.CharId);
-
-                            AddLoggedIcMessage(bot, icMessage.ShowName, icMessage.Message, isSentFromSelf, icMessage.TextColor);
-                        });
-                    };
-                    bot.OnIcActionReceived += (string showName, string action, bool isSentFromSelf, ICMessage.TextColors textColor) =>
-                    {
-                        Dispatcher.Invoke(() =>
-                        {
-                            AppendAo2ActionLog(bot, showName, action, isSentFromSelf, textColor);
-                        });
-                    };
-
-                    bot.OnOOCMessageReceived += (string showName, string message, bool isFromServer) =>
-                    {
-                        Dispatcher.Invoke(() =>
-                        {
-                            AddLoggedOocMessage(bot, showName, message, isFromServer);
-                        });
-                    };
-
-                    bot.OnMessageReceived += (string chatLogType, string characterName, string showName, string message, int iniPuppetId, bool isFromServer) =>
-                    {
-                        RecordAiMessageForClient(bot, bot, chatLogType, characterName, showName, message, iniPuppetId, isFromServer);
-                    };
+                    AttachDirectClientMessageHandlers(bot);
                 }
 
                 if (useSingleInternalClient)
@@ -2527,7 +2557,7 @@ namespace OceanyaClient
                 if (!useSingleInternalClient)
                 {
                     InitializeCommonClientEvents(bot, bot);
-                    await bot.Connect();
+                    await ConnectClientAsync(bot);
                     await BootstrapAreaNavigatorAsync(bot);
                 }
 
@@ -2604,7 +2634,7 @@ namespace OceanyaClient
             catch (Exception ex)
             {
                 WaitForm.CloseForm();
-                OceanyaMessageBox.Show($"Error connecting client: {ex.Message}", "Connection Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+                ShowMainWindowMessage($"Error connecting client: {ex.Message}", "Connection Failed", MessageBoxButton.OK, MessageBoxImage.Error);
             }
             finally
             {
@@ -2635,6 +2665,7 @@ namespace OceanyaClient
             currentClient = client;
             ICMessageSettingsControl.SetClient(currentClient);
             OOCLogControl.SetCurrentClient(currentClient);
+            OOCLogControl.txtOOCShowname.Text = currentClient.OOCShowname;
             ICLogControl.SetCurrentClient(currentClient);
             RefreshAreaNavigatorForCurrentClient();
 
@@ -3320,6 +3351,12 @@ namespace OceanyaClient
                 _altGrActive = false;
             }
             base.OnPreviewKeyUp(e);
+        }
+
+        internal static void ResetTestHooks()
+        {
+            testConnectClientAsyncOverride = null;
+            testMessageBoxOverride = null;
         }
     }
 }

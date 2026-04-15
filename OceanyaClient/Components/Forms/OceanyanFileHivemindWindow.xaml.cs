@@ -75,18 +75,22 @@ namespace OceanyaClient
 
         public OceanyanFileHivemindWindow(
             GoogleDriveSyncService? syncService = null,
-            bool manageStartupWaitForm = true)
+            bool manageStartupWaitForm = true,
+            GoogleDriveConnectionRuntimeStateStore? runtimeStateStore = null,
+            GoogleDriveSecureClientCredentialStore? credentialStore = null,
+            FileHivemindBackgroundAgentLauncher? backgroundAgentLauncher = null,
+            FileHivemindBackgroundLogStore? backgroundLogStore = null)
         {
             InitializeComponent();
             this.syncService = syncService ?? new GoogleDriveSyncService();
-            runtimeStateStore = new GoogleDriveConnectionRuntimeStateStore();
-            credentialStore = new GoogleDriveSecureClientCredentialStore();
+            this.runtimeStateStore = runtimeStateStore ?? new GoogleDriveConnectionRuntimeStateStore();
+            this.credentialStore = credentialStore ?? new GoogleDriveSecureClientCredentialStore();
             GoogleDriveSignedInAccountManager.MigrateLegacyConnectionSelections(
                 SaveFile.Data.FileHivemind,
                 SaveFile.Data.FileHivemind.Connections,
-                credentialStore);
-            backgroundAgentLauncher = new FileHivemindBackgroundAgentLauncher();
-            backgroundLogStore = new FileHivemindBackgroundLogStore();
+                this.credentialStore);
+            this.backgroundAgentLauncher = backgroundAgentLauncher ?? new FileHivemindBackgroundAgentLauncher();
+            this.backgroundLogStore = backgroundLogStore ?? new FileHivemindBackgroundLogStore();
             this.manageStartupWaitForm = manageStartupWaitForm;
             backgroundLogTimer = new DispatcherTimer
             {
