@@ -5,7 +5,7 @@ Establish a repo-specific release gate strong enough that, for a full new releas
 
 This file is the durable source of truth for testing progress, priority, and remaining work. Future agents should resume from here after context reset.
 
-Current implementation target: **Phase 3 - broaden selective confidence**
+Roadmap status: **Phases 1-4 completed; only narrow follow-up backlog remains**
 
 ## Current State
 - The repository already has meaningful unit, STA/in-process WPF, and FlaUI coverage.
@@ -16,7 +16,10 @@ Current implementation target: **Phase 3 - broaden selective confidence**
   - smoke startup/navigation coverage in `UiAutomationTests/FirstWaveSmokeTests.cs`
 - `Character creator`, `database viewer`, and `hivemind` each have useful tests, but mostly for internals or startup behavior rather than the user workflows that decide release confidence.
 - `AI bot` has strong parser/validator/prompt tests, but lighter protection for the `MainWindow` execution/wiring layer.
-- The repo has checked-in UI workflows for Smoke and Online FlaUI, but no equivalent checked-in always-on unit-test workflow for the main release gate.
+- The repo now has checked-in release-gate workflows for:
+  - always-on unit/STA coverage in `.github/workflows/unit-tests.yml`
+  - GitHub-hosted FlaUI `Smoke` coverage in `.github/workflows/ui-smoke.yml`
+  - self-hosted interactive-desktop FlaUI `Online` coverage in `.github/workflows/ui-online.yml`
 
 ## Feature Priorities
 Priority order is fixed and should remain stable unless explicitly changed by the user.
@@ -72,35 +75,19 @@ Scope for this pass:
 - [x] AI `MainWindow` action executor tests
 - [x] AI raw-response tagging/log-link tests
 
-Remaining (not yet started):
+### Phase 4 - targeted coverage gaps and CI hardening
 
-- Targeted FlaUI for viewer workflows that truly need end-to-end UI coverage
-- Hivemind agent-process integration coverage
-- CI workflow hardening and category strategy refinements
+Scope for this pass:
+
+- [x] Database viewer search filter coverage (STA; FlaUI open already covered by Smoke)
+- [x] Hivemind agent process/stop-signal integration coverage (named EventWaitHandle + mutex)
+- [x] Always-on unit-test CI workflow hardening
 
 ## Prioritized Backlog
-This backlog preserves the original roadmap ordering across the whole repo.
+The phased roadmap work above is complete. Only the original narrow follow-up backlog remains:
 
-1. GM selected-client isolation tests
-2. GM failed-connect/add-client recovery tests
-3. GM receive-path rendering tests
-4. GM reconnect state regression tests
-5. Character creator export end-to-end tests
-6. Character creator edit-existing-folder tests
-7. Character creator duplicate-folder tests
-8. Database viewer search/filter/tag tests
-9. Database viewer integrity-results/apply-fix tests
-10. Hivemind window settings persistence tests
-11. Hivemind import/export/delete connection tests
-12. Add always-on unit-test CI workflow
-13. ~~Character creator file-organization mutation tests~~ ✓ (Phase 3)
-14. ~~Character creator emote reorder/delete tests~~ ✓ (Phase 3)
-15. ~~AI `MainWindow` action executor tests~~ ✓ (Phase 3)
-16. ~~AI raw-response tagging/log-link tests~~ ✓ (Phase 3)
-17. Hivemind agent process/stop-signal integration tests
-18. Targeted FlaUI for database viewer search/open workflows
-19. Add creator AutomationIds and narrow test hooks where justified
-20. Add Hivemind AutomationIds and narrow test hooks where justified
+1. Add creator AutomationIds and narrow test hooks where justified
+2. Add Hivemind AutomationIds and narrow test hooks where justified
 
 ## Release-Gate Strategy
 
@@ -187,7 +174,12 @@ Even after the roadmap is complete, these still require manual validation:
 - [x] AI `MainWindow` action executor tests
 - [x] AI raw-response tagging/log-link tests
 
-### Current pass notes
+### Phase 4 status
+- [x] Database viewer search filter coverage
+- [x] Hivemind agent process/stop-signal integration coverage
+- [x] Always-on unit-test CI workflow hardening
+
+### Final verified state
 - Completed in repo:
   - `UnitTests/Phase1ReleaseConfidenceTests.cs` covers all six Phase 1 risks with explicit regression assertions.
   - `MainWindow.SelectClient` restores the selected client's OOC showname textbox when operators switch clients.
@@ -196,8 +188,16 @@ Even after the roadmap is complete, these still require manual validation:
   - `UnitTests/Phase2ReleaseConfidenceTests.cs` adds focused STA/unit coverage for GM reconnect logging/state sync, character creator edit and duplication workflows, database viewer integrity-results presentation plus blank-emotes rerun coverage, and Hivemind export/import/delete connection workflows.
   - `CharacterIntegrityVerifierResultsWindow` and `OceanyanFileHivemindWindow` expose narrow message/dialog test hooks so those workflows can be verified without FlaUI or live Windows dialogs.
   - `UnitTests/Phase3ReleaseConfidenceTests.cs` adds 16 STA/unit tests covering: (1) file-organization mutation — extra file and subdirectory become external entries, root-level animation recorded as override; (2) emote reorder/delete — MoveUp, MoveDown, Remove, boundary no-ops; (3) AI executor — SetTextColor, SetIcShowname, SetPosition, multiple actions; (4) AI raw-response tagging — QueuePendingAiOriginResponse IC+OOC entries, HandleAiFinalMessage success queues/error skips, BuildRawResponseLinks link text.
+  - `UnitTests/Phase4ReleaseConfidenceTests.cs` adds 9 focused tests covering: (1) database viewer search filtering at the STA layer — empty query, whitespace-only query, case-insensitive name matches, non-matching names rejected, and directory-path matches accepted; (2) Hivemind launcher integration behavior — real named-mutex detection, real named stop-signal event setting, and stop-signal reset before launch.
+  - `.github/workflows/unit-tests.yml` adds an always-on CI lane that builds the solution and runs `UnitTests/UnitTests.csproj` with `Category!=RequiresConnection&Category!=RequiresCredentials`, with build and test kept as separate steps.
 - Verification notes:
   - Phase 1 items verified with focused `FullyQualifiedName~Phase1ReleaseConfidenceTests` runs; all 10 pass.
   - Phase 2 items verified with focused `FullyQualifiedName~Phase2ReleaseConfidenceTests` runs; all 10 pass.
   - Phase 3 items verified with focused `FullyQualifiedName~Phase3ReleaseConfidenceTests` runs; all 16 pass.
+  - Phase 4 items verified against the repo state at the correct layer:
+    - database viewer "open" workflow remains covered by FlaUI `FirstWaveSmokeTests`
+    - database viewer search filtering is covered by 5 focused STA tests in `Phase4ReleaseConfidenceTests`
+    - Hivemind launcher/stop-signal behavior is covered by 4 focused tests in `Phase4ReleaseConfidenceTests`
+    - the always-on unit-test lane is present in `.github/workflows/unit-tests.yml`
   - None of the four Phase 3 tasks were already fully covered at the correct layer; existing coverage only addressed higher-level integration or adjacent concerns.
+  - No explicit Phase 5 remains in this roadmap. Future work should treat the roadmap as complete and pull only from the narrow follow-up backlog above unless the user expands scope.

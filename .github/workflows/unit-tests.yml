@@ -1,0 +1,48 @@
+name: Unit Tests
+
+# Always-on unit-test CI gate.
+# Runs the main NUnit suite (excluding categories that require live credentials
+# or a real server connection) on every push and pull request.
+# These tests run on any github-hosted runner — no interactive desktop needed.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit-tests:
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # Build and test must be separate steps — chaining them can cause
+      # lock contention on obj/ output files (see AGENTS.md).
+      - name: Build solution
+        run: dotnet build "Oceanya Client.sln"
+
+      - name: Run unit tests
+        run: >
+          dotnet test UnitTests/UnitTests.csproj
+          --no-build
+          --filter "Category!=RequiresConnection&Category!=RequiresCredentials"
+          --logger "trx;LogFileName=unit-test-results.trx"
+          --results-directory TestResults/UnitTests
+        timeout-minutes: 10
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: TestResults/UnitTests/*.trx
+          if-no-files-found: warn
