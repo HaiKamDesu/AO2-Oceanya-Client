@@ -126,6 +126,7 @@
                                                 Width="30"
                                                 HorizontalAlignment="Right"
                                                 Content="✕"
+                                                Panel.ZIndex="10"
                                                 Style="{StaticResource GenericOceanyaCloseButtonStyle}"
                                                 shell:WindowChrome.IsHitTestVisibleInChrome="True"
                                                 Command="{x:Static SystemCommands.CloseWindowCommand}"

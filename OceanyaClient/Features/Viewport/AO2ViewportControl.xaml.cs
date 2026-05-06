@@ -32,6 +32,9 @@ namespace OceanyaClient.Features.Viewport
         private bool chatBlankBlipEnabled;
         private string chatFullText = string.Empty;
         private string currentChatBlipToken = string.Empty;
+        private CharacterFolder? currentChatCharacter;
+        private string currentChatEmote = string.Empty;
+        private int currentChatSequence;
         private string[] chatMarkupStart = Array.Empty<string>();
         private string[] chatMarkupEnd = Array.Empty<string>();
         private bool[] chatMarkupRemove = Array.Empty<bool>();
@@ -480,7 +483,7 @@ namespace OceanyaClient.Features.Viewport
                 ChatPreview.RefreshPreview();
                 if (shouldStartTextReveal)
                 {
-                    StartChatTextReveal(messageText ?? string.Empty);
+                    StartChatTextReveal(messageText ?? string.Empty, character, message);
                 }
             }
             else
@@ -733,10 +736,13 @@ namespace OceanyaClient.Features.Viewport
             Panel.SetZIndex(ShoutOverlayImage, 9);
         }
 
-        private void StartChatTextReveal(string text)
+        private void StartChatTextReveal(string text, CharacterFolder? character, ICMessage? message)
         {
             StopChatTextTimer();
             chatFullText = text ?? string.Empty;
+            currentChatCharacter = character;
+            currentChatEmote = message?.Emote ?? string.Empty;
+            currentChatSequence = messageSequence;
             chatTextPosition = 0;
             chatDisplaySpeed = DefaultChatDisplaySpeed;
             chatTextCrawlMilliseconds = AO2ViewportAssetResolver.GetTextCrawlMilliseconds();
@@ -767,7 +773,7 @@ namespace OceanyaClient.Features.Viewport
         {
             if (chatTextPosition >= chatFullText.Length)
             {
-                StopChatTextTimer();
+                CompleteChatTextReveal();
                 return;
             }
 
@@ -793,7 +799,7 @@ namespace OceanyaClient.Features.Viewport
 
             if (chatTextPosition >= chatFullText.Length)
             {
-                StopChatTextTimer();
+                CompleteChatTextReveal();
                 return;
             }
 
@@ -812,6 +818,48 @@ namespace OceanyaClient.Features.Viewport
         private void OnChatTextTimerTick(object? sender, EventArgs e)
         {
             AdvanceChatTextReveal();
+        }
+
+        private void CompleteChatTextReveal()
+        {
+            StopChatTextTimer();
+            RenderPostMessageCharacterAnimation(currentChatCharacter, currentChatEmote, currentChatSequence);
+            currentChatCharacter = null;
+            currentChatEmote = string.Empty;
+            currentChatSequence = 0;
+        }
+
+        private void RenderPostMessageCharacterAnimation(CharacterFolder? character, string emoteName, int sequence)
+        {
+            if (character == null || sequence != messageSequence || string.IsNullOrWhiteSpace(emoteName))
+            {
+                return;
+            }
+
+            string? postPath = AO2ViewportAssetResolver.ResolveCharacterPostAnimation(character, emoteName);
+            if (!string.IsNullOrWhiteSpace(postPath))
+            {
+                IAnimationPlayer? postPlayer = SetAnimatedImage(CharacterImage, postPath, true, loop: false);
+                if (postPlayer != null)
+                {
+                    postPlayer.PlaybackFinished += () =>
+                    {
+                        if (sequence == messageSequence)
+                        {
+                            RenderIdleCharacterAnimation(character, emoteName);
+                        }
+                    };
+                    return;
+                }
+            }
+
+            RenderIdleCharacterAnimation(character, emoteName);
+        }
+
+        private void RenderIdleCharacterAnimation(CharacterFolder character, string emoteName)
+        {
+            string? idlePath = AO2ViewportAssetResolver.ResolveCharacterDialogAnimation(character, emoteName, talking: false);
+            SetAnimatedImage(CharacterImage, idlePath, !string.IsNullOrWhiteSpace(idlePath));
         }
 
         private int GetNextDisplayedTextElement(

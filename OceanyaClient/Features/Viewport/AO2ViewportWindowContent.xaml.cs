@@ -19,7 +19,7 @@ namespace OceanyaClient.Features.Viewport
         public override string HeaderText => "Viewport";
 
         /// <inheritdoc/>
-        public override bool IsUserResizeEnabled => false;
+        public override bool IsUserResizeEnabled => true;
 
         /// <inheritdoc/>
         public override bool IsUserMoveEnabled => true;

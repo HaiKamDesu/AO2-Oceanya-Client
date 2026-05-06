@@ -185,6 +185,38 @@ namespace OceanyaClient.Features.Viewport
         }
 
         /// <summary>
+        /// Resolves AO2's optional post-message <c>(c)</c> animation for a character emote.
+        /// </summary>
+        public static string? ResolveCharacterPostAnimation(CharacterFolder? character, string? emoteName)
+        {
+            return ResolveCharacterPostAnimationDetails(character, emoteName).AssetPath;
+        }
+
+        /// <summary>
+        /// Resolves AO2's optional post-message <c>(c)</c> animation and the exact animation token it matched.
+        /// </summary>
+        public static ResolvedCharacterAnimation ResolveCharacterPostAnimationDetails(
+            CharacterFolder? character,
+            string? emoteName)
+        {
+            if (!TryResolveDialogAnimationName(character, emoteName, out string characterDirectory, out string animationName))
+            {
+                return new ResolvedCharacterAnimation(null, string.Empty);
+            }
+
+            foreach (string candidate in new[] { "(c)" + animationName, "(c)/" + animationName })
+            {
+                string resolved = CharacterAssetPathResolver.ResolveCharacterAssetPath(characterDirectory, candidate);
+                if (!string.IsNullOrWhiteSpace(resolved))
+                {
+                    return new ResolvedCharacterAnimation(resolved, candidate);
+                }
+            }
+
+            return new ResolvedCharacterAnimation(null, string.Empty);
+        }
+
+        /// <summary>
         /// Resolves AO2's receive-time dialog animation path and the exact animation token it matched.
         /// </summary>
         public static ResolvedCharacterAnimation ResolveCharacterDialogAnimationDetails(
@@ -192,25 +224,9 @@ namespace OceanyaClient.Features.Viewport
             string? emoteName,
             bool talking)
         {
-            if (character == null)
+            if (!TryResolveDialogAnimationName(character, emoteName, out string characterDirectory, out string normalizedAnimationName))
             {
                 return new ResolvedCharacterAnimation(null, string.Empty);
-            }
-
-            string characterDirectory = GetCharacterDirectory(character);
-            if (string.IsNullOrWhiteSpace(characterDirectory))
-            {
-                return new ResolvedCharacterAnimation(null, string.Empty);
-            }
-
-            Emote? emote = ResolveEmote(character, emoteName);
-            string animationName = !string.IsNullOrWhiteSpace(emote?.Animation)
-                ? emote.Animation
-                : string.IsNullOrWhiteSpace(emoteName) ? "normal" : emoteName.Trim();
-            string normalizedAnimationName = animationName.Trim();
-            if (string.IsNullOrWhiteSpace(normalizedAnimationName) || normalizedAnimationName == "-")
-            {
-                return null;
             }
 
             string[] orderedCandidates = talking
@@ -241,6 +257,32 @@ namespace OceanyaClient.Features.Viewport
             }
 
             return new ResolvedCharacterAnimation(null, string.Empty);
+        }
+
+        private static bool TryResolveDialogAnimationName(
+            CharacterFolder? character,
+            string? emoteName,
+            out string characterDirectory,
+            out string animationName)
+        {
+            characterDirectory = string.Empty;
+            animationName = string.Empty;
+            if (character == null)
+            {
+                return false;
+            }
+
+            characterDirectory = GetCharacterDirectory(character);
+            if (string.IsNullOrWhiteSpace(characterDirectory))
+            {
+                return false;
+            }
+
+            Emote? emote = ResolveEmote(character, emoteName);
+            animationName = !string.IsNullOrWhiteSpace(emote?.Animation)
+                ? emote.Animation.Trim()
+                : string.IsNullOrWhiteSpace(emoteName) ? "normal" : emoteName.Trim();
+            return !string.IsNullOrWhiteSpace(animationName) && animationName != "-";
         }
 
         /// <summary>

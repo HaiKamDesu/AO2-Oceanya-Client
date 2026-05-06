@@ -156,6 +156,7 @@ namespace UnitTests
             Directory.CreateDirectory(characterDirectory);
             CreateEmptyFile(Path.Combine(characterDirectory, "(a)normal.png"));
             CreateEmptyFile(Path.Combine(characterDirectory, "(b)normal.png"));
+            CreateEmptyFile(Path.Combine(characterDirectory, "(c)normal.png"));
             CreateEmptyFile(Path.Combine(characterDirectory, "(a)packet_anim.png"));
             CreateEmptyFile(Path.Combine(characterDirectory, "(b)packet_anim.png"));
             CreateEmptyFile(Path.Combine(characterDirectory, "pre_packet.png"));
@@ -393,6 +394,10 @@ namespace UnitTests
             Assert.That(talkingPath, Is.EqualTo(Path.Combine(character.DirectoryPath, "(b)normal.png")));
             Assert.That(idlePath, Is.EqualTo(Path.Combine(character.DirectoryPath, "(a)normal.png")));
             Assert.That(packetTalkingPath, Is.EqualTo(Path.Combine(character.DirectoryPath, "(b)packet_anim.png")));
+            Assert.That(
+                AO2ViewportAssetResolver.ResolveCharacterPostAnimation(character, "normal"),
+                Is.EqualTo(Path.Combine(character.DirectoryPath, "(c)normal.png")));
+            Assert.That(AO2ViewportAssetResolver.ResolveCharacterPostAnimation(character, "packet_anim"), Is.Null);
             Assert.That(AO2ViewportAssetResolver.IsTextColorTalking(ICMessage.TextColors.White), Is.True);
             Assert.That(AO2ViewportAssetResolver.IsTextColorTalking(ICMessage.TextColors.Blue), Is.False);
         }

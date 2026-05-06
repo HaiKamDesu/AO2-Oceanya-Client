@@ -101,6 +101,7 @@
                                 Width="30"
                                 HorizontalAlignment="Right"
                                 Content="✕"
+                                Panel.ZIndex="10"
                                 shell:WindowChrome.IsHitTestVisibleInChrome="True"
                                 Style="{StaticResource CloseButtonStyle}"
                                 Click="CloseButton_Click"/>
