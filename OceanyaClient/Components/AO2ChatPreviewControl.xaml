@@ -56,23 +56,21 @@
                             Width="238"
                             Height="60"
                             Background="#00000000">
-                        <TextBox x:Name="MessageTextBox"
-                                 Text="Preview message."
-                                 Foreground="White"
-                                 FontSize="12"
-                                 TextWrapping="Wrap"
-                                 Background="Transparent"
-                                 BorderThickness="0"
-                                 Padding="0"
-                                 IsReadOnly="True"
-                                 IsUndoEnabled="False"
-                                 Focusable="False"
-                                 HorizontalContentAlignment="Left"
-                                 VerticalContentAlignment="Top"
-                                 ScrollViewer.VerticalScrollBarVisibility="Disabled"
-                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                 TextOptions.TextFormattingMode="Display"
-                                 TextOptions.TextRenderingMode="Aliased"/>
+                        <RichTextBox x:Name="MessageTextBox"
+                                     Foreground="White"
+                                     FontSize="12"
+                                     Background="Transparent"
+                                     BorderThickness="0"
+                                     Padding="0"
+                                     IsReadOnly="True"
+                                     IsUndoEnabled="False"
+                                     Focusable="False"
+                                     HorizontalContentAlignment="Left"
+                                     VerticalContentAlignment="Top"
+                                     ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                     TextOptions.TextFormattingMode="Display"
+                                     TextOptions.TextRenderingMode="Aliased"/>
                     </Border>
                 </Canvas>
             </Border>

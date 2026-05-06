@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Media;
+using AOBot_Testing.Structures;
 using Common;
 
 namespace OceanyaClient.Features.ChatPreview
@@ -64,7 +65,7 @@ namespace OceanyaClient.Features.ChatPreview
 
             string? chatboxImagePath = ResolveChatboxImagePath(token, hasShowname, preferViewportTheme);
 
-            return new AO2ChatPreviewStyle
+            AO2ChatPreviewStyle style = new AO2ChatPreviewStyle
             {
                 ChatToken = token,
                 ChatboxImagePath = chatboxImagePath,
@@ -89,6 +90,22 @@ namespace OceanyaClient.Features.ChatPreview
                 MessageBounds = TryParseBounds(GetValue(designValues, "message"))
                     ?? new AO2ChatPreviewBounds(6, 12, 238, 60)
             };
+            for (int i = 0; i < style.ChatColors.Length; i++)
+            {
+                Color fallback = i == 0
+                    ? messageColor
+                    : ToWpfColor(ICMessage.GetColorFromTextColor((ICMessage.TextColors)i));
+                style.ChatColors[i] = TryParseColor(GetValue(chatMarkupValues, "c" + i.ToString(CultureInfo.InvariantCulture)), fallback);
+                style.ChatMarkupStart[i] = GetValue(chatMarkupValues, "c" + i.ToString(CultureInfo.InvariantCulture) + "_start");
+                style.ChatMarkupEnd[i] = GetValue(chatMarkupValues, "c" + i.ToString(CultureInfo.InvariantCulture) + "_end");
+                style.ChatMarkupRemove[i] = TryParseBool(GetValue(chatMarkupValues, "c" + i.ToString(CultureInfo.InvariantCulture) + "_remove"));
+                style.ChatMarkupTalking[i] = !string.Equals(
+                    GetValue(chatMarkupValues, "c" + i.ToString(CultureInfo.InvariantCulture) + "_talking"),
+                    "0",
+                    StringComparison.Ordinal);
+            }
+
+            return style;
         }
 
         private static string NormalizeChatToken(string? chatToken)
@@ -311,6 +328,11 @@ namespace OceanyaClient.Features.ChatPreview
             return Color.FromRgb(r, g, b);
         }
 
+        private static Color ToWpfColor(System.Drawing.Color color)
+        {
+            return Color.FromArgb(color.A, color.R, color.G, color.B);
+        }
+
         private static string? ResolveChatboxImagePath(string chatToken, bool hasShowname, bool preferViewportTheme)
         {
             string[] preferredStems = hasShowname
@@ -470,5 +492,10 @@ namespace OceanyaClient.Features.ChatPreview
         public AO2ChatPreviewBounds ChatboxBounds { get; set; } = new AO2ChatPreviewBounds(0, 0, 256, 104);
         public AO2ChatPreviewBounds ShownameBounds { get; set; } = new AO2ChatPreviewBounds(1, 0, 46, 15);
         public AO2ChatPreviewBounds MessageBounds { get; set; } = new AO2ChatPreviewBounds(6, 12, 238, 60);
+        public Color[] ChatColors { get; } = new Color[9];
+        public string[] ChatMarkupStart { get; } = new string[9];
+        public string[] ChatMarkupEnd { get; } = new string[9];
+        public bool[] ChatMarkupRemove { get; } = new bool[9];
+        public bool[] ChatMarkupTalking { get; } = new bool[9];
     }
 }

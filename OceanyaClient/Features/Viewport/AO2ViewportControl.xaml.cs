@@ -9,6 +9,7 @@ using System.Windows.Threading;
 using AOBot_Testing.Agents;
 using AOBot_Testing.Structures;
 using Common;
+using OceanyaClient.Features.ChatPreview;
 
 namespace OceanyaClient.Features.Viewport
 {
@@ -31,6 +32,9 @@ namespace OceanyaClient.Features.Viewport
         private bool chatBlankBlipEnabled;
         private string chatFullText = string.Empty;
         private string currentChatBlipToken = string.Empty;
+        private string[] chatMarkupStart = Array.Empty<string>();
+        private string[] chatMarkupEnd = Array.Empty<string>();
+        private bool[] chatMarkupRemove = Array.Empty<bool>();
         private readonly Dictionary<Image, IAnimationPlayer> animationPlayers = new Dictionary<Image, IAnimationPlayer>();
         private readonly AO2ViewportAudioManager audioManager = new AO2ViewportAudioManager();
         private readonly Random screenShakeRandom = new Random();
@@ -434,6 +438,8 @@ namespace OceanyaClient.Features.Viewport
 
             RenderShoutOverlay(message, phase);
 
+            ChatPreview.MessageColorIndex = message == null ? 0 : (int)message.TextColor;
+            ChatPreview.MessageColorOverride = ResolveViewportMessageColor(message);
             ChatPreview.PreviewShowname = showname ?? string.Empty;
             bool shouldStartTextReveal = showChat
                 && startTextReveal
@@ -442,7 +448,6 @@ namespace OceanyaClient.Features.Viewport
                 ? string.Empty
                 : messageText ?? string.Empty;
             ChatPreview.ChatToken = AO2ViewportAssetResolver.ResolveCharacterChatToken(character);
-            ChatPreview.MessageColorOverride = ResolveViewportMessageColor(message);
             ChatPreview.ShowShowname = !string.IsNullOrWhiteSpace(showname);
             ChatPreview.ShowMessage = showChat;
             ChatPreview.Visibility = showChat ? Visibility.Visible : Visibility.Collapsed;
@@ -731,13 +736,20 @@ namespace OceanyaClient.Features.Viewport
         private void StartChatTextReveal(string text)
         {
             StopChatTextTimer();
-            chatFullText = SkipAo2AlignmentPrefix(text ?? string.Empty);
+            chatFullText = text ?? string.Empty;
             chatTextPosition = 0;
             chatDisplaySpeed = DefaultChatDisplaySpeed;
             chatTextCrawlMilliseconds = AO2ViewportAssetResolver.GetTextCrawlMilliseconds();
             chatBlipTicker = 0;
             chatBlipRate = AO2ViewportAssetResolver.GetBlipRate();
             chatBlankBlipEnabled = AO2ViewportAssetResolver.GetBlankBlipEnabled();
+            AO2ChatPreviewStyle style = AO2ChatPreviewResolver.Resolve(
+                ChatPreview.ChatToken,
+                !string.IsNullOrWhiteSpace(ChatPreview.PreviewShowname),
+                preferViewportTheme: true);
+            chatMarkupStart = style.ChatMarkupStart;
+            chatMarkupEnd = style.ChatMarkupEnd;
+            chatMarkupRemove = style.ChatMarkupRemove;
             ChatPreview.PreviewText = string.Empty;
 
             if (chatFullText.Length == 0)
@@ -771,7 +783,7 @@ namespace OceanyaClient.Features.Viewport
 
             if (!string.IsNullOrEmpty(textElement))
             {
-                ChatPreview.PreviewText += textElement;
+                ChatPreview.PreviewText = chatFullText.Substring(0, chatTextPosition);
 
                 if (shouldPlayBlip && IsVisible && ShouldPlayBlipForTextElement(textElement, blipGateDelay))
                 {
@@ -828,6 +840,12 @@ namespace OceanyaClient.Features.Viewport
                 return 0;
             }
 
+            if (IsRemovedAo2ColorMarkup(textElement))
+            {
+                textElement = string.Empty;
+                return 0;
+            }
+
             if (textElement == "\\" && chatTextPosition < chatFullText.Length)
             {
                 string escapedElement = GetTextElement(chatFullText, chatTextPosition);
@@ -859,6 +877,32 @@ namespace OceanyaClient.Features.Viewport
             shouldPlayBlip = true;
             blipGateDelay = GetChatTextDelay(textElement, includePunctuationDelay: false);
             return GetChatTextDelay(textElement, includePunctuationDelay: true);
+        }
+
+        private bool IsRemovedAo2ColorMarkup(string textElement)
+        {
+            for (int i = 0; i < chatMarkupStart.Length && i < chatMarkupRemove.Length; i++)
+            {
+                if (!chatMarkupRemove[i])
+                {
+                    continue;
+                }
+
+                string start = chatMarkupStart[i] ?? string.Empty;
+                string end = i < chatMarkupEnd.Length ? chatMarkupEnd[i] ?? string.Empty : string.Empty;
+                if (string.IsNullOrEmpty(start))
+                {
+                    continue;
+                }
+
+                if (string.Equals(textElement, start, StringComparison.Ordinal)
+                    || (!string.IsNullOrEmpty(end) && string.Equals(textElement, end, StringComparison.Ordinal)))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private bool ShouldPlayBlipForTextElement(string textElement, int delay)
@@ -910,15 +954,6 @@ namespace OceanyaClient.Features.Viewport
             return enumerator.MoveNext()
                 ? enumerator.GetTextElement()
                 : text.Substring(index, 1);
-        }
-
-        private static string SkipAo2AlignmentPrefix(string text)
-        {
-            return text.StartsWith("~~", StringComparison.Ordinal)
-                || text.StartsWith("~>", StringComparison.Ordinal)
-                || text.StartsWith("<>", StringComparison.Ordinal)
-                    ? text.Substring(2)
-                    : text;
         }
 
         internal static string ResolveViewportBlipToken(CharacterFolder? character, ICMessage? message)

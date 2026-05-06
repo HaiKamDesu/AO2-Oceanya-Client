@@ -464,6 +464,30 @@ namespace UnitTests
         }
 
         [Test]
+        public void Test_AO2ChatPreviewResolver_ReadsChatColorMarkup()
+        {
+            string viewportThemeDir = Path.Combine(_tempDir, "themes", "(714x688) FullChar");
+            Directory.CreateDirectory(viewportThemeDir);
+            File.WriteAllText(
+                Path.Combine(viewportThemeDir, "chat_config.ini"),
+                "c0=10,20,30\n" +
+                "c1=40,50,60\n" +
+                "c1_start=[g]\n" +
+                "c1_end=[/g]\n" +
+                "c1_remove=1\n" +
+                "c1_talking=0\n");
+
+            AO2ChatPreviewStyle style = AO2ChatPreviewResolver.Resolve("default", hasShowname: true, preferViewportTheme: true);
+
+            Assert.That(style.ChatColors[0], Is.EqualTo(System.Windows.Media.Color.FromRgb(10, 20, 30)));
+            Assert.That(style.ChatColors[1], Is.EqualTo(System.Windows.Media.Color.FromRgb(40, 50, 60)));
+            Assert.That(style.ChatMarkupStart[1], Is.EqualTo("[g]"));
+            Assert.That(style.ChatMarkupEnd[1], Is.EqualTo("[/g]"));
+            Assert.That(style.ChatMarkupRemove[1], Is.True);
+            Assert.That(style.ChatMarkupTalking[1], Is.False);
+        }
+
+        [Test]
         public void Test_AO2ViewportAssetResolver_ResolvesEffectLayerMetadata()
         {
             string miscEffectsDir = Path.Combine(_tempDir, "misc", "customfx", "effects");
