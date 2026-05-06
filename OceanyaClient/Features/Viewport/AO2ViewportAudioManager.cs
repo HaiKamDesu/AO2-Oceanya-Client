@@ -53,11 +53,14 @@ namespace OceanyaClient.Features.Viewport
                 return;
             }
 
-            currentBlipPath = path;
             if (blipPlayer.TrySetBlip(path))
             {
+                currentBlipPath = path;
                 blipPlayer.Volume = (float)AudioSettings.BlipVolume;
+                return;
             }
+
+            currentBlipPath = string.Empty;
         }
 
         /// <summary>

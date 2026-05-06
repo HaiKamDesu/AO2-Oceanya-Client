@@ -914,11 +914,16 @@ namespace OceanyaClient.Features.Viewport
                     : text;
         }
 
-        private static string ResolveViewportBlipToken(CharacterFolder? character, ICMessage? message)
+        internal static string ResolveViewportBlipToken(CharacterFolder? character, ICMessage? message)
         {
             if (!string.IsNullOrWhiteSpace(message?.Blips))
             {
-                return message.Blips;
+                string packetBlipToken = message.Blips.Trim();
+                if (!string.Equals(packetBlipToken, "0", StringComparison.Ordinal)
+                    && !string.IsNullOrWhiteSpace(AO2ViewportAudioResolver.ResolveBlipPath(packetBlipToken)))
+                {
+                    return packetBlipToken;
+                }
             }
 
             string characterToken = AO2ViewportAssetResolver.ResolveCharacterBlipToken(character, message?.Emote);

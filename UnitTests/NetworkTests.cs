@@ -377,6 +377,52 @@ public class NetworkTests
     }
 
     [Test]
+    public async Task ShowName_BlankShowname_FallsBackToIniPuppetShowname()
+    {
+        string baseRoot = CreateAoBaseRoot();
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(baseRoot, "characters", "Franziska"));
+            File.WriteAllText(
+                Path.Combine(baseRoot, "characters", "Franziska", "char.ini"),
+                "[Options]\nshowname=Von Karma\nside=pro\ngender=female\n[Emotions]\nnumber=1\n1=normal#-#normal#0#1\n");
+
+            Directory.CreateDirectory(Path.Combine(baseRoot, "characters", "VydValkKam"));
+            File.WriteAllText(
+                Path.Combine(baseRoot, "characters", "VydValkKam", "char.ini"),
+                "[Options]\nshowname=VydValkKam\nside=def\ngender=male\n[Emotions]\nnumber=1\n1=normal#-#normal#0#1\n");
+
+            Globals.BaseFolders = new List<string> { baseRoot };
+            CharacterFolder.RefreshCharacterList();
+
+            AOClient client = new AOClient("ws://localhost:10001/");
+            await client.HandleMessage("SC#Franziska#VydValkKam#%");
+            client.iniPuppetID = 0;
+            client.SetCharacter("VydValkKam");
+            client.ICShowname = string.Empty;
+
+            MethodInfo? resolveMethod = typeof(AOClient).GetMethod(
+                "ResolveShowNameForPacket",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(resolveMethod, Is.Not.Null, "ResolveShowNameForPacket must exist on AOClient");
+
+            string? resolved = resolveMethod!.Invoke(client, null) as string;
+
+            Assert.That(resolved, Is.EqualTo("Von Karma"),
+                "Blank ICShowname must use the selected INI puppet showname, matching AO2 iniswap behavior");
+        }
+        finally
+        {
+            Globals.BaseFolders = new List<string>();
+            CharacterFolder.RefreshCharacterList();
+            if (Directory.Exists(baseRoot))
+            {
+                Directory.Delete(baseRoot, true);
+            }
+        }
+    }
+
+    [Test]
     [CancelAfter(15000)]
     public async Task Connect_TcpEndpoint_UsesAoCompatibleHandshakeFlow()
     {

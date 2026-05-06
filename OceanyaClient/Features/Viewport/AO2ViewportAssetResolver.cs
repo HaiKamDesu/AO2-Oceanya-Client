@@ -764,7 +764,14 @@ namespace OceanyaClient.Features.Viewport
                 }
             }
 
-            return character.configINI.Blips?.Trim() ?? string.Empty;
+            string defaultToken = character.configINI.Blips?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(defaultToken))
+            {
+                return defaultToken;
+            }
+
+            string genderToken = character.configINI.Gender?.Trim() ?? string.Empty;
+            return string.IsNullOrWhiteSpace(genderToken) ? "male" : genderToken;
         }
 
         /// <summary>

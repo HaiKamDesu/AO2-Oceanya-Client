@@ -706,20 +706,33 @@ namespace AOBot_Testing.Agents
                 return explicitShowName;
             }
 
-            if (CurrentINI?.configINI != null)
+            CharacterFolder? showNameCharacter = ResolveIniPuppetCharacter() ?? CurrentINI;
+            if (showNameCharacter?.configINI != null)
             {
-                if ((CurrentINI.configINI.NeedsShowName ?? string.Empty).StartsWith("false", StringComparison.OrdinalIgnoreCase))
+                if ((showNameCharacter.configINI.NeedsShowName ?? string.Empty).StartsWith("false", StringComparison.OrdinalIgnoreCase))
                 {
                     return string.Empty;
                 }
 
-                if (!string.IsNullOrWhiteSpace(CurrentINI.configINI.ShowName))
+                if (!string.IsNullOrWhiteSpace(showNameCharacter.configINI.ShowName))
                 {
-                    return CurrentINI.configINI.ShowName;
+                    return showNameCharacter.configINI.ShowName;
                 }
             }
 
-            return CurrentINI?.Name ?? string.Empty;
+            return showNameCharacter?.Name ?? CurrentINI?.Name ?? string.Empty;
+        }
+
+        private CharacterFolder? ResolveIniPuppetCharacter()
+        {
+            if (iniPuppetID < 0 || iniPuppetID >= serverCharacterList.Count)
+            {
+                return null;
+            }
+
+            string characterName = serverCharacterList.ElementAt(iniPuppetID).Key;
+            return CharacterFolder.FullList.FirstOrDefault(character =>
+                string.Equals(character.Name, characterName, StringComparison.OrdinalIgnoreCase));
         }
 
         private string ResolveIncomingIcDisplayName(ICMessage icMessage)

@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -132,6 +133,7 @@ namespace OceanyaClient
             AO2ChatPreviewStyle style = AO2ChatPreviewResolver.Resolve(ChatToken, hasShowname, UseNativeViewportLayout);
             ApplyLayout(style);
             ApplyTextStyle(style, showname, text);
+            ApplyDynamicShownameLayout(style, showname);
             ApplyChatboxImage(style.ChatboxImagePath);
         }
 
@@ -217,6 +219,56 @@ namespace OceanyaClient
             {
                 ShownameTextBlock.Effect = null;
             }
+        }
+
+        private void ApplyDynamicShownameLayout(AO2ChatPreviewStyle style, string showname)
+        {
+            if (!ShowShowname || string.IsNullOrWhiteSpace(showname) || style.ShownameExtraWidth <= 0)
+            {
+                return;
+            }
+
+            double measuredWidth = MeasureShownameWidth(showname, style);
+            AO2ChatPreviewBounds defaultBounds = style.ShownameBounds;
+            string? baseImagePath = style.ChatboxImagePath;
+            if (measuredWidth > defaultBounds.Width)
+            {
+                string? mediumImagePath = AO2ChatPreviewResolver.ResolveSiblingImageVariant(baseImagePath, "med");
+                if (!string.IsNullOrWhiteSpace(mediumImagePath))
+                {
+                    style.ChatboxImagePath = mediumImagePath;
+                    ShownameTextBlock.Width = defaultBounds.Width + style.ShownameExtraWidth;
+                }
+            }
+
+            if (measuredWidth > ShownameTextBlock.Width)
+            {
+                string? bigImagePath = AO2ChatPreviewResolver.ResolveSiblingImageVariant(baseImagePath, "big");
+                if (!string.IsNullOrWhiteSpace(bigImagePath))
+                {
+                    style.ChatboxImagePath = bigImagePath;
+                    ShownameTextBlock.Width = defaultBounds.Width + (style.ShownameExtraWidth * 2);
+                }
+            }
+        }
+
+        private double MeasureShownameWidth(string showname, AO2ChatPreviewStyle style)
+        {
+            double pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+            Typeface typeface = new Typeface(
+                ShownameTextBlock.FontFamily,
+                ShownameTextBlock.FontStyle,
+                style.ShownameBold ? FontWeights.Bold : FontWeights.Normal,
+                ShownameTextBlock.FontStretch);
+            FormattedText formattedText = new FormattedText(
+                showname,
+                CultureInfo.CurrentUICulture,
+                FlowDirection.LeftToRight,
+                typeface,
+                style.ShownameFontSize,
+                Brushes.White,
+                pixelsPerDip);
+            return formattedText.WidthIncludingTrailingWhitespace;
         }
 
         private void ApplyChatboxImage(string? imagePath)

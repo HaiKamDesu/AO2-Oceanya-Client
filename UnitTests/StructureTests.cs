@@ -437,10 +437,12 @@ namespace UnitTests
             string viewportThemeDir = Path.Combine(_tempDir, "themes", "(714x688) FullChar");
             Directory.CreateDirectory(viewportThemeDir);
             CreateEmptyFile(Path.Combine(viewportThemeDir, "chat.png"));
+            CreateEmptyFile(Path.Combine(viewportThemeDir, "chatmed.png"));
             File.WriteAllText(
                 Path.Combine(viewportThemeDir, "courtroom_design.ini"),
                 "ao2_chatbox=0,178,256,104\n" +
                 "showname=1,0,46,15\n" +
+                "showname_extra_width=32\n" +
                 "showname_align=center\n" +
                 "message=10,12,242,89\n");
 
@@ -455,6 +457,10 @@ namespace UnitTests
             Assert.That(style.MessageFontFamily, Is.EqualTo("Arial"));
             Assert.That(style.MessageFontSize, Is.EqualTo(10 * 96d / 72d).Within(0.001d));
             Assert.That(style.ShownameTextAlignment, Is.EqualTo(TextAlignment.Center));
+            Assert.That(style.ShownameExtraWidth, Is.EqualTo(32));
+            Assert.That(
+                AO2ChatPreviewResolver.ResolveSiblingImageVariant(style.ChatboxImagePath, "med"),
+                Is.EqualTo(Path.Combine(viewportThemeDir, "chatmed.png")).IgnoreCase);
         }
 
         [Test]
@@ -776,6 +782,66 @@ namespace UnitTests
             string token = AO2ViewportAssetResolver.ResolveCharacterBlipToken(character, "normal");
 
             Assert.That(token, Is.EqualTo("custom-voice"));
+        }
+
+        [Test]
+        public void ResolveCharacterBlipToken_FallsBackToGenderThenMale()
+        {
+            string femaleDirectory = Path.Combine(tempRoot, "characters", "BlipFranziska");
+            Directory.CreateDirectory(femaleDirectory);
+            string femaleIniPath = Path.Combine(femaleDirectory, "char.ini");
+            File.WriteAllText(
+                femaleIniPath,
+                "[Options]\n" +
+                "gender=female\n" +
+                "[Emotions]\n" +
+                "number=1\n" +
+                "1=normal#-#normal#0#1\n");
+
+            string noGenderDirectory = Path.Combine(tempRoot, "characters", "BlipJudge");
+            Directory.CreateDirectory(noGenderDirectory);
+            string noGenderIniPath = Path.Combine(noGenderDirectory, "char.ini");
+            File.WriteAllText(
+                noGenderIniPath,
+                "[Options]\n" +
+                "[Emotions]\n" +
+                "number=1\n" +
+                "1=normal#-#normal#0#1\n");
+
+            CharacterFolder femaleCharacter = CharacterFolder.Create(femaleIniPath);
+            CharacterFolder noGenderCharacter = CharacterFolder.Create(noGenderIniPath);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(AO2ViewportAssetResolver.ResolveCharacterBlipToken(femaleCharacter, "normal"), Is.EqualTo("female"));
+                Assert.That(AO2ViewportAssetResolver.ResolveCharacterBlipToken(noGenderCharacter, "normal"), Is.EqualTo("male"));
+            });
+        }
+
+        [Test]
+        public void ResolveViewportBlipToken_IgnoresPacketZeroAndFallsBackToCharacterBlip()
+        {
+            string characterDirectory = Path.Combine(tempRoot, "characters", "BlipFranziska");
+            Directory.CreateDirectory(characterDirectory);
+            string iniPath = Path.Combine(characterDirectory, "char.ini");
+            File.WriteAllText(
+                iniPath,
+                "[Options]\n" +
+                "blips=female\n" +
+                "[Emotions]\n" +
+                "number=1\n" +
+                "1=normal#-#normal#0#1\n");
+
+            CharacterFolder character = CharacterFolder.Create(iniPath);
+            ICMessage message = new ICMessage
+            {
+                Emote = "normal",
+                Blips = "0"
+            };
+
+            string token = AO2ViewportControl.ResolveViewportBlipToken(character, message);
+
+            Assert.That(token, Is.EqualTo("female"));
         }
 
         [Test]

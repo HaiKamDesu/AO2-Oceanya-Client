@@ -60,6 +60,7 @@ namespace OceanyaClient.Features.ChatPreview
             bool shownameOutlined = TryParseBool(GetValue(fontValues, "showname_outlined"));
             int shownameOutlineWidth = Math.Max(1, TryParseInt(GetValue(fontValues, "showname_outline_width"), 1));
             TextAlignment shownameTextAlignment = ParseShownameTextAlignment(GetValue(designValues, "showname_align"));
+            int shownameExtraWidth = Math.Max(0, TryParseInt(GetValue(designValues, "showname_extra_width"), 0));
 
             string? chatboxImagePath = ResolveChatboxImagePath(token, hasShowname, preferViewportTheme);
 
@@ -79,6 +80,7 @@ namespace OceanyaClient.Features.ChatPreview
                 ShownameOutlined = shownameOutlined,
                 ShownameOutlineWidth = shownameOutlineWidth,
                 ShownameTextAlignment = shownameTextAlignment,
+                ShownameExtraWidth = shownameExtraWidth,
                 ChatboxBounds = TryParseBounds(GetValue(designValues, "ao2_chatbox"))
                     ?? TryParseBounds(GetValue(designValues, "chatbox"))
                     ?? new AO2ChatPreviewBounds(0, 0, 256, 104),
@@ -427,6 +429,23 @@ namespace OceanyaClient.Features.ChatPreview
 
             return null;
         }
+
+        public static string? ResolveSiblingImageVariant(string? imagePath, string suffix)
+        {
+            if (string.IsNullOrWhiteSpace(imagePath) || string.IsNullOrWhiteSpace(suffix))
+            {
+                return null;
+            }
+
+            string? directory = Path.GetDirectoryName(imagePath);
+            string stem = Path.GetFileNameWithoutExtension(imagePath);
+            if (string.IsNullOrWhiteSpace(directory) || string.IsNullOrWhiteSpace(stem))
+            {
+                return null;
+            }
+
+            return ResolveStem(directory, string.Empty, stem + suffix);
+        }
     }
 
     public sealed record AO2ChatPreviewBounds(int X, int Y, int Width, int Height);
@@ -447,6 +466,7 @@ namespace OceanyaClient.Features.ChatPreview
         public bool ShownameOutlined { get; set; }
         public int ShownameOutlineWidth { get; set; } = 1;
         public TextAlignment ShownameTextAlignment { get; set; } = TextAlignment.Left;
+        public int ShownameExtraWidth { get; set; }
         public AO2ChatPreviewBounds ChatboxBounds { get; set; } = new AO2ChatPreviewBounds(0, 0, 256, 104);
         public AO2ChatPreviewBounds ShownameBounds { get; set; } = new AO2ChatPreviewBounds(1, 0, 46, 15);
         public AO2ChatPreviewBounds MessageBounds { get; set; } = new AO2ChatPreviewBounds(6, 12, 238, 60);
