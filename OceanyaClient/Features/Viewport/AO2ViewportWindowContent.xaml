@@ -1,0 +1,15 @@
+<local:OceanyaWindowContentControl x:Class="OceanyaClient.Features.Viewport.AO2ViewportWindowContent"
+                                   xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                                   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                                   xmlns:local="clr-namespace:OceanyaClient"
+                                   xmlns:viewport="clr-namespace:OceanyaClient.Features.Viewport"
+                                   Width="256"
+                                   Height="296"
+                                   MinWidth="256"
+                                   MinHeight="296"
+                                   MaxWidth="256"
+                                   MaxHeight="296"
+                                   ShowInTaskbar="False"
+                                   Title="AO2 Viewport">
+    <viewport:AO2ViewportControl x:Name="ViewportControl"/>
+</local:OceanyaWindowContentControl>

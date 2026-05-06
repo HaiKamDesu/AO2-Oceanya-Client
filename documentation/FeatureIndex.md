@@ -7,6 +7,12 @@ Use this file as the first stop before broad repository searches. It should poin
 - Main code: `AOBot-Testing/Agents/AOClient.cs`, `AOBot-Testing/Structures/ICMessage.cs`, `OceanyaClient/MainWindow.xaml.cs`, `OceanyaClient/Components/ICLog.xaml.cs`
 - Notes: Covers IC/OOC packet handling, log formatting, and AO2-facing display behavior.
 
+## AO2 Viewport
+- Doc: `Documentation/AO2Viewport.md`
+- Main code: `OceanyaClient/Features/Viewport/*`, `OceanyaClient/MainWindow.xaml`, `OceanyaClient/MainWindow.xaml.cs`
+- AO2 reference: `AO2-Client/src/courtroom.cpp`, `AO2-Client/src/courtroom.h`, `AO2-Client/src/animationlayer.*`
+- Notes: GM multi-client `V` button opens an owned 256x192 AO2 render surface for background, character, desk, effect, and chatbox layers.
+
 ## Character File Creator
 - Doc: `Documentation/CharacterFileCreator.md`
 - Main code: `OceanyaClient/Components/Forms/AOCharacterFileCreatorWindow.xaml.cs`, `OceanyaClient/Features/CharacterCreator/AOCharacterFileCreatorBuilder.cs`, `OceanyaClient/Features/CharacterCreator/GeneratedAssetPathCollisionResolver.cs`

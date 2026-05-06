@@ -47,6 +47,18 @@ namespace OceanyaClient
             typeof(AO2ChatPreviewControl),
             new PropertyMetadata(true, OnPreviewInputChanged));
 
+        public static readonly DependencyProperty ShowPreviewHeaderProperty = DependencyProperty.Register(
+            nameof(ShowPreviewHeader),
+            typeof(bool),
+            typeof(AO2ChatPreviewControl),
+            new PropertyMetadata(true, OnPreviewInputChanged));
+
+        public static readonly DependencyProperty UseNativeViewportLayoutProperty = DependencyProperty.Register(
+            nameof(UseNativeViewportLayout),
+            typeof(bool),
+            typeof(AO2ChatPreviewControl),
+            new PropertyMetadata(false, OnPreviewInputChanged));
+
         public AO2ChatPreviewControl()
         {
             InitializeComponent();
@@ -83,6 +95,20 @@ namespace OceanyaClient
             set => SetValue(ShowShownameProperty, value);
         }
 
+        public bool ShowPreviewHeader
+        {
+            get => (bool)GetValue(ShowPreviewHeaderProperty);
+            set => SetValue(ShowPreviewHeaderProperty, value);
+        }
+
+        public bool UseNativeViewportLayout
+        {
+            get => (bool)GetValue(UseNativeViewportLayoutProperty);
+            set => SetValue(UseNativeViewportLayoutProperty, value);
+        }
+
+        public Color? MessageColorOverride { get; set; }
+
         private static void OnPreviewInputChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
             if (d is AO2ChatPreviewControl control)
@@ -94,12 +120,64 @@ namespace OceanyaClient
         public void RefreshPreview()
         {
             string showname = string.IsNullOrWhiteSpace(PreviewShowname) ? "Preview Name" : PreviewShowname.Trim();
-            string text = string.IsNullOrWhiteSpace(PreviewText) ? "Preview message." : PreviewText.Trim();
+            string text = UseNativeViewportLayout
+                ? PreviewText ?? string.Empty
+                : string.IsNullOrWhiteSpace(PreviewText)
+                    ? "Preview message."
+                    : PreviewText.Trim();
             bool hasShowname = !string.IsNullOrWhiteSpace(PreviewShowname);
+            HeaderTextBlock.Visibility = ShowPreviewHeader ? Visibility.Visible : Visibility.Collapsed;
+            HeaderRow.Height = ShowPreviewHeader ? GridLength.Auto : new GridLength(0);
 
-            AO2ChatPreviewStyle style = AO2ChatPreviewResolver.Resolve(ChatToken, hasShowname);
+            AO2ChatPreviewStyle style = AO2ChatPreviewResolver.Resolve(ChatToken, hasShowname, UseNativeViewportLayout);
+            ApplyLayout(style);
             ApplyTextStyle(style, showname, text);
             ApplyChatboxImage(style.ChatboxImagePath);
+        }
+
+        private void ApplyLayout(AO2ChatPreviewStyle style)
+        {
+            if (UseNativeViewportLayout)
+            {
+                RootBorder.Padding = new Thickness(0);
+                RootBorder.BorderThickness = new Thickness(0);
+                RootBorder.CornerRadius = new CornerRadius(0);
+                RootBorder.Background = Brushes.Transparent;
+                PreviewFrame.BorderThickness = new Thickness(0);
+                PreviewFrame.CornerRadius = new CornerRadius(0);
+                PreviewFrame.Background = Brushes.Transparent;
+                FallbackBackground.Background = new SolidColorBrush(Color.FromRgb(0xE8, 0xE8, 0xE8));
+            }
+            else
+            {
+                RootBorder.Padding = new Thickness(10);
+                RootBorder.BorderThickness = new Thickness(1);
+                RootBorder.CornerRadius = new CornerRadius(4);
+                RootBorder.Background = new SolidColorBrush(Color.FromArgb(0x22, 0, 0, 0));
+                PreviewFrame.BorderThickness = new Thickness(1);
+                PreviewFrame.CornerRadius = new CornerRadius(4);
+                PreviewFrame.Background = new SolidColorBrush(Color.FromArgb(0x1B, 0, 0, 0));
+                FallbackBackground.Background = new SolidColorBrush(Color.FromArgb(0xCC, 0x10, 0x10, 0x10));
+            }
+
+            AO2ChatPreviewBounds chatbox = style.ChatboxBounds;
+            ChatboxCanvas.Width = chatbox.Width;
+            ChatboxCanvas.Height = chatbox.Height;
+            ChatboxImage.Width = chatbox.Width;
+            ChatboxImage.Height = chatbox.Height;
+            FallbackBackground.Width = chatbox.Width;
+            FallbackBackground.Height = chatbox.Height;
+
+            ApplyBounds(ShownameTextBlock, style.ShownameBounds);
+            ApplyBounds(MessageContainer, style.MessageBounds);
+        }
+
+        private static void ApplyBounds(FrameworkElement element, AO2ChatPreviewBounds bounds)
+        {
+            Canvas.SetLeft(element, bounds.X);
+            Canvas.SetTop(element, bounds.Y);
+            element.Width = bounds.Width;
+            element.Height = bounds.Height;
         }
 
         private void ApplyTextStyle(AO2ChatPreviewStyle style, string showname, string text)
@@ -110,7 +188,7 @@ namespace OceanyaClient
             MessageContainer.Visibility = ShowMessage ? Visibility.Visible : Visibility.Collapsed;
 
             ShownameTextBlock.Foreground = new SolidColorBrush(style.ShownameColor);
-            MessageTextBlock.Foreground = new SolidColorBrush(style.MessageColor);
+            MessageTextBlock.Foreground = new SolidColorBrush(MessageColorOverride ?? style.MessageColor);
 
             ShownameTextBlock.FontSize = style.ShownameFontSize;
             MessageTextBlock.FontSize = style.MessageFontSize;
@@ -120,6 +198,7 @@ namespace OceanyaClient
 
             ShownameTextBlock.FontFamily = TryCreateFont(style.ShownameFontFamily) ?? new FontFamily("Arial");
             MessageTextBlock.FontFamily = TryCreateFont(style.MessageFontFamily) ?? new FontFamily("Arial");
+            ShownameTextBlock.TextAlignment = style.ShownameTextAlignment;
 
             if (style.ShownameOutlined)
             {

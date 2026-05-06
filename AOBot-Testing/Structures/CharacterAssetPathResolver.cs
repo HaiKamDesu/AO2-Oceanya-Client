@@ -51,20 +51,49 @@ namespace AOBot_Testing.Structures
 
             if (Path.HasExtension(normalizedCandidate))
             {
-                return File.Exists(candidateFromDirectory) ? candidateFromDirectory : string.Empty;
+                return ResolveExistingFileCaseInsensitive(candidateFromDirectory);
             }
 
             string[] ao2PreferredExtensions = { "webp", "apng", "gif", "png", "jpg", "jpeg", "pdn" };
             foreach (string extension in ao2PreferredExtensions)
             {
                 string pathWithExtension = candidateFromDirectory + "." + extension;
-                if (File.Exists(pathWithExtension))
+                string resolvedPath = ResolveExistingFileCaseInsensitive(pathWithExtension);
+                if (!string.IsNullOrWhiteSpace(resolvedPath))
                 {
-                    return pathWithExtension;
+                    return resolvedPath;
                 }
             }
 
             return string.Empty;
+        }
+
+        private static string ResolveExistingFileCaseInsensitive(string candidatePath)
+        {
+            if (File.Exists(candidatePath))
+            {
+                return candidatePath;
+            }
+
+            string? directory = Path.GetDirectoryName(candidatePath);
+            string fileName = Path.GetFileName(candidatePath);
+            if (string.IsNullOrWhiteSpace(directory)
+                || string.IsNullOrWhiteSpace(fileName)
+                || !Directory.Exists(directory))
+            {
+                return string.Empty;
+            }
+
+            try
+            {
+                return Directory.EnumerateFiles(directory)
+                    .FirstOrDefault(path => string.Equals(Path.GetFileName(path), fileName, StringComparison.OrdinalIgnoreCase))
+                    ?? string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
+            }
         }
 
         public static string ResolveCharacterAnimationPath(string characterDirectory, string animationName, bool includePlaceholder = true)

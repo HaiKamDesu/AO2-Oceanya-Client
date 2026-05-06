@@ -7,6 +7,9 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Windows;
+using OceanyaClient.Features.ChatPreview;
+using OceanyaClient.Features.Viewport;
 
 namespace UnitTests
 {
@@ -146,6 +149,36 @@ namespace UnitTests
             // Create an empty file at the specified path
             File.WriteAllBytes(filePath, new byte[0]);
         }
+
+        private CharacterFolder CreateViewportTestCharacter()
+        {
+            string characterDirectory = Path.Combine(_tempDir, "characters", "ViewportPhoenix");
+            Directory.CreateDirectory(characterDirectory);
+            CreateEmptyFile(Path.Combine(characterDirectory, "(a)normal.png"));
+            CreateEmptyFile(Path.Combine(characterDirectory, "(b)normal.png"));
+            CreateEmptyFile(Path.Combine(characterDirectory, "(a)packet_anim.png"));
+            CreateEmptyFile(Path.Combine(characterDirectory, "(b)packet_anim.png"));
+            CreateEmptyFile(Path.Combine(characterDirectory, "pre_packet.png"));
+            CreateEmptyFile(Path.Combine(characterDirectory, "pre_configured.png"));
+
+            string iniPath = Path.Combine(characterDirectory, "char.ini");
+            File.WriteAllText(
+                iniPath,
+                "[Options]\n" +
+                "showname=Phoenix Wright\n" +
+                "gender=unknown\n" +
+                "side=def\n" +
+                "[Time]\n" +
+                "preanim=0\n" +
+                "pre_packet=1200\n" +
+                "[stay_time]\n" +
+                "pre_packet=250\n" +
+                "[Emotions]\n" +
+                "number=1\n" +
+                "1=normal#pre_configured#normal#1#1\n");
+
+            return CharacterFolder.Create(iniPath);
+        }
         
         [Test]
         public void Test_Background_FromBGPath()
@@ -269,6 +302,223 @@ namespace UnitTests
             Assert.That(positions.ContainsKey("def"), Is.True);
             Assert.That(positions.ContainsKey("wit"), Is.True);
             Assert.That(positions.ContainsKey("pro"), Is.True);
+        }
+
+        [Test]
+        public void Test_AO2ViewportAssetResolver_ResolvesBackgroundAndDeskImages()
+        {
+            string testBgDir = Path.Combine(_tempDir, "background", "testbg");
+
+            string? backgroundPath = AO2ViewportAssetResolver.ResolveBackgroundImage("testbg", "def");
+            string? deskPath = AO2ViewportAssetResolver.ResolveDeskImage("testbg", "def");
+
+            Assert.That(backgroundPath, Is.Not.Null);
+            Assert.That(backgroundPath, Does.EndWith("defenseempty.png"));
+            Assert.That(deskPath, Is.Not.Null);
+            Assert.That(deskPath, Is.EqualTo(Path.Combine(testBgDir, "defensedesk.png")));
+        }
+
+        [Test]
+        public void Test_AO2ViewportAssetResolver_DeskVisibilityMatchesAo2PostPreanimState()
+        {
+            Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.Hidden, "def"), Is.False);
+            Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.Shown, "def"), Is.True);
+            Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.Chat, "def"), Is.True);
+            Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.Chat, "custom"), Is.False);
+            Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.ShownDuringPreanimHiddenAfter, "def"), Is.False);
+            Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.HiddenDuringPreanimShownAfter, "def"), Is.True);
+            Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.ShownDuringPreanimCenteredAfter, "def"), Is.False);
+        }
+
+        [Test]
+        public void Test_AO2ViewportAssetResolver_DeskVisibilityMatchesAo2PreanimState()
+        {
+            Assert.That(
+                AO2ViewportAssetResolver.ShouldShowDeskDuringPreAnimation(
+                    ICMessage.DeskMods.HiddenDuringPreanimShownAfter,
+                    "def"),
+                Is.False);
+            Assert.That(
+                AO2ViewportAssetResolver.ShouldShowDeskDuringPreAnimation(
+                    ICMessage.DeskMods.ShownDuringPreanimHiddenAfter,
+                    "def"),
+                Is.True);
+            Assert.That(
+                AO2ViewportAssetResolver.ShouldShowDeskDuringPreAnimation(ICMessage.DeskMods.Chat, "def"),
+                Is.True);
+            Assert.That(
+                AO2ViewportAssetResolver.ShouldShowDeskDuringPreAnimation(
+                    ICMessage.DeskMods.ShownDuringPreanimCenteredAfter,
+                    "def"),
+                Is.True);
+        }
+
+        [Test]
+        public void Test_AO2ViewportAssetResolver_UsesPacketPreanimTokenAndTiming()
+        {
+            CharacterFolder character = CreateViewportTestCharacter();
+
+            string? preAnimationPath = AO2ViewportAssetResolver.ResolveCharacterPreAnimation(character, "pre_packet");
+            string? emoteNamePath = AO2ViewportAssetResolver.ResolveCharacterPreAnimation(character, "normal");
+
+            Assert.That(preAnimationPath, Is.EqualTo(Path.Combine(character.DirectoryPath, "pre_packet.png")));
+            Assert.That(emoteNamePath, Is.Null);
+            Assert.That(
+                AO2ViewportAssetResolver.GetPreAnimationDuration(character, "pre_packet"),
+                Is.EqualTo(TimeSpan.FromMilliseconds(1200)));
+            Assert.That(
+                AO2ViewportAssetResolver.GetPreAnimationWaitDuration(character, "pre_packet"),
+                Is.EqualTo(TimeSpan.FromMilliseconds(10000)));
+        }
+
+        [Test]
+        public void Test_AO2ViewportAssetResolver_DialogAnimationMatchesTalkingState()
+        {
+            CharacterFolder character = CreateViewportTestCharacter();
+
+            string? talkingPath = AO2ViewportAssetResolver.ResolveCharacterDialogAnimation(character, "normal", talking: true);
+            string? idlePath = AO2ViewportAssetResolver.ResolveCharacterDialogAnimation(character, "normal", talking: false);
+            string? packetTalkingPath = AO2ViewportAssetResolver.ResolveCharacterDialogAnimation(
+                character,
+                "packet_anim",
+                talking: true);
+
+            Assert.That(talkingPath, Is.EqualTo(Path.Combine(character.DirectoryPath, "(b)normal.png")));
+            Assert.That(idlePath, Is.EqualTo(Path.Combine(character.DirectoryPath, "(a)normal.png")));
+            Assert.That(packetTalkingPath, Is.EqualTo(Path.Combine(character.DirectoryPath, "(b)packet_anim.png")));
+            Assert.That(AO2ViewportAssetResolver.IsTextColorTalking(ICMessage.TextColors.White), Is.True);
+            Assert.That(AO2ViewportAssetResolver.IsTextColorTalking(ICMessage.TextColors.Blue), Is.False);
+        }
+
+        [Test]
+        public void Test_AO2ViewportAssetResolver_NormalizesAo2EmoteModifiers()
+        {
+            Assert.That(
+                AO2ViewportAssetResolver.NormalizeEmoteModifier(ICMessage.EmoteModifiers.PlayPreanimationAndObjection),
+                Is.EqualTo(AO2ViewportAssetResolver.NormalizedEmoteModifier.PreAnimation));
+            Assert.That(
+                AO2ViewportAssetResolver.NormalizeEmoteModifier(ICMessage.EmoteModifiers.Unused4),
+                Is.EqualTo(AO2ViewportAssetResolver.NormalizedEmoteModifier.PreAnimationZoom));
+            Assert.That(
+                AO2ViewportAssetResolver.ShouldBlockForPreAnimation(ICMessage.EmoteModifiers.Unused4),
+                Is.True);
+            Assert.That(
+                AO2ViewportAssetResolver.ShouldPlayImmediatePreAnimation(
+                    ICMessage.EmoteModifiers.NoPreanimation,
+                    immediate: true),
+                Is.True);
+            Assert.That(
+                AO2ViewportAssetResolver.ShouldCenterAndHidePairDuringSpeaking(
+                    ICMessage.DeskMods.ShownDuringPreanimCenteredAfter,
+                    ICMessage.EmoteModifiers.NoPreanimation),
+                Is.True);
+        }
+
+        [Test]
+        public void Test_AO2ChatPreviewResolver_UsesFullCharViewportThemeGeometry()
+        {
+            string defaultThemeDir = Path.Combine(_tempDir, "themes", "default");
+            Directory.CreateDirectory(defaultThemeDir);
+            File.WriteAllText(
+                Path.Combine(defaultThemeDir, "courtroom_fonts.ini"),
+                "showname=8\n" +
+                "showname_font=Arial\n" +
+                "message=10\n" +
+                "message_font=Arial\n" +
+                "message_color=0,0,0\n");
+
+            string viewportThemeDir = Path.Combine(_tempDir, "themes", "(714x688) FullChar");
+            Directory.CreateDirectory(viewportThemeDir);
+            CreateEmptyFile(Path.Combine(viewportThemeDir, "chat.png"));
+            File.WriteAllText(
+                Path.Combine(viewportThemeDir, "courtroom_design.ini"),
+                "ao2_chatbox=0,178,256,104\n" +
+                "showname=1,0,46,15\n" +
+                "showname_align=center\n" +
+                "message=10,12,242,89\n");
+
+            AO2ChatPreviewStyle style = AO2ChatPreviewResolver.Resolve("default", hasShowname: true, preferViewportTheme: true);
+
+            Assert.That(
+                style.ChatboxImagePath,
+                Is.EqualTo(Path.Combine(viewportThemeDir, "chat.png")).IgnoreCase);
+            Assert.That(style.ChatboxBounds, Is.EqualTo(new AO2ChatPreviewBounds(0, 178, 256, 104)));
+            Assert.That(style.ShownameBounds, Is.EqualTo(new AO2ChatPreviewBounds(1, 0, 46, 15)));
+            Assert.That(style.MessageBounds, Is.EqualTo(new AO2ChatPreviewBounds(10, 12, 242, 89)));
+            Assert.That(style.MessageFontFamily, Is.EqualTo("Arial"));
+            Assert.That(style.MessageFontSize, Is.EqualTo(10 * 96d / 72d).Within(0.001d));
+            Assert.That(style.ShownameTextAlignment, Is.EqualTo(TextAlignment.Center));
+        }
+
+        [Test]
+        public void Test_AO2ViewportAssetResolver_ResolvesEffectLayerMetadata()
+        {
+            string miscEffectsDir = Path.Combine(_tempDir, "misc", "customfx", "effects");
+            Directory.CreateDirectory(miscEffectsDir);
+            CreateEmptyFile(Path.Combine(miscEffectsDir, "spark.png"));
+            File.WriteAllText(
+                Path.Combine(_tempDir, "misc", "customfx", "effects.ini"),
+                "[0]\nname=spark\nlayer=behind\nstretch=true\nrespect_flip=true\nrespect_offset=true\n");
+
+            AO2ViewportAssetResolver.ViewportEffect effect =
+                AO2ViewportAssetResolver.ResolveEffect("spark|customfx|sfx-spark", ICMessage.Effects.None, null, true);
+
+            Assert.That(effect.ImagePath, Is.EqualTo(Path.Combine(miscEffectsDir, "spark.png")));
+            Assert.That(effect.Layer, Is.EqualTo(AO2ViewportAssetResolver.EffectLayer.BehindCharacter));
+            Assert.That(effect.Stretch, Is.True);
+            Assert.That(effect.RespectFlip, Is.True);
+            Assert.That(effect.RespectOffset, Is.True);
+        }
+
+        [Test]
+        public void Test_AO2ViewportAssetResolver_ParsesPairOrderingAndZoomNames()
+        {
+            Assert.That(
+                AO2ViewportAssetResolver.GetPairOrdering("12^1"),
+                Is.EqualTo(AO2ViewportAssetResolver.PairOrdering.PairInFront));
+            Assert.That(
+                AO2ViewportAssetResolver.GetPairOrdering("12^0"),
+                Is.EqualTo(AO2ViewportAssetResolver.PairOrdering.PairBehind));
+            Assert.That(AO2ViewportAssetResolver.ResolveSpeedlinesName("pro"), Is.EqualTo("prosecution_speedlines"));
+            Assert.That(AO2ViewportAssetResolver.ResolveSpeedlinesName("hlp"), Is.EqualTo("prosecution_speedlines"));
+            Assert.That(AO2ViewportAssetResolver.ResolveSpeedlinesName("def"), Is.EqualTo("defense_speedlines"));
+        }
+
+        [Test]
+        public void Test_AO2ViewportAssetResolver_ResolvesShoutOverlayDefaults()
+        {
+            Assert.That(
+                AO2ViewportAssetResolver.ResolveShoutOverlayImage(ICMessage.ShoutModifiers.Objection),
+                Does.Contain("objection_bubble.gif"));
+            Assert.That(
+                AO2ViewportAssetResolver.ResolveShoutOverlayImage(ICMessage.ShoutModifiers.Nothing),
+                Is.Null);
+        }
+
+        [Test]
+        public void Test_ICMessage_FromConsoleLine_PreservesPairOrderAndVerticalOffset()
+        {
+            List<string> fields = Enumerable.Repeat(string.Empty, 32).ToList();
+            fields[0] = "chat";
+            fields[2] = "Phoenix";
+            fields[3] = "normal";
+            fields[4] = "Hello";
+            fields[5] = "def";
+            fields[8] = "1";
+            fields[16] = "12^1";
+            fields[17] = "Maya";
+            fields[18] = "normal";
+            fields[19] = "10&5";
+            fields[20] = "-20&8";
+
+            ICMessage? message = ICMessage.FromConsoleLine("MS#" + string.Join("#", fields) + "#%");
+
+            Assert.That(message, Is.Not.Null);
+            Assert.That(message!.OtherCharIdRaw, Is.EqualTo("12^1"));
+            Assert.That(message.OtherCharId, Is.EqualTo(12));
+            Assert.That(message.OtherOffset, Is.EqualTo(-20));
+            Assert.That(message.OtherOffsetVertical, Is.EqualTo(8));
+            Assert.That(message.SelfOffset, Is.EqualTo((10, 5)));
         }
     }
 

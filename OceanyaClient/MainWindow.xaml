@@ -457,6 +457,18 @@
                         Click="btnAreaNavigator_Click"
                         ToolTip="Area Navigator"/>
 
+                <Button x:Name="btnViewport"
+                        AutomationProperties.AutomationId="Main.Viewport.Open"
+                        AutomationProperties.Name="Open AO2 Viewport"
+                        Width="24"
+                        Height="24"
+                        Canvas.Left="431"
+                        Canvas.Top="603"
+                        Content="V"
+                        FontWeight="Bold"
+                        Click="btnViewport_Click"
+                        ToolTip="AO2 Viewport"/>
+
                 <Popup x:Name="AreaNavigatorPopup"
                        AutomationProperties.AutomationId="Main.AreaNavigator.Popup"
                        PlacementTarget="{Binding ElementName=btnAreaNavigator}"

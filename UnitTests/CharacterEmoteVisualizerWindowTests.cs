@@ -344,6 +344,12 @@ namespace UnitTests
                 remove { }
             }
 
+            public event Action? PlaybackFinished
+            {
+                add { }
+                remove { }
+            }
+
             public int StopCallCount { get; private set; }
 
             public ImageSource CurrentFrame => new DrawingImage();

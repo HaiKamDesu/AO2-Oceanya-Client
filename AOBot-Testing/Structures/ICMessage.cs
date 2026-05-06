@@ -88,11 +88,13 @@ namespace AOBot_Testing.Structures
         public bool Realization { get; set; }
         public TextColors TextColor { get; set; }
         public string ShowName { get; set; }
+        public string OtherCharIdRaw { get; set; }
         public int OtherCharId { get; set; }
         public string OtherName { get; set; }
         public string OtherEmote { get; set; }
         public (int Horizontal, int Vertical) SelfOffset { get; set; }
         public int OtherOffset { get; set; }
+        public int OtherOffsetVertical { get; set; }
         public bool OtherFlip { get; set; }
         public bool NonInterruptingPreAnim { get; set; } // Changed to bool
         public bool SfxLooping { get; set; }
@@ -198,11 +200,13 @@ namespace AOBot_Testing.Structures
             Realization = false;
             TextColor = TextColors.White;
             ShowName = "";
+            OtherCharIdRaw = "";
             OtherCharId = -1;
             OtherName = "";
             OtherEmote = "";
             SelfOffset = (0, 0);
             OtherOffset = 0;
+            OtherOffsetVertical = 0;
             OtherFlip = false;
             NonInterruptingPreAnim = false; // Changed to bool
             SfxLooping = false;
@@ -269,6 +273,8 @@ namespace AOBot_Testing.Structures
             {
                 PacketFieldLayout layout = ResolvePacketFieldLayout(fields.Length);
                 (int Horizontal, int Vertical) selfOffset = ParseOffset(GetField(fields, layout.SelfOffsetIndex));
+                string otherCharIdRaw = DecodePacketField(GetField(fields, OtherCharIdIndex));
+                (int Horizontal, int Vertical) otherOffset = ParseOffset(GetField(fields, layout.OtherOffsetIndex));
 
                 return new ICMessage
                 {
@@ -288,11 +294,13 @@ namespace AOBot_Testing.Structures
                     Realization = ParseBoolean(GetField(fields, RealizationIndex)),
                     TextColor = ParseEnum(GetField(fields, TextColorIndex), TextColors.White),
                     ShowName = ResolveShowName(fields),
-                    OtherCharId = ParsePairCharId(GetField(fields, OtherCharIdIndex)),
+                    OtherCharIdRaw = otherCharIdRaw,
+                    OtherCharId = ParsePairCharId(otherCharIdRaw),
                     OtherName = DecodePacketField(GetField(fields, layout.OtherNameIndex)),
                     OtherEmote = DecodePacketField(GetField(fields, layout.OtherEmoteIndex)),
                     SelfOffset = selfOffset,
-                    OtherOffset = ParseInt(GetField(fields, layout.OtherOffsetIndex), 0),
+                    OtherOffset = otherOffset.Horizontal,
+                    OtherOffsetVertical = otherOffset.Vertical,
                     OtherFlip = ParseBoolean(GetField(fields, layout.OtherFlipIndex)),
                     NonInterruptingPreAnim = ParseBoolean(GetField(fields, layout.ImmediateIndex)),
                     SfxLooping = ParseBoolean(GetField(fields, layout.SfxLoopingIndex)),
@@ -340,7 +348,9 @@ namespace AOBot_Testing.Structures
             if (effectiveOptions.IncludeCcccIcSupport)
             {
                 fields.Add(message.ShowName ?? string.Empty);
-                fields.Add(message.OtherCharId.ToString(CultureInfo.InvariantCulture));
+                fields.Add(string.IsNullOrWhiteSpace(message.OtherCharIdRaw)
+                    ? message.OtherCharId.ToString(CultureInfo.InvariantCulture)
+                    : message.OtherCharIdRaw);
                 fields.Add(BuildOffsetField(message.SelfOffset, effectiveOptions.IncludeVerticalOffset));
                 fields.Add(message.NonInterruptingPreAnim ? "1" : "0");
             }

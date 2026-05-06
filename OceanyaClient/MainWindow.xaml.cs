@@ -19,6 +19,7 @@ using NAudio.Wave;
 using OceanyaClient.AdvancedFeatures;
 using OceanyaClient.Components;
 using OceanyaClient.Features.Startup;
+using OceanyaClient.Features.Viewport;
 using OceanyaClient.Utilities;
 using ToggleButton = System.Windows.Controls.Primitives.ToggleButton;
 
@@ -38,6 +39,8 @@ namespace OceanyaClient
         private AOClient? currentClient;
         private AOClient? singleInternalClient;
         private AOClient? boundSingleClientProfile;
+        private Window? viewportWindow;
+        private AO2ViewportWindowContent? viewportContent;
         private readonly bool useSingleInternalClient = SaveFile.Data.UseSingleInternalClient;
         private readonly bool aiModeEnabled;
         private bool debug = false;
@@ -1662,6 +1665,7 @@ namespace OceanyaClient
             Canvas.SetTop(btnDebug, 607 + verticalOffset);
             Canvas.SetTop(chkInvertLog, 607 + verticalOffset);
             Canvas.SetTop(btnAreaNavigator, 603 + verticalOffset);
+            Canvas.SetTop(btnViewport, 603 + verticalOffset);
 
             UpdateDreddFeatureEnabledState();
         }
@@ -2252,6 +2256,7 @@ namespace OceanyaClient
             InitializeCommonClientEvents(singleInternalClient, singleInternalClient);
             await singleInternalClient.Connect();
             await BootstrapAreaNavigatorAsync(singleInternalClient);
+            RefreshViewportAttachment();
         }
         private void AddClient(string clientName)
         {
@@ -2667,6 +2672,7 @@ namespace OceanyaClient
             OOCLogControl.SetCurrentClient(currentClient);
             OOCLogControl.txtOOCShowname.Text = currentClient.OOCShowname;
             ICLogControl.SetCurrentClient(currentClient);
+            RefreshViewportAttachment();
             RefreshAreaNavigatorForCurrentClient();
 
             if (isDreddFeatureEnabled && DreddStickyOverlayCheckBox.IsChecked == true)
@@ -2687,6 +2693,59 @@ namespace OceanyaClient
             {
                 AddClient(newClientName);
             }
+        }
+
+        private void btnViewport_Click(object sender, RoutedEventArgs e)
+        {
+            OpenViewportWindow();
+        }
+
+        private void OpenViewportWindow()
+        {
+            if (viewportWindow != null)
+            {
+                viewportWindow.Activate();
+                RefreshViewportAttachment();
+                return;
+            }
+
+            viewportContent = new AO2ViewportWindowContent();
+            RefreshViewportAttachment();
+
+            Window owner = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            viewportWindow = OceanyaWindowManager.CreateWindow(
+                viewportContent,
+                new OceanyaWindowPresentationOptions
+                {
+                    Owner = owner,
+                    Title = "AO2 Viewport",
+                    HeaderText = "Viewport",
+                    Width = AO2ViewportAssetResolver.ViewportWidth,
+                    Height = AO2ViewportAssetResolver.ViewportToolHeight,
+                    MinWidth = AO2ViewportAssetResolver.ViewportWidth,
+                    MinHeight = AO2ViewportAssetResolver.ViewportToolHeight,
+                    MaxWidth = AO2ViewportAssetResolver.ViewportWidth,
+                    MaxHeight = AO2ViewportAssetResolver.ViewportToolHeight,
+                    ShowInTaskbar = false,
+                    IsUserResizeEnabled = false,
+                    IsUserMoveEnabled = true,
+                    IsCloseButtonVisible = true,
+                    WindowStartupLocation = WindowStartupLocation.CenterOwner
+                });
+            viewportWindow.Closed += (_, _) =>
+            {
+                viewportContent?.AttachClient(null, null);
+                viewportContent = null;
+                viewportWindow = null;
+            };
+            viewportWindow.Show();
+            viewportWindow.Activate();
+        }
+
+        private void RefreshViewportAttachment()
+        {
+            AOClient? incomingMessageClient = GetTargetClientForNetwork(currentClient) ?? currentClient;
+            viewportContent?.AttachClient(currentClient, incomingMessageClient);
         }
 
         private string ShowInputDialog(string prompt)

@@ -21,6 +21,7 @@ namespace OceanyaClient
     public interface IAnimationPlayer
     {
         event Action<ImageSource>? FrameChanged;
+        event Action? PlaybackFinished;
         ImageSource CurrentFrame { get; }
         void SetLoop(bool shouldLoop);
         void Restart();
@@ -191,7 +192,44 @@ namespace OceanyaClient
             return result;
         }
 
-        public static bool TryCreateAnimationPlayer(string? sourcePath, bool loop, out IAnimationPlayer? player)
+        public static bool TryEstimateAnimationDuration(string? path, out TimeSpan duration)
+        {
+            duration = TimeSpan.Zero;
+            string? resolvedPath = ResolveAo2ImagePath(path);
+            if (string.IsNullOrWhiteSpace(resolvedPath) || !File.Exists(resolvedPath))
+            {
+                return false;
+            }
+
+            if (TryDecodeFirstAnimationFrame(resolvedPath, out _, out double estimatedDurationMs)
+                && estimatedDurationMs > 0)
+            {
+                duration = TimeSpan.FromMilliseconds(estimatedDurationMs);
+                return true;
+            }
+
+            if (TryDecodeAnimationFrames(resolvedPath, out List<BitmapSource>? frames, out List<TimeSpan>? durations)
+                && frames != null
+                && durations != null
+                && frames.Count > 1
+                && durations.Count == frames.Count)
+            {
+                TimeSpan total = TimeSpan.FromMilliseconds(durations.Sum(frameDuration => frameDuration.TotalMilliseconds));
+                if (total > TimeSpan.Zero)
+                {
+                    duration = total;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public static bool TryCreateAnimationPlayer(
+            string? sourcePath,
+            bool loop,
+            out IAnimationPlayer? player,
+            bool usePreviewLimits = true)
         {
             player = null;
             string? resolvedPath = ResolveAo2ImagePath(sourcePath);
@@ -225,7 +263,9 @@ namespace OceanyaClient
             {
                 try
                 {
-                    player = new GifAnimationPlayer(resolvedPath, loop);
+                    player = usePreviewLimits
+                        ? new GifAnimationPlayer(resolvedPath, loop)
+                        : GifAnimationPlayer.CreateFullFidelity(resolvedPath, loop);
                     return true;
                 }
                 catch
@@ -1108,6 +1148,7 @@ namespace OceanyaClient
         private DateTime nextFrameAtUtc;
 
         public event Action<ImageSource>? FrameChanged;
+        public event Action? PlaybackFinished;
 
         public ImageSource CurrentFrame => frames.Count > 0
             ? frames[Math.Clamp(frameIndex, 0, frames.Count - 1)]
@@ -1179,6 +1220,7 @@ namespace OceanyaClient
         {
             StopPlayback();
             FrameChanged = null;
+            PlaybackFinished = null;
             frames.Clear();
             frameDurations.Clear();
             frameIndex = 0;
@@ -1219,6 +1261,7 @@ namespace OceanyaClient
                     {
                         endedWithoutLoop = true;
                         StopPlayback();
+                        PlaybackFinished?.Invoke();
                         return;
                     }
 
@@ -1313,6 +1356,8 @@ namespace OceanyaClient
         private readonly DrawingImage gifImage;
         private readonly List<BitmapSource> frames = new List<BitmapSource>();
         private readonly List<TimeSpan> frameDurations = new List<TimeSpan>();
+        private readonly int maxDimension;
+        private readonly int maxFrames;
         private int frameCount;
         private int frameIndex;
         private bool loop;
@@ -1321,14 +1366,22 @@ namespace OceanyaClient
         private DateTime nextFrameAtUtc;
 
         public event Action<ImageSource>? FrameChanged;
+        public event Action? PlaybackFinished;
 
         public ImageSource CurrentFrame => frameCount > 0
             ? frames[Math.Clamp(frameIndex, 0, frameCount - 1)]
             : new System.Windows.Media.DrawingImage();
 
         public GifAnimationPlayer(string gifPath, bool loop)
+            : this(gifPath, loop, MaxGifPreviewDimension, MaxGifPreviewFrames)
+        {
+        }
+
+        private GifAnimationPlayer(string gifPath, bool loop, int maxDimension, int maxFrames)
         {
             this.loop = loop;
+            this.maxDimension = maxDimension;
+            this.maxFrames = maxFrames;
             gifImage = DrawingImage.FromFile(gifPath);
             int sourceFrameCount = gifImage.GetFrameCount(DrawingFrameDimension.Time);
 
@@ -1358,6 +1411,11 @@ namespace OceanyaClient
 
             frameIndex = 0;
             StartPlayback();
+        }
+
+        public static GifAnimationPlayer CreateFullFidelity(string gifPath, bool loop)
+        {
+            return new GifAnimationPlayer(gifPath, loop, maxDimension: 0, maxFrames: 0);
         }
 
         public void SetLoop(bool shouldLoop)
@@ -1390,6 +1448,7 @@ namespace OceanyaClient
             StopPlayback();
             gifImage.Dispose();
             FrameChanged = null;
+            PlaybackFinished = null;
             frames.Clear();
             frameDurations.Clear();
             frameIndex = 0;
@@ -1430,6 +1489,7 @@ namespace OceanyaClient
                     {
                         endedWithoutLoop = true;
                         StopPlayback();
+                        PlaybackFinished?.Invoke();
                         return;
                     }
 
@@ -1449,7 +1509,7 @@ namespace OceanyaClient
 
         private void CacheFrames(IReadOnlyList<int> selectedFrameIndices)
         {
-            (int targetWidth, int targetHeight) = ComputePreviewDimensions(gifImage.Width, gifImage.Height);
+            (int targetWidth, int targetHeight) = ComputePreviewDimensions(gifImage.Width, gifImage.Height, maxDimension);
 
             for (int i = 0; i < selectedFrameIndices.Count; i++)
             {
@@ -1481,32 +1541,37 @@ namespace OceanyaClient
             }
         }
 
-        private static (int width, int height) ComputePreviewDimensions(int sourceWidth, int sourceHeight)
+        private static (int width, int height) ComputePreviewDimensions(int sourceWidth, int sourceHeight, int maxDimension)
         {
             int safeWidth = Math.Max(1, sourceWidth);
             int safeHeight = Math.Max(1, sourceHeight);
-            int largestSide = Math.Max(safeWidth, safeHeight);
-            if (largestSide <= MaxGifPreviewDimension)
+            if (maxDimension <= 0)
             {
                 return (safeWidth, safeHeight);
             }
 
-            double scale = MaxGifPreviewDimension / (double)largestSide;
+            int largestSide = Math.Max(safeWidth, safeHeight);
+            if (largestSide <= maxDimension)
+            {
+                return (safeWidth, safeHeight);
+            }
+
+            double scale = maxDimension / (double)largestSide;
             int width = Math.Max(1, (int)Math.Round(safeWidth * scale));
             int height = Math.Max(1, (int)Math.Round(safeHeight * scale));
             return (width, height);
         }
 
-        private static List<int> BuildSelectedFrameIndices(int sourceFrameCount)
+        private List<int> BuildSelectedFrameIndices(int sourceFrameCount)
         {
-            if (sourceFrameCount <= MaxGifPreviewFrames)
+            if (maxFrames <= 0 || sourceFrameCount <= maxFrames)
             {
                 return Enumerable.Range(0, sourceFrameCount).ToList();
             }
 
-            List<int> selected = new List<int>(MaxGifPreviewFrames);
-            double stride = sourceFrameCount / (double)MaxGifPreviewFrames;
-            for (int i = 0; i < MaxGifPreviewFrames; i++)
+            List<int> selected = new List<int>(maxFrames);
+            double stride = sourceFrameCount / (double)maxFrames;
+            for (int i = 0; i < maxFrames; i++)
             {
                 int sourceIndex = Math.Min(sourceFrameCount - 1, (int)Math.Round(i * stride));
                 if (selected.Count == 0 || selected[selected.Count - 1] != sourceIndex)

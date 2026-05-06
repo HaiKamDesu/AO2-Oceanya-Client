@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Windows;
 using System.Windows.Media;
 using Common;
 
@@ -19,13 +20,30 @@ namespace OceanyaClient.Features.ChatPreview
     public static class AO2ChatPreviewResolver
     {
         private static readonly string[] ImageExtensions = { ".webp", ".apng", ".gif", ".png", ".jpg", ".jpeg" };
+        private const double WpfPixelsPerQtPoint = 96d / 72d;
         private static readonly string[] PreferredThemeNames = { "default", "CC", "CCDefault", "CCBig", "CC1080p" };
+        private static readonly string[] ViewportPreferredThemeNames =
+        {
+            "(714x688) FullChar",
+            "FullChar",
+            "default",
+            "CC",
+            "CCDefault",
+            "CCBig",
+            "CC1080p"
+        };
 
         public static AO2ChatPreviewStyle Resolve(string? chatToken, bool hasShowname)
         {
+            return Resolve(chatToken, hasShowname, preferViewportTheme: false);
+        }
+
+        public static AO2ChatPreviewStyle Resolve(string? chatToken, bool hasShowname, bool preferViewportTheme)
+        {
             string token = NormalizeChatToken(chatToken);
-            Dictionary<string, string> fontValues = LoadMergedConfig(token, "courtroom_fonts.ini");
-            Dictionary<string, string> chatMarkupValues = LoadMergedConfig(token, "chat_config.ini");
+            Dictionary<string, string> fontValues = LoadMergedConfig(token, "courtroom_fonts.ini", preferViewportTheme);
+            Dictionary<string, string> chatMarkupValues = LoadMergedConfig(token, "chat_config.ini", preferViewportTheme);
+            Dictionary<string, string> designValues = LoadMergedConfig(token, "courtroom_design.ini", preferViewportTheme);
 
             Color shownameColor = TryParseColor(GetValue(fontValues, "showname_color"), Colors.White);
             Color messageColor = TryParseColor(GetValue(fontValues, "message_color"), TryParseColor(GetValue(chatMarkupValues, "c0"), Colors.White));
@@ -41,8 +59,9 @@ namespace OceanyaClient.Features.ChatPreview
             bool messageBold = TryParseBool(GetValue(fontValues, "message_bold"));
             bool shownameOutlined = TryParseBool(GetValue(fontValues, "showname_outlined"));
             int shownameOutlineWidth = Math.Max(1, TryParseInt(GetValue(fontValues, "showname_outline_width"), 1));
+            TextAlignment shownameTextAlignment = ParseShownameTextAlignment(GetValue(designValues, "showname_align"));
 
-            string? chatboxImagePath = ResolveChatboxImagePath(token, hasShowname);
+            string? chatboxImagePath = ResolveChatboxImagePath(token, hasShowname, preferViewportTheme);
 
             return new AO2ChatPreviewStyle
             {
@@ -53,12 +72,20 @@ namespace OceanyaClient.Features.ChatPreview
                 ShownameOutlineColor = shownameOutlineColor,
                 ShownameFontFamily = string.IsNullOrWhiteSpace(shownameFont) ? "Arial" : shownameFont,
                 MessageFontFamily = string.IsNullOrWhiteSpace(messageFont) ? "Arial" : messageFont,
-                ShownameFontSize = Math.Max(8, shownameSize),
-                MessageFontSize = Math.Max(8, messageSize),
+                ShownameFontSize = ConvertQtPointSizeToWpfFontSize(shownameSize),
+                MessageFontSize = ConvertQtPointSizeToWpfFontSize(messageSize),
                 ShownameBold = shownameBold,
                 MessageBold = messageBold,
                 ShownameOutlined = shownameOutlined,
-                ShownameOutlineWidth = shownameOutlineWidth
+                ShownameOutlineWidth = shownameOutlineWidth,
+                ShownameTextAlignment = shownameTextAlignment,
+                ChatboxBounds = TryParseBounds(GetValue(designValues, "ao2_chatbox"))
+                    ?? TryParseBounds(GetValue(designValues, "chatbox"))
+                    ?? new AO2ChatPreviewBounds(0, 0, 256, 104),
+                ShownameBounds = TryParseBounds(GetValue(designValues, "showname"))
+                    ?? new AO2ChatPreviewBounds(1, 0, 46, 15),
+                MessageBounds = TryParseBounds(GetValue(designValues, "message"))
+                    ?? new AO2ChatPreviewBounds(6, 12, 238, 60)
             };
         }
 
@@ -68,10 +95,15 @@ namespace OceanyaClient.Features.ChatPreview
             return string.IsNullOrWhiteSpace(token) ? "default" : token;
         }
 
-        private static Dictionary<string, string> LoadMergedConfig(string chatToken, string fileName)
+        private static Dictionary<string, string> LoadMergedConfig(string chatToken, string fileName, bool preferViewportTheme)
         {
             Dictionary<string, string> values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            List<string> candidates = EnumerateCandidateFiles(chatToken, fileName).ToList();
+            List<string> candidates = EnumerateCandidateFiles(chatToken, fileName, preferViewportTheme).ToList();
+            if (preferViewportTheme)
+            {
+                candidates.Reverse();
+            }
+
             foreach (string filePath in candidates)
             {
                 if (!File.Exists(filePath))
@@ -95,7 +127,7 @@ namespace OceanyaClient.Features.ChatPreview
             return values;
         }
 
-        private static IEnumerable<string> EnumerateCandidateFiles(string chatToken, string fileName)
+        private static IEnumerable<string> EnumerateCandidateFiles(string chatToken, string fileName, bool preferViewportTheme)
         {
             List<string> baseFolders = Globals.BaseFolders ?? new List<string>();
             for (int i = baseFolders.Count - 1; i >= 0; i--)
@@ -106,7 +138,7 @@ namespace OceanyaClient.Features.ChatPreview
                     continue;
                 }
 
-                foreach (string root in EnumerateThemeRoots(baseFolder))
+                foreach (string root in EnumerateThemeRoots(baseFolder, preferViewportTheme))
                 {
                     yield return Path.Combine(root, fileName);
                     yield return Path.Combine(root, "misc", "default", fileName);
@@ -115,7 +147,7 @@ namespace OceanyaClient.Features.ChatPreview
             }
         }
 
-        private static IEnumerable<string> EnumerateThemeRoots(string baseFolder)
+        private static IEnumerable<string> EnumerateThemeRoots(string baseFolder, bool preferViewportTheme)
         {
             yield return baseFolder;
 
@@ -135,7 +167,8 @@ namespace OceanyaClient.Features.ChatPreview
                 yield break;
             }
 
-            foreach (string preferred in PreferredThemeNames)
+            string[] preferredThemeNames = preferViewportTheme ? ViewportPreferredThemeNames : PreferredThemeNames;
+            foreach (string preferred in preferredThemeNames)
             {
                 string? path = themeDirectories.FirstOrDefault(dir =>
                     string.Equals(Path.GetFileName(dir), preferred, StringComparison.OrdinalIgnoreCase));
@@ -147,7 +180,7 @@ namespace OceanyaClient.Features.ChatPreview
 
             foreach (string path in themeDirectories.OrderBy(static dir => dir, StringComparer.OrdinalIgnoreCase))
             {
-                if (PreferredThemeNames.Any(name =>
+                if (preferredThemeNames.Any(name =>
                     string.Equals(Path.GetFileName(path), name, StringComparison.OrdinalIgnoreCase)))
                 {
                     continue;
@@ -199,12 +232,55 @@ namespace OceanyaClient.Features.ChatPreview
             return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) ? parsed : fallback;
         }
 
+        private static double ConvertQtPointSizeToWpfFontSize(int pointSize)
+        {
+            return Math.Max(8, pointSize) * WpfPixelsPerQtPoint;
+        }
+
         private static bool TryParseBool(string value)
         {
             string normalized = (value ?? string.Empty).Trim();
             return normalized == "1"
                 || normalized.Equals("true", StringComparison.OrdinalIgnoreCase)
                 || normalized.Equals("yes", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static TextAlignment ParseShownameTextAlignment(string value)
+        {
+            string normalized = (value ?? string.Empty).Trim();
+            if (normalized.Equals("right", StringComparison.OrdinalIgnoreCase))
+            {
+                return TextAlignment.Right;
+            }
+
+            if (normalized.Equals("center", StringComparison.OrdinalIgnoreCase)
+                || normalized.Equals("justify", StringComparison.OrdinalIgnoreCase))
+            {
+                return TextAlignment.Center;
+            }
+
+            return TextAlignment.Left;
+        }
+
+        private static AO2ChatPreviewBounds? TryParseBounds(string value)
+        {
+            string[] parts = (value ?? string.Empty).Split(',');
+            if (parts.Length < 4)
+            {
+                return null;
+            }
+
+            if (!int.TryParse(parts[0].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int x)
+                || !int.TryParse(parts[1].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int y)
+                || !int.TryParse(parts[2].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int width)
+                || !int.TryParse(parts[3].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int height)
+                || width < 0
+                || height < 0)
+            {
+                return null;
+            }
+
+            return new AO2ChatPreviewBounds(x, y, width, height);
         }
 
         private static Color TryParseColor(string value, Color fallback)
@@ -233,7 +309,7 @@ namespace OceanyaClient.Features.ChatPreview
             return Color.FromRgb(r, g, b);
         }
 
-        private static string? ResolveChatboxImagePath(string chatToken, bool hasShowname)
+        private static string? ResolveChatboxImagePath(string chatToken, bool hasShowname, bool preferViewportTheme)
         {
             string[] preferredStems = hasShowname
                 ? new[] { "chat", "chatbox", "chatblank" }
@@ -248,7 +324,13 @@ namespace OceanyaClient.Features.ChatPreview
                     continue;
                 }
 
-                foreach (string root in EnumerateThemeRoots(baseFolder))
+                IEnumerable<string> roots = EnumerateThemeRoots(baseFolder, preferViewportTheme);
+                if (preferViewportTheme)
+                {
+                    roots = roots.OrderBy(GetViewportImageRootPriority).ThenBy(root => root, StringComparer.OrdinalIgnoreCase);
+                }
+
+                foreach (string root in roots)
                 {
                     foreach (string stem in preferredStems)
                     {
@@ -287,9 +369,67 @@ namespace OceanyaClient.Features.ChatPreview
                 }
             }
 
+            foreach (string candidateDirectory in new[]
+            {
+                Path.Combine(root, "misc", chatToken),
+                Path.Combine(root, "misc", "default"),
+                root
+            })
+            {
+                string? resolved = ResolveStemCaseInsensitive(candidateDirectory, stem);
+                if (!string.IsNullOrWhiteSpace(resolved))
+                {
+                    return resolved;
+                }
+            }
+
+            return null;
+        }
+
+        private static int GetViewportImageRootPriority(string root)
+        {
+            string name = Path.GetFileName(root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            if (string.Equals(name, "(714x688) FullChar", StringComparison.OrdinalIgnoreCase))
+            {
+                return 0;
+            }
+
+            if (string.Equals(name, "FullChar", StringComparison.OrdinalIgnoreCase))
+            {
+                return 1;
+            }
+
+            if (string.Equals(name, "default", StringComparison.OrdinalIgnoreCase))
+            {
+                return 2;
+            }
+
+            return 3;
+        }
+
+        private static string? ResolveStemCaseInsensitive(string directory, string stem)
+        {
+            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+            {
+                return null;
+            }
+
+            foreach (string filePath in Directory.EnumerateFiles(directory))
+            {
+                string fileStem = Path.GetFileNameWithoutExtension(filePath);
+                string extension = Path.GetExtension(filePath);
+                if (string.Equals(fileStem, stem, StringComparison.OrdinalIgnoreCase)
+                    && ImageExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase))
+                {
+                    return filePath;
+                }
+            }
+
             return null;
         }
     }
+
+    public sealed record AO2ChatPreviewBounds(int X, int Y, int Width, int Height);
 
     public sealed class AO2ChatPreviewStyle
     {
@@ -300,11 +440,15 @@ namespace OceanyaClient.Features.ChatPreview
         public Color ShownameOutlineColor { get; set; } = Colors.Black;
         public string ShownameFontFamily { get; set; } = "Arial";
         public string MessageFontFamily { get; set; } = "Arial";
-        public int ShownameFontSize { get; set; } = 14;
-        public int MessageFontSize { get; set; } = 14;
+        public double ShownameFontSize { get; set; } = 14;
+        public double MessageFontSize { get; set; } = 14;
         public bool ShownameBold { get; set; }
         public bool MessageBold { get; set; }
         public bool ShownameOutlined { get; set; }
         public int ShownameOutlineWidth { get; set; } = 1;
+        public TextAlignment ShownameTextAlignment { get; set; } = TextAlignment.Left;
+        public AO2ChatPreviewBounds ChatboxBounds { get; set; } = new AO2ChatPreviewBounds(0, 0, 256, 104);
+        public AO2ChatPreviewBounds ShownameBounds { get; set; } = new AO2ChatPreviewBounds(1, 0, 46, 15);
+        public AO2ChatPreviewBounds MessageBounds { get; set; } = new AO2ChatPreviewBounds(6, 12, 238, 60);
     }
 }
