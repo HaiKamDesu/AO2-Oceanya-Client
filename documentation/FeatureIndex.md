@@ -13,6 +13,12 @@ Use this file as the first stop before broad repository searches. It should poin
 - AO2 reference: `AO2-Client/src/courtroom.cpp`, `AO2-Client/src/courtroom.h`, `AO2-Client/src/animationlayer.*`
 - Notes: GM multi-client `V` button opens an owned 256x192 AO2 render surface for background, character, desk, effect, and chatbox layers.
 
+## Client Settings And Audio
+- Doc: `Documentation/AO2Viewport.md`
+- Main code: `OceanyaClient/Components/Forms/SettingsWindow.xaml(.cs)`, `OceanyaClient/AudioSettings.cs`, `Common/SaveFile.cs`, `OceanyaClient/MainWindow.xaml`, `OceanyaClient/MainWindow.xaml.cs`
+- AO2 reference: `AO2-Client/src/options.cpp`, `AO2-Client/src/courtroom.cpp`
+- Notes: The shared dark settings dialog persists AO2-style music/SFX/blip sliders, and the viewport/audio playback bridge uses those volumes when the viewport is visible.
+
 ## Character File Creator
 - Doc: `Documentation/CharacterFileCreator.md`
 - Main code: `OceanyaClient/Components/Forms/AOCharacterFileCreatorWindow.xaml.cs`, `OceanyaClient/Features/CharacterCreator/AOCharacterFileCreatorBuilder.cs`, `OceanyaClient/Features/CharacterCreator/GeneratedAssetPathCollisionResolver.cs`

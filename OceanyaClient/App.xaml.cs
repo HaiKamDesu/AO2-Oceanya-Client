@@ -145,7 +145,7 @@ public partial class App : Application
             await Task.Delay(_rand.Next(500, 1200));
         }
 
-        AudioPlayer.PlayEmbeddedSound("Resources/BellDing.mp3", 0.25f);
+        AudioPlayer.PlayEmbeddedSound("Resources/BellDing.mp3", AudioSettings.ScaleEmbeddedSfxVolume(0.25f));
         LoadingScreenManager.SetSubtitle("Loading complete!");
         LoadingScreenManager.SetProgress(1);
         await Task.Delay(600);

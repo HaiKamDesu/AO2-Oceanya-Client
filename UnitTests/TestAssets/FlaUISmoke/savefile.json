@@ -454,6 +454,9 @@
     "IsMaximized": false
   },
   "CharacterCreatorPreviewVolume": 1,
+  "AudioMusicVolume": 0.5,
+  "AudioSfxVolume": 1,
+  "AudioBlipVolume": 0.5,
   "CharacterCreatorEmoteTileWidth": 420,
   "CharacterCreatorEmoteTileHeight": 430,
   "CharacterCreatorCuttingPreviewHeight": 170,

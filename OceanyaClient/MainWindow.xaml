@@ -402,7 +402,7 @@
                         AutomationProperties.AutomationId="Main.OpenCharacterFolderVisualizer"
                         AutomationProperties.Name="Open Character Folder Visualizer"
                         BorderBrush="{x:Null}" Foreground="{x:Null}" Padding="0"
-                        Canvas.Left="485" Canvas.Top="603"
+                        Canvas.Left="458" Canvas.Top="603"
                         Click="btnCharacterFolderVisualizer_Click"
                         ToolTip="Character Folder Visualizer">
                     <Button.Style>
@@ -419,6 +419,47 @@
                                             </Trigger>
                                             <Trigger Property="IsEnabled" Value="False">
                                                 <Setter TargetName="ButtonImage" Property="Opacity" Value="0.3"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </Button.Style>
+                </Button>
+
+                <Button x:Name="btnSettings"
+                        Height="24"
+                        Width="24"
+                        Canvas.Left="485"
+                        Canvas.Top="603"
+                        AutomationProperties.AutomationId="Main.Settings.Open"
+                        AutomationProperties.Name="Open Settings"
+                        BorderBrush="{x:Null}"
+                        Foreground="#FFE8E8E8"
+                        Padding="0"
+                        Click="btnSettings_Click"
+                        ToolTip="Settings">
+                    <Button.Style>
+                        <Style TargetType="{x:Type Button}">
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="{x:Type Button}">
+                                        <Grid>
+                                            <TextBlock x:Name="ButtonGlyph"
+                                                       Text="&#xE713;"
+                                                       FontFamily="Segoe MDL2 Assets"
+                                                       FontSize="14"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center"
+                                                       Foreground="{TemplateBinding Foreground}"/>
+                                        </Grid>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="ButtonGlyph" Property="Opacity" Value="0.7"/>
+                                            </Trigger>
+                                            <Trigger Property="IsEnabled" Value="False">
+                                                <Setter TargetName="ButtonGlyph" Property="Opacity" Value="0.3"/>
                                             </Trigger>
                                         </ControlTemplate.Triggers>
                                     </ControlTemplate>
@@ -450,7 +491,7 @@
                         AutomationProperties.Name="Area Navigator"
                         Width="24"
                         Height="24"
-                        Canvas.Left="458"
+                        Canvas.Left="431"
                         Canvas.Top="603"
                         Content="A"
                         FontWeight="Bold"
@@ -462,7 +503,7 @@
                         AutomationProperties.Name="Open AO2 Viewport"
                         Width="24"
                         Height="24"
-                        Canvas.Left="431"
+                        Canvas.Left="404"
                         Canvas.Top="603"
                         Content="V"
                         FontWeight="Bold"

@@ -88,6 +88,16 @@ namespace OceanyaClient.Features.Viewport
             bool RespectOffset);
 
         /// <summary>
+        /// Resolved animation metadata for a viewport character layer.
+        /// </summary>
+        public sealed record ResolvedCharacterAnimation(string? AssetPath, string ResolvedToken);
+
+        /// <summary>
+        /// Resolved AO2 frame effect metadata for a specific animation token.
+        /// </summary>
+        public sealed record ViewportFrameEffect(int FrameNumber, string Value);
+
+        /// <summary>
         /// Pair character ordering relative to the main speaker.
         /// </summary>
         public enum PairOrdering
@@ -171,15 +181,26 @@ namespace OceanyaClient.Features.Viewport
         /// </summary>
         public static string? ResolveCharacterDialogAnimation(CharacterFolder? character, string? emoteName, bool talking)
         {
+            return ResolveCharacterDialogAnimationDetails(character, emoteName, talking).AssetPath;
+        }
+
+        /// <summary>
+        /// Resolves AO2's receive-time dialog animation path and the exact animation token it matched.
+        /// </summary>
+        public static ResolvedCharacterAnimation ResolveCharacterDialogAnimationDetails(
+            CharacterFolder? character,
+            string? emoteName,
+            bool talking)
+        {
             if (character == null)
             {
-                return null;
+                return new ResolvedCharacterAnimation(null, string.Empty);
             }
 
             string characterDirectory = GetCharacterDirectory(character);
             if (string.IsNullOrWhiteSpace(characterDirectory))
             {
-                return null;
+                return new ResolvedCharacterAnimation(null, string.Empty);
             }
 
             Emote? emote = ResolveEmote(character, emoteName);
@@ -215,11 +236,11 @@ namespace OceanyaClient.Features.Viewport
                 string resolved = CharacterAssetPathResolver.ResolveCharacterAssetPath(characterDirectory, candidate);
                 if (!string.IsNullOrWhiteSpace(resolved))
                 {
-                    return resolved;
+                    return new ResolvedCharacterAnimation(resolved, candidate);
                 }
             }
 
-            return null;
+            return new ResolvedCharacterAnimation(null, string.Empty);
         }
 
         /// <summary>
@@ -227,25 +248,37 @@ namespace OceanyaClient.Features.Viewport
         /// </summary>
         public static string? ResolveCharacterPreAnimation(CharacterFolder? character, string? preAnimToken)
         {
+            return ResolveCharacterPreAnimationDetails(character, preAnimToken).AssetPath;
+        }
+
+        /// <summary>
+        /// Resolves an AO2 character preanimation path and the exact token it matched.
+        /// </summary>
+        public static ResolvedCharacterAnimation ResolveCharacterPreAnimationDetails(
+            CharacterFolder? character,
+            string? preAnimToken)
+        {
             if (character == null)
             {
-                return null;
+                return new ResolvedCharacterAnimation(null, string.Empty);
             }
 
             string normalizedPreAnim = (preAnimToken ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(normalizedPreAnim) || normalizedPreAnim == "-")
             {
-                return null;
+                return new ResolvedCharacterAnimation(null, string.Empty);
             }
 
             string characterDirectory = GetCharacterDirectory(character);
             if (string.IsNullOrWhiteSpace(characterDirectory))
             {
-                return null;
+                return new ResolvedCharacterAnimation(null, string.Empty);
             }
 
             string resolved = CharacterAssetPathResolver.ResolveCharacterAssetPath(characterDirectory, normalizedPreAnim);
-            return string.IsNullOrWhiteSpace(resolved) ? null : resolved;
+            return string.IsNullOrWhiteSpace(resolved)
+                ? new ResolvedCharacterAnimation(null, string.Empty)
+                : new ResolvedCharacterAnimation(resolved, normalizedPreAnim);
         }
 
         /// <summary>
@@ -265,7 +298,7 @@ namespace OceanyaClient.Features.Viewport
             CharacterFolder? character,
             bool flip)
         {
-            (string effectName, string effectFolder) = ParseEffectParts(effectString);
+            (string effectName, string effectFolder, _) = ParseEffectParts(effectString);
             if (string.IsNullOrWhiteSpace(effectFolder))
             {
                 effectFolder = character?.configINI.EffectsFolder ?? string.Empty;
@@ -332,6 +365,32 @@ namespace OceanyaClient.Features.Viewport
             bool respectOffset = IsTrue(GetProperty(properties, "respect_offset"));
 
             return new ViewportEffect(effectPath, layer, stretch, respectFlip, respectOffset);
+        }
+
+        /// <summary>
+        /// Resolves the AO2 effect sound token referenced by an IC packet effect field.
+        /// </summary>
+        public static string ResolveEffectSoundToken(
+            string? effectString,
+            ICMessage.Effects effect,
+            CharacterFolder? character)
+        {
+            (_, _, string effectSound) = ParseEffectParts(effectString);
+            if (!string.IsNullOrWhiteSpace(effectSound))
+            {
+                return effectSound;
+            }
+
+            return effect switch
+            {
+                ICMessage.Effects.Realization => string.IsNullOrWhiteSpace(character?.configINI?.Realization)
+                    ? "sfx-realization"
+                    : character.configINI.Realization,
+                ICMessage.Effects.Hearts => "sfx-squee",
+                ICMessage.Effects.Reaction => "sfx-reactionding",
+                ICMessage.Effects.Impact => "sfx-fan",
+                _ => string.Empty
+            };
         }
 
         /// <summary>
@@ -565,6 +624,80 @@ namespace OceanyaClient.Features.Viewport
         }
 
         /// <summary>
+        /// Returns the configured AO2 chat crawl speed from <c>config.ini</c>.
+        /// </summary>
+        public static int GetTextCrawlMilliseconds()
+        {
+            return ReadConfigIniInt("text_crawl", 40, minimum: 0);
+        }
+
+        /// <summary>
+        /// Returns the configured AO2 blip rate from <c>config.ini</c>.
+        /// </summary>
+        public static int GetBlipRate()
+        {
+            return ReadConfigIniInt("blip_rate", 2);
+        }
+
+        /// <summary>
+        /// Returns whether AO2 blank-blips are enabled in <c>config.ini</c>.
+        /// </summary>
+        public static bool GetBlankBlipEnabled()
+        {
+            return ReadConfigIniBool("blank_blip", defaultValue: false);
+        }
+
+        /// <summary>
+        /// Returns whether AO2 viewport screenshake is enabled in <c>config.ini</c>.
+        /// </summary>
+        public static bool GetScreenShakeEnabled()
+        {
+            return ReadConfigIniBool("shake", defaultValue: true);
+        }
+
+        /// <summary>
+        /// Resolves frame effects for a specific matched animation token by reading the local character <c>char.ini</c>.
+        /// </summary>
+        public static IReadOnlyList<ViewportFrameEffect> ResolveCharacterFrameEffects(
+            CharacterFolder? character,
+            string? animationToken,
+            string sectionSuffix)
+        {
+            if (character == null)
+            {
+                return Array.Empty<ViewportFrameEffect>();
+            }
+
+            string resolvedToken = (animationToken ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(resolvedToken))
+            {
+                return Array.Empty<ViewportFrameEffect>();
+            }
+
+            string iniPath = character.configINI.PathToConfigINI;
+            if (string.IsNullOrWhiteSpace(iniPath) || !File.Exists(iniPath))
+            {
+                return Array.Empty<ViewportFrameEffect>();
+            }
+
+            string sectionName = resolvedToken + sectionSuffix;
+            List<ViewportFrameEffect> result = new List<ViewportFrameEffect>();
+            foreach (KeyValuePair<string, string> entry in ReadIniSectionEntries(iniPath, sectionName))
+            {
+                if (!int.TryParse(entry.Key, NumberStyles.Integer, CultureInfo.InvariantCulture, out int frameNumber))
+                {
+                    continue;
+                }
+
+                result.Add(new ViewportFrameEffect(frameNumber, entry.Value?.Trim() ?? string.Empty));
+            }
+
+            return result
+                .OrderBy(effect => effect.FrameNumber)
+                .ToArray();
+        }
+
+        /// <summary>
         /// Determines whether the pair character should render in front of or behind the main character.
         /// </summary>
         public static PairOrdering GetPairOrdering(string? otherCharIdRaw)
@@ -609,6 +742,29 @@ namespace OceanyaClient.Features.Viewport
 
             string token = ReadIniSectionValue(character.configINI.PathToConfigINI, "Options", "chat");
             return string.IsNullOrWhiteSpace(token) ? "default" : token.Trim();
+        }
+
+        /// <summary>
+        /// Resolves the AO2 blip token for a character/emote pair using default and per-emote overrides.
+        /// </summary>
+        public static string ResolveCharacterBlipToken(CharacterFolder? character, string? emoteName)
+        {
+            if (character == null)
+            {
+                return string.Empty;
+            }
+
+            Emote? emote = ResolveEmote(character, emoteName);
+            if (emote != null)
+            {
+                string overrideToken = ReadCharacterBlipOverride(character.configINI.PathToConfigINI, emote.ID);
+                if (!string.IsNullOrWhiteSpace(overrideToken))
+                {
+                    return overrideToken.Trim();
+                }
+            }
+
+            return character.configINI.Blips?.Trim() ?? string.Empty;
         }
 
         /// <summary>
@@ -900,6 +1056,125 @@ namespace OceanyaClient.Features.Viewport
             return string.Empty;
         }
 
+        private static IReadOnlyList<KeyValuePair<string, string>> ReadIniSectionEntries(string path, string section)
+        {
+            List<KeyValuePair<string, string>> result = new List<KeyValuePair<string, string>>();
+            if (string.IsNullOrWhiteSpace(path)
+                || string.IsNullOrWhiteSpace(section)
+                || !File.Exists(path))
+            {
+                return result;
+            }
+
+            string currentSection = string.Empty;
+            foreach (string rawLine in File.ReadLines(path))
+            {
+                string line = (rawLine ?? string.Empty).Trim().TrimStart('\uFEFF');
+                if (string.IsNullOrWhiteSpace(line) || line.StartsWith(";", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (line.StartsWith("[", StringComparison.Ordinal) && line.EndsWith("]", StringComparison.Ordinal))
+                {
+                    currentSection = line[1..^1].Trim();
+                    continue;
+                }
+
+                if (!string.Equals(currentSection, section, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                int separator = line.IndexOf('=');
+                if (separator <= 0)
+                {
+                    continue;
+                }
+
+                result.Add(new KeyValuePair<string, string>(
+                    line[..separator].Trim(),
+                    line[(separator + 1)..].Trim()));
+            }
+
+            return result;
+        }
+
+        private static int ReadConfigIniInt(string key, int defaultValue, int? minimum = null)
+        {
+            string value = ReadRawConfigIniValue(key);
+            if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed))
+            {
+                return minimum.HasValue ? Math.Max(minimum.Value, parsed) : parsed;
+            }
+
+            return defaultValue;
+        }
+
+        private static bool ReadConfigIniBool(string key, bool defaultValue)
+        {
+            string value = ReadRawConfigIniValue(key);
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return defaultValue;
+            }
+
+            if (bool.TryParse(value, out bool parsedBool))
+            {
+                return parsedBool;
+            }
+
+            if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedInt))
+            {
+                return parsedInt != 0;
+            }
+
+            return defaultValue;
+        }
+
+        private static string ReadRawConfigIniValue(string key)
+        {
+            string configPath = Globals.PathToConfigINI;
+            if (string.IsNullOrWhiteSpace(configPath) || !File.Exists(configPath))
+            {
+                return string.Empty;
+            }
+
+            try
+            {
+                foreach (string rawLine in File.ReadLines(configPath))
+                {
+                    string line = rawLine.Trim();
+                    if (line.Length == 0
+                        || line.StartsWith(";", StringComparison.Ordinal)
+                        || line.StartsWith("#", StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    int equalsIndex = line.IndexOf('=');
+                    if (equalsIndex <= 0)
+                    {
+                        continue;
+                    }
+
+                    string currentKey = line[..equalsIndex].Trim();
+                    if (!string.Equals(currentKey, key, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    return line[(equalsIndex + 1)..].Trim();
+                }
+            }
+            catch
+            {
+                // Fall back to the AO2 defaults if the config cannot be read.
+            }
+
+            return string.Empty;
+        }
+
         private static int ReadCharacterPreAnimationMilliseconds(
             CharacterFolder? character,
             string section,
@@ -915,6 +1190,29 @@ namespace OceanyaClient.Features.Viewport
             return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed)
                 ? parsed
                 : -1;
+        }
+
+        private static string ReadCharacterBlipOverride(string iniPath, int emoteId)
+        {
+            if (string.IsNullOrWhiteSpace(iniPath) || emoteId <= 0 || !File.Exists(iniPath))
+            {
+                return string.Empty;
+            }
+
+            string optionsProfile = ReadIniSectionValue(
+                iniPath,
+                "OptionsN",
+                emoteId.ToString(CultureInfo.InvariantCulture));
+            if (!int.TryParse(optionsProfile, NumberStyles.Integer, CultureInfo.InvariantCulture, out int profileId)
+                || profileId <= 0)
+            {
+                return string.Empty;
+            }
+
+            return ReadIniSectionValue(
+                iniPath,
+                "Options" + profileId.ToString(CultureInfo.InvariantCulture),
+                "blips");
         }
 
         private static int? TryReadInt(string value)
@@ -1080,12 +1378,13 @@ namespace OceanyaClient.Features.Viewport
             };
         }
 
-        private static (string EffectName, string EffectFolder) ParseEffectParts(string? effectString)
+        private static (string EffectName, string EffectFolder, string EffectSound) ParseEffectParts(string? effectString)
         {
             string[] parts = (effectString ?? string.Empty).Split('|');
             string name = parts.Length > 0 ? parts[0].Trim() : string.Empty;
-            string folder = parts.Length > 2 ? parts[1].Trim() : string.Empty;
-            return (name, folder);
+            string folder = parts.Length > 1 ? parts[1].Trim() : string.Empty;
+            string sound = parts.Length > 2 ? parts[2].Trim() : string.Empty;
+            return (name, folder, sound);
         }
 
         private sealed record BackgroundPositionResolution(string BackgroundStem, string DeskStem, int? Origin);

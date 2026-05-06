@@ -40,6 +40,7 @@ namespace OceanyaClient
         private AOClient? singleInternalClient;
         private AOClient? boundSingleClientProfile;
         private Window? viewportWindow;
+        private Window? settingsWindow;
         private AO2ViewportWindowContent? viewportContent;
         private readonly bool useSingleInternalClient = SaveFile.Data.UseSingleInternalClient;
         private readonly bool aiModeEnabled;
@@ -2700,6 +2701,11 @@ namespace OceanyaClient
             OpenViewportWindow();
         }
 
+        private void btnSettings_Click(object sender, RoutedEventArgs e)
+        {
+            OpenSettingsWindow();
+        }
+
         private void OpenViewportWindow()
         {
             if (viewportWindow != null)
@@ -2740,6 +2746,41 @@ namespace OceanyaClient
             };
             viewportWindow.Show();
             viewportWindow.Activate();
+        }
+
+        private void OpenSettingsWindow()
+        {
+            if (settingsWindow != null)
+            {
+                settingsWindow.Activate();
+                return;
+            }
+
+            SettingsWindow settingsContent = new SettingsWindow();
+            Window owner = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            settingsWindow = OceanyaWindowManager.CreateWindow(
+                settingsContent,
+                new OceanyaWindowPresentationOptions
+                {
+                    Owner = owner,
+                    Title = "Settings",
+                    HeaderText = "Settings",
+                    Width = 560,
+                    Height = 430,
+                    MinWidth = 520,
+                    MinHeight = 400,
+                    ShowInTaskbar = false,
+                    IsUserResizeEnabled = true,
+                    IsUserMoveEnabled = true,
+                    IsCloseButtonVisible = true,
+                    WindowStartupLocation = WindowStartupLocation.CenterOwner
+                });
+            settingsWindow.Closed += (_, _) =>
+            {
+                settingsWindow = null;
+            };
+            settingsWindow.Show();
+            settingsWindow.Activate();
         }
 
         private void RefreshViewportAttachment()
@@ -3225,7 +3266,7 @@ namespace OceanyaClient
 
         private void THEDINGBUTTON_Click(object sender, RoutedEventArgs e)
         {
-            AudioPlayer.PlayEmbeddedSound("Resources/BellDing.mp3", 0.25f);
+            AudioPlayer.PlayEmbeddedSound("Resources/BellDing.mp3", AudioSettings.ScaleEmbeddedSfxVolume(0.25f));
         }
 
         private void btnAreaNavigator_Click(object sender, RoutedEventArgs e)

@@ -21,15 +21,27 @@ namespace OceanyaClient.Features.Viewport
         private AOClient? messageSourceClient;
         private DispatcherTimer? pendingMessageTimer;
         private DispatcherTimer? chatTextTimer;
+        private DispatcherTimer? screenShakeTimer;
         private int messageSequence;
         private int chatTextPosition;
         private int chatDisplaySpeed = DefaultChatDisplaySpeed;
+        private int chatTextCrawlMilliseconds = DefaultChatTextCrawlMilliseconds;
+        private int chatBlipTicker;
+        private int chatBlipRate = DefaultBlipRate;
+        private bool chatBlankBlipEnabled;
         private string chatFullText = string.Empty;
+        private string currentChatBlipToken = string.Empty;
         private readonly Dictionary<Image, IAnimationPlayer> animationPlayers = new Dictionary<Image, IAnimationPlayer>();
+        private readonly AO2ViewportAudioManager audioManager = new AO2ViewportAudioManager();
+        private readonly Random screenShakeRandom = new Random();
+        private readonly TranslateTransform viewportShakeTransform = new TranslateTransform();
         private static readonly double[] ChatDisplayMultipliers = { 0, 0.25, 0.65, 1, 1.25, 1.75, 2.25 };
         private const int DefaultChatTextCrawlMilliseconds = 40;
         private const int DefaultChatDisplaySpeed = 3;
+        private const int DefaultBlipRate = 2;
         private const int ChatPauseMilliseconds = 100;
+        private const int ScreenShakeDurationMilliseconds = 300;
+        private const int ScreenShakeIntervalMilliseconds = 20;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AO2ViewportControl"/> class.
@@ -37,6 +49,10 @@ namespace OceanyaClient.Features.Viewport
         public AO2ViewportControl()
         {
             InitializeComponent();
+            ViewportCanvas.RenderTransform = viewportShakeTransform;
+            audioManager.RefreshVolumes();
+            IsVisibleChanged += OnIsVisibleChanged;
+            Unloaded += (_, _) => audioManager.Dispose();
         }
 
         /// <summary>
@@ -80,6 +96,7 @@ namespace OceanyaClient.Features.Viewport
             if (messageSourceClient != null)
             {
                 messageSourceClient.OnICMessageReceived += OnICMessageReceived;
+                messageSourceClient.OnIcActionReceived += OnIcActionReceived;
             }
         }
 
@@ -93,6 +110,7 @@ namespace OceanyaClient.Features.Viewport
             if (messageSourceClient != null)
             {
                 messageSourceClient.OnICMessageReceived -= OnICMessageReceived;
+                messageSourceClient.OnIcActionReceived -= OnIcActionReceived;
             }
         }
 
@@ -101,9 +119,52 @@ namespace OceanyaClient.Features.Viewport
             Dispatcher.Invoke(() => RenderMessage(message));
         }
 
+        private void OnIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+        {
+            if (IsVisible)
+            {
+                audioManager.RefreshVolumes();
+                return;
+            }
+
+            StopScreenShake();
+            audioManager.StopAll();
+        }
+
+        private void OnIcActionReceived(string showName, string action, bool isSentFromSelf, ICMessage.TextColors textColor)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                if (!IsVisible)
+                {
+                    return;
+                }
+
+                string normalized = (action ?? string.Empty).Trim();
+                const string musicPrefix = "has played a song ";
+                const string stopMusic = "has stopped the music.";
+
+                if (normalized.StartsWith(musicPrefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    audioManager.PlayMusic(normalized.Substring(musicPrefix.Length));
+                    return;
+                }
+
+                if (string.Equals(normalized, stopMusic, StringComparison.OrdinalIgnoreCase))
+                {
+                    audioManager.StopMusic();
+                }
+            });
+        }
+
         private void OnBackgroundChanged(string background)
         {
-            Dispatcher.Invoke(RenderBackgroundOnly);
+            Dispatcher.Invoke(() =>
+            {
+                StopScreenShake();
+                audioManager.StopAll();
+                RenderBackgroundOnly();
+            });
         }
 
         private void RenderBackgroundOnly()
@@ -115,6 +176,8 @@ namespace OceanyaClient.Features.Viewport
             }
 
             StopChatTextTimer();
+            StopScreenShake();
+            audioManager.StopAll();
             AO2ViewportAssetResolver.ViewportImagePlacement backgroundPlacement =
                 AO2ViewportAssetResolver.ResolveBackgroundPlacement(sceneClient.curBG, sceneClient.curPos);
             SetPlacedImage(BackgroundImage, backgroundPlacement, true, Stretch.Fill);
@@ -135,12 +198,14 @@ namespace OceanyaClient.Features.Viewport
             SetAnimatedImage(ShoutOverlayImage, null, false);
             ChatPreview.PreviewText = string.Empty;
             ChatPreview.Visibility = Visibility.Collapsed;
+            currentChatBlipToken = string.Empty;
         }
 
         private void RenderMessage(ICMessage message)
         {
             messageSequence++;
             StopPendingMessageTimer();
+            StopScreenShake();
             CharacterFolder? character = AO2ViewportAssetResolver.ResolveCharacter(message.Character)
                 ?? sceneClient?.currentINI
                 ?? messageSourceClient?.currentINI;
@@ -325,10 +390,22 @@ namespace OceanyaClient.Features.Viewport
                 && showChat
                 && !string.IsNullOrWhiteSpace(message?.Message)
                 && AO2ViewportAssetResolver.IsTextColorTalking(message.TextColor);
-            string? characterPath = isPreAnimation
-                ? AO2ViewportAssetResolver.ResolveCharacterPreAnimation(character, message?.PreAnim)
-                : AO2ViewportAssetResolver.ResolveCharacterDialogAnimation(character, emoteName, useTalkingSprite);
-            SetAnimatedImage(CharacterImage, characterPath, !string.IsNullOrWhiteSpace(characterPath), loop: !isPreAnimation);
+            AO2ViewportAssetResolver.ResolvedCharacterAnimation resolvedCharacterAnimation = isPreAnimation
+                ? AO2ViewportAssetResolver.ResolveCharacterPreAnimationDetails(character, message?.PreAnim)
+                : AO2ViewportAssetResolver.ResolveCharacterDialogAnimationDetails(character, emoteName, useTalkingSprite);
+            Action<int>? frameHandler = message == null
+                ? null
+                : BuildFrameEffectHandler(
+                    message,
+                    character,
+                    resolvedCharacterAnimation.ResolvedToken,
+                    messageSequence);
+            SetAnimatedImage(
+                CharacterImage,
+                resolvedCharacterAnimation.AssetPath,
+                !string.IsNullOrWhiteSpace(resolvedCharacterAnimation.AssetPath),
+                loop: !isPreAnimation,
+                onFrameChanged: frameHandler);
             CharacterImage.RenderTransformOrigin = new Point(0.5, 0.5);
             CharacterImage.RenderTransform = flip ? new ScaleTransform(-1, 1) : Transform.Identity;
             ApplyOffset(CharacterImage, centerAndHidePair ? (0, 0) : message?.SelfOffset ?? (0, 0));
@@ -369,8 +446,32 @@ namespace OceanyaClient.Features.Viewport
             ChatPreview.ShowShowname = !string.IsNullOrWhiteSpace(showname);
             ChatPreview.ShowMessage = showChat;
             ChatPreview.Visibility = showChat ? Visibility.Visible : Visibility.Collapsed;
+            if (message != null && IsVisible)
+            {
+                bool hasPreAnimation = !string.IsNullOrWhiteSpace(
+                    AO2ViewportAssetResolver.ResolveCharacterPreAnimation(character, message.PreAnim));
+                if (phase == ViewportPhase.PreAnimation || !hasPreAnimation)
+                {
+                    bool shakeAtSfxTime = phase == ViewportPhase.PreAnimation
+                        || AO2ViewportAssetResolver.ShouldBlockForPreAnimation(message.EmoteModifier);
+                    ScheduleMessageSfxPlayback(message, messageSequence, shakeAtSfxTime);
+                }
+
+                if (phase == ViewportPhase.Speaking)
+                {
+                    PlayEffectSfx(message, character);
+                }
+
+                if (ShouldApplyImmediateScreenShake(message, phase))
+                {
+                    StartScreenShake(messageSequence);
+                }
+            }
+
             if (showChat)
             {
+                currentChatBlipToken = ResolveViewportBlipToken(character, message);
+                audioManager.PrepareBlip(currentChatBlipToken);
                 ChatPreview.RefreshPreview();
                 if (shouldStartTextReveal)
                 {
@@ -380,6 +481,7 @@ namespace OceanyaClient.Features.Viewport
             else
             {
                 StopChatTextTimer();
+                currentChatBlipToken = string.Empty;
             }
         }
 
@@ -394,6 +496,7 @@ namespace OceanyaClient.Features.Viewport
         private void ClearScene()
         {
             StopChatTextTimer();
+            StopScreenShake();
             BackgroundImage.Source = null;
             CharacterImage.Source = null;
             DeskImage.Source = null;
@@ -402,8 +505,10 @@ namespace OceanyaClient.Features.Viewport
             SpeedlinesImage.Source = null;
             ShoutOverlayImage.Source = null;
             StopAllAnimations();
+            audioManager.StopAll();
             ChatPreview.PreviewText = string.Empty;
             ChatPreview.Visibility = Visibility.Collapsed;
+            currentChatBlipToken = string.Empty;
             CharacterImage.Visibility = Visibility.Collapsed;
             PairCharacterImage.Visibility = Visibility.Collapsed;
             DeskImage.Visibility = Visibility.Collapsed;
@@ -412,7 +517,87 @@ namespace OceanyaClient.Features.Viewport
             ShoutOverlayImage.Visibility = Visibility.Collapsed;
         }
 
-        private IAnimationPlayer? SetAnimatedImage(Image image, string? path, bool visible, bool loop = true)
+        internal static bool MessageRequestsScreenShake(ICMessage? message)
+        {
+            return message?.ScreenShake == true;
+        }
+
+        private static bool ShouldApplyImmediateScreenShake(ICMessage? message, ViewportPhase phase)
+        {
+            if (phase != ViewportPhase.Speaking || !MessageRequestsScreenShake(message))
+            {
+                return false;
+            }
+
+            AO2ViewportAssetResolver.NormalizedEmoteModifier modifier =
+                AO2ViewportAssetResolver.NormalizeEmoteModifier(message!.EmoteModifier);
+            return modifier == AO2ViewportAssetResolver.NormalizedEmoteModifier.Idle
+                || modifier == AO2ViewportAssetResolver.NormalizedEmoteModifier.Zoom;
+        }
+
+        private void StartScreenShake(int sequence)
+        {
+            if (!IsVisible || !AO2ViewportAssetResolver.GetScreenShakeEnabled())
+            {
+                return;
+            }
+
+            StopScreenShake();
+
+            ApplyScreenShakeOffset();
+            DateTime startedAtUtc = DateTime.UtcNow;
+
+            screenShakeTimer = new DispatcherTimer(DispatcherPriority.Render, Dispatcher)
+            {
+                Interval = TimeSpan.FromMilliseconds(ScreenShakeIntervalMilliseconds)
+            };
+            screenShakeTimer.Tick += (_, _) =>
+            {
+                if (sequence != messageSequence || !IsVisible)
+                {
+                    StopScreenShake();
+                    return;
+                }
+
+                double elapsedMs = (DateTime.UtcNow - startedAtUtc).TotalMilliseconds;
+                double remainingFraction = 1.0 - (elapsedMs / ScreenShakeDurationMilliseconds);
+                if (remainingFraction <= 0)
+                {
+                    StopScreenShake();
+                    return;
+                }
+
+                ApplyScreenShakeOffset(remainingFraction);
+            };
+            screenShakeTimer.Start();
+        }
+
+        private void ApplyScreenShakeOffset(double remainingFraction = 1.0)
+        {
+            double maxDeviation = 7.0 * (AO2ViewportAssetResolver.ViewportHeight / 192.0) * Math.Clamp(remainingFraction, 0.0, 1.0);
+            int deviation = Math.Max(1, (int)Math.Round(maxDeviation, MidpointRounding.AwayFromZero));
+            viewportShakeTransform.X = screenShakeRandom.Next(-deviation, deviation + 1);
+            viewportShakeTransform.Y = screenShakeRandom.Next(-deviation, deviation + 1);
+        }
+
+        private void StopScreenShake()
+        {
+            if (screenShakeTimer != null)
+            {
+                screenShakeTimer.Stop();
+                screenShakeTimer = null;
+            }
+
+            viewportShakeTransform.X = 0;
+            viewportShakeTransform.Y = 0;
+        }
+
+        private IAnimationPlayer? SetAnimatedImage(
+            Image image,
+            string? path,
+            bool visible,
+            bool loop = true,
+            Action<int>? onFrameChanged = null)
         {
             StopAnimation(image);
             if (!visible || string.IsNullOrWhiteSpace(path))
@@ -427,8 +612,14 @@ namespace OceanyaClient.Features.Viewport
             {
                 animationPlayers[image] = player;
                 player.FrameChanged += frame => image.Source = frame;
+                if (onFrameChanged != null)
+                {
+                    player.FrameIndexChanged += onFrameChanged;
+                }
+
                 image.Source = player.CurrentFrame;
                 image.Visibility = Visibility.Visible;
+                onFrameChanged?.Invoke(player.CurrentFrameIndex);
                 return player;
             }
 
@@ -543,6 +734,10 @@ namespace OceanyaClient.Features.Viewport
             chatFullText = SkipAo2AlignmentPrefix(text ?? string.Empty);
             chatTextPosition = 0;
             chatDisplaySpeed = DefaultChatDisplaySpeed;
+            chatTextCrawlMilliseconds = AO2ViewportAssetResolver.GetTextCrawlMilliseconds();
+            chatBlipTicker = 0;
+            chatBlipRate = AO2ViewportAssetResolver.GetBlipRate();
+            chatBlankBlipEnabled = AO2ViewportAssetResolver.GetBlankBlipEnabled();
             ChatPreview.PreviewText = string.Empty;
 
             if (chatFullText.Length == 0)
@@ -562,10 +757,23 @@ namespace OceanyaClient.Features.Viewport
                 return;
             }
 
-            int delay = GetNextDisplayedTextElement(out string textElement, out bool formattingElement);
-            if (!formattingElement)
+            int delay = GetNextDisplayedTextElement(
+                out string textElement,
+                out bool shouldPlayBlip,
+                out bool triggerScreenShake);
+            if (triggerScreenShake)
+            {
+                StartScreenShake(messageSequence);
+            }
+
+            if (!string.IsNullOrEmpty(textElement))
             {
                 ChatPreview.PreviewText += textElement;
+
+                if (shouldPlayBlip && IsVisible && ShouldPlayBlipForTextElement(textElement, delay))
+                {
+                    audioManager.PlayBlip();
+                }
             }
 
             if (chatTextPosition >= chatFullText.Length)
@@ -591,23 +799,27 @@ namespace OceanyaClient.Features.Viewport
             AdvanceChatTextReveal();
         }
 
-        private int GetNextDisplayedTextElement(out string textElement, out bool formattingElement)
+        private int GetNextDisplayedTextElement(
+            out string textElement,
+            out bool shouldPlayBlip,
+            out bool triggerScreenShake)
         {
-            formattingElement = false;
+            shouldPlayBlip = false;
+            triggerScreenShake = false;
             textElement = GetTextElement(chatFullText, chatTextPosition);
             chatTextPosition += textElement.Length;
 
             if (textElement == "{")
             {
                 chatDisplaySpeed = Math.Min(ChatDisplayMultipliers.Length - 1, chatDisplaySpeed + 1);
-                formattingElement = true;
+                textElement = string.Empty;
                 return 0;
             }
 
             if (textElement == "}")
             {
                 chatDisplaySpeed = Math.Max(0, chatDisplaySpeed - 1);
-                formattingElement = true;
+                textElement = string.Empty;
                 return 0;
             }
 
@@ -615,29 +827,70 @@ namespace OceanyaClient.Features.Viewport
             {
                 string escapedElement = GetTextElement(chatFullText, chatTextPosition);
                 chatTextPosition += escapedElement.Length;
-                formattingElement = escapedElement is "s" or "f";
-                textElement = escapedElement == "n"
-                    ? Environment.NewLine
-                    : escapedElement == "p"
-                        ? string.Empty
-                        : formattingElement
-                            ? string.Empty
-                            : escapedElement;
-                return escapedElement == "p"
-                    ? ChatPauseMilliseconds
-                    : GetChatTextDelay(textElement);
+
+                switch (escapedElement)
+                {
+                    case "n":
+                        textElement = Environment.NewLine;
+                        return 0;
+                    case "p":
+                        textElement = string.Empty;
+                        return ChatPauseMilliseconds;
+                    case "s":
+                        textElement = string.Empty;
+                        triggerScreenShake = true;
+                        return 0;
+                    case "f":
+                        textElement = string.Empty;
+                        return 0;
+                    default:
+                        textElement = escapedElement;
+                        shouldPlayBlip = true;
+                        return GetChatTextDelay(textElement);
+                }
             }
 
+            shouldPlayBlip = true;
             return GetChatTextDelay(textElement);
+        }
+
+        private bool ShouldPlayBlipForTextElement(string textElement, int delay)
+        {
+            string firstElement = GetTextElement(textElement, 0);
+            bool isWhitespace = string.IsNullOrWhiteSpace(firstElement) || char.IsWhiteSpace(firstElement[0]);
+            int effectiveBlipRate = chatBlipRate;
+            if (delay > 0 && delay <= 25)
+            {
+                effectiveBlipRate = Math.Max(
+                    effectiveBlipRate,
+                    (int)Math.Round(chatTextCrawlMilliseconds / (double)delay, MidpointRounding.AwayFromZero));
+            }
+
+            bool shouldPlay = (chatBlipRate <= 0 && chatBlipTicker < 1)
+                || (effectiveBlipRate > 0 && chatBlipTicker % effectiveBlipRate == 0);
+            if (shouldPlay)
+            {
+                if (!isWhitespace || chatBlankBlipEnabled)
+                {
+                    chatBlipTicker++;
+                    return true;
+                }
+            }
+            else
+            {
+                chatBlipTicker++;
+            }
+
+            return false;
         }
 
         private int GetChatTextDelay(string textElement)
         {
             double multiplier = ChatDisplayMultipliers[chatDisplaySpeed];
-            int delay = (int)Math.Round(DefaultChatTextCrawlMilliseconds * multiplier);
+            int delay = (int)Math.Round(chatTextCrawlMilliseconds * multiplier);
             if (chatDisplaySpeed > 1 && ".,?!:;".Contains(textElement, StringComparison.Ordinal))
             {
-                int maxDelay = (int)Math.Round(DefaultChatTextCrawlMilliseconds * ChatDisplayMultipliers[6] * 1.5);
+                int maxDelay = (int)Math.Round(chatTextCrawlMilliseconds * ChatDisplayMultipliers[6] * 1.5);
                 delay = Math.Min(maxDelay, delay * 3);
             }
 
@@ -661,6 +914,22 @@ namespace OceanyaClient.Features.Viewport
                     : text;
         }
 
+        private static string ResolveViewportBlipToken(CharacterFolder? character, ICMessage? message)
+        {
+            if (!string.IsNullOrWhiteSpace(message?.Blips))
+            {
+                return message.Blips;
+            }
+
+            string characterToken = AO2ViewportAssetResolver.ResolveCharacterBlipToken(character, message?.Emote);
+            if (!string.IsNullOrWhiteSpace(characterToken))
+            {
+                return characterToken;
+            }
+
+            return string.Empty;
+        }
+
         private static Color? ResolveViewportMessageColor(ICMessage? message)
         {
             if (message == null)
@@ -670,6 +939,53 @@ namespace OceanyaClient.Features.Viewport
 
             System.Drawing.Color packetColor = ICMessage.GetColorFromTextColor(message.TextColor);
             return Color.FromArgb(packetColor.A, packetColor.R, packetColor.G, packetColor.B);
+        }
+
+        private void ScheduleMessageSfxPlayback(ICMessage message, int sequence, bool shakeAtSfxTime)
+        {
+            if (!IsVisible)
+            {
+                return;
+            }
+
+            string? sfxPath = AO2ViewportAudioResolver.ResolveSfxPath(message.SfxName);
+            if (string.IsNullOrWhiteSpace(sfxPath))
+            {
+                return;
+            }
+
+            TimeSpan delay = TimeSpan.FromMilliseconds(Math.Max(0, message.SfxDelay) * 40);
+            DispatcherTimer timer = new DispatcherTimer(DispatcherPriority.Normal, Dispatcher)
+            {
+                Interval = delay
+            };
+            timer.Tick += (_, _) =>
+            {
+                timer.Stop();
+                if (sequence != messageSequence || !IsVisible)
+                {
+                    return;
+                }
+
+                if (shakeAtSfxTime && message.ScreenShake)
+                {
+                    StartScreenShake(sequence);
+                }
+
+                audioManager.PlaySfx(message.SfxName);
+            };
+            timer.Start();
+        }
+
+        private void PlayEffectSfx(ICMessage message, CharacterFolder? character)
+        {
+            string token = AO2ViewportAssetResolver.ResolveEffectSoundToken(message.EffectString, message.Effect, character);
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                return;
+            }
+
+            audioManager.PlaySfx(token);
         }
 
         private void StopAnimation(Image image)
@@ -729,6 +1045,176 @@ namespace OceanyaClient.Features.Viewport
             chatTextTimer.Stop();
             chatTextTimer.Tick -= OnChatTextTimerTick;
             chatTextTimer = null;
+        }
+
+        private Action<int>? BuildFrameEffectHandler(
+            ICMessage message,
+            CharacterFolder? character,
+            string? resolvedAnimationToken,
+            int sequence)
+        {
+            string token = (resolvedAnimationToken ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                return null;
+            }
+
+            Dictionary<int, List<string>> shakeFrames = ResolveFrameEffects(
+                message.FramesShake,
+                character,
+                token,
+                "_FrameScreenshake");
+            Dictionary<int, List<string>> sfxFrames = ResolveFrameEffects(
+                message.FramesSfx,
+                character,
+                token,
+                "_FrameSFX");
+            if (shakeFrames.Count == 0 && sfxFrames.Count == 0)
+            {
+                return null;
+            }
+
+            HashSet<string> processedEffectKeys = new HashSet<string>(StringComparer.Ordinal);
+            return frameIndex =>
+            {
+                if (sequence != messageSequence || !IsVisible)
+                {
+                    return;
+                }
+
+                FireFrameShakeEffects(frameIndex, shakeFrames, processedEffectKeys, sequence);
+                FireFrameSfxEffects(frameIndex, sfxFrames, processedEffectKeys);
+            };
+        }
+
+        private void FireFrameShakeEffects(
+            int frameIndex,
+            IReadOnlyDictionary<int, List<string>> frameMap,
+            ISet<string> processedEffectKeys,
+            int sequence)
+        {
+            foreach (KeyValuePair<int, List<string>> entry in frameMap)
+            {
+                if (entry.Key != frameIndex)
+                {
+                    continue;
+                }
+
+                for (int i = 0; i < entry.Value.Count; i++)
+                {
+                    string uniqueKey = "shake:" + frameIndex.ToString(CultureInfo.InvariantCulture) + ":" + i.ToString(CultureInfo.InvariantCulture);
+                    if (!processedEffectKeys.Add(uniqueKey))
+                    {
+                        continue;
+                    }
+
+                    StartScreenShake(sequence);
+                }
+            }
+        }
+
+        private void FireFrameSfxEffects(
+            int frameIndex,
+            IReadOnlyDictionary<int, List<string>> frameMap,
+            ISet<string> processedEffectKeys)
+        {
+            foreach (KeyValuePair<int, List<string>> entry in frameMap)
+            {
+                if (entry.Key != frameIndex)
+                {
+                    continue;
+                }
+
+                for (int i = 0; i < entry.Value.Count; i++)
+                {
+                    string uniqueKey = "sfx:" + frameIndex.ToString(CultureInfo.InvariantCulture) + ":" + i.ToString(CultureInfo.InvariantCulture);
+                    if (!processedEffectKeys.Add(uniqueKey))
+                    {
+                        continue;
+                    }
+
+                    string token = entry.Value[i];
+                    if (string.IsNullOrWhiteSpace(token) || string.Equals(token, "1", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    audioManager.PlaySfx(token);
+                }
+            }
+        }
+
+        private static Dictionary<int, List<string>> ResolveFrameEffects(
+            string? packetValue,
+            CharacterFolder? character,
+            string resolvedAnimationToken,
+            string sectionSuffix)
+        {
+            Dictionary<int, List<string>> packetEffects = ParsePacketFrameEffects(packetValue, resolvedAnimationToken);
+            if (packetEffects.Count > 0)
+            {
+                return packetEffects;
+            }
+
+            Dictionary<int, List<string>> result = new Dictionary<int, List<string>>();
+            foreach (AO2ViewportAssetResolver.ViewportFrameEffect effect in
+                     AO2ViewportAssetResolver.ResolveCharacterFrameEffects(character, resolvedAnimationToken, sectionSuffix))
+            {
+                if (!result.TryGetValue(effect.FrameNumber, out List<string>? values))
+                {
+                    values = new List<string>();
+                    result[effect.FrameNumber] = values;
+                }
+
+                values.Add(effect.Value);
+            }
+
+            return result;
+        }
+
+        private static Dictionary<int, List<string>> ParsePacketFrameEffects(string? packetValue, string resolvedAnimationToken)
+        {
+            Dictionary<int, List<string>> result = new Dictionary<int, List<string>>();
+            foreach (string rawGroup in (packetValue ?? string.Empty).Split('^', StringSplitOptions.RemoveEmptyEntries))
+            {
+                string[] parts = rawGroup.Split('|', StringSplitOptions.None);
+                if (parts.Length == 0)
+                {
+                    continue;
+                }
+
+                string groupToken = parts[0].Trim();
+                if (!string.Equals(groupToken, resolvedAnimationToken, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                for (int i = 1; i < parts.Length; i++)
+                {
+                    string frameEntry = parts[i].Trim();
+                    if (string.IsNullOrWhiteSpace(frameEntry))
+                    {
+                        continue;
+                    }
+
+                    string[] frameParts = frameEntry.Split('=', 2);
+                    if (!int.TryParse(frameParts[0].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int frameNumber))
+                    {
+                        continue;
+                    }
+
+                    string value = frameParts.Length > 1 ? frameParts[1].Trim() : "1";
+                    if (!result.TryGetValue(frameNumber, out List<string>? values))
+                    {
+                        values = new List<string>();
+                        result[frameNumber] = values;
+                    }
+
+                    values.Add(value);
+                }
+            }
+
+            return result;
         }
 
         private enum ViewportPhase

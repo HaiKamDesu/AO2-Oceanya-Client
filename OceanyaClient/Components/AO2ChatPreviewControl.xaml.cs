@@ -183,22 +183,25 @@ namespace OceanyaClient
         private void ApplyTextStyle(AO2ChatPreviewStyle style, string showname, string text)
         {
             ShownameTextBlock.Text = showname;
-            MessageTextBlock.Text = text;
+            MessageTextBox.Text = text;
             ShownameTextBlock.Visibility = ShowShowname ? Visibility.Visible : Visibility.Collapsed;
             MessageContainer.Visibility = ShowMessage ? Visibility.Visible : Visibility.Collapsed;
 
             ShownameTextBlock.Foreground = new SolidColorBrush(style.ShownameColor);
-            MessageTextBlock.Foreground = new SolidColorBrush(MessageColorOverride ?? style.MessageColor);
+            MessageTextBox.Foreground = new SolidColorBrush(MessageColorOverride ?? style.MessageColor);
 
             ShownameTextBlock.FontSize = style.ShownameFontSize;
-            MessageTextBlock.FontSize = style.MessageFontSize;
+            MessageTextBox.FontSize = style.MessageFontSize;
 
             ShownameTextBlock.FontWeight = style.ShownameBold ? FontWeights.Bold : FontWeights.Normal;
-            MessageTextBlock.FontWeight = style.MessageBold ? FontWeights.Bold : FontWeights.Normal;
+            MessageTextBox.FontWeight = style.MessageBold ? FontWeights.Bold : FontWeights.Normal;
 
             ShownameTextBlock.FontFamily = TryCreateFont(style.ShownameFontFamily) ?? new FontFamily("Arial");
-            MessageTextBlock.FontFamily = TryCreateFont(style.MessageFontFamily) ?? new FontFamily("Arial");
+            MessageTextBox.FontFamily = TryCreateFont(style.MessageFontFamily) ?? new FontFamily("Arial");
             ShownameTextBlock.TextAlignment = style.ShownameTextAlignment;
+            MessageTextBox.TextAlignment = TextAlignment.Left;
+            MessageTextBox.CaretIndex = MessageTextBox.Text.Length;
+            MessageTextBox.ScrollToEnd();
 
             if (style.ShownameOutlined)
             {

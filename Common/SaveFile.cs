@@ -357,6 +357,9 @@ namespace OceanyaClient
             IsMaximized = false
         };
         public double CharacterCreatorPreviewVolume { get; set; } = 1.0;
+        public double AudioMusicVolume { get; set; } = 0.5;
+        public double AudioSfxVolume { get; set; } = 1.0;
+        public double AudioBlipVolume { get; set; } = 0.5;
         public double CharacterCreatorEmoteTileWidth { get; set; } = 420;
         public double CharacterCreatorEmoteTileHeight { get; set; } = 430;
         public double CharacterCreatorCuttingPreviewHeight { get; set; } = 170;
@@ -592,6 +595,9 @@ namespace OceanyaClient
             data.CharacterFolderActiveTagFilters = NormalizeTagList(data.CharacterFolderActiveTagFilters);
             data.CharacterFolderTagPanelWidth = Math.Clamp(data.CharacterFolderTagPanelWidth, 180, 520);
             data.CharacterCreatorPreviewVolume = Math.Clamp(data.CharacterCreatorPreviewVolume, 0.0, 1.0);
+            data.AudioMusicVolume = Math.Clamp(data.AudioMusicVolume, 0.0, 1.0);
+            data.AudioSfxVolume = Math.Clamp(data.AudioSfxVolume, 0.0, 1.0);
+            data.AudioBlipVolume = Math.Clamp(data.AudioBlipVolume, 0.0, 1.0);
             data.CharacterCreatorEmoteTileWidth = Math.Clamp(data.CharacterCreatorEmoteTileWidth, 320, 760);
             data.CharacterCreatorEmoteTileHeight = Math.Clamp(data.CharacterCreatorEmoteTileHeight, 330, 820);
             data.CharacterCreatorCuttingPreviewHeight = Math.Clamp(data.CharacterCreatorCuttingPreviewHeight, 120, 520);

@@ -742,7 +742,7 @@ namespace OceanyaClient
         {
             try
             {
-                AudioPlayer.PlayEmbeddedSound("Resources/ApertureScienceJingleHD.mp3", 0.5f);
+                AudioPlayer.PlayEmbeddedSound("Resources/ApertureScienceJingleHD.mp3", AudioSettings.ScaleEmbeddedSfxVolume(0.5f));
             }
             catch (Exception ex)
             {

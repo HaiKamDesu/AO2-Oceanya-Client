@@ -30,7 +30,7 @@ Run from the project root. Use this exact dotnet path on WSL:
 
 ```bash
 /mnt/c/Program\ Files/dotnet/dotnet.exe build "Oceanya Client.sln"
-/mnt/c/Program\ Files/dotnet/dotnet.exe test "Oceanya Client.sln"
+/mnt/c/Program\ Files/dotnet/dotnet.exe test UnitTests/UnitTests.csproj --filter "FullyQualifiedName~UnitTests"
 ```
 
 **IMPORTANT — run build and test as separate commands, never chained.**
@@ -49,9 +49,15 @@ Run a single test class or method:
 
 Always run build and test after any code change to verify the work.
 
+For normal agent verification, run the `UnitTests` project only. Do **not**
+run the live FlaUI/UI automation test project unless the user explicitly asks
+for it.
+
 The app version is centrally defined in `Directory.Build.props` via `OceanyaAppVersion`.
 
 ## UI Automation Execution
+- UI automation is **opt-in only** for agents. Do **not** run `UiAutomationTests`
+  or other live desktop tests unless the user specifically requests them.
 - FlaUI/UIA3 tests must be run on the **Windows side** in an **active interactive desktop session**. Do not treat WSL-only execution as a valid runtime check for these tests.
 - Verified desktop check: `query session` should show the target user (usually `Usuario`) on `console` or another `Active` session.
 - Preferred invocation method from this repo when working through WSL/Codex:

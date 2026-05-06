@@ -344,6 +344,12 @@ namespace UnitTests
                 remove { }
             }
 
+            public event Action<int>? FrameIndexChanged
+            {
+                add { }
+                remove { }
+            }
+
             public event Action? PlaybackFinished
             {
                 add { }
@@ -353,6 +359,7 @@ namespace UnitTests
             public int StopCallCount { get; private set; }
 
             public ImageSource CurrentFrame => new DrawingImage();
+            public int CurrentFrameIndex => 0;
 
             public void SetLoop(bool shouldLoop)
             {

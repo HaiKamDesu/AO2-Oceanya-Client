@@ -21,8 +21,10 @@ namespace OceanyaClient
     public interface IAnimationPlayer
     {
         event Action<ImageSource>? FrameChanged;
+        event Action<int>? FrameIndexChanged;
         event Action? PlaybackFinished;
         ImageSource CurrentFrame { get; }
+        int CurrentFrameIndex { get; }
         void SetLoop(bool shouldLoop);
         void Restart();
         void Stop();
@@ -33,6 +35,7 @@ namespace OceanyaClient
         private const string FallbackPackUri =
             "pack://application:,,,/OceanyaClient;component/Resources/Buttons/smallFolder.png";
         private const double DefaultFrameDelayMilliseconds = 100d;
+        internal static readonly TimeSpan MinimumAnimationTickInterval = TimeSpan.FromMilliseconds(1);
         private const int StaticPreviewCacheEntryLimit = 256;
         private const int MaxAnimatedPreviewDimension = 360;
         private const int MaxAnimatedPreviewFrames = 180;
@@ -1137,7 +1140,6 @@ namespace OceanyaClient
         private static readonly object SharedTimerLock = new object();
         private static readonly List<BitmapFrameAnimationPlayer> ActivePlayers = new List<BitmapFrameAnimationPlayer>();
         private static DispatcherTimer? sharedTimer;
-        private static readonly TimeSpan SharedTickInterval = TimeSpan.FromMilliseconds(15);
 
         private readonly List<BitmapSource> frames = new List<BitmapSource>();
         private readonly List<TimeSpan> frameDurations = new List<TimeSpan>();
@@ -1148,11 +1150,13 @@ namespace OceanyaClient
         private DateTime nextFrameAtUtc;
 
         public event Action<ImageSource>? FrameChanged;
+        public event Action<int>? FrameIndexChanged;
         public event Action? PlaybackFinished;
 
         public ImageSource CurrentFrame => frames.Count > 0
             ? frames[Math.Clamp(frameIndex, 0, frames.Count - 1)]
             : new System.Windows.Media.DrawingImage();
+        public int CurrentFrameIndex => frameIndex;
 
         private BitmapFrameAnimationPlayer(bool loop)
         {
@@ -1220,6 +1224,7 @@ namespace OceanyaClient
         {
             StopPlayback();
             FrameChanged = null;
+            FrameIndexChanged = null;
             PlaybackFinished = null;
             frames.Clear();
             frameDurations.Clear();
@@ -1270,13 +1275,14 @@ namespace OceanyaClient
 
                 frameIndex = nextIndex;
                 RaiseFrameChanged();
-                nextFrameAtUtc = nowUtc + frameDurations[Math.Clamp(frameIndex, 0, frameDurations.Count - 1)];
+                nextFrameAtUtc += frameDurations[Math.Clamp(frameIndex, 0, frameDurations.Count - 1)];
             }
         }
 
         private void RaiseFrameChanged()
         {
             FrameChanged?.Invoke(frames[frameIndex]);
+            FrameIndexChanged?.Invoke(frameIndex);
         }
 
         private static void RegisterActivePlayer(BitmapFrameAnimationPlayer player)
@@ -1288,8 +1294,7 @@ namespace OceanyaClient
                     ActivePlayers.Add(player);
                 }
 
-                EnsureSharedTimer();
-                sharedTimer?.Start();
+                ScheduleNextSharedTick(DateTime.UtcNow);
             }
         }
 
@@ -1298,10 +1303,8 @@ namespace OceanyaClient
             lock (SharedTimerLock)
             {
                 ActivePlayers.Remove(player);
-                if (ActivePlayers.Count == 0)
-                {
-                    sharedTimer?.Stop();
-                }
+
+                ScheduleNextSharedTick(DateTime.UtcNow);
             }
         }
 
@@ -1313,9 +1316,9 @@ namespace OceanyaClient
             }
 
             Dispatcher dispatcher = Application.Current?.Dispatcher ?? Dispatcher.CurrentDispatcher;
-            sharedTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher)
+            sharedTimer = new DispatcherTimer(DispatcherPriority.Render, dispatcher)
             {
-                Interval = SharedTickInterval
+                Interval = Ao2AnimationPreview.MinimumAnimationTickInterval
             };
             sharedTimer.Tick += SharedTimer_Tick;
         }
@@ -1339,6 +1342,41 @@ namespace OceanyaClient
             {
                 player.Tick(nowUtc);
             }
+
+            lock (SharedTimerLock)
+            {
+                ScheduleNextSharedTick(nowUtc);
+            }
+        }
+
+        private static void ScheduleNextSharedTick(DateTime nowUtc)
+        {
+            EnsureSharedTimer();
+            if (sharedTimer == null)
+            {
+                return;
+            }
+
+            if (ActivePlayers.Count == 0)
+            {
+                sharedTimer.Stop();
+                return;
+            }
+
+            TimeSpan nextDelay = ActivePlayers
+                .Where(player => player.isRunning && player.frames.Count > 0 && player.frameDurations.Count > 0)
+                .Select(player => player.nextFrameAtUtc - nowUtc)
+                .DefaultIfEmpty(Ao2AnimationPreview.MinimumAnimationTickInterval)
+                .Min();
+
+            if (nextDelay < Ao2AnimationPreview.MinimumAnimationTickInterval)
+            {
+                nextDelay = Ao2AnimationPreview.MinimumAnimationTickInterval;
+            }
+
+            sharedTimer.Stop();
+            sharedTimer.Interval = nextDelay;
+            sharedTimer.Start();
         }
 
     }
@@ -1348,7 +1386,6 @@ namespace OceanyaClient
         private static readonly object SharedTimerLock = new object();
         private static readonly List<GifAnimationPlayer> ActivePlayers = new List<GifAnimationPlayer>();
         private static DispatcherTimer? sharedTimer;
-        private static readonly TimeSpan SharedTickInterval = TimeSpan.FromMilliseconds(15);
         // Preview players do not need full-resolution/full-frame GIF decoding; cap both to prevent UI stalls.
         private const int MaxGifPreviewDimension = 360;
         private const int MaxGifPreviewFrames = 180;
@@ -1366,11 +1403,13 @@ namespace OceanyaClient
         private DateTime nextFrameAtUtc;
 
         public event Action<ImageSource>? FrameChanged;
+        public event Action<int>? FrameIndexChanged;
         public event Action? PlaybackFinished;
 
         public ImageSource CurrentFrame => frameCount > 0
             ? frames[Math.Clamp(frameIndex, 0, frameCount - 1)]
             : new System.Windows.Media.DrawingImage();
+        public int CurrentFrameIndex => frameIndex;
 
         public GifAnimationPlayer(string gifPath, bool loop)
             : this(gifPath, loop, MaxGifPreviewDimension, MaxGifPreviewFrames)
@@ -1448,6 +1487,7 @@ namespace OceanyaClient
             StopPlayback();
             gifImage.Dispose();
             FrameChanged = null;
+            FrameIndexChanged = null;
             PlaybackFinished = null;
             frames.Clear();
             frameDurations.Clear();
@@ -1498,13 +1538,14 @@ namespace OceanyaClient
 
                 frameIndex = nextIndex;
                 RaiseFrameChanged();
-                nextFrameAtUtc = nowUtc + frameDurations[Math.Clamp(frameIndex, 0, frameDurations.Count - 1)];
+                nextFrameAtUtc += frameDurations[Math.Clamp(frameIndex, 0, frameDurations.Count - 1)];
             }
         }
 
         private void RaiseFrameChanged()
         {
             FrameChanged?.Invoke(frames[Math.Clamp(frameIndex, 0, frameCount - 1)]);
+            FrameIndexChanged?.Invoke(Math.Clamp(frameIndex, 0, frameCount - 1));
         }
 
         private void CacheFrames(IReadOnlyList<int> selectedFrameIndices)
@@ -1631,8 +1672,7 @@ namespace OceanyaClient
                     ActivePlayers.Add(player);
                 }
 
-                EnsureSharedTimer();
-                sharedTimer?.Start();
+                ScheduleNextSharedTick(DateTime.UtcNow);
             }
         }
 
@@ -1641,10 +1681,8 @@ namespace OceanyaClient
             lock (SharedTimerLock)
             {
                 ActivePlayers.Remove(player);
-                if (ActivePlayers.Count == 0)
-                {
-                    sharedTimer?.Stop();
-                }
+
+                ScheduleNextSharedTick(DateTime.UtcNow);
             }
         }
 
@@ -1656,9 +1694,9 @@ namespace OceanyaClient
             }
 
             Dispatcher dispatcher = Application.Current?.Dispatcher ?? Dispatcher.CurrentDispatcher;
-            sharedTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher)
+            sharedTimer = new DispatcherTimer(DispatcherPriority.Render, dispatcher)
             {
-                Interval = SharedTickInterval
+                Interval = Ao2AnimationPreview.MinimumAnimationTickInterval
             };
             sharedTimer.Tick += SharedTimer_Tick;
         }
@@ -1682,6 +1720,41 @@ namespace OceanyaClient
             {
                 player.Tick(nowUtc);
             }
+
+            lock (SharedTimerLock)
+            {
+                ScheduleNextSharedTick(nowUtc);
+            }
+        }
+
+        private static void ScheduleNextSharedTick(DateTime nowUtc)
+        {
+            EnsureSharedTimer();
+            if (sharedTimer == null)
+            {
+                return;
+            }
+
+            if (ActivePlayers.Count == 0)
+            {
+                sharedTimer.Stop();
+                return;
+            }
+
+            TimeSpan nextDelay = ActivePlayers
+                .Where(player => player.isRunning && player.frameCount > 0 && player.frameDurations.Count > 0)
+                .Select(player => player.nextFrameAtUtc - nowUtc)
+                .DefaultIfEmpty(Ao2AnimationPreview.MinimumAnimationTickInterval)
+                .Min();
+
+            if (nextDelay < Ao2AnimationPreview.MinimumAnimationTickInterval)
+            {
+                nextDelay = Ao2AnimationPreview.MinimumAnimationTickInterval;
+            }
+
+            sharedTimer.Stop();
+            sharedTimer.Interval = nextDelay;
+            sharedTimer.Start();
         }
 
         private static List<TimeSpan> ReadFrameDelays(DrawingImage image, int frameCount)

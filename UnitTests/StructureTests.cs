@@ -166,6 +166,7 @@ namespace UnitTests
                 iniPath,
                 "[Options]\n" +
                 "showname=Phoenix Wright\n" +
+                "realization=phoenix-realization\n" +
                 "gender=unknown\n" +
                 "side=def\n" +
                 "[Time]\n" +
@@ -175,7 +176,13 @@ namespace UnitTests
                 "pre_packet=250\n" +
                 "[Emotions]\n" +
                 "number=1\n" +
-                "1=normal#pre_configured#normal#1#1\n");
+                "1=normal#pre_configured#normal#1#1\n" +
+                "[(b)normal_FrameSFX]\n" +
+                "2=phoenix-talk-hit\n" +
+                "[(b)normal_FrameScreenshake]\n" +
+                "3=1\n" +
+                "[pre_configured_FrameSFX]\n" +
+                "1=phoenix-pre-hit\n");
 
             return CharacterFolder.Create(iniPath);
         }
@@ -471,6 +478,25 @@ namespace UnitTests
         }
 
         [Test]
+        public void Test_AO2ViewportAssetResolver_ResolvesEffectSoundToken()
+        {
+            CharacterFolder character = CreateViewportTestCharacter();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    AO2ViewportAssetResolver.ResolveEffectSoundToken("spark|customfx|sfx-spark", ICMessage.Effects.None, null),
+                    Is.EqualTo("sfx-spark"));
+                Assert.That(
+                    AO2ViewportAssetResolver.ResolveEffectSoundToken(null, ICMessage.Effects.Realization, character),
+                    Is.EqualTo("phoenix-realization"));
+                Assert.That(
+                    AO2ViewportAssetResolver.ResolveEffectSoundToken(null, ICMessage.Effects.Reaction, character),
+                    Is.EqualTo("sfx-reactionding"));
+            });
+        }
+
+        [Test]
         public void Test_AO2ViewportAssetResolver_ParsesPairOrderingAndZoomNames()
         {
             Assert.That(
@@ -565,6 +591,204 @@ namespace UnitTests
                 includePlaceholder: false);
 
             Assert.That(resolvedPath, Is.EqualTo(expectedPath));
+        }
+    }
+
+    [TestFixture]
+    public class AO2ViewportTimingTests
+    {
+        private string tempRoot = string.Empty;
+        private string originalConfigIniPath = string.Empty;
+        private List<string> originalBaseFolders = new List<string>();
+
+        private static void CreateEmptyFile(string filePath)
+        {
+            File.WriteAllBytes(filePath, new byte[0]);
+        }
+
+        private CharacterFolder CreateViewportTestCharacter()
+        {
+            string characterDirectory = Path.Combine(tempRoot, "characters", "ViewportPhoenix");
+            Directory.CreateDirectory(characterDirectory);
+            CreateEmptyFile(Path.Combine(characterDirectory, "(a)normal.png"));
+            CreateEmptyFile(Path.Combine(characterDirectory, "(b)normal.png"));
+            CreateEmptyFile(Path.Combine(characterDirectory, "(a)packet_anim.png"));
+            CreateEmptyFile(Path.Combine(characterDirectory, "(b)packet_anim.png"));
+            CreateEmptyFile(Path.Combine(characterDirectory, "pre_packet.png"));
+            CreateEmptyFile(Path.Combine(characterDirectory, "pre_configured.png"));
+
+            string iniPath = Path.Combine(characterDirectory, "char.ini");
+            File.WriteAllText(
+                iniPath,
+                "[Options]\n" +
+                "showname=Phoenix Wright\n" +
+                "realization=phoenix-realization\n" +
+                "gender=unknown\n" +
+                "side=def\n" +
+                "[Time]\n" +
+                "preanim=0\n" +
+                "pre_packet=1200\n" +
+                "[stay_time]\n" +
+                "pre_packet=250\n" +
+                "[Emotions]\n" +
+                "number=1\n" +
+                "1=normal#pre_configured#normal#1#1\n" +
+                "[(b)normal_FrameSFX]\n" +
+                "2=phoenix-talk-hit\n" +
+                "[(b)normal_FrameScreenshake]\n" +
+                "3=1\n" +
+                "[pre_configured_FrameSFX]\n" +
+                "1=phoenix-pre-hit\n");
+
+            return CharacterFolder.Create(iniPath);
+        }
+
+        [SetUp]
+        public void SetUp()
+        {
+            tempRoot = Path.Combine(Path.GetTempPath(), "viewport_timing_tests_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempRoot);
+            originalConfigIniPath = Globals.PathToConfigINI;
+            originalBaseFolders = new List<string>(Globals.BaseFolders);
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            Globals.PathToConfigINI = originalConfigIniPath;
+            Globals.BaseFolders = originalBaseFolders;
+
+            try
+            {
+                if (Directory.Exists(tempRoot))
+                {
+                    Directory.Delete(tempRoot, true);
+                }
+            }
+            catch
+            {
+                // best-effort cleanup
+            }
+        }
+
+        [Test]
+        public void GetTextCrawlMilliseconds_UsesConfigIniValue()
+        {
+            string configPath = Path.Combine(tempRoot, "config.ini");
+            File.WriteAllText(
+                configPath,
+                "; viewport timing test\n" +
+                "stay_time=200\n" +
+                "text_crawl=64\n");
+
+            Globals.PathToConfigINI = configPath;
+
+            Assert.That(AO2ViewportAssetResolver.GetTextCrawlMilliseconds(), Is.EqualTo(64));
+        }
+
+        [Test]
+        public void GetTextCrawlMilliseconds_FallsBackToDefaultWhenMissing()
+        {
+            Globals.PathToConfigINI = Path.Combine(tempRoot, "missing-config.ini");
+
+            Assert.That(AO2ViewportAssetResolver.GetTextCrawlMilliseconds(), Is.EqualTo(40));
+        }
+
+        [Test]
+        public void ViewportTimingSettings_UseConfigIniValues()
+        {
+            string configPath = Path.Combine(tempRoot, "config.ini");
+            File.WriteAllText(
+                configPath,
+                "text_crawl=52\n" +
+                "blip_rate=4\n" +
+                "blank_blip=true\n" +
+                "shake=0\n");
+
+            Globals.PathToConfigINI = configPath;
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(AO2ViewportAssetResolver.GetTextCrawlMilliseconds(), Is.EqualTo(52));
+                Assert.That(AO2ViewportAssetResolver.GetBlipRate(), Is.EqualTo(4));
+                Assert.That(AO2ViewportAssetResolver.GetBlankBlipEnabled(), Is.True);
+                Assert.That(AO2ViewportAssetResolver.GetScreenShakeEnabled(), Is.False);
+            });
+        }
+
+        [Test]
+        public void ResolveCharacterDialogAnimationDetails_ReturnsMatchedAo2Token()
+        {
+            CharacterFolder character = CreateViewportTestCharacter();
+
+            AO2ViewportAssetResolver.ResolvedCharacterAnimation resolved =
+                AO2ViewportAssetResolver.ResolveCharacterDialogAnimationDetails(
+                    character,
+                    "normal",
+                    talking: true);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(resolved.AssetPath, Does.EndWith("(b)normal.png"));
+                Assert.That(resolved.ResolvedToken, Is.EqualTo("(b)normal"));
+            });
+        }
+
+        [Test]
+        public void ResolveCharacterFrameEffects_ReadsCharIniEntriesForResolvedToken()
+        {
+            CharacterFolder character = CreateViewportTestCharacter();
+
+            IReadOnlyList<AO2ViewportAssetResolver.ViewportFrameEffect> resolved =
+                AO2ViewportAssetResolver.ResolveCharacterFrameEffects(
+                    character,
+                    "(b)normal",
+                    "_FrameSFX");
+
+            Assert.That(resolved, Has.Count.EqualTo(1));
+            Assert.Multiple(() =>
+            {
+                Assert.That(resolved[0].FrameNumber, Is.EqualTo(2));
+                Assert.That(resolved[0].Value, Is.EqualTo("phoenix-talk-hit"));
+            });
+        }
+
+        [Test]
+        public void ResolveCharacterBlipToken_UsesPerEmoteOverrideBeforeDefault()
+        {
+            string characterDirectory = Path.Combine(tempRoot, "characters", "BlipPhoenix");
+            Directory.CreateDirectory(characterDirectory);
+            string iniPath = Path.Combine(characterDirectory, "char.ini");
+            File.WriteAllText(
+                iniPath,
+                "[Options]\n" +
+                "blips=male\n" +
+                "[Emotions]\n" +
+                "number=1\n" +
+                "1=normal#-#normal#0#1\n" +
+                "[OptionsN]\n" +
+                "1=1\n" +
+                "[Options1]\n" +
+                "blips=custom-voice\n");
+
+            CharacterFolder character = CharacterFolder.Create(iniPath);
+
+            string token = AO2ViewportAssetResolver.ResolveCharacterBlipToken(character, "normal");
+
+            Assert.That(token, Is.EqualTo("custom-voice"));
+        }
+
+        [Test]
+        public void ResolveBlipPath_ResolvesAo2StyleRelativeCharacterPath()
+        {
+            string customBlipPath = Path.Combine(tempRoot, "characters", "BlipPhoenix", "voice", "custom.opus");
+            Directory.CreateDirectory(Path.GetDirectoryName(customBlipPath)!);
+            File.WriteAllBytes(customBlipPath, new byte[] { 1, 2, 3, 4 });
+            Globals.BaseFolders = new List<string> { tempRoot };
+
+            string? resolved = AO2ViewportAudioResolver.ResolveBlipPath("../../characters/BlipPhoenix/voice/custom");
+
+            Assert.That(resolved, Is.EqualTo(customBlipPath));
         }
     }
 }

@@ -2,8 +2,8 @@
   "ConfigIniPath": "D:\\Programs\\Attorney Online\\RPG\\AO2-Oceanya-Bot\\UnitTests\\TestAssets\\FlaUISmoke\\config.ini",
   "StartupFunctionalityId": "gm_multi_client",
   "UseSingleInternalClient": false,
-  "SelectedServerEndpoint": "tcp://127.0.0.1:54709",
-  "SelectedServerName": "tcp://127.0.0.1:54709",
+  "SelectedServerEndpoint": "tcp://127.0.0.1:61231",
+  "SelectedServerName": "tcp://127.0.0.1:61231",
   "CustomServerEndpoints": [],
   "CustomServerEntries": [],
   "AdvancedFeatures": {
@@ -454,6 +454,9 @@
     "IsMaximized": false
   },
   "CharacterCreatorPreviewVolume": 1,
+  "AudioMusicVolume": 0.5,
+  "AudioSfxVolume": 1,
+  "AudioBlipVolume": 0.5,
   "CharacterCreatorEmoteTileWidth": 420,
   "CharacterCreatorEmoteTileHeight": 430,
   "CharacterCreatorCuttingPreviewHeight": 170,

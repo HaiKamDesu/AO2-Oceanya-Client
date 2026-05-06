@@ -11,6 +11,7 @@ using AOBot_Testing.Structures;
 using Common;
 using NUnit.Framework;
 using OceanyaClient;
+using OceanyaClient.Features.Viewport;
 using OceanyaClient.Components;
 using OceanyaClient.Features.Startup;
 
@@ -134,6 +135,69 @@ namespace UnitTests
             SaveFile.ReloadFromDiskForTests();
 
             Assert.That(SaveFile.Data.ConfigIniPath, Is.EqualTo("different.ini"));
+        }
+
+        [Test]
+        public void SaveFile_NormalizesAudioVolumes()
+        {
+            SaveFile.ResetForTests(
+                new SaveData
+                {
+                    AudioMusicVolume = 2.0,
+                    AudioSfxVolume = -1.0,
+                    AudioBlipVolume = 0.35
+                },
+                persist: false);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(SaveFile.Data.AudioMusicVolume, Is.EqualTo(1.0));
+                Assert.That(SaveFile.Data.AudioSfxVolume, Is.EqualTo(0.0));
+                Assert.That(SaveFile.Data.AudioBlipVolume, Is.EqualTo(0.35));
+            });
+        }
+
+        [Test]
+        public void AudioSettings_ConversionHelpersClampExpectedRanges()
+        {
+            Assert.Multiple(() =>
+            {
+                Assert.That(AudioSettings.PercentToScalar(-10), Is.EqualTo(0.0));
+                Assert.That(AudioSettings.PercentToScalar(25), Is.EqualTo(0.25));
+                Assert.That(AudioSettings.PercentToScalar(120), Is.EqualTo(1.0));
+                Assert.That(AudioSettings.ScalarToPercent(-0.1), Is.EqualTo(0.0));
+                Assert.That(AudioSettings.ScalarToPercent(0.5), Is.EqualTo(50.0));
+                Assert.That(AudioSettings.ScalarToPercent(2.0), Is.EqualTo(100.0));
+            });
+        }
+
+        [Test]
+        public void AudioSettings_ScaleEmbeddedSfxVolume_UsesPersistedSfxSlider()
+        {
+            SaveFile.ResetForTests(
+                new SaveData
+                {
+                    AudioSfxVolume = 0.4
+                },
+                persist: false);
+
+            Assert.That(AudioSettings.ScaleEmbeddedSfxVolume(0.5f), Is.EqualTo(0.2f).Within(0.0001f));
+        }
+
+        [Test]
+        public void AO2ViewportControl_MessageRequestsScreenShake_RequiresExplicitPacketRequest()
+        {
+            Assert.Multiple(() =>
+            {
+                Assert.That(AO2ViewportControl.MessageRequestsScreenShake(null), Is.False);
+                Assert.That(AO2ViewportControl.MessageRequestsScreenShake(new ICMessage()), Is.False);
+                Assert.That(
+                    AO2ViewportControl.MessageRequestsScreenShake(new ICMessage { ScreenShake = true }),
+                    Is.True);
+                Assert.That(
+                    AO2ViewportControl.MessageRequestsScreenShake(new ICMessage { FramesShake = "pre^talk^" }),
+                    Is.False);
+            });
         }
 
         [Test]
