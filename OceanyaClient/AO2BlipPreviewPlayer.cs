@@ -98,7 +98,7 @@ namespace OceanyaClient
             }
 
             _ = Bass.ChannelSetDevice(stream, Bass.CurrentDevice);
-            bool played = Bass.ChannelPlay(stream, true);
+            bool played = Bass.ChannelPlay(stream, false);
             cycleIndex = (cycleIndex + 1) % StreamCount;
             return played;
         }

@@ -723,6 +723,27 @@ namespace UnitTests
         }
 
         [Test]
+        public void ViewportTimingSettings_ReadQtSettingsGeneralSection()
+        {
+            string configPath = Path.Combine(tempRoot, "config.ini");
+            File.WriteAllText(
+                configPath,
+                "[General]\n" +
+                "text_crawl=48\n" +
+                "blip_rate=3\n" +
+                "blank_blip=false\n");
+
+            Globals.PathToConfigINI = configPath;
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(AO2ViewportAssetResolver.GetTextCrawlMilliseconds(), Is.EqualTo(48));
+                Assert.That(AO2ViewportAssetResolver.GetBlipRate(), Is.EqualTo(3));
+                Assert.That(AO2ViewportAssetResolver.GetBlankBlipEnabled(), Is.False);
+            });
+        }
+
+        [Test]
         public void ResolveCharacterDialogAnimationDetails_ReturnsMatchedAo2Token()
         {
             CharacterFolder character = CreateViewportTestCharacter();

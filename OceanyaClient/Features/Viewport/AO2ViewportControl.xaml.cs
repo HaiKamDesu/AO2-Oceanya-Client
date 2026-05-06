@@ -746,7 +746,9 @@ namespace OceanyaClient.Features.Viewport
             }
 
             chatTextTimer = new DispatcherTimer(DispatcherPriority.Normal, Dispatcher);
-            AdvanceChatTextReveal();
+            chatTextTimer.Interval = TimeSpan.Zero;
+            chatTextTimer.Tick += OnChatTextTimerTick;
+            chatTextTimer.Start();
         }
 
         private void AdvanceChatTextReveal()
@@ -760,7 +762,8 @@ namespace OceanyaClient.Features.Viewport
             int delay = GetNextDisplayedTextElement(
                 out string textElement,
                 out bool shouldPlayBlip,
-                out bool triggerScreenShake);
+                out bool triggerScreenShake,
+                out int blipGateDelay);
             if (triggerScreenShake)
             {
                 StartScreenShake(messageSequence);
@@ -770,7 +773,7 @@ namespace OceanyaClient.Features.Viewport
             {
                 ChatPreview.PreviewText += textElement;
 
-                if (shouldPlayBlip && IsVisible && ShouldPlayBlipForTextElement(textElement, delay))
+                if (shouldPlayBlip && IsVisible && ShouldPlayBlipForTextElement(textElement, blipGateDelay))
                 {
                     audioManager.PlayBlip();
                 }
@@ -802,12 +805,14 @@ namespace OceanyaClient.Features.Viewport
         private int GetNextDisplayedTextElement(
             out string textElement,
             out bool shouldPlayBlip,
-            out bool triggerScreenShake)
+            out bool triggerScreenShake,
+            out int blipGateDelay)
         {
             shouldPlayBlip = false;
             triggerScreenShake = false;
             textElement = GetTextElement(chatFullText, chatTextPosition);
             chatTextPosition += textElement.Length;
+            blipGateDelay = 0;
 
             if (textElement == "{")
             {
@@ -846,12 +851,14 @@ namespace OceanyaClient.Features.Viewport
                     default:
                         textElement = escapedElement;
                         shouldPlayBlip = true;
-                        return GetChatTextDelay(textElement);
+                        blipGateDelay = GetChatTextDelay(textElement, includePunctuationDelay: false);
+                        return GetChatTextDelay(textElement, includePunctuationDelay: true);
                 }
             }
 
             shouldPlayBlip = true;
-            return GetChatTextDelay(textElement);
+            blipGateDelay = GetChatTextDelay(textElement, includePunctuationDelay: false);
+            return GetChatTextDelay(textElement, includePunctuationDelay: true);
         }
 
         private bool ShouldPlayBlipForTextElement(string textElement, int delay)
@@ -884,13 +891,13 @@ namespace OceanyaClient.Features.Viewport
             return false;
         }
 
-        private int GetChatTextDelay(string textElement)
+        private int GetChatTextDelay(string textElement, bool includePunctuationDelay)
         {
             double multiplier = ChatDisplayMultipliers[chatDisplaySpeed];
-            int delay = (int)Math.Round(chatTextCrawlMilliseconds * multiplier);
-            if (chatDisplaySpeed > 1 && ".,?!:;".Contains(textElement, StringComparison.Ordinal))
+            int delay = (int)(chatTextCrawlMilliseconds * multiplier);
+            if (includePunctuationDelay && chatDisplaySpeed > 1 && ".,?!:;".Contains(textElement, StringComparison.Ordinal))
             {
-                int maxDelay = (int)Math.Round(chatTextCrawlMilliseconds * ChatDisplayMultipliers[6] * 1.5);
+                int maxDelay = (int)(chatTextCrawlMilliseconds * ChatDisplayMultipliers[6] * 1.5);
                 delay = Math.Min(maxDelay, delay * 3);
             }
 

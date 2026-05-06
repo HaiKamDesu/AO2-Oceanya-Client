@@ -6,6 +6,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using Common;
 using OceanyaClient.Features.ChatPreview;
 
@@ -114,6 +115,12 @@ namespace OceanyaClient
         {
             if (d is AO2ChatPreviewControl control)
             {
+                if (e.Property == PreviewTextProperty && control.IsLoaded)
+                {
+                    control.ApplyPreviewTextOnly(e.NewValue as string ?? string.Empty);
+                    return;
+                }
+
                 control.RefreshPreview();
             }
         }
@@ -202,8 +209,7 @@ namespace OceanyaClient
             MessageTextBox.FontFamily = TryCreateFont(style.MessageFontFamily) ?? new FontFamily("Arial");
             ShownameTextBlock.TextAlignment = style.ShownameTextAlignment;
             MessageTextBox.TextAlignment = TextAlignment.Left;
-            MessageTextBox.CaretIndex = MessageTextBox.Text.Length;
-            MessageTextBox.ScrollToEnd();
+            ScrollMessageToCurrentTextEnd();
 
             if (style.ShownameOutlined)
             {
@@ -219,6 +225,35 @@ namespace OceanyaClient
             {
                 ShownameTextBlock.Effect = null;
             }
+        }
+
+        private void ApplyPreviewTextOnly(string rawText)
+        {
+            string text = UseNativeViewportLayout
+                ? rawText ?? string.Empty
+                : string.IsNullOrWhiteSpace(rawText)
+                    ? "Preview message."
+                    : rawText.Trim();
+
+            if (!string.Equals(MessageTextBox.Text, text, StringComparison.Ordinal))
+            {
+                MessageTextBox.Text = text;
+            }
+
+            ScrollMessageToCurrentTextEnd();
+        }
+
+        private void ScrollMessageToCurrentTextEnd()
+        {
+            MessageTextBox.CaretIndex = MessageTextBox.Text.Length;
+            MessageTextBox.ScrollToEnd();
+            _ = MessageTextBox.Dispatcher.BeginInvoke(
+                DispatcherPriority.Render,
+                new Action(() =>
+                {
+                    MessageTextBox.CaretIndex = MessageTextBox.Text.Length;
+                    MessageTextBox.ScrollToEnd();
+                }));
         }
 
         private void ApplyDynamicShownameLayout(AO2ChatPreviewStyle style, string showname)
