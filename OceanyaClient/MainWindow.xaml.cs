@@ -1,10 +1,12 @@
 ﻿using System;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Automation;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
@@ -40,8 +42,11 @@ namespace OceanyaClient
         private AOClient? singleInternalClient;
         private AOClient? boundSingleClientProfile;
         private Window? viewportWindow;
+        private HwndSource? viewportWindowSource;
         private Window? settingsWindow;
         private AO2ViewportWindowContent? viewportContent;
+        private bool isMainWindowClosing;
+        private bool hasHookedHostWindowClosing;
         private readonly bool useSingleInternalClient = SaveFile.Data.UseSingleInternalClient;
         private readonly bool aiModeEnabled;
         private bool debug = false;
@@ -74,6 +79,19 @@ namespace OceanyaClient
         private string lastUnknownOverlayPromptKey = string.Empty;
         private bool hasRaisedFinishedLoading;
         private static readonly TimeSpan PendingAiOriginRetention = TimeSpan.FromMinutes(2);
+        private const double ViewportContentAspectRatio =
+            (double)AO2ViewportAssetResolver.ViewportWidth / AO2ViewportAssetResolver.ViewportToolHeight;
+        private const int WmGetMinMaxInfo = 0x0024;
+        private const int WmSizing = 0x0214;
+        private const int WmSize = 0x0005;
+        private const int WmszLeft = 1;
+        private const int WmszRight = 2;
+        private const int WmszTop = 3;
+        private const int WmszTopLeft = 4;
+        private const int WmszTopRight = 5;
+        private const int WmszBottom = 6;
+        private const int WmszBottomLeft = 7;
+        private const int WmszBottomRight = 8;
 
         private sealed class DreddOverlaySelectionItem
         {
@@ -302,6 +320,7 @@ namespace OceanyaClient
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
+            HookHostWindowClosing();
             if (hasRaisedFinishedLoading)
             {
                 return;
@@ -310,6 +329,28 @@ namespace OceanyaClient
             hasRaisedFinishedLoading = true;
             MarkAutomationReady();
             FinishedLoading?.Invoke();
+        }
+
+        private void HookHostWindowClosing()
+        {
+            if (hasHookedHostWindowClosing)
+            {
+                return;
+            }
+
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this);
+            if (hostWindow == null)
+            {
+                return;
+            }
+
+            hasHookedHostWindowClosing = true;
+            hostWindow.Closing += (_, _) =>
+            {
+                isMainWindowClosing = true;
+                viewportContent?.AttachClient(null, null);
+                viewportWindow?.Close();
+            };
         }
         private void RenameClient(AOClient bot)
         {
@@ -2708,42 +2749,80 @@ namespace OceanyaClient
 
         private void OpenViewportWindow()
         {
+            EnsureViewportContent();
             if (viewportWindow != null)
             {
+                if (!viewportWindow.IsVisible)
+                {
+                    viewportWindow.Show();
+                }
+
                 viewportWindow.Activate();
                 RefreshViewportAttachment();
                 return;
             }
 
-            viewportContent = new AO2ViewportWindowContent();
             RefreshViewportAttachment();
 
             Window owner = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            ViewportWindowState savedState = SaveFile.Data.GMViewportWindowState ?? new ViewportWindowState();
+            double defaultWidth = GetViewportWindowWidthFromContentWidth(AO2ViewportAssetResolver.ViewportWidth);
+            double defaultHeight = GetViewportWindowHeightFromContentHeight(AO2ViewportAssetResolver.ViewportToolHeight);
+            double initialWidth = Math.Max(defaultWidth, savedState.Width);
+            double initialHeight = Math.Max(defaultHeight, savedState.Height);
+            (initialWidth, initialHeight) = NormalizeViewportWindowSize(initialWidth, initialHeight, preferWidth: true);
+
             viewportWindow = OceanyaWindowManager.CreateWindow(
-                viewportContent,
+                viewportContent!,
                 new OceanyaWindowPresentationOptions
                 {
                     Owner = owner,
                     Title = "AO2 Viewport",
                     HeaderText = "Viewport",
-                    Width = Math.Max(320, AO2ViewportAssetResolver.ViewportWidth),
-                    Height = AO2ViewportAssetResolver.ViewportToolHeight,
-                    MinWidth = AO2ViewportAssetResolver.ViewportWidth,
-                    MinHeight = AO2ViewportAssetResolver.ViewportToolHeight,
+                    Width = initialWidth,
+                    Height = initialHeight,
+                    MinWidth = defaultWidth,
+                    MinHeight = defaultHeight,
                     ShowInTaskbar = false,
                     IsUserResizeEnabled = true,
                     IsUserMoveEnabled = true,
                     IsCloseButtonVisible = true,
-                    WindowStartupLocation = WindowStartupLocation.CenterOwner
+                    WindowStartupLocation = savedState.Left.HasValue && savedState.Top.HasValue
+                        ? WindowStartupLocation.Manual
+                        : WindowStartupLocation.CenterOwner
                 });
+
+            if (savedState.Left.HasValue && savedState.Top.HasValue)
+            {
+                viewportWindow.Left = savedState.Left.Value;
+                viewportWindow.Top = savedState.Top.Value;
+            }
+
+            viewportWindow.SourceInitialized += ViewportWindow_SourceInitialized;
+            viewportWindow.LocationChanged += ViewportWindow_LocationChanged;
+            viewportWindow.Closing += (sender, eventArgs) =>
+            {
+                CaptureViewportWindowState();
+                if (isMainWindowClosing)
+                {
+                    return;
+                }
+
+                eventArgs.Cancel = true;
+                viewportWindow?.Hide();
+            };
             viewportWindow.Closed += (_, _) =>
             {
-                viewportContent?.AttachClient(null, null);
-                viewportContent = null;
+                viewportWindow.SourceInitialized -= ViewportWindow_SourceInitialized;
+                viewportWindow.LocationChanged -= ViewportWindow_LocationChanged;
+                viewportWindowSource?.RemoveHook(ViewportWindow_WndProc);
+                viewportWindowSource = null;
                 viewportWindow = null;
             };
             viewportWindow.Show();
             viewportWindow.Activate();
+            NormalizeVisibleViewportWindowSize(preferWidth: true);
+            CaptureViewportWindowState();
         }
 
         private void OpenSettingsWindow()
@@ -2783,8 +2862,284 @@ namespace OceanyaClient
 
         private void RefreshViewportAttachment()
         {
+            EnsureViewportContent();
             AOClient? incomingMessageClient = GetTargetClientForNetwork(currentClient) ?? currentClient;
             viewportContent?.AttachClient(currentClient, incomingMessageClient);
+        }
+
+        private void EnsureViewportContent()
+        {
+            viewportContent ??= new AO2ViewportWindowContent();
+        }
+
+        private void ViewportWindow_SourceInitialized(object? sender, EventArgs e)
+        {
+            if (viewportWindow == null)
+            {
+                return;
+            }
+
+            viewportWindowSource = HwndSource.FromHwnd(new WindowInteropHelper(viewportWindow).Handle);
+            viewportWindowSource?.AddHook(ViewportWindow_WndProc);
+        }
+
+        private void ViewportWindow_LocationChanged(object? sender, EventArgs e)
+        {
+            CaptureViewportWindowState();
+        }
+
+        private void NormalizeVisibleViewportWindowSize(bool preferWidth)
+        {
+            if (viewportWindow == null || viewportWindow.WindowState != WindowState.Normal)
+            {
+                return;
+            }
+
+            (double desiredWidth, double desiredHeight) =
+                NormalizeViewportWindowSize(viewportWindow.Width, viewportWindow.Height, preferWidth);
+            if (Math.Abs(viewportWindow.Width - desiredWidth) < 0.5
+                && Math.Abs(viewportWindow.Height - desiredHeight) < 0.5)
+            {
+                return;
+            }
+
+            viewportWindow.Width = desiredWidth;
+            viewportWindow.Height = desiredHeight;
+        }
+
+        private IntPtr ViewportWindow_WndProc(
+            IntPtr hwnd,
+            int message,
+            IntPtr wParam,
+            IntPtr lParam,
+            ref bool handled)
+        {
+            if (message == WmGetMinMaxInfo)
+            {
+                ApplyViewportMinMaxInfo(lParam);
+                handled = true;
+            }
+            else if (message == WmSizing)
+            {
+                ApplyViewportSizingRect((int)wParam, lParam);
+                handled = true;
+            }
+            else if (message == WmSize)
+            {
+                CaptureViewportWindowState();
+            }
+
+            return IntPtr.Zero;
+        }
+
+        private void ApplyViewportMinMaxInfo(IntPtr lParam)
+        {
+            ViewportMinMaxInfo minMaxInfo = Marshal.PtrToStructure<ViewportMinMaxInfo>(lParam);
+            (double scaleX, double scaleY) = GetViewportDpiScale();
+            minMaxInfo.ptMinTrackSize.X = (int)Math.Ceiling(GetViewportMinimumWindowWidth() * scaleX);
+            minMaxInfo.ptMinTrackSize.Y = (int)Math.Ceiling(GetViewportMinimumWindowHeight() * scaleY);
+            Marshal.StructureToPtr(minMaxInfo, lParam, true);
+        }
+
+        private void ApplyViewportSizingRect(int sizingEdge, IntPtr lParam)
+        {
+            ViewportNativeRect rect = Marshal.PtrToStructure<ViewportNativeRect>(lParam);
+            (double scaleX, double scaleY) = GetViewportDpiScale();
+            double horizontalOffset = GetViewportWindowHorizontalOffset() * scaleX;
+            double verticalOffset = GetViewportWindowVerticalOffset() * scaleY;
+            double minWidth = GetViewportMinimumWindowWidth() * scaleX;
+            double minHeight = GetViewportMinimumWindowHeight() * scaleY;
+
+            double width = Math.Max(minWidth, rect.Right - rect.Left);
+            double height = Math.Max(minHeight, rect.Bottom - rect.Top);
+            bool preferWidth = sizingEdge is WmszLeft or WmszRight or WmszTopLeft or WmszTopRight
+                or WmszBottomLeft or WmszBottomRight;
+
+            if (preferWidth)
+            {
+                height = ((width - horizontalOffset) / ViewportContentAspectRatio) + verticalOffset;
+                if (height < minHeight)
+                {
+                    height = minHeight;
+                    width = ((height - verticalOffset) * ViewportContentAspectRatio) + horizontalOffset;
+                }
+            }
+            else
+            {
+                width = ((height - verticalOffset) * ViewportContentAspectRatio) + horizontalOffset;
+                if (width < minWidth)
+                {
+                    width = minWidth;
+                    height = ((width - horizontalOffset) / ViewportContentAspectRatio) + verticalOffset;
+                }
+            }
+
+            ResizeViewportNativeRect(ref rect, sizingEdge, (int)Math.Round(width), (int)Math.Round(height));
+            Marshal.StructureToPtr(rect, lParam, true);
+        }
+
+        private static void ResizeViewportNativeRect(
+            ref ViewportNativeRect rect,
+            int sizingEdge,
+            int width,
+            int height)
+        {
+            switch (sizingEdge)
+            {
+                case WmszLeft:
+                    rect.Left = rect.Right - width;
+                    rect.Bottom = rect.Top + height;
+                    break;
+                case WmszRight:
+                    rect.Right = rect.Left + width;
+                    rect.Bottom = rect.Top + height;
+                    break;
+                case WmszTop:
+                    rect.Top = rect.Bottom - height;
+                    rect.Right = rect.Left + width;
+                    break;
+                case WmszTopLeft:
+                    rect.Left = rect.Right - width;
+                    rect.Top = rect.Bottom - height;
+                    break;
+                case WmszTopRight:
+                    rect.Right = rect.Left + width;
+                    rect.Top = rect.Bottom - height;
+                    break;
+                case WmszBottom:
+                    rect.Bottom = rect.Top + height;
+                    rect.Right = rect.Left + width;
+                    break;
+                case WmszBottomLeft:
+                    rect.Left = rect.Right - width;
+                    rect.Bottom = rect.Top + height;
+                    break;
+                case WmszBottomRight:
+                default:
+                    rect.Right = rect.Left + width;
+                    rect.Bottom = rect.Top + height;
+                    break;
+            }
+        }
+
+        private static (double Width, double Height) NormalizeViewportWindowSize(
+            double width,
+            double height,
+            bool preferWidth)
+        {
+            double minWidth = GetViewportWindowWidthFromContentWidth(AO2ViewportAssetResolver.ViewportWidth);
+            double minHeight = GetViewportWindowHeightFromContentHeight(AO2ViewportAssetResolver.ViewportToolHeight);
+            double clampedWidth = Math.Max(minWidth, width);
+            double clampedHeight = Math.Max(minHeight, height);
+
+            if (preferWidth)
+            {
+                double contentWidth = Math.Max(
+                    AO2ViewportAssetResolver.ViewportWidth,
+                    clampedWidth - GetViewportWindowHorizontalOffset());
+                double contentHeight = contentWidth / ViewportContentAspectRatio;
+                return (
+                    GetViewportWindowWidthFromContentWidth(contentWidth),
+                    GetViewportWindowHeightFromContentHeight(contentHeight));
+            }
+
+            double heightDrivenContentHeight = Math.Max(
+                AO2ViewportAssetResolver.ViewportToolHeight,
+                clampedHeight - GetViewportWindowVerticalOffset());
+            double heightDrivenContentWidth = heightDrivenContentHeight * ViewportContentAspectRatio;
+            return (
+                GetViewportWindowWidthFromContentWidth(heightDrivenContentWidth),
+                GetViewportWindowHeightFromContentHeight(heightDrivenContentHeight));
+        }
+
+        private void CaptureViewportWindowState()
+        {
+            if (viewportWindow == null || viewportWindow.WindowState != WindowState.Normal)
+            {
+                return;
+            }
+
+            SaveFile.Data.GMViewportWindowState = new ViewportWindowState
+            {
+                Width = Math.Max(GetViewportMinimumWindowWidth(), viewportWindow.Width),
+                Height = Math.Max(GetViewportMinimumWindowHeight(), viewportWindow.Height),
+                Left = viewportWindow.Left,
+                Top = viewportWindow.Top
+            };
+            SaveFile.Save();
+        }
+
+        private static double GetViewportWindowWidthFromContentWidth(double contentWidth)
+        {
+            return contentWidth + GetViewportWindowHorizontalOffset();
+        }
+
+        private static double GetViewportWindowHeightFromContentHeight(double contentHeight)
+        {
+            return contentHeight + GetViewportWindowVerticalOffset();
+        }
+
+        private static double GetViewportWindowHorizontalOffset()
+        {
+            return GenericOceanyaWindow.SharedFrameBorderThickness * 2;
+        }
+
+        private static double GetViewportWindowVerticalOffset()
+        {
+            return GenericOceanyaWindow.SharedHeaderHeight + (GenericOceanyaWindow.SharedFrameBorderThickness * 2);
+        }
+
+        private static double GetViewportMinimumWindowWidth()
+        {
+            return GetViewportWindowWidthFromContentWidth(AO2ViewportAssetResolver.ViewportWidth);
+        }
+
+        private static double GetViewportMinimumWindowHeight()
+        {
+            return GetViewportWindowHeightFromContentHeight(AO2ViewportAssetResolver.ViewportToolHeight);
+        }
+
+        private (double ScaleX, double ScaleY) GetViewportDpiScale()
+        {
+            if (viewportWindow == null)
+            {
+                return (1.0, 1.0);
+            }
+
+            PresentationSource? source = PresentationSource.FromVisual(viewportWindow);
+            if (source?.CompositionTarget == null)
+            {
+                return (1.0, 1.0);
+            }
+
+            Matrix transform = source.CompositionTarget.TransformToDevice;
+            return (transform.M11, transform.M22);
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ViewportNativePoint
+        {
+            public int X;
+            public int Y;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ViewportMinMaxInfo
+        {
+            public ViewportNativePoint ptReserved;
+            public ViewportNativePoint ptMaxSize;
+            public ViewportNativePoint ptMaxPosition;
+            public ViewportNativePoint ptMinTrackSize;
+            public ViewportNativePoint ptMaxTrackSize;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ViewportNativeRect
+        {
+            public int Left;
+            public int Top;
+            public int Right;
+            public int Bottom;
         }
 
         private string ShowInputDialog(string prompt)

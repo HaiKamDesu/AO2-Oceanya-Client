@@ -161,7 +161,7 @@ namespace OceanyaClient
                 PreviewFrame.BorderThickness = new Thickness(0);
                 PreviewFrame.CornerRadius = new CornerRadius(0);
                 PreviewFrame.Background = Brushes.Transparent;
-                FallbackBackground.Background = new SolidColorBrush(Color.FromRgb(0xE8, 0xE8, 0xE8));
+                FallbackBackground.Background = Brushes.Transparent;
             }
             else
             {

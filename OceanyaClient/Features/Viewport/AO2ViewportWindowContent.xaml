@@ -7,7 +7,7 @@
                                    MinHeight="296"
                                    ShowInTaskbar="False"
                                    Title="AO2 Viewport">
-    <Grid Background="Black" ClipToBounds="True">
+    <Grid Background="Transparent" ClipToBounds="True">
         <Viewbox Stretch="Uniform"
                  StretchDirection="Both"
                  HorizontalAlignment="Center"

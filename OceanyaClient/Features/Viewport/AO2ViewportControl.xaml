@@ -6,7 +6,7 @@
              Height="296"
              SnapsToDevicePixels="True"
              UseLayoutRounding="True">
-    <Grid Width="256" Height="296" Background="Black" ClipToBounds="True">
+    <Grid Width="256" Height="296" Background="Transparent" ClipToBounds="True">
         <Grid.RowDefinitions>
             <RowDefinition Height="192"/>
             <RowDefinition Height="104"/>

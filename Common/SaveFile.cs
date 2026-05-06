@@ -202,6 +202,14 @@ namespace OceanyaClient
         public bool IsMaximized { get; set; }
     }
 
+    public class ViewportWindowState
+    {
+        public double Width { get; set; } = 258;
+        public double Height { get; set; } = 328;
+        public double? Left { get; set; }
+        public double? Top { get; set; }
+    }
+
     public class CharacterCreatorCutSelectionState
     {
         public string SourcePath { get; set; } = string.Empty;
@@ -356,6 +364,7 @@ namespace OceanyaClient
             Height = 760,
             IsMaximized = false
         };
+        public ViewportWindowState GMViewportWindowState { get; set; } = new ViewportWindowState();
         public double CharacterCreatorPreviewVolume { get; set; } = 1.0;
         public double AudioMusicVolume { get; set; } = 0.5;
         public double AudioSfxVolume { get; set; } = 1.0;
@@ -569,9 +578,11 @@ namespace OceanyaClient
                 Height = 760,
                 IsMaximized = false
             };
+            data.GMViewportWindowState ??= new ViewportWindowState();
             ClampWindowState(data.FolderVisualizerWindowState);
             ClampWindowState(data.EmoteVisualizerWindowState);
             ClampWindowState(data.CharacterCreatorWindowState);
+            ClampViewportWindowState(data.GMViewportWindowState);
             data.CharacterFolderPreviewEmoteOverrides ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             data.CharacterFolderPreviewEmoteOverrides = data.CharacterFolderPreviewEmoteOverrides
                 .Where(pair => !string.IsNullOrWhiteSpace(pair.Key) && pair.Value > 0)
@@ -1416,6 +1427,21 @@ namespace OceanyaClient
         {
             state.Width = Math.Clamp(state.Width, 760, 6000);
             state.Height = Math.Clamp(state.Height, 520, 4000);
+            if (state.Left.HasValue && (double.IsInfinity(state.Left.Value) || double.IsNaN(state.Left.Value)))
+            {
+                state.Left = null;
+            }
+
+            if (state.Top.HasValue && (double.IsInfinity(state.Top.Value) || double.IsNaN(state.Top.Value)))
+            {
+                state.Top = null;
+            }
+        }
+
+        private static void ClampViewportWindowState(ViewportWindowState state)
+        {
+            state.Width = Math.Clamp(state.Width, 258, 6000);
+            state.Height = Math.Clamp(state.Height, 328, 7000);
             if (state.Left.HasValue && (double.IsInfinity(state.Left.Value) || double.IsNaN(state.Left.Value)))
             {
                 state.Left = null;
