@@ -83,6 +83,7 @@ Important AO2 contracts:
 - Objection/Hold It/Take That/Custom shouts gate the normal message path until the shout overlay finishes.
 - AO2 does not apply the new chat packet scene before a shout finishes; it overlays the shout on the previous viewport scene, then continues into the same message's preanim/speaking path.
 - AO2 uses `shout_static_time=724` for non-animated shout gates and caps animated shouts with `shout_max_time=1500`; Oceanya uses the same 724 ms default gate for built-in shout overlays.
+- Shout overlay visuals are resolved only from configured AO roots (`Globals.BaseFolders`): character folder, active misc/theme folders, theme default, then AO base root. The viewport must not use bundled Oceanya installation/source assets for AO visuals.
 - AO2 plays character shout SFX through a dedicated objection/shout player while using the regular SFX lookup (`holdit`, `objection`, `takethat`, or `custom`) at the same time the shout overlay starts. Oceanya keeps the same separate player so later emote/preanim SFX cannot cut the shout off.
 - Preanimations use packet field `PRE_EMOTE` (`ICMessage.PreAnim`) directly. They are not derived from the selected emote's configured preanimation name during receive-time rendering.
 - Character talking/idle sprites use packet field `EMOTE` as AO2's raw animation token. The resolver may use the emote table when the packet value matches an emote name/id, but it must fall back to resolving `(b)<packet emote>`, `(a)<packet emote>`, and raw packet token paths because AO2 sends and loads the animation token.

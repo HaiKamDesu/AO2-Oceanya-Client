@@ -594,7 +594,7 @@ namespace OceanyaClient.Features.Viewport
         }
 
         /// <summary>
-        /// Resolves the AO2 shout overlay image, preferring character/misc assets before built-in defaults.
+        /// Resolves the AO2 shout overlay image from configured AO asset roots only.
         /// </summary>
         public static string? ResolveShoutOverlayImage(
             ICMessage.ShoutModifiers shoutModifier,
@@ -629,27 +629,7 @@ namespace OceanyaClient.Features.Viewport
                 }
             }
 
-            string defaultName = stem + ".gif";
-            string outputDefault = Path.Combine(AppContext.BaseDirectory, "Resources", "ShoutDefaults", defaultName);
-            if (File.Exists(outputDefault))
-            {
-                return outputDefault;
-            }
-
-            string sourceDefault = Path.GetFullPath(Path.Combine(
-                AppContext.BaseDirectory,
-                "..",
-                "..",
-                "..",
-                "Resources",
-                "ShoutDefaults",
-                defaultName));
-            if (File.Exists(sourceDefault))
-            {
-                return sourceDefault;
-            }
-
-            return "pack://application:,,,/OceanyaClient;component/Resources/ShoutDefaults/" + defaultName;
+            return null;
         }
 
         /// <summary>
@@ -884,11 +864,6 @@ namespace OceanyaClient.Features.Viewport
             if (string.IsNullOrWhiteSpace(path))
             {
                 return null;
-            }
-
-            if (path.StartsWith("pack://", StringComparison.OrdinalIgnoreCase))
-            {
-                return new System.Windows.Media.Imaging.BitmapImage(new Uri(path, UriKind.Absolute));
             }
 
             if (!File.Exists(path))

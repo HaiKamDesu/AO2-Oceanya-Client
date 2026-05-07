@@ -558,15 +558,28 @@ namespace UnitTests
         [Test]
         public void Test_AO2ViewportAssetResolver_ResolvesShoutOverlayDefaults()
         {
+            string themeDirectory = Path.Combine(_tempDir, "themes", "default");
+            Directory.CreateDirectory(themeDirectory);
+            string themeShoutPath = Path.Combine(themeDirectory, "objection_bubble.gif");
+            File.WriteAllBytes(themeShoutPath, new byte[] { 1, 2, 3, 4 });
+
             Assert.That(
                 AO2ViewportAssetResolver.ResolveShoutOverlayImage(ICMessage.ShoutModifiers.Objection),
-                Does.Contain("objection_bubble.gif"));
+                Is.EqualTo(themeShoutPath));
             Assert.That(
                 AO2ViewportAssetResolver.ResolveShoutOverlayImage(ICMessage.ShoutModifiers.Nothing),
                 Is.Null);
             Assert.That(
                 AO2ViewportAssetResolver.GetShoutDuration(),
                 Is.EqualTo(TimeSpan.FromMilliseconds(724)));
+        }
+
+        [Test]
+        public void Test_AO2ViewportAssetResolver_DoesNotUseBundledShoutDefaults()
+        {
+            Assert.That(
+                AO2ViewportAssetResolver.ResolveShoutOverlayImage(ICMessage.ShoutModifiers.Objection),
+                Is.Null);
         }
 
         [Test]
