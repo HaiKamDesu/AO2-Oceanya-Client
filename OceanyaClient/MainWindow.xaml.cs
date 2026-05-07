@@ -2227,7 +2227,7 @@ namespace OceanyaClient
                     }
 
                     bool isSentFromSelf = icMessage.CharId == singleInternalClient.iniPuppetID;
-                    AddLoggedIcMessage(targetClient, icMessage.ShowName, icMessage.Message, isSentFromSelf, icMessage.TextColor);
+                    AddLoggedIcMessage(targetClient, icMessage.ShowName, ICMessage.StripFormattingCodes(icMessage.Message), isSentFromSelf, icMessage.TextColor);
 
                     targetClient.curBG = singleInternalClient.curBG;
                     targetClient.iniPuppetID = singleInternalClient.iniPuppetID;
@@ -2336,7 +2336,7 @@ namespace OceanyaClient
                 {
                     bool isSentFromSelf = clients.Select(x => x.Value.iniPuppetID).Contains(icMessage.CharId);
 
-                    AddLoggedIcMessage(bot, icMessage.ShowName, icMessage.Message, isSentFromSelf, icMessage.TextColor);
+                    AddLoggedIcMessage(bot, icMessage.ShowName, ICMessage.StripFormattingCodes(icMessage.Message), isSentFromSelf, icMessage.TextColor);
                 });
             };
             bot.OnIcActionReceived += (string showName, string action, bool isSentFromSelf, ICMessage.TextColors textColor) =>

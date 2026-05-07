@@ -222,6 +222,51 @@ namespace AOBot_Testing.Structures
             OriginalCommand = "";
         }
 
+        /// <summary>
+        /// Strips AO2 in-text formatting codes for display in logs/transcripts.
+        /// Removes speed modifiers ({/}), screenshake (\s), flash (\f), pause (\p),
+        /// converts \n to a real newline, and converts any other \x to x literally.
+        /// </summary>
+        public static string StripFormattingCodes(string? text)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return string.Empty;
+            }
+
+            System.Text.StringBuilder sb = new System.Text.StringBuilder(text.Length);
+            int i = 0;
+            while (i < text.Length)
+            {
+                char c = text[i];
+                if (c == '\\' && i + 1 < text.Length)
+                {
+                    i++;
+                    char next = text[i];
+                    switch (next)
+                    {
+                        case 'n': sb.Append('\n'); break;
+                        case 'p':
+                        case 's':
+                        case 'f': break;
+                        default: sb.Append(next); break;
+                    }
+                }
+                else if (c == '{' || c == '}')
+                {
+                    // speed modifier — not visible
+                }
+                else
+                {
+                    sb.Append(c);
+                }
+
+                i++;
+            }
+
+            return sb.ToString();
+        }
+
         private static string BuildDefaultEffectString(Effects effect)
         {
             return effect switch
@@ -477,7 +522,10 @@ namespace AOBot_Testing.Structures
             }
 
             string characterName = DecodePacketField(GetField(fields, CharacterIndex));
-            return CharacterFolder.FullList.FirstOrDefault(ini => ini.Name == characterName)?.configINI?.ShowName
+            return CharacterFolder.FullList.FirstOrDefault(ini =>
+                    string.Equals(ini.Name, characterName, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(ini.configINI?.Name, characterName, StringComparison.OrdinalIgnoreCase))
+                ?.configINI?.ResolveShowNameForEmote(-1)
                 ?? characterName;
         }
 
@@ -510,7 +558,11 @@ namespace AOBot_Testing.Structures
 
         private static PacketFieldLayout ResolvePacketFieldLayout(int fieldCount)
         {
-            return fieldCount >= LegacySlideIndex + 1
+            // Servers (tsuserverCC, tsuserver3) always echo with OtherName/OtherEmote/OtherOffset/OtherFlip
+            // in the Legacy field positions (indices 17-21), producing 30-field echoes even when CCCC_IC_SUPPORT
+            // was sent as a 28-field Compact packet. Legacy threshold must be <= 29 to detect these echoes.
+            // Compact outgoing packets max out at 28 fields (all features, no pairing extras).
+            return fieldCount >= LegacyAdditiveIndex + 1
                 ? PacketFieldLayout.Legacy
                 : PacketFieldLayout.Compact;
         }

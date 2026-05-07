@@ -550,6 +550,7 @@ namespace AOBot_Testing.Structures
         }
 
         public string PathToConfigINI { get; set; }
+        public string Name { get; set; } = string.Empty;
         public string ShowName { get; set; } = string.Empty;
         public string NeedsShowName { get; set; } = string.Empty;
         public string Gender { get; set; } = string.Empty;
@@ -560,17 +561,22 @@ namespace AOBot_Testing.Structures
         public int PreAnimationTime { get; set; }
         public int EmotionsCount { get; set; }
         public Dictionary<int, Emote> Emotions { get; set; } = new();
+        public Dictionary<int, int> ShowNameOverrideIndicesByEmoteId { get; set; } = new();
+        public Dictionary<int, string> ShowNameOverridesByIndex { get; set; } = new();
 
         public void Update()
         {
             string configINIPath = PathToConfigINI;
             EmotionsCount = 0;
             Emotions.Clear();
+            ShowNameOverrideIndicesByEmoteId.Clear();
+            ShowNameOverridesByIndex.Clear();
             int maxEmotionEntryId = 0;
 
             #region Config Parsing
             IniDocument document = IniDocument.Load(configINIPath);
 
+            Name = document.GetLatestValueOrDefault("Options", "name");
             ShowName = document.GetLatestValueOrDefault("Options", "showname");
             NeedsShowName = document.GetLatestValueOrDefault("Options", "needs_showname");
             Gender = document.GetLatestValueOrDefault("Options", "gender");
@@ -656,6 +662,31 @@ namespace AOBot_Testing.Structures
 
                 Emotions[soundLoopId].sfxLooping = string.IsNullOrWhiteSpace(entry.Value) ? "0" : entry.Value;
             }
+
+            foreach (IniEntry entry in document.GetEntries("OptionsN"))
+            {
+                if (int.TryParse(entry.Key, out int emoteId) && int.TryParse(entry.Value, out int overrideIndex))
+                {
+                    ShowNameOverrideIndicesByEmoteId[emoteId] = overrideIndex;
+                }
+            }
+
+            foreach (KeyValuePair<string, List<IniEntry>> section in document.Sections)
+            {
+                const string prefix = "Options";
+                if (!section.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                    || !int.TryParse(section.Key[prefix.Length..], out int overrideIndex)
+                    || overrideIndex <= 0)
+                {
+                    continue;
+                }
+
+                string overrideShowName = document.GetLatestValueOrDefault(section.Key, "showname");
+                if (!string.IsNullOrWhiteSpace(overrideShowName))
+                {
+                    ShowNameOverridesByIndex[overrideIndex] = overrideShowName;
+                }
+            }
             #endregion
 
             #region Gather Button Paths
@@ -715,6 +746,26 @@ namespace AOBot_Testing.Structures
                     .ToDictionary(x => x.Key, x => x.Value);
             }
             #endregion
+        }
+
+        public string ResolveShowNameForEmote(int emoteId)
+        {
+            string resolved = ShowName;
+            if (ShowNameOverrideIndicesByEmoteId.TryGetValue(emoteId, out int overrideIndex)
+                && ShowNameOverridesByIndex.TryGetValue(overrideIndex, out string overrideShowName)
+                && !string.IsNullOrWhiteSpace(overrideShowName))
+            {
+                resolved = overrideShowName;
+            }
+
+            if ((NeedsShowName ?? string.Empty).StartsWith("false", StringComparison.OrdinalIgnoreCase))
+            {
+                return string.Empty;
+            }
+
+            return string.IsNullOrWhiteSpace(resolved)
+                ? Path.GetFileName(Path.GetDirectoryName(PathToConfigINI) ?? string.Empty) ?? string.Empty
+                : resolved;
         }
     }
 

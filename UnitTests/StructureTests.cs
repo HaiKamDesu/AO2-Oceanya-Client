@@ -81,8 +81,18 @@ namespace UnitTests
             {
                 Assert.That(invalidEmote.Name, Is.EqualTo("invalid"), "Name should be parsed correctly");
                 Assert.That(invalidEmote.Modifier, Is.EqualTo(ICMessage.EmoteModifiers.NoPreanimation), "Invalid modifier should default to AO2 idle/no-preanimation");
-                Assert.That(invalidEmote.DeskMod, Is.EqualTo(ICMessage.DeskMods.Unspecified), "Invalid deskMod should default to AO2 unspecified");
+                Assert.That(
+                    invalidEmote.DeskMod,
+                    Is.EqualTo(ICMessage.DeskMods.Hidden),
+                    "Non-empty non-numeric deskMod should match AO2 QString::toInt hidden behavior");
             });
+
+            var blankDeskData = "invalid#pre#anim#0#";
+            var blankDeskEmote = Emote.ParseEmoteLine(blankDeskData);
+            Assert.That(
+                blankDeskEmote.DeskMod,
+                Is.EqualTo(ICMessage.DeskMods.Unspecified),
+                "Blank deskMod should remain AO2 unspecified");
         }
     }
     

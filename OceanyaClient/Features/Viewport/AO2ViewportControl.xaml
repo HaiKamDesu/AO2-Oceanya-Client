@@ -20,6 +20,14 @@
             <Image x:Name="DeskImage" Width="256" Height="192" Stretch="Fill" Visibility="Collapsed" Panel.ZIndex="5"/>
             <Image x:Name="EffectImage" Width="256" Height="192" Stretch="Uniform" Visibility="Collapsed" Panel.ZIndex="8"/>
             <Image x:Name="ShoutOverlayImage" Width="256" Height="192" Stretch="Uniform" Visibility="Collapsed" Panel.ZIndex="9"/>
+            <Border x:Name="FlashOverlay"
+                    Width="256"
+                    Height="192"
+                    Background="White"
+                    Opacity="0"
+                    Visibility="Collapsed"
+                    IsHitTestVisible="False"
+                    Panel.ZIndex="10"/>
         </Canvas>
 
         <components:AO2ChatPreviewControl x:Name="ChatPreview"
@@ -29,6 +37,6 @@
                                           ShowPreviewHeader="False"
                                           UseNativeViewportLayout="True"
                                           Visibility="Collapsed"
-                                          IsHitTestVisible="False"/>
+                                          IsHitTestVisible="True"/>
     </Grid>
 </UserControl>

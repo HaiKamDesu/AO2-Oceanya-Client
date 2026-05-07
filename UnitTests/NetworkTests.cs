@@ -423,6 +423,55 @@ public class NetworkTests
     }
 
     [Test]
+    public async Task ShowName_BlankShowname_UsesIniPuppetEmoteShownameOverride()
+    {
+        string baseRoot = CreateAoBaseRoot();
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(baseRoot, "characters", "Franziska"));
+            File.WriteAllText(
+                Path.Combine(baseRoot, "characters", "Franziska", "char.ini"),
+                "[Options]\nshowname=Loremaster\nside=pro\ngender=female\n"
+                + "[OptionsN]\n1=2\n"
+                + "[Options2]\nshowname=von Karma\n"
+                + "[Emotions]\nnumber=1\n1=normal#-#normal#0#1\n");
+
+            Directory.CreateDirectory(Path.Combine(baseRoot, "characters", "KamLoremaster"));
+            File.WriteAllText(
+                Path.Combine(baseRoot, "characters", "KamLoremaster", "char.ini"),
+                "[Options]\nshowname=Loremaster\nside=jud\ngender=female\n"
+                + "[Emotions]\nnumber=1\n1=normal#-#normal#0#../../background/default/defensedesk\n");
+
+            Globals.BaseFolders = new List<string> { baseRoot };
+            CharacterFolder.RefreshCharacterList();
+
+            AOClient client = new AOClient("ws://localhost:10001/");
+            await client.HandleMessage("SC#Franziska#%");
+            client.iniPuppetID = 0;
+            client.SetCharacter("KamLoremaster");
+            client.ICShowname = string.Empty;
+
+            MethodInfo? resolveMethod = typeof(AOClient).GetMethod(
+                "ResolveShowNameForPacket",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(resolveMethod, Is.Not.Null, "ResolveShowNameForPacket must exist on AOClient");
+
+            string? resolved = resolveMethod!.Invoke(client, null) as string;
+
+            Assert.That(resolved, Is.EqualTo("von Karma"));
+        }
+        finally
+        {
+            Globals.BaseFolders = new List<string>();
+            CharacterFolder.RefreshCharacterList();
+            if (Directory.Exists(baseRoot))
+            {
+                Directory.Delete(baseRoot, true);
+            }
+        }
+    }
+
+    [Test]
     [CancelAfter(15000)]
     public async Task Connect_TcpEndpoint_UsesAoCompatibleHandshakeFlow()
     {

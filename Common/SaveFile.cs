@@ -365,6 +365,7 @@ namespace OceanyaClient
             IsMaximized = false
         };
         public ViewportWindowState GMViewportWindowState { get; set; } = new ViewportWindowState();
+        public string GMViewportChatBackgroundColor { get; set; } = string.Empty;
         public double CharacterCreatorPreviewVolume { get; set; } = 1.0;
         public double AudioMusicVolume { get; set; } = 0.5;
         public double AudioSfxVolume { get; set; } = 1.0;
@@ -579,6 +580,7 @@ namespace OceanyaClient
                 IsMaximized = false
             };
             data.GMViewportWindowState ??= new ViewportWindowState();
+            data.GMViewportChatBackgroundColor = NormalizeOptionalColor(data.GMViewportChatBackgroundColor);
             ClampWindowState(data.FolderVisualizerWindowState);
             ClampWindowState(data.EmoteVisualizerWindowState);
             ClampWindowState(data.CharacterCreatorWindowState);
@@ -1451,6 +1453,30 @@ namespace OceanyaClient
             {
                 state.Top = null;
             }
+        }
+
+        private static string NormalizeOptionalColor(string? value)
+        {
+            string normalized = (value ?? string.Empty).Trim();
+            if (normalized.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            if (normalized[0] == '#')
+            {
+                normalized = normalized[1..];
+            }
+
+            bool isArgbHex = normalized.Length == 8 && normalized.All(IsHexDigit);
+            return isArgbHex ? "#" + normalized.ToUpperInvariant() : string.Empty;
+        }
+
+        private static bool IsHexDigit(char value)
+        {
+            return value is >= '0' and <= '9'
+                or >= 'a' and <= 'f'
+                or >= 'A' and <= 'F';
         }
 
         private static List<string> NormalizeTagList(IEnumerable<string>? values)

@@ -26,7 +26,10 @@ namespace OceanyaClient.Features.Viewport
         /// </summary>
         public static string? ResolveSfxPath(string? token)
         {
-            return ResolveSoundPath(string.Empty, token, includeLegacySfxPrefixes: true);
+            // AO2 standard SFX tokens (e.g. "sfx-realization", "1.wav") live in sounds/general/.
+            // Fall back to sounds/ root for non-standard layouts.
+            return ResolveSoundPath("general", token, includeLegacySfxPrefixes: true)
+                ?? ResolveSoundPath(string.Empty, token, includeLegacySfxPrefixes: false);
         }
 
         /// <summary>

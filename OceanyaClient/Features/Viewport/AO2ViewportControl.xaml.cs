@@ -5,6 +5,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using AOBot_Testing.Agents;
 using AOBot_Testing.Structures;
@@ -31,6 +32,11 @@ namespace OceanyaClient.Features.Viewport
         private int chatBlipRate = DefaultBlipRate;
         private bool chatBlankBlipEnabled;
         private string chatFullText = string.Empty;
+        private string chatPrefixText = string.Empty;
+        private string additivePreviousText = string.Empty;
+        private bool currentChatAdditive;
+        private bool chatRevealStartedForCurrentMessage;
+        private bool immediatePreAnimActive;
         private string currentChatBlipToken = string.Empty;
         private CharacterFolder? currentChatCharacter;
         private string currentChatEmote = string.Empty;
@@ -58,8 +64,207 @@ namespace OceanyaClient.Features.Viewport
             InitializeComponent();
             ViewportCanvas.RenderTransform = viewportShakeTransform;
             audioManager.RefreshVolumes();
+            InitializeChatBackgroundMenu();
+            ApplySavedChatBackground();
             IsVisibleChanged += OnIsVisibleChanged;
             Unloaded += (_, _) => audioManager.Dispose();
+        }
+
+        private void InitializeChatBackgroundMenu()
+        {
+            ContextMenu menu = new ContextMenu();
+            MenuItem chooseColorItem = new MenuItem { Header = "Set chat background color..." };
+            chooseColorItem.Click += (_, _) => PickChatBackgroundColor();
+            MenuItem transparentItem = new MenuItem { Header = "Use transparent chat background" };
+            transparentItem.Click += (_, _) => SetChatBackgroundColor(null);
+            menu.Items.Add(chooseColorItem);
+            menu.Items.Add(transparentItem);
+            ChatPreview.ContextMenu = menu;
+        }
+
+        private void PickChatBackgroundColor()
+        {
+            Color initialColor = TryParseSavedChatBackgroundColor(SaveFile.Data.GMViewportChatBackgroundColor)
+                ?? Color.FromArgb(180, 0, 0, 0);
+
+            Color? selected = ShowChatBackgroundColorDialog(initialColor);
+            if (selected.HasValue)
+            {
+                SetChatBackgroundColor(selected.Value);
+            }
+        }
+
+        private Color? ShowChatBackgroundColorDialog(Color initialColor)
+        {
+            ChatBackgroundColorPickerContent content = new ChatBackgroundColorPickerContent(initialColor);
+            OceanyaWindowPresentationOptions options = new OceanyaWindowPresentationOptions
+            {
+                Owner = Window.GetWindow(this),
+                Title = "Chat Background Color",
+                HeaderText = "Chat Background Color",
+                Width = 360,
+                Height = 270,
+                MinWidth = 360,
+                MinHeight = 270,
+                ShowInTaskbar = false,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                IsUserResizeEnabled = false,
+                BodyMargin = new Thickness(0)
+            };
+
+            return OceanyaWindowManager.ShowDialog(content, options) == true
+                ? content.SelectedColor
+                : null;
+        }
+
+        private static Slider CreateColorSlider(byte value)
+        {
+            return new Slider
+            {
+                Minimum = 0,
+                Maximum = 255,
+                Value = value,
+                TickFrequency = 1,
+                IsSnapToTickEnabled = true
+            };
+        }
+
+        private static Grid BuildColorSliderRow(string label, Slider slider, int row)
+        {
+            Grid grid = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.Children.Add(new TextBlock
+            {
+                Text = label,
+                Foreground = Brushes.White,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            Grid.SetColumn(slider, 1);
+            grid.Children.Add(slider);
+            Grid.SetRow(grid, row);
+            return grid;
+        }
+
+        private sealed class ChatBackgroundColorPickerContent : OceanyaWindowContentControl
+        {
+            private readonly Border preview;
+            private readonly Slider redSlider;
+            private readonly Slider greenSlider;
+            private readonly Slider blueSlider;
+
+            public ChatBackgroundColorPickerContent(Color initialColor)
+            {
+                Width = 358;
+                Height = 238;
+                Background = new SolidColorBrush(Color.FromRgb(30, 36, 45));
+
+                Grid root = new Grid { Margin = new Thickness(16) };
+                root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+                root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+                preview = new Border
+                {
+                    Height = 44,
+                    Margin = new Thickness(0, 0, 0, 14),
+                    CornerRadius = new CornerRadius(4),
+                    BorderBrush = new SolidColorBrush(Color.FromRgb(80, 95, 116)),
+                    BorderThickness = new Thickness(1)
+                };
+                Grid.SetRow(preview, 0);
+                root.Children.Add(preview);
+
+                redSlider = CreateColorSlider(initialColor.R);
+                greenSlider = CreateColorSlider(initialColor.G);
+                blueSlider = CreateColorSlider(initialColor.B);
+                root.Children.Add(BuildColorSliderRow("R", redSlider, 1));
+                root.Children.Add(BuildColorSliderRow("G", greenSlider, 2));
+                root.Children.Add(BuildColorSliderRow("B", blueSlider, 3));
+
+                redSlider.ValueChanged += (_, _) => RefreshPreview();
+                greenSlider.ValueChanged += (_, _) => RefreshPreview();
+                blueSlider.ValueChanged += (_, _) => RefreshPreview();
+
+                StackPanel buttons = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    Margin = new Thickness(0, 14, 0, 0)
+                };
+                Button cancelButton = new Button
+                {
+                    Content = "Cancel",
+                    MinWidth = 78,
+                    Margin = new Thickness(0, 0, 8, 0)
+                };
+                Button okButton = new Button { Content = "OK", MinWidth = 78, IsDefault = true };
+                cancelButton.Click += (_, _) => RequestHostClose(false);
+                okButton.Click += (_, _) => RequestHostClose(true);
+                buttons.Children.Add(cancelButton);
+                buttons.Children.Add(okButton);
+                Grid.SetRow(buttons, 4);
+                root.Children.Add(buttons);
+
+                Content = root;
+                RefreshPreview();
+            }
+
+            public Color SelectedColor { get; private set; }
+
+            public override string HeaderText => "Chat Background Color";
+
+            private void RefreshPreview()
+            {
+                SelectedColor = Color.FromRgb(
+                    (byte)redSlider.Value,
+                    (byte)greenSlider.Value,
+                    (byte)blueSlider.Value);
+                preview.Background = new SolidColorBrush(SelectedColor);
+            }
+        }
+
+        private void ApplySavedChatBackground()
+        {
+            SetChatBackgroundBrush(TryParseSavedChatBackgroundColor(SaveFile.Data.GMViewportChatBackgroundColor));
+        }
+
+        private void SetChatBackgroundColor(Color? color)
+        {
+            SaveFile.Data.GMViewportChatBackgroundColor = color.HasValue
+                ? $"#{color.Value.A:X2}{color.Value.R:X2}{color.Value.G:X2}{color.Value.B:X2}"
+                : string.Empty;
+            SaveFile.Save();
+            SetChatBackgroundBrush(color);
+        }
+
+        private void SetChatBackgroundBrush(Color? color)
+        {
+            ChatPreview.ChatSectionBackground = color.HasValue
+                ? new SolidColorBrush(color.Value)
+                : Brushes.Transparent;
+            ChatPreview.RefreshPreview();
+        }
+
+        private static Color? TryParseSavedChatBackgroundColor(string? value)
+        {
+            string normalized = (value ?? string.Empty).Trim();
+            if (normalized.Length == 0)
+            {
+                return null;
+            }
+
+            try
+            {
+                object? converted = ColorConverter.ConvertFromString(normalized);
+                return converted is Color color ? color : null;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         /// <summary>
@@ -135,6 +340,9 @@ namespace OceanyaClient.Features.Viewport
             }
 
             StopScreenShake();
+            FlashOverlay.BeginAnimation(OpacityProperty, null);
+            FlashOverlay.Visibility = Visibility.Collapsed;
+            FlashOverlay.Opacity = 0;
             audioManager.StopAll();
         }
 
@@ -185,6 +393,8 @@ namespace OceanyaClient.Features.Viewport
             StopChatTextTimer();
             StopScreenShake();
             audioManager.StopAll();
+            FlashOverlay.BeginAnimation(OpacityProperty, null);
+            FlashOverlay.Visibility = Visibility.Collapsed;
             AO2ViewportAssetResolver.ViewportImagePlacement backgroundPlacement =
                 AO2ViewportAssetResolver.ResolveBackgroundPlacement(sceneClient.curBG, sceneClient.curPos);
             SetPlacedImage(BackgroundImage, backgroundPlacement, true, Stretch.Fill);
@@ -205,12 +415,18 @@ namespace OceanyaClient.Features.Viewport
             SetAnimatedImage(ShoutOverlayImage, null, false);
             ChatPreview.PreviewText = string.Empty;
             ChatPreview.Visibility = Visibility.Collapsed;
+            additivePreviousText = string.Empty;
+            chatPrefixText = string.Empty;
+            currentChatAdditive = false;
+            chatRevealStartedForCurrentMessage = false;
             currentChatBlipToken = string.Empty;
         }
 
         private void RenderMessage(ICMessage message)
         {
             messageSequence++;
+            chatRevealStartedForCurrentMessage = false;
+            immediatePreAnimActive = false;
             StopPendingMessageTimer();
             StopScreenShake();
             CharacterFolder? character = AO2ViewportAssetResolver.ResolveCharacter(message.Character)
@@ -315,8 +531,7 @@ namespace OceanyaClient.Features.Viewport
             {
                 if (immediate)
                 {
-                    renderSpeaking();
-                    return;
+                    immediatePreAnimActive = true;
                 }
 
                 bool continued = false;
@@ -328,6 +543,7 @@ namespace OceanyaClient.Features.Viewport
                     }
 
                     continued = true;
+                    immediatePreAnimActive = false;
                     renderSpeaking();
                 };
                 return;
@@ -444,12 +660,24 @@ namespace OceanyaClient.Features.Viewport
             ChatPreview.MessageColorIndex = message == null ? 0 : (int)message.TextColor;
             ChatPreview.MessageColorOverride = ResolveViewportMessageColor(message);
             ChatPreview.PreviewShowname = showname ?? string.Empty;
+            bool isAdditiveMessage = message?.Additive == true;
+            string additivePrefix = isAdditiveMessage ? additivePreviousText : string.Empty;
+            if (!isAdditiveMessage)
+            {
+                additivePreviousText = string.Empty;
+            }
+
             bool shouldStartTextReveal = showChat
                 && startTextReveal
                 && (phase == ViewportPhase.Speaking || phase == ViewportPhase.PreAnimation);
-            ChatPreview.PreviewText = shouldStartTextReveal
-                ? string.Empty
-                : messageText ?? string.Empty;
+            if (shouldStartTextReveal)
+            {
+                ChatPreview.PreviewText = string.Empty;
+            }
+            else if (!chatRevealStartedForCurrentMessage)
+            {
+                ChatPreview.PreviewText = additivePrefix + (messageText ?? string.Empty);
+            }
             ChatPreview.ChatToken = AO2ViewportAssetResolver.ResolveCharacterChatToken(character);
             ChatPreview.ShowShowname = !string.IsNullOrWhiteSpace(showname);
             ChatPreview.ShowMessage = showChat;
@@ -468,6 +696,7 @@ namespace OceanyaClient.Features.Viewport
                 if (phase == ViewportPhase.Speaking)
                 {
                     PlayEffectSfx(message, character);
+                    PlayLegacyRealization(message, character);
                 }
 
                 if (ShouldApplyImmediateScreenShake(message, phase))
@@ -483,7 +712,7 @@ namespace OceanyaClient.Features.Viewport
                 ChatPreview.RefreshPreview();
                 if (shouldStartTextReveal)
                 {
-                    StartChatTextReveal(messageText ?? string.Empty, character, message);
+                    StartChatTextReveal(messageText ?? string.Empty, additivePrefix, character, message);
                 }
             }
             else
@@ -512,10 +741,18 @@ namespace OceanyaClient.Features.Viewport
             PairCharacterImage.Source = null;
             SpeedlinesImage.Source = null;
             ShoutOverlayImage.Source = null;
+            FlashOverlay.BeginAnimation(OpacityProperty, null);
+            FlashOverlay.Visibility = Visibility.Collapsed;
+            FlashOverlay.Opacity = 0;
             StopAllAnimations();
             audioManager.StopAll();
             ChatPreview.PreviewText = string.Empty;
             ChatPreview.Visibility = Visibility.Collapsed;
+            additivePreviousText = string.Empty;
+            chatPrefixText = string.Empty;
+            currentChatAdditive = false;
+            chatRevealStartedForCurrentMessage = false;
+            immediatePreAnimActive = false;
             currentChatBlipToken = string.Empty;
             CharacterImage.Visibility = Visibility.Collapsed;
             PairCharacterImage.Visibility = Visibility.Collapsed;
@@ -706,7 +943,12 @@ namespace OceanyaClient.Features.Viewport
         {
             AO2ViewportAssetResolver.ViewportEffect resolvedEffect =
                 AO2ViewportAssetResolver.ResolveEffect(effectString, effect, character, flip);
-            SetAnimatedImage(EffectImage, resolvedEffect.ImagePath, !string.IsNullOrWhiteSpace(resolvedEffect.ImagePath));
+            IAnimationPlayer? effectPlayer = SetAnimatedImage(EffectImage, resolvedEffect.ImagePath, !string.IsNullOrWhiteSpace(resolvedEffect.ImagePath), loop: resolvedEffect.Loop);
+            if (effectPlayer != null && !resolvedEffect.Loop)
+            {
+                effectPlayer.PlaybackFinished += () => EffectImage.Visibility = Visibility.Collapsed;
+            }
+
             EffectImage.Stretch = resolvedEffect.Stretch ? Stretch.Fill : Stretch.Uniform;
             EffectImage.RenderTransformOrigin = new Point(0.5, 0.5);
             EffectImage.RenderTransform = resolvedEffect.RespectFlip ? new ScaleTransform(-1, 1) : Transform.Identity;
@@ -736,10 +978,13 @@ namespace OceanyaClient.Features.Viewport
             Panel.SetZIndex(ShoutOverlayImage, 9);
         }
 
-        private void StartChatTextReveal(string text, CharacterFolder? character, ICMessage? message)
+        private void StartChatTextReveal(string text, string prefixText, CharacterFolder? character, ICMessage? message)
         {
             StopChatTextTimer();
+            chatRevealStartedForCurrentMessage = true;
             chatFullText = text ?? string.Empty;
+            chatPrefixText = prefixText ?? string.Empty;
+            currentChatAdditive = message?.Additive == true;
             currentChatCharacter = character;
             currentChatEmote = message?.Emote ?? string.Empty;
             currentChatSequence = messageSequence;
@@ -756,10 +1001,11 @@ namespace OceanyaClient.Features.Viewport
             chatMarkupStart = style.ChatMarkupStart;
             chatMarkupEnd = style.ChatMarkupEnd;
             chatMarkupRemove = style.ChatMarkupRemove;
-            ChatPreview.PreviewText = string.Empty;
+            ChatPreview.PreviewText = chatPrefixText;
 
             if (chatFullText.Length == 0)
             {
+                CompleteChatTextReveal();
                 return;
             }
 
@@ -789,7 +1035,7 @@ namespace OceanyaClient.Features.Viewport
 
             if (!string.IsNullOrEmpty(textElement))
             {
-                ChatPreview.PreviewText = chatFullText.Substring(0, chatTextPosition);
+                ChatPreview.PreviewText = chatPrefixText + chatFullText.Substring(0, chatTextPosition);
 
                 if (shouldPlayBlip && IsVisible && ShouldPlayBlipForTextElement(textElement, blipGateDelay))
                 {
@@ -823,6 +1069,9 @@ namespace OceanyaClient.Features.Viewport
         private void CompleteChatTextReveal()
         {
             StopChatTextTimer();
+            additivePreviousText = chatPrefixText + chatFullText;
+            chatPrefixText = string.Empty;
+            currentChatAdditive = false;
             RenderPostMessageCharacterAnimation(currentChatCharacter, currentChatEmote, currentChatSequence);
             currentChatCharacter = null;
             currentChatEmote = string.Empty;
@@ -832,6 +1081,11 @@ namespace OceanyaClient.Features.Viewport
         private void RenderPostMessageCharacterAnimation(CharacterFolder? character, string emoteName, int sequence)
         {
             if (character == null || sequence != messageSequence || string.IsNullOrWhiteSpace(emoteName))
+            {
+                return;
+            }
+
+            if (immediatePreAnimActive)
             {
                 return;
             }
@@ -913,6 +1167,7 @@ namespace OceanyaClient.Features.Viewport
                         return 0;
                     case "f":
                         textElement = string.Empty;
+                        DoFlash();
                         return 0;
                     default:
                         textElement = escapedElement;
@@ -1044,7 +1299,8 @@ namespace OceanyaClient.Features.Viewport
             }
 
             string? sfxPath = AO2ViewportAudioResolver.ResolveSfxPath(message.SfxName);
-            if (string.IsNullOrWhiteSpace(sfxPath))
+            bool needsShake = message.ScreenShake;
+            if (string.IsNullOrWhiteSpace(sfxPath) && !needsShake)
             {
                 return;
             }
@@ -1062,12 +1318,15 @@ namespace OceanyaClient.Features.Viewport
                     return;
                 }
 
-                if (shakeAtSfxTime && message.ScreenShake)
+                if (needsShake)
                 {
                     StartScreenShake(sequence);
                 }
 
-                audioManager.PlaySfx(message.SfxName);
+                if (!string.IsNullOrWhiteSpace(sfxPath))
+                {
+                    audioManager.PlaySfx(message.SfxName);
+                }
             };
             timer.Start();
         }
@@ -1080,7 +1339,45 @@ namespace OceanyaClient.Features.Viewport
                 return;
             }
 
-            audioManager.PlaySfx(token);
+            audioManager.PlayEffectSfx(token);
+        }
+
+        private void PlayLegacyRealization(ICMessage message, CharacterFolder? character)
+        {
+            // Legacy realization checkbox only — new effects field handles both visual and SFX via
+            // RenderEffect + PlayEffectSfx, so DoFlash here would be redundant and cause stuck white.
+            if (!message.Realization || message.Effect != ICMessage.Effects.None)
+            {
+                return;
+            }
+
+            DoFlash();
+
+            string token = string.IsNullOrWhiteSpace(character?.configINI?.Realization)
+                ? "sfx-realization"
+                : character.configINI.Realization;
+            audioManager.PlayEffectSfx(token);
+        }
+
+        private void DoFlash()
+        {
+            if (!IsVisible)
+            {
+                return;
+            }
+
+            FlashOverlay.BeginAnimation(OpacityProperty, null);
+            FlashOverlay.Opacity = 0;
+            FlashOverlay.Visibility = Visibility.Visible;
+            DoubleAnimation fade = new DoubleAnimation
+            {
+                From = 0.85,
+                To = 0,
+                Duration = TimeSpan.FromMilliseconds(220),
+                FillBehavior = FillBehavior.Stop
+            };
+            fade.Completed += (_, _) => FlashOverlay.Visibility = Visibility.Collapsed;
+            FlashOverlay.BeginAnimation(OpacityProperty, fade);
         }
 
         private void StopAnimation(Image image)
@@ -1159,12 +1456,17 @@ namespace OceanyaClient.Features.Viewport
                 character,
                 token,
                 "_FrameScreenshake");
+            Dictionary<int, List<string>> realizationFrames = ResolveFrameEffects(
+                message.FramesRealization,
+                character,
+                token,
+                "_FrameRealization");
             Dictionary<int, List<string>> sfxFrames = ResolveFrameEffects(
                 message.FramesSfx,
                 character,
                 token,
                 "_FrameSFX");
-            if (shakeFrames.Count == 0 && sfxFrames.Count == 0)
+            if (shakeFrames.Count == 0 && realizationFrames.Count == 0 && sfxFrames.Count == 0)
             {
                 return null;
             }
@@ -1178,6 +1480,7 @@ namespace OceanyaClient.Features.Viewport
                 }
 
                 FireFrameShakeEffects(frameIndex, shakeFrames, processedEffectKeys, sequence);
+                FireFrameRealizationEffects(frameIndex, realizationFrames, processedEffectKeys);
                 FireFrameSfxEffects(frameIndex, sfxFrames, processedEffectKeys);
             };
         }
@@ -1197,13 +1500,44 @@ namespace OceanyaClient.Features.Viewport
 
                 for (int i = 0; i < entry.Value.Count; i++)
                 {
-                    string uniqueKey = "shake:" + frameIndex.ToString(CultureInfo.InvariantCulture) + ":" + i.ToString(CultureInfo.InvariantCulture);
+                    string uniqueKey = "shake:"
+                        + frameIndex.ToString(CultureInfo.InvariantCulture)
+                        + ":"
+                        + i.ToString(CultureInfo.InvariantCulture);
                     if (!processedEffectKeys.Add(uniqueKey))
                     {
                         continue;
                     }
 
                     StartScreenShake(sequence);
+                }
+            }
+        }
+
+        private void FireFrameRealizationEffects(
+            int frameIndex,
+            IReadOnlyDictionary<int, List<string>> frameMap,
+            ISet<string> processedEffectKeys)
+        {
+            foreach (KeyValuePair<int, List<string>> entry in frameMap)
+            {
+                if (entry.Key != frameIndex)
+                {
+                    continue;
+                }
+
+                for (int i = 0; i < entry.Value.Count; i++)
+                {
+                    string uniqueKey = "realization:"
+                        + frameIndex.ToString(CultureInfo.InvariantCulture)
+                        + ":"
+                        + i.ToString(CultureInfo.InvariantCulture);
+                    if (!processedEffectKeys.Add(uniqueKey))
+                    {
+                        continue;
+                    }
+
+                    DoFlash();
                 }
             }
         }
@@ -1222,7 +1556,10 @@ namespace OceanyaClient.Features.Viewport
 
                 for (int i = 0; i < entry.Value.Count; i++)
                 {
-                    string uniqueKey = "sfx:" + frameIndex.ToString(CultureInfo.InvariantCulture) + ":" + i.ToString(CultureInfo.InvariantCulture);
+                    string uniqueKey = "sfx:"
+                        + frameIndex.ToString(CultureInfo.InvariantCulture)
+                        + ":"
+                        + i.ToString(CultureInfo.InvariantCulture);
                     if (!processedEffectKeys.Add(uniqueKey))
                     {
                         continue;

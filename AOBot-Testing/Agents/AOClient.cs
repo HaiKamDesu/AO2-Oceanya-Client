@@ -709,15 +709,7 @@ namespace AOBot_Testing.Agents
             CharacterFolder? showNameCharacter = ResolveIniPuppetCharacter() ?? CurrentINI;
             if (showNameCharacter?.configINI != null)
             {
-                if ((showNameCharacter.configINI.NeedsShowName ?? string.Empty).StartsWith("false", StringComparison.OrdinalIgnoreCase))
-                {
-                    return string.Empty;
-                }
-
-                if (!string.IsNullOrWhiteSpace(showNameCharacter.configINI.ShowName))
-                {
-                    return showNameCharacter.configINI.ShowName;
-                }
+                return showNameCharacter.configINI.ResolveShowNameForEmote(currentEmote?.ID ?? -1);
             }
 
             return showNameCharacter?.Name ?? CurrentINI?.Name ?? string.Empty;
@@ -731,8 +723,7 @@ namespace AOBot_Testing.Agents
             }
 
             string characterName = serverCharacterList.ElementAt(iniPuppetID).Key;
-            return CharacterFolder.FullList.FirstOrDefault(character =>
-                string.Equals(character.Name, characterName, StringComparison.OrdinalIgnoreCase));
+            return FindCharacterByFolderOrIniName(characterName);
         }
 
         private string ResolveIncomingIcDisplayName(ICMessage icMessage)
@@ -749,19 +740,10 @@ namespace AOBot_Testing.Agents
                 return string.Empty;
             }
 
-            CharacterFolder? matchingCharacter = CharacterFolder.FullList.FirstOrDefault(character =>
-                string.Equals(character.Name, characterName, StringComparison.OrdinalIgnoreCase));
+            CharacterFolder? matchingCharacter = FindCharacterByFolderOrIniName(characterName);
             if (matchingCharacter?.configINI != null)
             {
-                if ((matchingCharacter.configINI.NeedsShowName ?? string.Empty).StartsWith("false", StringComparison.OrdinalIgnoreCase))
-                {
-                    return string.Empty;
-                }
-
-                if (!string.IsNullOrWhiteSpace(matchingCharacter.configINI.ShowName))
-                {
-                    return matchingCharacter.configINI.ShowName;
-                }
+                return matchingCharacter.configINI.ResolveShowNameForEmote(-1);
             }
 
             return characterName;
@@ -925,22 +907,27 @@ namespace AOBot_Testing.Agents
             }
 
             string characterName = serverCharacterList.ElementAt(characterId).Key;
-            CharacterFolder? matchingCharacter = CharacterFolder.FullList.FirstOrDefault(character =>
-                string.Equals(character.Name, characterName, StringComparison.OrdinalIgnoreCase));
+            CharacterFolder? matchingCharacter = FindCharacterByFolderOrIniName(characterName);
             if (matchingCharacter?.configINI != null)
             {
-                if ((matchingCharacter.configINI.NeedsShowName ?? string.Empty).StartsWith("false", StringComparison.OrdinalIgnoreCase))
-                {
-                    return string.Empty;
-                }
-
-                if (!string.IsNullOrWhiteSpace(matchingCharacter.configINI.ShowName))
-                {
-                    return matchingCharacter.configINI.ShowName;
-                }
+                return matchingCharacter.configINI.ResolveShowNameForEmote(-1);
             }
 
             return characterName;
+        }
+
+        private static CharacterFolder? FindCharacterByFolderOrIniName(string characterName)
+        {
+            string normalized = characterName?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                return null;
+            }
+
+            return CharacterFolder.FullList.FirstOrDefault(character =>
+                    string.Equals(character.Name, normalized, StringComparison.OrdinalIgnoreCase))
+                ?? CharacterFolder.FullList.FirstOrDefault(character =>
+                    string.Equals(character.configINI?.Name, normalized, StringComparison.OrdinalIgnoreCase));
         }
 
         private string ResolveEffectStringForPacket(bool hasSelectedCustomSfx)

@@ -10,9 +10,11 @@ namespace OceanyaClient.Features.Viewport
     {
         private readonly AO2BlipPreviewPlayer musicPlayer = new AO2BlipPreviewPlayer();
         private readonly AO2BlipPreviewPlayer sfxPlayer = new AO2BlipPreviewPlayer();
+        private readonly AO2BlipPreviewPlayer effectSfxPlayer = new AO2BlipPreviewPlayer();
         private readonly AO2BlipPreviewPlayer blipPlayer = new AO2BlipPreviewPlayer();
         private string currentMusicPath = string.Empty;
         private string currentSfxPath = string.Empty;
+        private string currentEffectSfxPath = string.Empty;
         private string currentBlipPath = string.Empty;
         private bool disposed;
 
@@ -23,6 +25,7 @@ namespace OceanyaClient.Features.Viewport
         {
             musicPlayer.Volume = (float)AudioSettings.MusicVolume;
             sfxPlayer.Volume = (float)AudioSettings.SfxVolume;
+            effectSfxPlayer.Volume = (float)AudioSettings.SfxVolume;
             blipPlayer.Volume = (float)AudioSettings.BlipVolume;
         }
 
@@ -33,6 +36,7 @@ namespace OceanyaClient.Features.Viewport
         {
             musicPlayer.Stop();
             sfxPlayer.Stop();
+            effectSfxPlayer.Stop();
             blipPlayer.Stop();
         }
 
@@ -90,15 +94,42 @@ namespace OceanyaClient.Features.Viewport
 
             if (!string.Equals(currentSfxPath, path, StringComparison.OrdinalIgnoreCase))
             {
-                currentSfxPath = path;
                 if (!sfxPlayer.TrySetBlip(path))
                 {
                     return;
                 }
+
+                currentSfxPath = path;
             }
 
             sfxPlayer.Volume = (float)AudioSettings.SfxVolume;
             _ = sfxPlayer.PlayBlip();
+        }
+
+        /// <summary>
+        /// Plays an AO2-style effect SFX token on a dedicated player that won't be
+        /// interrupted by regular emote SFX playback.
+        /// </summary>
+        public void PlayEffectSfx(string? token)
+        {
+            string? path = AO2ViewportAudioResolver.ResolveSfxPath(token);
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return;
+            }
+
+            if (!string.Equals(currentEffectSfxPath, path, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!effectSfxPlayer.TrySetBlip(path))
+                {
+                    return;
+                }
+
+                currentEffectSfxPath = path;
+            }
+
+            effectSfxPlayer.Volume = (float)AudioSettings.SfxVolume;
+            _ = effectSfxPlayer.PlayBlip();
         }
 
         /// <summary>
@@ -147,6 +178,7 @@ namespace OceanyaClient.Features.Viewport
             StopAll();
             musicPlayer.Dispose();
             sfxPlayer.Dispose();
+            effectSfxPlayer.Dispose();
             blipPlayer.Dispose();
         }
     }

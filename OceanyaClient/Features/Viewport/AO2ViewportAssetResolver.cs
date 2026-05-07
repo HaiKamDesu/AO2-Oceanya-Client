@@ -85,7 +85,8 @@ namespace OceanyaClient.Features.Viewport
             EffectLayer Layer,
             bool Stretch,
             bool RespectFlip,
-            bool RespectOffset);
+            bool RespectOffset,
+            bool Loop = false);
 
         /// <summary>
         /// Resolved animation metadata for a viewport character layer.
@@ -387,26 +388,14 @@ namespace OceanyaClient.Features.Viewport
                 }
             }
 
-            string fallbackResourceName = effectName.ToLowerInvariant() switch
-            {
-                "realization" => "realization",
-                "hearts" => "hearts",
-                "reaction" => "reaction",
-                "impact" => "impact",
-                _ => string.Empty
-            };
-
-            effectPath ??= string.IsNullOrWhiteSpace(fallbackResourceName)
-                ? null
-                : "pack://application:,,,/OceanyaClient;component/Resources/Buttons/MessageEffects/" + fallbackResourceName + ".png";
-
             Dictionary<string, string> properties = ResolveEffectProperties(effectName, effectFolder);
             EffectLayer layer = ParseEffectLayer(GetProperty(properties, "layer"));
             bool stretch = IsTrue(GetProperty(properties, "stretch"));
             bool respectFlip = IsTrue(GetProperty(properties, "respect_flip")) && flip;
             bool respectOffset = IsTrue(GetProperty(properties, "respect_offset"));
+            bool loop = IsTrue(GetProperty(properties, "loop"));
 
-            return new ViewportEffect(effectPath, layer, stretch, respectFlip, respectOffset);
+            return new ViewportEffect(effectPath, layer, stretch, respectFlip, respectOffset, loop);
         }
 
         /// <summary>
@@ -519,6 +508,7 @@ namespace OceanyaClient.Features.Viewport
 
         /// <summary>
         /// Determines whether AO2 starts a packet preanimation alongside the chat text.
+        /// Per AO2: only IDLE/ZOOM emote modifiers respect the immediate flag; PREANIM always blocks.
         /// </summary>
         public static bool ShouldPlayImmediatePreAnimation(ICMessage.EmoteModifiers emoteModifier, bool immediate)
         {
@@ -528,8 +518,7 @@ namespace OceanyaClient.Features.Viewport
             }
 
             NormalizedEmoteModifier normalized = NormalizeEmoteModifier(emoteModifier);
-            return normalized == NormalizedEmoteModifier.Idle
-                || normalized == NormalizedEmoteModifier.Zoom;
+            return normalized == NormalizedEmoteModifier.Idle || normalized == NormalizedEmoteModifier.Zoom;
         }
 
         /// <summary>
@@ -1292,10 +1281,15 @@ namespace OceanyaClient.Features.Viewport
 
         private static IEnumerable<string> EnumerateEffectRoots(string baseFolder, string effectFolder)
         {
+            // AO2 base: effects live directly under base/effects/ (standard AO2 layout)
+            yield return Path.Combine(baseFolder, "effects");
+
+            yield return Path.Combine(baseFolder, "misc", "default");
             yield return Path.Combine(baseFolder, "misc", "default", "effects");
 
             if (!string.IsNullOrWhiteSpace(effectFolder))
             {
+                yield return Path.Combine(baseFolder, "misc", effectFolder);
                 yield return Path.Combine(baseFolder, "misc", effectFolder, "effects");
             }
 

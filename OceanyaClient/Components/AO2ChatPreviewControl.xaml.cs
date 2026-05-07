@@ -64,6 +64,12 @@ namespace OceanyaClient
             typeof(AO2ChatPreviewControl),
             new PropertyMetadata(false, OnPreviewInputChanged));
 
+        public static readonly DependencyProperty ChatSectionBackgroundProperty = DependencyProperty.Register(
+            nameof(ChatSectionBackground),
+            typeof(Brush),
+            typeof(AO2ChatPreviewControl),
+            new PropertyMetadata(Brushes.Transparent, OnPreviewInputChanged));
+
         public AO2ChatPreviewControl()
         {
             InitializeComponent();
@@ -110,6 +116,12 @@ namespace OceanyaClient
         {
             get => (bool)GetValue(UseNativeViewportLayoutProperty);
             set => SetValue(UseNativeViewportLayoutProperty, value);
+        }
+
+        public Brush ChatSectionBackground
+        {
+            get => (Brush)GetValue(ChatSectionBackgroundProperty);
+            set => SetValue(ChatSectionBackgroundProperty, value);
         }
 
         public Color? MessageColorOverride { get; set; }
@@ -182,6 +194,7 @@ namespace OceanyaClient
             ChatboxImage.Height = chatbox.Height;
             FallbackBackground.Width = chatbox.Width;
             FallbackBackground.Height = chatbox.Height;
+            ChatboxCanvas.Background = ChatSectionBackground;
 
             ApplyBounds(ShownameTextBlock, style.ShownameBounds);
             ApplyBounds(MessageContainer, style.MessageBounds);

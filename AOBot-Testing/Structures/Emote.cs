@@ -31,13 +31,26 @@ namespace AOBot_Testing.Structures
                         (ICMessage.EmoteModifiers)newEmoteMod :
                         ICMessage.EmoteModifiers.NoPreanimation)
                     : ICMessage.EmoteModifiers.NoPreanimation,
-                DeskMod = 
-                    parts.Length > 4 ? 
-                        (int.TryParse(parts[4], out int newDeskmod) ? 
-                        (ICMessage.DeskMods)newDeskmod :
-                        ICMessage.DeskMods.Unspecified) 
-                    : ICMessage.DeskMods.Unspecified
+                DeskMod = ParseDeskMod(parts.Length > 4 ? parts[4] : null)
             };
+        }
+
+        private static ICMessage.DeskMods ParseDeskMod(string? value)
+        {
+            if (value == null)
+            {
+                return ICMessage.DeskMods.Unspecified;
+            }
+
+            string normalized = value.Trim();
+            if (normalized.Length == 0)
+            {
+                return ICMessage.DeskMods.Unspecified;
+            }
+
+            return int.TryParse(normalized, out int newDeskmod)
+                ? (ICMessage.DeskMods)newDeskmod
+                : ICMessage.DeskMods.Hidden;
         }
     }
 }
