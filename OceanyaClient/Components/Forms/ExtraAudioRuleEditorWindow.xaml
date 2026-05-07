@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:OceanyaClient"
+        xmlns:components="clr-namespace:OceanyaClient.Components"
         Height="430"
         Width="660"
         MinHeight="390"
@@ -10,10 +11,36 @@
         <Style x:Key="ModernButton" TargetType="Button">
             <Setter Property="Background" Value="#FF262626"/>
             <Setter Property="Foreground" Value="White"/>
-            <Setter Property="BorderBrush" Value="#555555"/>
+            <Setter Property="BorderBrush" Value="#444444"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding" Value="12,5"/>
             <Setter Property="MinHeight" Value="30"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="3">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#FF3D3D3D"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#FF171717"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#FF1A1A1A"/>
+                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#FF333333"/>
+                                <Setter Property="Foreground" Value="#FF7A7A7A"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
         <Style x:Key="DarkTextBox" TargetType="TextBox">
             <Setter Property="Background" Value="#FF1E1E1E"/>
@@ -137,13 +164,23 @@
             <TextBlock Text="Rule type" Style="{StaticResource LabelText}"/>
             <TextBlock Style="{StaticResource HelpGlyph}" ToolTip="What kind of audio this rule changes. Blip rules change message talking sounds."/>
         </StackPanel>
-        <ComboBox Grid.Row="2" x:Name="KindComboBox" Style="{StaticResource DarkComboBox}" Margin="0,0,0,12"/>
+        <local:AutoCompleteDropdownField Grid.Row="2"
+                                         x:Name="KindDropdown"
+                                         IsTextReadOnly="True"
+                                         PreserveItemOrder="True"
+                                         Margin="0,0,0,12"
+                                         TextValueChanged="KindDropdown_TextValueChanged"/>
 
-        <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,0,0,6">
+        <StackPanel Grid.Row="3" x:Name="TargetLabelRow" Orientation="Horizontal" Margin="0,0,0,6">
             <TextBlock Text="Applies to" Style="{StaticResource LabelText}"/>
-            <TextBlock Style="{StaticResource HelpGlyph}" ToolTip="Choose what the rule matches. Character/showname/blip values come from local files so spelling mistakes cannot happen."/>
+            <TextBlock Style="{StaticResource HelpGlyph}" ToolTip="Choose what the rule matches. SFX rules apply to one SFX token. Music rules directly choose one music token."/>
         </StackPanel>
-        <ComboBox Grid.Row="4" x:Name="TargetComboBox" Style="{StaticResource DarkComboBox}" Margin="0,0,0,12" SelectionChanged="TargetComboBox_SelectionChanged"/>
+        <local:AutoCompleteDropdownField Grid.Row="4"
+                                         x:Name="TargetDropdown"
+                                         IsTextReadOnly="True"
+                                         PreserveItemOrder="True"
+                                         Margin="0,0,0,12"
+                                         TextValueChanged="TargetDropdown_TextValueChanged"/>
 
         <StackPanel Grid.Row="5" Orientation="Horizontal" Margin="0,0,0,6">
             <TextBlock x:Name="MatchLabel" Text="Value" Style="{StaticResource LabelText}"/>
@@ -154,21 +191,75 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <ComboBox x:Name="MatchComboBox" Style="{StaticResource DarkComboBox}" Margin="0,0,8,12"/>
+            <components:ImageComboBox x:Name="CharacterComboBox"
+                                      Height="30"
+                                      HorizontalAlignment="Stretch"
+                                      Margin="0,0,8,12"
+                                      OnConfirm="CharacterComboBox_OnConfirm"/>
+            <TextBox x:Name="ShownameTextBox"
+                     Style="{StaticResource DarkTextBox}"
+                     Grid.ColumnSpan="3"
+                     Margin="0,0,8,12"
+                     Visibility="Collapsed"/>
+            <local:AutoCompleteDropdownField x:Name="BlipDropdown"
+                                             Grid.ColumnSpan="2"
+                                             Margin="0,0,8,12"
+                                             Visibility="Collapsed"
+                                             TextValueChanged="BlipDropdown_TextValueChanged"/>
+            <local:AutoCompleteDropdownField x:Name="SfxDropdown"
+                                             Grid.ColumnSpan="2"
+                                             Margin="0,0,8,12"
+                                             Visibility="Collapsed"
+                                             TextValueChanged="AudioTokenDropdown_TextValueChanged"/>
+            <local:AutoCompleteDropdownField x:Name="MusicDropdown"
+                                             Grid.ColumnSpan="2"
+                                             Margin="0,0,8,12"
+                                             Visibility="Collapsed"
+                                             TextValueChanged="AudioTokenDropdown_TextValueChanged"/>
             <Button x:Name="CharacterLookupButton" Grid.Column="1" Content="..." Width="40" Style="{StaticResource ModernButton}" Margin="0,0,0,12" Click="CharacterLookupButton_Click" ToolTip="Open character lookup."/>
+            <local:PlayStopProgressButton x:Name="BlipPreviewButton"
+                                          Grid.Column="2"
+                                          Width="36"
+                                          Height="36"
+                                          Margin="0,0,0,12"
+                                          ProgressEnabled="True"
+                                          AutoProgress="True"
+                                          ToolTipText="Preview resolved blip."
+                                          Visibility="Collapsed"
+                                          PlayRequested="BlipPreviewButton_PlayRequested"
+                                          StopRequested="BlipPreviewButton_StopRequested"
+                                          PlaybackCompleted="BlipPreviewButton_PlaybackCompleted"/>
 
-            <StackPanel Grid.Row="1" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,0,0,6">
+            <CheckBox Grid.Row="1"
+                      Grid.ColumnSpan="2"
+                      x:Name="ShownameCaseSensitiveCheckBox"
+                      Content="Case sensitive"
+                      Foreground="White"
+                      Margin="0,0,0,12"
+                      Visibility="Collapsed"
+                      ToolTip="When enabled, showname matching must use the exact same uppercase/lowercase letters you typed."/>
+
+            <StackPanel Grid.Row="2" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,0,0,6">
                 <TextBlock Text="Volume" Style="{StaticResource LabelText}"/>
                 <TextBlock Style="{StaticResource HelpGlyph}" ToolTip="Final volume for matching audio. 100% keeps normal volume, 50% halves it, 0% mutes it."/>
-                <TextBlock x:Name="VolumeValueText" Foreground="#FFE2E2E2" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                <TextBox x:Name="VolumeValueTextBox"
+                         Style="{StaticResource DarkTextBox}"
+                         Width="76"
+                         Margin="12,0,0,0"
+                         VerticalAlignment="Center"
+                         TextChanged="VolumeValueTextBox_TextChanged"
+                         LostFocus="VolumeValueTextBox_LostFocus"
+                         ToolTip="Exact volume percent. The slider is limited to 0-200, but this field accepts any positive number."/>
             </StackPanel>
-            <Slider Grid.Row="2" Grid.ColumnSpan="2" x:Name="VolumeSlider" Minimum="0" Maximum="200" ValueChanged="VolumeSlider_ValueChanged"/>
+            <Slider Grid.Row="3" Grid.ColumnSpan="2" x:Name="VolumeSlider" Minimum="0" Maximum="200" ValueChanged="VolumeSlider_ValueChanged"/>
         </Grid>
 
         <StackPanel Grid.Row="7" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">

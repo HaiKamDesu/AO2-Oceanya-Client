@@ -102,16 +102,16 @@ namespace OceanyaClient.Features.Viewport
         /// <summary>
         /// Plays an AO2-style SFX token immediately.
         /// </summary>
-        public void PlaySfx(string? token)
+        public void PlaySfx(string? token, string? characterName = null, string? showname = null, string? playerName = null)
         {
             string? path = AO2ViewportAudioResolver.ResolveSfxPath(token);
-            PlayResolvedSfx(path);
+            PlayResolvedSfx(path, token, characterName, showname, playerName);
         }
 
         /// <summary>
         /// Plays an AO2 character shout SFX token immediately.
         /// </summary>
-        public void PlayShoutSfx(string? token, string? characterName, string? miscName)
+        public void PlayShoutSfx(string? token, string? characterName, string? miscName, string? showname = null, string? playerName = null)
         {
             string? path = AO2ViewportAudioResolver.ResolveCharacterShoutPath(token, characterName, miscName);
             if (string.IsNullOrWhiteSpace(path))
@@ -129,11 +129,11 @@ namespace OceanyaClient.Features.Viewport
                 currentShoutSfxPath = path;
             }
 
-            shoutSfxPlayer.Volume = (float)AudioSettings.SfxVolume;
+            shoutSfxPlayer.Volume = (float)AudioSettings.ResolveSfxVolume(characterName, showname, playerName, token);
             _ = shoutSfxPlayer.PlayBlip();
         }
 
-        private void PlayResolvedSfx(string? path)
+        private void PlayResolvedSfx(string? path, string? token, string? characterName, string? showname, string? playerName)
         {
             if (string.IsNullOrWhiteSpace(path))
             {
@@ -150,7 +150,7 @@ namespace OceanyaClient.Features.Viewport
                 currentSfxPath = path;
             }
 
-            sfxPlayer.Volume = (float)AudioSettings.SfxVolume;
+            sfxPlayer.Volume = (float)AudioSettings.ResolveSfxVolume(characterName, showname, playerName, token);
             _ = sfxPlayer.PlayBlip();
         }
 
@@ -158,7 +158,7 @@ namespace OceanyaClient.Features.Viewport
         /// Plays an AO2-style effect SFX token on a dedicated player that won't be
         /// interrupted by regular emote SFX playback.
         /// </summary>
-        public void PlayEffectSfx(string? token)
+        public void PlayEffectSfx(string? token, string? characterName = null, string? showname = null, string? playerName = null)
         {
             string? path = AO2ViewportAudioResolver.ResolveSfxPath(token);
             if (string.IsNullOrWhiteSpace(path))
@@ -176,7 +176,7 @@ namespace OceanyaClient.Features.Viewport
                 currentEffectSfxPath = path;
             }
 
-            effectSfxPlayer.Volume = (float)AudioSettings.SfxVolume;
+            effectSfxPlayer.Volume = (float)AudioSettings.ResolveSfxVolume(characterName, showname, playerName, token);
             _ = effectSfxPlayer.PlayBlip();
         }
 
@@ -201,7 +201,7 @@ namespace OceanyaClient.Features.Viewport
                 }
             }
 
-            musicPlayer.Volume = (float)AudioSettings.MusicVolume;
+            musicPlayer.Volume = (float)AudioSettings.ResolveMusicVolume(token);
             _ = musicPlayer.PlayBlip();
         }
 

@@ -214,7 +214,8 @@ namespace OceanyaClient
     public enum ExtraAudioRuleKind
     {
         Blip = 0,
-        Sfx = 1
+        Sfx = 1,
+        Music = 2
     }
 
     public enum ExtraAudioRuleTarget
@@ -223,19 +224,45 @@ namespace OceanyaClient
         Character = 1,
         Showname = 2,
         Player = 3,
-        Blip = 4
+        Blip = 4,
+        Sfx = 5
+    }
+
+    public enum CallwordTriggerType
+    {
+        Ao2Callword = 0,
+        MessageContains = 1,
+        MessageStartsWith = 2,
+        CharacterSpeaks = 3,
+        PlayerShownameSpeaks = 4,
+        CharacterEmoteUsed = 5
     }
 
     public class CallwordRule
     {
         public string Word { get; set; } = string.Empty;
+        public CallwordTriggerType TriggerType { get; set; } = CallwordTriggerType.Ao2Callword;
+        public string Match { get; set; } = string.Empty;
+        public string CharacterName { get; set; } = string.Empty;
+        public string EmoteName { get; set; } = string.Empty;
         public string SoundPath { get; set; } = string.Empty;
+        public bool WholeWord { get; set; }
         public bool IsEnabled { get; set; } = true;
 
         public override string ToString()
         {
-            string soundText = string.IsNullOrWhiteSpace(SoundPath) ? "default notification SFX" : Path.GetFileName(SoundPath);
-            return $"Play {soundText} when \"{Word}\" appears";
+            string soundText = string.IsNullOrWhiteSpace(SoundPath) ? "AO2 default notification" : Path.GetFileName(SoundPath);
+            string match = string.IsNullOrWhiteSpace(Match) ? Word : Match;
+            string wordModeText = WholeWord ? " as a whole word" : string.Empty;
+            return TriggerType switch
+            {
+                CallwordTriggerType.Ao2Callword => $"AO2 callword \"{match}\"{wordModeText}",
+                CallwordTriggerType.MessageStartsWith => $"Play {soundText} when a message starts with \"{match}\"{wordModeText}",
+                CallwordTriggerType.CharacterSpeaks => $"Play {soundText} when character \"{CharacterName}\" speaks",
+                CallwordTriggerType.PlayerShownameSpeaks => $"Play {soundText} when showname \"{match}\" speaks",
+                CallwordTriggerType.CharacterEmoteUsed => $"Play {soundText} when character \"{CharacterName}\" uses emote \"{EmoteName}\"",
+                _ => $"Play {soundText} when a message contains \"{match}\"{wordModeText}"
+            };
         }
     }
 
@@ -247,26 +274,32 @@ namespace OceanyaClient
         public string Match { get; set; } = string.Empty;
         public int VolumePercent { get; set; } = 100;
         public bool IsEnabled { get; set; } = true;
+        public bool IsCaseSensitive { get; set; }
 
         public override string ToString()
         {
             string targetText = Target switch
             {
                 ExtraAudioRuleTarget.Any => "all",
-                ExtraAudioRuleTarget.Character => $"character |{Match}|",
-                ExtraAudioRuleTarget.Showname => $"showname |{Match}|",
-                ExtraAudioRuleTarget.Player => $"player |{Match}|",
-                ExtraAudioRuleTarget.Blip => $"blip |{Match}|",
+                ExtraAudioRuleTarget.Character => $"character \"{Match}\"",
+                ExtraAudioRuleTarget.Showname => $"showname \"{Match}\"{(IsCaseSensitive ? " case-sensitively" : string.Empty)}",
+                ExtraAudioRuleTarget.Player => $"player \"{Match}\"",
+                ExtraAudioRuleTarget.Blip => $"blip \"{Match}\"",
+                ExtraAudioRuleTarget.Sfx => $"SFX \"{Match}\"",
                 _ => Match
             };
 
             string kindText = Kind switch
             {
                 ExtraAudioRuleKind.Blip => "blips",
+                ExtraAudioRuleKind.Sfx => "SFX",
+                ExtraAudioRuleKind.Music => "music",
                 _ => "audio"
             };
 
-            return $"Set {targetText}'s {kindText} to {VolumePercent}% volume";
+            return Kind == ExtraAudioRuleKind.Music
+                ? $"Set music \"{Match}\" to {VolumePercent}% volume"
+                : $"Set {targetText}'s {kindText} to {VolumePercent}% volume";
         }
     }
 
@@ -851,11 +884,25 @@ namespace OceanyaClient
                 .Select(rule => new CallwordRule
                 {
                     Word = rule.Word?.Trim() ?? string.Empty,
+                    TriggerType = Enum.IsDefined(typeof(CallwordTriggerType), rule.TriggerType)
+                        ? rule.TriggerType
+                        : CallwordTriggerType.Ao2Callword,
+                    Match = string.IsNullOrWhiteSpace(rule.Match)
+                        ? rule.Word?.Trim() ?? string.Empty
+                        : rule.Match.Trim(),
+                    CharacterName = rule.CharacterName?.Trim() ?? string.Empty,
+                    EmoteName = rule.EmoteName?.Trim() ?? string.Empty,
                     SoundPath = rule.SoundPath?.Trim() ?? string.Empty,
+                    WholeWord = rule.WholeWord,
                     IsEnabled = rule.IsEnabled
                 })
-                .Where(rule => !string.IsNullOrWhiteSpace(rule.Word))
-                .GroupBy(rule => rule.Word, StringComparer.OrdinalIgnoreCase)
+                .Select(rule =>
+                {
+                    rule.Word = rule.TriggerType == CallwordTriggerType.Ao2Callword ? rule.Match : rule.Word;
+                    return rule;
+                })
+                .Where(rule => IsValidCallwordRule(rule))
+                .GroupBy(BuildCallwordRuleKey, StringComparer.OrdinalIgnoreCase)
                 .Select(group => group.First())
                 .ToList();
         }
@@ -864,17 +911,56 @@ namespace OceanyaClient
         {
             return (rules ?? new List<ExtraAudioRule>())
                 .Where(rule => rule != null)
-                .Select(rule => new ExtraAudioRule
+                .Select(rule =>
                 {
-                    Name = string.IsNullOrWhiteSpace(rule.Name) ? "Audio rule" : rule.Name.Trim(),
-                    Kind = Enum.IsDefined(typeof(ExtraAudioRuleKind), rule.Kind) ? rule.Kind : ExtraAudioRuleKind.Blip,
-                    Target = Enum.IsDefined(typeof(ExtraAudioRuleTarget), rule.Target) ? rule.Target : ExtraAudioRuleTarget.Any,
-                    Match = rule.Match?.Trim() ?? string.Empty,
-                    VolumePercent = Math.Clamp(rule.VolumePercent, 0, 200),
-                    IsEnabled = rule.IsEnabled
+                    ExtraAudioRuleKind kind = Enum.IsDefined(typeof(ExtraAudioRuleKind), rule.Kind) ? rule.Kind : ExtraAudioRuleKind.Blip;
+                    ExtraAudioRuleTarget target = Enum.IsDefined(typeof(ExtraAudioRuleTarget), rule.Target) ? rule.Target : ExtraAudioRuleTarget.Any;
+                    if (kind == ExtraAudioRuleKind.Sfx && target == ExtraAudioRuleTarget.Blip)
+                    {
+                        target = ExtraAudioRuleTarget.Sfx;
+                    }
+
+                    if (kind == ExtraAudioRuleKind.Music)
+                    {
+                        target = ExtraAudioRuleTarget.Any;
+                    }
+
+                    return new ExtraAudioRule
+                    {
+                        Name = string.IsNullOrWhiteSpace(rule.Name) ? "Audio rule" : rule.Name.Trim(),
+                        Kind = kind,
+                        Target = target,
+                        Match = rule.Match?.Trim() ?? string.Empty,
+                        VolumePercent = Math.Max(0, rule.VolumePercent),
+                        IsEnabled = rule.IsEnabled,
+                        IsCaseSensitive = rule.IsCaseSensitive
+                    };
                 })
-                .Where(rule => rule.Target == ExtraAudioRuleTarget.Any || !string.IsNullOrWhiteSpace(rule.Match))
+                .Where(rule => !string.IsNullOrWhiteSpace(rule.Match)
+                    || (rule.Kind == ExtraAudioRuleKind.Blip && rule.Target == ExtraAudioRuleTarget.Any))
                 .ToList();
+        }
+
+        private static bool IsValidCallwordRule(CallwordRule rule)
+        {
+            return rule.TriggerType switch
+            {
+                CallwordTriggerType.CharacterSpeaks => !string.IsNullOrWhiteSpace(rule.CharacterName),
+                CallwordTriggerType.CharacterEmoteUsed => !string.IsNullOrWhiteSpace(rule.CharacterName)
+                    && !string.IsNullOrWhiteSpace(rule.EmoteName),
+                _ => !string.IsNullOrWhiteSpace(rule.Match)
+            };
+        }
+
+        private static string BuildCallwordRuleKey(CallwordRule rule)
+        {
+            return string.Join(
+                "|",
+                (int)rule.TriggerType,
+                rule.Match ?? string.Empty,
+                rule.CharacterName ?? string.Empty,
+                rule.EmoteName ?? string.Empty,
+                rule.WholeWord.ToString());
         }
 
         private static void ClampPresetValues(FolderVisualizerViewPreset preset)

@@ -49,6 +49,7 @@ namespace OceanyaClient.Components
                 var item = FindItemByExactText(value);
 
                 isInternalUpdate = true;
+                cboINISelect.IsDropDownOpen = false;
 
                 if (editableTextBox != null)
                 {
@@ -62,6 +63,7 @@ namespace OceanyaClient.Components
                     cboINISelect.Text = value;
                 }
 
+                cboINISelect.SelectedItem = item;
                 SetSelectedItemImage(item?.ImagePath ?? "");
                 lastConfirmedText = value;
 
@@ -71,6 +73,7 @@ namespace OceanyaClient.Components
                 {
                     cboINISelect.ItemsSource = allItems;
                     cboINISelect.SelectedItem = item;
+                    cboINISelect.IsDropDownOpen = false;
                     isInternalUpdate = false;
                 }), System.Windows.Threading.DispatcherPriority.Background);
             }

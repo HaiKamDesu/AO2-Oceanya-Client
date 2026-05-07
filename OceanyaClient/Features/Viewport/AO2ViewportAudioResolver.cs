@@ -32,6 +32,30 @@ namespace OceanyaClient.Features.Viewport
                 ?? ResolveSoundPath(string.Empty, token, includeLegacySfxPrefixes: false);
         }
 
+        public static string? ResolveCourtSfxPath(string identifier)
+        {
+            string key = identifier?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                return null;
+            }
+
+            foreach (string baseFolder in Globals.BaseFolders ?? new List<string>())
+            {
+                foreach (string iniPath in EnumerateCourtroomSoundIniPaths(baseFolder))
+                {
+                    string? token = ReadIniValue(iniPath, key);
+                    string? resolved = ResolveSfxPath(token);
+                    if (!string.IsNullOrWhiteSpace(resolved))
+                    {
+                        return resolved;
+                    }
+                }
+            }
+
+            return ResolveSfxPath(key);
+        }
+
         /// <summary>
         /// Resolves AO2's character shout SFX lookup used by objection/hold-it/take-that overlays.
         /// </summary>
@@ -183,6 +207,54 @@ namespace OceanyaClient.Features.Viewport
                         return prefixed;
                     }
                 }
+            }
+
+            return null;
+        }
+
+        private static IEnumerable<string> EnumerateCourtroomSoundIniPaths(string baseFolder)
+        {
+            if (string.IsNullOrWhiteSpace(baseFolder))
+            {
+                yield break;
+            }
+
+            yield return Path.Combine(baseFolder, "themes", "default", "courtroom_sounds.ini");
+            yield return Path.Combine(baseFolder, "themes", "default", "courtroom", "courtroom_sounds.ini");
+            yield return Path.Combine(baseFolder, "courtroom_sounds.ini");
+        }
+
+        private static string? ReadIniValue(string filePath, string key)
+        {
+            if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+            {
+                return null;
+            }
+
+            foreach (string rawLine in File.ReadLines(filePath))
+            {
+                string line = (rawLine ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(line)
+                    || line.StartsWith(";", StringComparison.Ordinal)
+                    || line.StartsWith("#", StringComparison.Ordinal)
+                    || line.StartsWith("[", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                int equalsIndex = line.IndexOf('=');
+                if (equalsIndex <= 0)
+                {
+                    continue;
+                }
+
+                string entryKey = line[..equalsIndex].Trim();
+                if (!string.Equals(entryKey, key, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                return line[(equalsIndex + 1)..].Trim();
             }
 
             return null;

@@ -1,8 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media.Imaging;
+using AOBot_Testing.Structures;
 using Common;
 using Microsoft.Win32;
 using OceanyaClient.Features.Viewport;
@@ -15,6 +19,9 @@ namespace OceanyaClient
     public partial class CallwordRuleEditorWindow : OceanyaWindowContentControl
     {
         private readonly AO2BlipPreviewPlayer previewPlayer = new AO2BlipPreviewPlayer();
+        private readonly List<CharacterSelectorOption> characters;
+        private readonly IReadOnlyList<TriggerTypeOption> triggerTypeOptions;
+        private bool suppressRefresh;
 
         public CallwordRuleEditorWindow(CallwordRule? source)
         {
@@ -22,17 +29,79 @@ namespace OceanyaClient
             Title = "Callword Rule";
             Icon = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/OceanyaO.ico"));
             Closed += (_, _) => previewPlayer.Dispose();
+            characters = BuildCharacterOptions();
+            triggerTypeOptions = BuildTriggerTypeOptions();
+            PopulateCharacterComboBox();
+            TriggerTypeDropdown.ItemsSource = triggerTypeOptions.Select(option => option.DisplayName).ToList();
             Rule = source == null ? null : Clone(source);
-            if (Rule != null)
-            {
-                CallwordTextBox.Text = Rule.Word;
-                SoundPathTextBox.Text = Rule.SoundPath;
-            }
+            LoadSourceRule(Rule);
         }
 
         public override string HeaderText => "CALLWORD RULE";
 
         public CallwordRule? Rule { get; private set; }
+
+        private void LoadSourceRule(CallwordRule? rule)
+        {
+            suppressRefresh = true;
+            CallwordTriggerType triggerType = rule?.TriggerType ?? CallwordTriggerType.Ao2Callword;
+            TriggerTypeDropdown.Text = triggerTypeOptions
+                .First(option => option.TriggerType == triggerType)
+                .DisplayName;
+            TextValueTextBox.Text = string.IsNullOrWhiteSpace(rule?.Match) ? rule?.Word ?? string.Empty : rule.Match;
+            WholeWordCheckBox.IsChecked = rule?.WholeWord == true;
+            CharacterComboBox.SelectedText = rule?.CharacterName ?? characters.FirstOrDefault()?.Name ?? string.Empty;
+            PopulateEmoteComboBox(CharacterComboBox.SelectedText);
+            EmoteComboBox.SelectedText = rule?.EmoteName ?? string.Empty;
+            SoundPathTextBox.Text = string.IsNullOrWhiteSpace(rule?.SoundPath)
+                ? ResolveDefaultNotificationPath() ?? string.Empty
+                : rule.SoundPath;
+            suppressRefresh = false;
+            RefreshEditorForTriggerType();
+        }
+
+        private void TriggerTypeDropdown_TextValueChanged(object? sender, EventArgs e)
+        {
+            if (!suppressRefresh)
+            {
+                RefreshEditorForTriggerType();
+            }
+        }
+
+        private void CharacterComboBox_OnConfirm(object? sender, string value)
+        {
+            CharacterComboBox.SelectedText = value?.Trim() ?? string.Empty;
+            PopulateEmoteComboBox(CharacterComboBox.SelectedText);
+        }
+
+        private void EmoteComboBox_OnConfirm(object? sender, string value)
+        {
+            EmoteComboBox.SelectedText = value?.Trim() ?? string.Empty;
+        }
+
+        private void CharacterLookupButton_Click(object sender, RoutedEventArgs e)
+        {
+            CharacterSelectorOption? selected = null;
+            CharacterFolderVisualizerWindow selector = new CharacterFolderVisualizerWindow(
+                null,
+                suppressInitialLoadWaitForm: false,
+                characterSelectionMode: true,
+                selectCharacterForDialog: item =>
+                {
+                    selected = characters.FirstOrDefault(option =>
+                        string.Equals(option.DirectoryPath, item.DirectoryPath, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(option.Name, item.Name, StringComparison.OrdinalIgnoreCase));
+                })
+            {
+                Owner = HostWindow,
+                WindowState = WindowState.Maximized
+            };
+            if (selector.ShowDialog() == true && selected != null)
+            {
+                CharacterComboBox.SelectedText = selected.Name;
+                PopulateEmoteComboBox(selected.Name);
+            }
+        }
 
         private void BrowseButton_Click(object sender, RoutedEventArgs e)
         {
@@ -51,7 +120,7 @@ namespace OceanyaClient
 
         private void UseDefaultButton_Click(object sender, RoutedEventArgs e)
         {
-            SoundPathTextBox.Text = string.Empty;
+            SoundPathTextBox.Text = ResolveDefaultNotificationPath() ?? string.Empty;
             StopPreview();
         }
 
@@ -71,6 +140,7 @@ namespace OceanyaClient
                 return;
             }
 
+            previewPlayer.Volume = (float)AudioSettings.SfxVolume;
             PreviewButton.DurationMs = Math.Max(160, previewPlayer.GetLoadedDurationMs());
             PreviewButton.IsPlaying = true;
             _ = previewPlayer.PlayBlip();
@@ -88,16 +158,24 @@ namespace OceanyaClient
 
         private void OkButton_Click(object sender, RoutedEventArgs e)
         {
-            string word = CallwordTextBox.Text?.Trim() ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(word))
+            CallwordTriggerType triggerType = GetSelectedTriggerType();
+            string match = ResolveTextMatch(triggerType);
+            string characterName = CharacterComboBox.SelectedText?.Trim() ?? string.Empty;
+            string emoteName = EmoteComboBox.SelectedText?.Trim() ?? string.Empty;
+            if (!IsValid(triggerType, match, characterName, emoteName))
             {
                 return;
             }
 
             Rule = new CallwordRule
             {
-                Word = word,
-                SoundPath = SoundPathTextBox.Text?.Trim() ?? string.Empty,
+                TriggerType = triggerType,
+                Word = triggerType == CallwordTriggerType.Ao2Callword ? match : string.Empty,
+                Match = match,
+                CharacterName = UsesCharacter(triggerType) ? characterName : string.Empty,
+                EmoteName = triggerType == CallwordTriggerType.CharacterEmoteUsed ? emoteName : string.Empty,
+                SoundPath = UsesCustomSound(triggerType) ? SoundPathTextBox.Text?.Trim() ?? string.Empty : string.Empty,
+                WholeWord = SupportsWholeWord(triggerType) && WholeWordCheckBox.IsChecked == true,
                 IsEnabled = true
             };
             DialogResult = true;
@@ -118,6 +196,91 @@ namespace OceanyaClient
             }
         }
 
+        private void RefreshEditorForTriggerType()
+        {
+            CallwordTriggerType triggerType = GetSelectedTriggerType();
+            bool usesText = UsesTextMatch(triggerType);
+            bool usesCharacter = UsesCharacter(triggerType);
+            bool usesEmote = triggerType == CallwordTriggerType.CharacterEmoteUsed;
+            bool supportsWholeWord = SupportsWholeWord(triggerType);
+            TextValueLabelRow.Visibility = usesText ? Visibility.Visible : Visibility.Collapsed;
+            TextValueTextBox.Visibility = usesText ? Visibility.Visible : Visibility.Collapsed;
+            WholeWordCheckBox.Visibility = supportsWholeWord ? Visibility.Visible : Visibility.Collapsed;
+            CharacterLabelRow.Visibility = usesCharacter ? Visibility.Visible : Visibility.Collapsed;
+            CharacterRow.Visibility = usesCharacter ? Visibility.Visible : Visibility.Collapsed;
+            EmoteLabelRow.Visibility = usesEmote ? Visibility.Visible : Visibility.Collapsed;
+            EmoteComboBox.Visibility = usesEmote ? Visibility.Visible : Visibility.Collapsed;
+            SoundSection.Visibility = UsesCustomSound(triggerType) ? Visibility.Visible : Visibility.Collapsed;
+
+            TextValueLabel.Text = triggerType switch
+            {
+                CallwordTriggerType.Ao2Callword => "Callword",
+                CallwordTriggerType.MessageStartsWith => "Message starts with",
+                CallwordTriggerType.PlayerShownameSpeaks => "Showname",
+                _ => "Message contains"
+            };
+            TextValueHelpGlyph.ToolTip = triggerType switch
+            {
+                CallwordTriggerType.Ao2Callword => "AO2-compatible callword text. Saved into config.ini callwords for AO2 and Oceanya.",
+                CallwordTriggerType.MessageStartsWith => "Incoming message text must start with this value. Case-insensitive.",
+                CallwordTriggerType.PlayerShownameSpeaks => "Incoming IC/OOC showname must match this value. Case-insensitive.",
+                _ => "Incoming message text must contain this value. Case-insensitive."
+            };
+        }
+
+        private void PopulateCharacterComboBox()
+        {
+            CharacterComboBox.Clear();
+            foreach (CharacterSelectorOption option in characters)
+            {
+                CharacterComboBox.Add(option.Name, option.IconPath, option.Name);
+            }
+        }
+
+        private void PopulateEmoteComboBox(string? characterName)
+        {
+            EmoteComboBox.Clear();
+            CharacterFolder? character = CharacterFolder.FullList.FirstOrDefault(folder =>
+                string.Equals(folder.Name, characterName?.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (character == null)
+            {
+                return;
+            }
+
+            foreach (Emote emote in character.configINI.Emotions.Values.OrderBy(emote => emote.ID))
+            {
+                EmoteComboBox.Add(emote.DisplayID, emote.PathToImage_off, emote.DisplayID);
+            }
+        }
+
+        private string ResolveTextMatch(CallwordTriggerType triggerType)
+        {
+            return UsesTextMatch(triggerType) ? TextValueTextBox.Text?.Trim() ?? string.Empty : string.Empty;
+        }
+
+        private CallwordTriggerType GetSelectedTriggerType()
+        {
+            string displayName = TriggerTypeDropdown.Text?.Trim() ?? string.Empty;
+            return triggerTypeOptions
+                .FirstOrDefault(option => string.Equals(option.DisplayName, displayName, StringComparison.OrdinalIgnoreCase))
+                ?.TriggerType ?? CallwordTriggerType.Ao2Callword;
+        }
+
+        private static bool IsValid(CallwordTriggerType triggerType, string match, string characterName, string emoteName)
+        {
+            if (UsesTextMatch(triggerType) && string.IsNullOrWhiteSpace(match))
+            {
+                return false;
+            }
+
+            if (UsesCharacter(triggerType) && string.IsNullOrWhiteSpace(characterName))
+            {
+                return false;
+            }
+
+            return triggerType != CallwordTriggerType.CharacterEmoteUsed || !string.IsNullOrWhiteSpace(emoteName);
+        }
+
         private string? ResolvePreviewPath()
         {
             string customPath = SoundPathTextBox.Text?.Trim() ?? string.Empty;
@@ -126,7 +289,13 @@ namespace OceanyaClient
                 return customPath;
             }
 
-            return AO2ViewportAudioResolver.ResolveSfxPath("word_call")
+            return ResolveDefaultNotificationPath();
+        }
+
+        internal static string? ResolveDefaultNotificationPath()
+        {
+            return AO2ViewportAudioResolver.ResolveCourtSfxPath("word_call")
+                ?? AO2ViewportAudioResolver.ResolveSfxPath("word_call")
                 ?? AO2ViewportAudioResolver.ResolveSfxPath("sfx-word_call")
                 ?? AO2ViewportAudioResolver.ResolveSfxPath("modcall");
         }
@@ -137,14 +306,84 @@ namespace OceanyaClient
             PreviewButton.IsPlaying = false;
         }
 
+        private static bool UsesTextMatch(CallwordTriggerType triggerType)
+        {
+            return triggerType == CallwordTriggerType.Ao2Callword
+                || triggerType == CallwordTriggerType.MessageContains
+                || triggerType == CallwordTriggerType.MessageStartsWith
+                || triggerType == CallwordTriggerType.PlayerShownameSpeaks;
+        }
+
+        private static bool UsesCharacter(CallwordTriggerType triggerType)
+        {
+            return triggerType == CallwordTriggerType.CharacterSpeaks
+                || triggerType == CallwordTriggerType.CharacterEmoteUsed;
+        }
+
+        private static bool UsesCustomSound(CallwordTriggerType triggerType)
+        {
+            return triggerType != CallwordTriggerType.Ao2Callword;
+        }
+
+        private static bool SupportsWholeWord(CallwordTriggerType triggerType)
+        {
+            return triggerType == CallwordTriggerType.Ao2Callword
+                || triggerType == CallwordTriggerType.MessageContains
+                || triggerType == CallwordTriggerType.MessageStartsWith;
+        }
+
+        private static List<CharacterSelectorOption> BuildCharacterOptions()
+        {
+            return CharacterFolder.FullList
+                .OrderBy(character => character.Name, StringComparer.OrdinalIgnoreCase)
+                .Select(character => new CharacterSelectorOption(
+                    character.Name,
+                    character.configINI.ShowName,
+                    character.DirectoryPath,
+                    character.CharIconPath))
+                .ToList();
+        }
+
+        private static IReadOnlyList<TriggerTypeOption> BuildTriggerTypeOptions()
+        {
+            return new[]
+            {
+                new TriggerTypeOption(CallwordTriggerType.Ao2Callword, "AO2 Callword"),
+                new TriggerTypeOption(CallwordTriggerType.MessageContains, "Message contains"),
+                new TriggerTypeOption(CallwordTriggerType.MessageStartsWith, "Message starts with"),
+                new TriggerTypeOption(CallwordTriggerType.CharacterSpeaks, "Character speaks"),
+                new TriggerTypeOption(CallwordTriggerType.PlayerShownameSpeaks, "Player with showname speaks"),
+                new TriggerTypeOption(CallwordTriggerType.CharacterEmoteUsed, "Character emote is used")
+            };
+        }
+
         private static CallwordRule Clone(CallwordRule rule)
         {
+            string match = string.IsNullOrWhiteSpace(rule.Match) ? rule.Word : rule.Match;
             return new CallwordRule
             {
                 Word = rule.Word,
+                TriggerType = rule.TriggerType,
+                Match = match,
+                CharacterName = rule.CharacterName,
+                EmoteName = rule.EmoteName,
                 SoundPath = rule.SoundPath,
+                WholeWord = rule.WholeWord,
                 IsEnabled = rule.IsEnabled
             };
+        }
+
+        private sealed class TriggerTypeOption
+        {
+            public TriggerTypeOption(CallwordTriggerType triggerType, string displayName)
+            {
+                TriggerType = triggerType;
+                DisplayName = displayName;
+            }
+
+            public CallwordTriggerType TriggerType { get; }
+
+            public string DisplayName { get; }
         }
     }
 }

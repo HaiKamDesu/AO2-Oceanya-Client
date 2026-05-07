@@ -54,14 +54,15 @@ namespace OceanyaClient
             double musicPercent = GetConfigPercentOrSavefile("default_music", AudioSettings.ScalarToPercent(AudioSettings.MusicVolume));
             double sfxPercent = GetConfigPercentOrSavefile("default_sfx", AudioSettings.ScalarToPercent(AudioSettings.SfxVolume));
             double blipPercent = GetConfigPercentOrSavefile("default_blip", AudioSettings.ScalarToPercent(AudioSettings.BlipVolume));
+            double unfocusedPercent = 100 - Math.Clamp(Ao2ConfigIniSettings.GetInt(configValues, "suppress_audio", 0), 0, 100);
             MusicVolumeSlider.Value = musicPercent;
             SfxVolumeSlider.Value = sfxPercent;
             BlipVolumeSlider.Value = blipPercent;
+            UnfocusedVolumeSlider.Value = unfocusedPercent;
 
             StickyEffectsCheckBox.IsChecked = SaveFile.Data.StickyEffect;
             SwitchPosOnIniSwapCheckBox.IsChecked = SaveFile.Data.SwitchPosOnIniSwap;
             InvertIcLogsCheckBox.IsChecked = SaveFile.Data.InvertICLog;
-            OpenViewportOnStartupCheckBox.IsChecked = SaveFile.Data.GMViewportWindowState?.IsVisible == true;
 
             ConfigPathTextBlock.Text = string.IsNullOrWhiteSpace(Ao2ConfigIniSettings.ConfigPath)
                 ? "No config.ini selected."
@@ -79,12 +80,12 @@ namespace OceanyaClient
             foreach (CallwordRule rule in LoadConfigIniCallwords())
             {
                 callwordRules.Add(rule);
-                seenCallwords.Add(rule.Word);
+                seenCallwords.Add(BuildCallwordRuleKey(rule));
             }
 
             foreach (CallwordRule rule in SaveFile.Data.CallwordRules)
             {
-                if (seenCallwords.Add(rule.Word))
+                if (seenCallwords.Add(BuildCallwordRuleKey(rule)))
                 {
                     callwordRules.Add(Clone(rule));
                 }
@@ -110,6 +111,7 @@ namespace OceanyaClient
             MusicVolumeValueText.Text = $"{Math.Round(MusicVolumeSlider.Value):0}%";
             SfxVolumeValueText.Text = $"{Math.Round(SfxVolumeSlider.Value):0}%";
             BlipVolumeValueText.Text = $"{Math.Round(BlipVolumeSlider.Value):0}%";
+            UnfocusedVolumeValueText.Text = $"{Math.Round(UnfocusedVolumeSlider.Value):0}%";
         }
 
         private void PageButton_Checked(object sender, RoutedEventArgs e)
@@ -238,6 +240,7 @@ namespace OceanyaClient
             MusicVolumeSlider.Value = Ao2ConfigIniSettings.GetInt(configValues, "default_music", 50);
             SfxVolumeSlider.Value = Ao2ConfigIniSettings.GetInt(configValues, "default_sfx", 100);
             BlipVolumeSlider.Value = Ao2ConfigIniSettings.GetInt(configValues, "default_blip", 50);
+            UnfocusedVolumeSlider.Value = 100 - Math.Clamp(Ao2ConfigIniSettings.GetInt(configValues, "suppress_audio", 0), 0, 100);
             ShakeCheckBox.IsChecked = Ao2ConfigIniSettings.GetBool(configValues, "shake", true);
             BlankBlipCheckBox.IsChecked = Ao2ConfigIniSettings.GetBool(configValues, "blank_blip", false);
             TextCrawlTextBox.Text = Ao2ConfigIniSettings.GetInt(configValues, "text_crawl", 40).ToString(CultureInfo.InvariantCulture);
@@ -256,21 +259,9 @@ namespace OceanyaClient
             SaveFile.Data.StickyEffect = StickyEffectsCheckBox.IsChecked == true;
             SaveFile.Data.SwitchPosOnIniSwap = SwitchPosOnIniSwapCheckBox.IsChecked == true;
             SaveFile.Data.InvertICLog = InvertIcLogsCheckBox.IsChecked == true;
-            SaveFile.Data.GMViewportWindowState ??= new ViewportWindowState();
-            SaveFile.Data.GMViewportWindowState.IsVisible = OpenViewportOnStartupCheckBox.IsChecked == true;
             SaveFile.Data.CallwordRules = new List<CallwordRule>(callwordRules);
             SaveFile.Data.ExtraAudioRules = new List<ExtraAudioRule>(audioRules);
 
-            Ao2ConfigIniSettings.SetPercent(configValues, "default_music", MusicVolumeSlider.Value);
-            Ao2ConfigIniSettings.SetPercent(configValues, "default_sfx", SfxVolumeSlider.Value);
-            Ao2ConfigIniSettings.SetPercent(configValues, "default_blip", BlipVolumeSlider.Value);
-            configValues["shake"] = (ShakeCheckBox.IsChecked == true).ToString().ToLowerInvariant();
-            configValues["blank_blip"] = (BlankBlipCheckBox.IsChecked == true).ToString().ToLowerInvariant();
-            configValues["text_crawl"] = TryParseInt(TextCrawlTextBox.Text, 40).ToString(CultureInfo.InvariantCulture);
-            configValues["blip_rate"] = TryParseInt(BlipRateTextBox.Text, 2).ToString(CultureInfo.InvariantCulture);
-            configValues["chat_ratelimit"] = TryParseInt(ChatRateLimitTextBox.Text, 0).ToString(CultureInfo.InvariantCulture);
-            configValues["stay_time"] = TryParseInt(StayTimeTextBox.Text, 200).ToString(CultureInfo.InvariantCulture);
-            configValues["log_maximum"] = TryParseInt(LogMaximumTextBox.Text, 0).ToString(CultureInfo.InvariantCulture);
             foreach (ConfigEntry entry in configEntries)
             {
                 if (!string.IsNullOrWhiteSpace(entry.Key))
@@ -278,7 +269,23 @@ namespace OceanyaClient
                     configValues[entry.Key] = entry.Value;
                 }
             }
-            configValues["callwords"] = string.Join(", ", callwordRules.Select(rule => rule.Word).Where(word => !string.IsNullOrWhiteSpace(word)));
+            Ao2ConfigIniSettings.SetPercent(configValues, "default_music", MusicVolumeSlider.Value);
+            Ao2ConfigIniSettings.SetPercent(configValues, "default_sfx", SfxVolumeSlider.Value);
+            Ao2ConfigIniSettings.SetPercent(configValues, "default_blip", BlipVolumeSlider.Value);
+            Ao2ConfigIniSettings.SetPercent(configValues, "suppress_audio", 100 - UnfocusedVolumeSlider.Value);
+            configValues["shake"] = (ShakeCheckBox.IsChecked == true).ToString().ToLowerInvariant();
+            configValues["blank_blip"] = (BlankBlipCheckBox.IsChecked == true).ToString().ToLowerInvariant();
+            configValues["text_crawl"] = TryParseInt(TextCrawlTextBox.Text, 40).ToString(CultureInfo.InvariantCulture);
+            configValues["blip_rate"] = TryParseInt(BlipRateTextBox.Text, 2).ToString(CultureInfo.InvariantCulture);
+            configValues["chat_ratelimit"] = TryParseInt(ChatRateLimitTextBox.Text, 0).ToString(CultureInfo.InvariantCulture);
+            configValues["stay_time"] = TryParseInt(StayTimeTextBox.Text, 200).ToString(CultureInfo.InvariantCulture);
+            configValues["log_maximum"] = TryParseInt(LogMaximumTextBox.Text, 0).ToString(CultureInfo.InvariantCulture);
+            configValues["callwords"] = string.Join(
+                ", ",
+                callwordRules
+                    .Where(rule => rule.TriggerType == CallwordTriggerType.Ao2Callword)
+                    .Select(rule => string.IsNullOrWhiteSpace(rule.Match) ? rule.Word : rule.Match)
+                    .Where(word => !string.IsNullOrWhiteSpace(word)));
 
             Ao2ConfigIniSettings.Save(configValues);
             SaveFile.Save();
@@ -313,7 +320,12 @@ namespace OceanyaClient
             return new CallwordRule
             {
                 Word = rule.Word,
+                TriggerType = rule.TriggerType,
+                Match = rule.Match,
+                CharacterName = rule.CharacterName,
+                EmoteName = rule.EmoteName,
                 SoundPath = rule.SoundPath,
+                WholeWord = rule.WholeWord,
                 IsEnabled = rule.IsEnabled
             };
         }
@@ -327,7 +339,8 @@ namespace OceanyaClient
                 Target = rule.Target,
                 Match = rule.Match,
                 VolumePercent = rule.VolumePercent,
-                IsEnabled = rule.IsEnabled
+                IsEnabled = rule.IsEnabled,
+                IsCaseSensitive = rule.IsCaseSensitive
             };
         }
 
@@ -349,10 +362,24 @@ namespace OceanyaClient
                 yield return new CallwordRule
                 {
                     Word = trimmed,
+                    TriggerType = CallwordTriggerType.Ao2Callword,
+                    Match = trimmed,
                     SoundPath = string.Empty,
+                    WholeWord = false,
                     IsEnabled = true
                 };
             }
+        }
+
+        private static string BuildCallwordRuleKey(CallwordRule rule)
+        {
+            return string.Join(
+                "|",
+                (int)rule.TriggerType,
+                rule.Match ?? string.Empty,
+                rule.CharacterName ?? string.Empty,
+                rule.EmoteName ?? string.Empty,
+                rule.WholeWord.ToString());
         }
 
         private void RefreshConfigEntries()

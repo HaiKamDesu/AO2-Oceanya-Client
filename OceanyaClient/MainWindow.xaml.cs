@@ -1112,9 +1112,20 @@ namespace OceanyaClient
             bool isSentFromSelf,
             ICMessage.TextColors textColor)
         {
+            AddLoggedIcMessageWithContext(profileClient, showName, message, isSentFromSelf, textColor, null);
+        }
+
+        private void AddLoggedIcMessageWithContext(
+            AOClient profileClient,
+            string showName,
+            string message,
+            bool isSentFromSelf,
+            ICMessage.TextColors textColor,
+            ICMessage? sourceMessage = null)
+        {
             if (!isSentFromSelf)
             {
-                callwordAudioNotifier.TryNotify(message);
+                callwordAudioNotifier.TryNotify(new CallwordNotificationContext(message, showName, sourceMessage));
             }
 
             IReadOnlyList<LogMessageActionLink>? nameLinks = null;
@@ -1206,7 +1217,7 @@ namespace OceanyaClient
                 && string.Equals(showName, profileClient.OOCShowname, StringComparison.OrdinalIgnoreCase);
             if (!isSentFromSelf)
             {
-                callwordAudioNotifier.TryNotify(message);
+                callwordAudioNotifier.TryNotify(new CallwordNotificationContext(message, showName, null));
             }
 
             IReadOnlyList<LogMessageActionLink>? nameLinks = null;
@@ -2243,7 +2254,7 @@ namespace OceanyaClient
                     }
 
                     bool isSentFromSelf = icMessage.CharId == singleInternalClient.iniPuppetID;
-                    AddLoggedIcMessage(targetClient, icMessage.ShowName, ICMessage.StripFormattingCodes(icMessage.Message), isSentFromSelf, icMessage.TextColor);
+                    AddLoggedIcMessageWithContext(targetClient, icMessage.ShowName, ICMessage.StripFormattingCodes(icMessage.Message), isSentFromSelf, icMessage.TextColor, icMessage);
 
                     targetClient.curBG = singleInternalClient.curBG;
                     targetClient.iniPuppetID = singleInternalClient.iniPuppetID;
@@ -2352,7 +2363,7 @@ namespace OceanyaClient
                 {
                     bool isSentFromSelf = clients.Select(x => x.Value.iniPuppetID).Contains(icMessage.CharId);
 
-                    AddLoggedIcMessage(bot, icMessage.ShowName, ICMessage.StripFormattingCodes(icMessage.Message), isSentFromSelf, icMessage.TextColor);
+                    AddLoggedIcMessageWithContext(bot, icMessage.ShowName, ICMessage.StripFormattingCodes(icMessage.Message), isSentFromSelf, icMessage.TextColor, icMessage);
                 });
             };
             bot.OnIcActionReceived += (string showName, string action, bool isSentFromSelf, ICMessage.TextColors textColor) =>

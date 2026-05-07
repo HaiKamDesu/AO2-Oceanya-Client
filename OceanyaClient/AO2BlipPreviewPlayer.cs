@@ -30,7 +30,7 @@ namespace OceanyaClient
             get => volume;
             set
             {
-                volume = Math.Clamp(value, 0.0f, 1.0f);
+                volume = Math.Max(0.0f, value);
                 ApplyVolumeToStreams();
             }
         }

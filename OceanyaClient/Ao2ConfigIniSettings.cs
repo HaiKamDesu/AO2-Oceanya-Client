@@ -17,6 +17,7 @@ namespace OceanyaClient
             ["default_music"] = "50",
             ["default_sfx"] = "100",
             ["default_blip"] = "50",
+            ["suppress_audio"] = "0",
             ["text_crawl"] = "40",
             ["blip_rate"] = "2",
             ["blank_blip"] = "false",

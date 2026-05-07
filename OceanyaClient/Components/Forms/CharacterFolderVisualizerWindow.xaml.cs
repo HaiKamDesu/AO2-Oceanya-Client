@@ -54,6 +54,8 @@ namespace OceanyaClient
         private readonly Func<FolderVisualizerItem, bool>? canSetCharacterInClient;
         private readonly Action<FolderVisualizerItem>? setCharacterInClient;
         private readonly bool suppressInitialLoadWaitForm;
+        private readonly bool characterSelectionMode;
+        private readonly Action<FolderVisualizerItem>? selectCharacterForDialog;
         private readonly object progressiveLoadKeyLock = new object();
         private readonly List<FolderVisualizerItem> allItems = new List<FolderVisualizerItem>();
         private CancellationTokenSource? progressiveImageLoadCancellation;
@@ -201,10 +203,12 @@ namespace OceanyaClient
             Action? onAssetsRefreshed,
             Func<FolderVisualizerItem, bool>? canSetCharacterInClient = null,
             Action<FolderVisualizerItem>? setCharacterInClient = null,
-            bool suppressInitialLoadWaitForm = false)
+            bool suppressInitialLoadWaitForm = false,
+            bool characterSelectionMode = false,
+            Action<FolderVisualizerItem>? selectCharacterForDialog = null)
         {
             InitializeComponent();
-            Title = "Character Folder Visualizer";
+            Title = characterSelectionMode ? "Select Character" : "Character Folder Visualizer";
             SourceInitialized += Window_SourceInitialized;
             StateChanged += Window_StateChanged;
             Closed += Window_Closed;
@@ -212,6 +216,8 @@ namespace OceanyaClient
             this.canSetCharacterInClient = canSetCharacterInClient;
             this.setCharacterInClient = setCharacterInClient;
             this.suppressInitialLoadWaitForm = suppressInitialLoadWaitForm;
+            this.characterSelectionMode = characterSelectionMode;
+            this.selectCharacterForDialog = selectCharacterForDialog;
             searchDebounceTimer = new DispatcherTimer
             {
                 Interval = TimeSpan.FromMilliseconds(140)
@@ -242,7 +248,7 @@ namespace OceanyaClient
         }
 
         /// <inheritdoc/>
-        public override string HeaderText => "CHARACTER FOLDER VISUALIZER";
+        public override string HeaderText => characterSelectionMode ? "SELECT CHARACTER" : "CHARACTER FOLDER VISUALIZER";
 
         /// <inheritdoc/>
         public override bool IsUserResizeEnabled => true;
@@ -2822,6 +2828,12 @@ namespace OceanyaClient
                 return;
             }
 
+            if (characterSelectionMode)
+            {
+                AcceptCharacterSelection(item);
+                return;
+            }
+
             CharacterFolder? character = ResolveCharacterFolderForItem(item);
             if (character == null)
             {
@@ -2833,6 +2845,13 @@ namespace OceanyaClient
                 Owner = this
             };
             emoteVisualizerWindow.ShowDialog();
+        }
+
+        private void AcceptCharacterSelection(FolderVisualizerItem item)
+        {
+            selectCharacterForDialog?.Invoke(item);
+            DialogResult = true;
+            Close();
         }
 
         private void FolderListView_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
@@ -2980,6 +2999,17 @@ namespace OceanyaClient
             ContextMenu menu = new ContextMenu();
 
             AddContextCategoryHeader(menu, "Oceanya Client", addLeadingSeparator: false);
+
+            if (characterSelectionMode)
+            {
+                MenuItem selectCharacterMenuItem = new MenuItem
+                {
+                    Header = "Select this character"
+                };
+                selectCharacterMenuItem.Click += (_, _) => AcceptCharacterSelection(item);
+                menu.Items.Add(selectCharacterMenuItem);
+                return menu;
+            }
 
             MenuItem setCharacterMenuItem = new MenuItem
             {

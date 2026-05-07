@@ -10,10 +10,36 @@
         <Style x:Key="ModernButton" TargetType="Button">
             <Setter Property="Background" Value="#FF262626"/>
             <Setter Property="Foreground" Value="White"/>
-            <Setter Property="BorderBrush" Value="#555555"/>
+            <Setter Property="BorderBrush" Value="#444444"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding" Value="12,5"/>
             <Setter Property="MinHeight" Value="30"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="3">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#FF3D3D3D"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#FF171717"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#FF1A1A1A"/>
+                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#FF333333"/>
+                                <Setter Property="Foreground" Value="#FF7A7A7A"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
         <Style x:Key="DarkTextBox" TargetType="TextBox">
             <Setter Property="Background" Value="#FF1E1E1E"/>
@@ -238,7 +264,7 @@
                                 <Slider Grid.Column="1" x:Name="SfxVolumeSlider" Minimum="0" Maximum="100" ValueChanged="AudioSlider_ValueChanged"/>
                                 <TextBlock Grid.Column="2" x:Name="SfxVolumeValueText" Style="{StaticResource LabelText}" HorizontalAlignment="Right"/>
                             </Grid>
-                            <Grid Margin="0,0,0,18">
+                            <Grid Margin="0,0,0,10">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="140"/>
                                     <ColumnDefinition Width="*"/>
@@ -250,6 +276,20 @@
                                 </StackPanel>
                                 <Slider Grid.Column="1" x:Name="BlipVolumeSlider" Minimum="0" Maximum="100" ValueChanged="AudioSlider_ValueChanged"/>
                                 <TextBlock Grid.Column="2" x:Name="BlipVolumeValueText" Style="{StaticResource LabelText}" HorizontalAlignment="Right"/>
+                            </Grid>
+                            <Border Height="12" Background="Transparent"/>
+                            <Grid Margin="0,0,0,18">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="140"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="54"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Unfocused Volume" Style="{StaticResource LabelText}"/>
+                                    <TextBlock Style="{StaticResource HelpGlyph}" ToolTip="Volume kept when the AO2 window is not focused. Saved to config.ini as inverse suppress_audio: 100% means no suppression, 0% means fully suppressed."/>
+                                </StackPanel>
+                                <Slider Grid.Column="1" x:Name="UnfocusedVolumeSlider" Minimum="0" Maximum="100" ValueChanged="AudioSlider_ValueChanged"/>
+                                <TextBlock Grid.Column="2" x:Name="UnfocusedVolumeValueText" Style="{StaticResource LabelText}" HorizontalAlignment="Right"/>
                             </Grid>
 
                             <StackPanel Orientation="Horizontal" Margin="0,2,0,8">
@@ -269,7 +309,6 @@
                             <CheckBox x:Name="StickyEffectsCheckBox" Content="Sticky effects" Foreground="White" Margin="0,0,0,10" ToolTip="Keep selected effects around instead of clearing them after send."/>
                             <CheckBox x:Name="SwitchPosOnIniSwapCheckBox" Content="Switch position on INI swap" Foreground="White" Margin="0,0,0,10" ToolTip="When changing character INI, also switch to that character's preferred side/position when known."/>
                             <CheckBox x:Name="InvertIcLogsCheckBox" Content="Invert IC logs" Foreground="White" Margin="0,0,0,10" ToolTip="Show newest IC log messages at the opposite end of the log."/>
-                            <CheckBox x:Name="OpenViewportOnStartupCheckBox" Content="Open viewport automatically when it was left shown" Foreground="White" Margin="0,0,0,10" ToolTip="If GM viewport was visible when saved, open it automatically next time."/>
                         </StackPanel>
 
                         <StackPanel x:Name="ConfigPage" Visibility="Collapsed">

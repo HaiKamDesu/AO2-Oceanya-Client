@@ -185,6 +185,94 @@ namespace UnitTests
         }
 
         [Test]
+        public void AudioSettings_ResolveSfxVolume_AppliesCharacterShownameAndTokenRules()
+        {
+            SaveFile.ResetForTests(
+                new SaveData
+                {
+                    AudioSfxVolume = 0.4,
+                    ExtraAudioRules = new List<ExtraAudioRule>
+                    {
+                        new ExtraAudioRule
+                        {
+                            Kind = ExtraAudioRuleKind.Sfx,
+                            Target = ExtraAudioRuleTarget.Character,
+                            Match = "Phoenix",
+                            VolumePercent = 25,
+                            IsEnabled = true
+                        },
+                        new ExtraAudioRule
+                        {
+                            Kind = ExtraAudioRuleKind.Sfx,
+                            Target = ExtraAudioRuleTarget.Showname,
+                            Match = "Judge",
+                            VolumePercent = 60,
+                            IsEnabled = true
+                        },
+                        new ExtraAudioRule
+                        {
+                            Kind = ExtraAudioRuleKind.Sfx,
+                            Target = ExtraAudioRuleTarget.Sfx,
+                            Match = "sfx-objection",
+                            VolumePercent = 80,
+                            IsEnabled = true
+                        }
+                    }
+                },
+                persist: false);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(AudioSettings.ResolveSfxVolume("Phoenix", null, null, "sfx-damage"), Is.EqualTo(0.25));
+                Assert.That(AudioSettings.ResolveSfxVolume(null, "The Judge", null, "sfx-damage"), Is.EqualTo(0.6));
+                Assert.That(AudioSettings.ResolveSfxVolume(null, null, null, "sfx-objection"), Is.EqualTo(0.8));
+                Assert.That(AudioSettings.ResolveSfxVolume(null, null, null, "sfx-other"), Is.EqualTo(0.4));
+            });
+        }
+
+        [Test]
+        public void CallwordAudioNotifier_WholeWord_MatchesOnlyDelimitedText()
+        {
+            Assert.Multiple(() =>
+            {
+                Assert.That(CallwordAudioNotifier.ContainsWholeWord("Kam, hello", "Kam"), Is.True);
+                Assert.That(CallwordAudioNotifier.ContainsWholeWord("hello Kam!", "Kam"), Is.True);
+                Assert.That(CallwordAudioNotifier.ContainsWholeWord("hello Kamui", "Kam"), Is.False);
+                Assert.That(CallwordAudioNotifier.ContainsWholeWord("hello akam", "Kam"), Is.False);
+                Assert.That(CallwordAudioNotifier.ContainsWholeWord("hello Kam_Test", "Kam"), Is.False);
+            });
+        }
+
+        [Test]
+        public void ExtraAudioRuleEditorWindow_CatalogsIncludeCharacterGeneralAndMusicFolders()
+        {
+            string characterRoot = Path.Combine(tempRoot, "characters", "Naoto");
+            string characterGeneral = Path.Combine(characterRoot, "general");
+            string characterMusic = Path.Combine(characterRoot, "music");
+            Directory.CreateDirectory(characterGeneral);
+            Directory.CreateDirectory(characterMusic);
+            File.WriteAllBytes(Path.Combine(characterGeneral, "cutin.wav"), new byte[] { 1 });
+            File.WriteAllBytes(Path.Combine(characterMusic, "theme.ogg"), new byte[] { 1 });
+            Globals.BaseFolders = new List<string> { tempRoot };
+
+            MethodInfo buildSfxCatalog = typeof(ExtraAudioRuleEditorWindow).GetMethod(
+                "BuildSfxTokenCatalog",
+                BindingFlags.NonPublic | BindingFlags.Static)!;
+            MethodInfo buildAudioCatalog = typeof(ExtraAudioRuleEditorWindow).GetMethod(
+                "BuildAudioTokenCatalog",
+                BindingFlags.NonPublic | BindingFlags.Static)!;
+
+            List<string> sfxTokens = (List<string>)buildSfxCatalog.Invoke(null, null)!;
+            List<string> musicTokens = (List<string>)buildAudioCatalog.Invoke(null, new object[] { "music" })!;
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(sfxTokens, Does.Contain("../../characters/Naoto/general/cutin"));
+                Assert.That(musicTokens, Does.Contain("../../characters/Naoto/music/theme"));
+            });
+        }
+
+        [Test]
         public void AO2ViewportControl_MessageRequestsScreenShake_RequiresExplicitPacketRequest()
         {
             Assert.Multiple(() =>

@@ -412,7 +412,7 @@ namespace OceanyaClient
             IReadOnlyList<AutoCompleteDropdownItem> matches = BuildSuggestionList(source, query);
 
             Suggestions.Clear();
-            foreach (AutoCompleteDropdownItem match in matches.Take(60))
+            foreach (AutoCompleteDropdownItem match in matches)
             {
                 Suggestions.Add(match);
             }

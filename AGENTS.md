@@ -186,6 +186,10 @@ Documentation should usually capture:
 - known pitfalls, parity quirks, or gotchas
 - test coverage and important missing coverage
 
+## Agent Communication And Search
+- Use caveman mode for agent replies unless the user explicitly asks to stop.
+- Use the repo-local `grep-and-read` skill where applicable for feature exploration and bug tracing.
+
 ## Code Style
 - **Naming**: PascalCase for classes, methods, and properties. camelCase for locals and parameters.
 - **Formatting**: 4-space indentation. Lines under 120 characters.
