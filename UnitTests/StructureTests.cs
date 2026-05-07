@@ -564,6 +564,41 @@ namespace UnitTests
             Assert.That(
                 AO2ViewportAssetResolver.ResolveShoutOverlayImage(ICMessage.ShoutModifiers.Nothing),
                 Is.Null);
+            Assert.That(
+                AO2ViewportAssetResolver.GetShoutDuration(),
+                Is.EqualTo(TimeSpan.FromMilliseconds(724)));
+        }
+
+        [Test]
+        public void Test_AO2ViewportAssetResolver_ResolvesCharacterShoutOverlayLikeAo2()
+        {
+            string characterDirectory = Path.Combine(_tempDir, "characters", "ViewportPhoenix");
+            Directory.CreateDirectory(characterDirectory);
+            string characterShoutPath = Path.Combine(characterDirectory, "objection_bubble.gif");
+            File.WriteAllBytes(characterShoutPath, new byte[] { 1, 2, 3, 4 });
+
+            string? resolved = AO2ViewportAssetResolver.ResolveShoutOverlayImage(
+                ICMessage.ShoutModifiers.Objection,
+                "ViewportPhoenix",
+                "default");
+
+            Assert.That(resolved, Is.EqualTo(characterShoutPath));
+        }
+
+        [Test]
+        public void Test_AO2ViewportAudioResolver_ResolvesCharacterShoutLikeAo2()
+        {
+            string characterSoundsDirectory = Path.Combine(_tempDir, "characters", "ViewportPhoenix", "sounds");
+            Directory.CreateDirectory(characterSoundsDirectory);
+            string characterShoutPath = Path.Combine(characterSoundsDirectory, "objection.ogg");
+            File.WriteAllBytes(characterShoutPath, new byte[] { 1, 2, 3, 4 });
+
+            string? resolved = AO2ViewportAudioResolver.ResolveCharacterShoutPath(
+                "objection",
+                "ViewportPhoenix",
+                "default");
+
+            Assert.That(resolved, Is.EqualTo(characterShoutPath));
         }
 
         [Test]

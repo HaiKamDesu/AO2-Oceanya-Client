@@ -36,7 +36,7 @@ namespace OceanyaClient.Features.Viewport
         public const int ViewportToolHeight = ViewportHeight + ChatboxHeight;
 
         private static readonly string[] ImageExtensions = { ".webp", ".apng", ".gif", ".png", ".jpg", ".jpeg" };
-        private static readonly TimeSpan DefaultShoutDuration = TimeSpan.FromMilliseconds(900);
+        private static readonly TimeSpan DefaultShoutDuration = TimeSpan.FromMilliseconds(724);
         private static readonly TimeSpan DefaultPreAnimationDuration = TimeSpan.FromMilliseconds(1000);
 
         private static readonly Dictionary<string, string> LegacyPositionImageNames = new(StringComparer.OrdinalIgnoreCase)
@@ -590,17 +590,66 @@ namespace OceanyaClient.Features.Viewport
         /// </summary>
         public static string? ResolveShoutOverlayImage(ICMessage.ShoutModifiers shoutModifier)
         {
-            string resourceName = shoutModifier switch
+            return ResolveShoutOverlayImage(shoutModifier, null, null);
+        }
+
+        /// <summary>
+        /// Resolves the AO2 shout overlay image, preferring character/misc assets before built-in defaults.
+        /// </summary>
+        public static string? ResolveShoutOverlayImage(
+            ICMessage.ShoutModifiers shoutModifier,
+            string? characterName,
+            string? miscName)
+        {
+            string stem = shoutModifier switch
             {
-                ICMessage.ShoutModifiers.HoldIt => "holdit_bubble.gif",
-                ICMessage.ShoutModifiers.Objection => "objection_bubble.gif",
-                ICMessage.ShoutModifiers.TakeThat => "takethat_bubble.gif",
+                ICMessage.ShoutModifiers.HoldIt => "holdit_bubble",
+                ICMessage.ShoutModifiers.Objection => "objection_bubble",
+                ICMessage.ShoutModifiers.TakeThat => "takethat_bubble",
+                ICMessage.ShoutModifiers.Custom => "custom",
                 _ => string.Empty
             };
 
-            return string.IsNullOrWhiteSpace(resourceName)
-                ? null
-                : "pack://application:,,,/OceanyaClient;component/Resources/ShoutDefaults/" + resourceName;
+            if (string.IsNullOrWhiteSpace(stem))
+            {
+                return null;
+            }
+
+            string character = characterName?.Trim() ?? string.Empty;
+            string misc = miscName?.Trim() ?? string.Empty;
+            foreach (string baseFolder in Globals.BaseFolders ?? new List<string>())
+            {
+                foreach (string root in EnumerateAo2ImageAssetRoots(baseFolder, character, misc))
+                {
+                    string? resolved = ResolveImageStem(root, stem);
+                    if (!string.IsNullOrWhiteSpace(resolved))
+                    {
+                        return resolved;
+                    }
+                }
+            }
+
+            string defaultName = stem + ".gif";
+            string outputDefault = Path.Combine(AppContext.BaseDirectory, "Resources", "ShoutDefaults", defaultName);
+            if (File.Exists(outputDefault))
+            {
+                return outputDefault;
+            }
+
+            string sourceDefault = Path.GetFullPath(Path.Combine(
+                AppContext.BaseDirectory,
+                "..",
+                "..",
+                "..",
+                "Resources",
+                "ShoutDefaults",
+                defaultName));
+            if (File.Exists(sourceDefault))
+            {
+                return sourceDefault;
+            }
+
+            return "pack://application:,,,/OceanyaClient;component/Resources/ShoutDefaults/" + defaultName;
         }
 
         /// <summary>
@@ -1295,6 +1344,28 @@ namespace OceanyaClient.Features.Viewport
 
             yield return Path.Combine(baseFolder, "themes", "default", "effects");
             yield return Path.Combine(baseFolder, "themes", "CC", "effects");
+        }
+
+        private static IEnumerable<string> EnumerateAo2ImageAssetRoots(string baseFolder, string character, string misc)
+        {
+            if (string.IsNullOrWhiteSpace(baseFolder))
+            {
+                yield break;
+            }
+
+            if (!string.IsNullOrWhiteSpace(character))
+            {
+                yield return Path.Combine(baseFolder, "characters", character);
+            }
+
+            if (!string.IsNullOrWhiteSpace(misc))
+            {
+                yield return Path.Combine(baseFolder, "themes", "default", "misc", misc);
+                yield return Path.Combine(baseFolder, "misc", misc);
+            }
+
+            yield return Path.Combine(baseFolder, "themes", "default");
+            yield return baseFolder;
         }
 
         private static IEnumerable<string> EnumerateMiscRoots(string? effectFolder)

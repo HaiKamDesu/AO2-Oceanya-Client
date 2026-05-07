@@ -47,7 +47,10 @@ namespace OceanyaClient.Features.Viewport
         private readonly Dictionary<Image, IAnimationPlayer> animationPlayers = new Dictionary<Image, IAnimationPlayer>();
         private readonly AO2ViewportAudioManager audioManager = new AO2ViewportAudioManager();
         private readonly Random screenShakeRandom = new Random();
-        private readonly TranslateTransform viewportShakeTransform = new TranslateTransform();
+        private readonly TranslateTransform backgroundShakeTransform = new TranslateTransform();
+        private readonly TranslateTransform characterShakeTransform = new TranslateTransform();
+        private readonly TranslateTransform pairCharacterShakeTransform = new TranslateTransform();
+        private readonly TranslateTransform chatShakeTransform = new TranslateTransform();
         private static readonly double[] ChatDisplayMultipliers = { 0, 0.25, 0.65, 1, 1.25, 1.75, 2.25 };
         private const int DefaultChatTextCrawlMilliseconds = 40;
         private const int DefaultChatDisplaySpeed = 3;
@@ -62,7 +65,8 @@ namespace OceanyaClient.Features.Viewport
         public AO2ViewportControl()
         {
             InitializeComponent();
-            ViewportCanvas.RenderTransform = viewportShakeTransform;
+            BackgroundImage.RenderTransform = backgroundShakeTransform;
+            ChatPreview.RenderTransform = chatShakeTransform;
             audioManager.RefreshVolumes();
             InitializeChatBackgroundMenu();
             ApplySavedChatBackground();
@@ -630,7 +634,7 @@ namespace OceanyaClient.Features.Viewport
                 loop: !isPreAnimation,
                 onFrameChanged: frameHandler);
             CharacterImage.RenderTransformOrigin = new Point(0.5, 0.5);
-            CharacterImage.RenderTransform = flip ? new ScaleTransform(-1, 1) : Transform.Identity;
+            CharacterImage.RenderTransform = BuildCharacterTransform(flip, characterShakeTransform);
             ApplyOffset(CharacterImage, centerAndHidePair ? (0, 0) : message?.SelfOffset ?? (0, 0));
 
             bool shouldShowDesk = isZoom && !isPreAnimation
@@ -725,6 +729,14 @@ namespace OceanyaClient.Features.Viewport
         private void ShowShoutOverlay(ICMessage message)
         {
             RenderShoutOverlay(message, ViewportPhase.Shout);
+            if (IsVisible)
+            {
+                string shoutToken = ResolveShoutSfxToken(message);
+                string miscToken = AO2ViewportAssetResolver.ResolveCharacterChatToken(
+                    AO2ViewportAssetResolver.ResolveCharacter(message.Character));
+                audioManager.PlayShoutSfx(shoutToken, message.Character, miscToken);
+            }
+
             StopChatTextTimer();
             ChatPreview.Visibility = Visibility.Collapsed;
             ChatPreview.ShowMessage = false;
@@ -805,24 +817,30 @@ namespace OceanyaClient.Features.Viewport
                 }
 
                 double elapsedMs = (DateTime.UtcNow - startedAtUtc).TotalMilliseconds;
-                double remainingFraction = 1.0 - (elapsedMs / ScreenShakeDurationMilliseconds);
-                if (remainingFraction <= 0)
+                if (elapsedMs >= ScreenShakeDurationMilliseconds)
                 {
                     StopScreenShake();
                     return;
                 }
 
-                ApplyScreenShakeOffset(remainingFraction);
+                ApplyScreenShakeOffset();
             };
             screenShakeTimer.Start();
         }
 
-        private void ApplyScreenShakeOffset(double remainingFraction = 1.0)
+        private void ApplyScreenShakeOffset()
         {
-            double maxDeviation = 7.0 * (AO2ViewportAssetResolver.ViewportHeight / 192.0) * Math.Clamp(remainingFraction, 0.0, 1.0);
-            int deviation = Math.Max(1, (int)Math.Round(maxDeviation, MidpointRounding.AwayFromZero));
-            viewportShakeTransform.X = screenShakeRandom.Next(-deviation, deviation + 1);
-            viewportShakeTransform.Y = screenShakeRandom.Next(-deviation, deviation + 1);
+            int deviation = Math.Max(1, (int)(7.0 * (AO2ViewportAssetResolver.ViewportHeight / 192.0)));
+            ApplyIndependentShakeOffset(backgroundShakeTransform, deviation);
+            ApplyIndependentShakeOffset(characterShakeTransform, deviation);
+            ApplyIndependentShakeOffset(pairCharacterShakeTransform, deviation);
+            ApplyIndependentShakeOffset(chatShakeTransform, deviation);
+        }
+
+        private void ApplyIndependentShakeOffset(TranslateTransform transform, int deviation)
+        {
+            transform.X = screenShakeRandom.Next(-deviation, deviation);
+            transform.Y = screenShakeRandom.Next(-deviation, deviation);
         }
 
         private void StopScreenShake()
@@ -833,8 +851,16 @@ namespace OceanyaClient.Features.Viewport
                 screenShakeTimer = null;
             }
 
-            viewportShakeTransform.X = 0;
-            viewportShakeTransform.Y = 0;
+            ResetShakeTransform(backgroundShakeTransform);
+            ResetShakeTransform(characterShakeTransform);
+            ResetShakeTransform(pairCharacterShakeTransform);
+            ResetShakeTransform(chatShakeTransform);
+        }
+
+        private static void ResetShakeTransform(TranslateTransform transform)
+        {
+            transform.X = 0;
+            transform.Y = 0;
         }
 
         private IAnimationPlayer? SetAnimatedImage(
@@ -896,6 +922,18 @@ namespace OceanyaClient.Features.Viewport
             Canvas.SetTop(image, AO2ViewportAssetResolver.ViewportHeight * offset.Vertical / 100.0);
         }
 
+        private static Transform BuildCharacterTransform(bool flipped, TranslateTransform shakeTransform)
+        {
+            TransformGroup group = new TransformGroup();
+            if (flipped)
+            {
+                group.Children.Add(new ScaleTransform(-1, 1));
+            }
+
+            group.Children.Add(shakeTransform);
+            return group;
+        }
+
         private void RenderPairCharacter(ICMessage? message, CharacterFolder? fallbackCharacter, bool hidden)
         {
             if (message == null || hidden || message.OtherCharId < 0 || string.IsNullOrWhiteSpace(message.OtherName))
@@ -912,7 +950,7 @@ namespace OceanyaClient.Features.Viewport
                 talking: false);
             SetAnimatedImage(PairCharacterImage, pairPath, !string.IsNullOrWhiteSpace(pairPath));
             PairCharacterImage.RenderTransformOrigin = new Point(0.5, 0.5);
-            PairCharacterImage.RenderTransform = message.OtherFlip ? new ScaleTransform(-1, 1) : Transform.Identity;
+            PairCharacterImage.RenderTransform = BuildCharacterTransform(message.OtherFlip, pairCharacterShakeTransform);
             ApplyOffset(PairCharacterImage, (message.OtherOffset, message.OtherOffsetVertical));
 
             bool pairInFront = AO2ViewportAssetResolver.GetPairOrdering(message.OtherCharIdRaw)
@@ -943,6 +981,11 @@ namespace OceanyaClient.Features.Viewport
         {
             AO2ViewportAssetResolver.ViewportEffect resolvedEffect =
                 AO2ViewportAssetResolver.ResolveEffect(effectString, effect, character, flip);
+            if (IsRealizationEffect(effectString, effect))
+            {
+                DoFlash();
+            }
+
             IAnimationPlayer? effectPlayer = SetAnimatedImage(EffectImage, resolvedEffect.ImagePath, !string.IsNullOrWhiteSpace(resolvedEffect.ImagePath), loop: resolvedEffect.Loop);
             if (effectPlayer != null && !resolvedEffect.Loop)
             {
@@ -973,9 +1016,36 @@ namespace OceanyaClient.Features.Viewport
                 return;
             }
 
-            string? shoutPath = AO2ViewportAssetResolver.ResolveShoutOverlayImage(message.ShoutModifier);
+            string? shoutPath = AO2ViewportAssetResolver.ResolveShoutOverlayImage(
+                message.ShoutModifier,
+                message.Character,
+                AO2ViewportAssetResolver.ResolveCharacterChatToken(AO2ViewportAssetResolver.ResolveCharacter(message.Character)));
             SetAnimatedImage(ShoutOverlayImage, shoutPath, !string.IsNullOrWhiteSpace(shoutPath), loop: false);
             Panel.SetZIndex(ShoutOverlayImage, 9);
+        }
+
+        private static string ResolveShoutSfxToken(ICMessage message)
+        {
+            return message.ShoutModifier switch
+            {
+                ICMessage.ShoutModifiers.HoldIt => "holdit",
+                ICMessage.ShoutModifiers.Objection => "objection",
+                ICMessage.ShoutModifiers.TakeThat => "takethat",
+                ICMessage.ShoutModifiers.Custom => "custom",
+                _ => string.Empty
+            };
+        }
+
+        private static bool IsRealizationEffect(string? effectString, ICMessage.Effects effect)
+        {
+            if (effect == ICMessage.Effects.Realization)
+            {
+                return true;
+            }
+
+            string token = (effectString ?? string.Empty).Split('|')[0].Trim();
+            return string.Equals(token, "realization", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(token, "flash", StringComparison.OrdinalIgnoreCase);
         }
 
         private void StartChatTextReveal(string text, string prefixText, CharacterFolder? character, ICMessage? message)
@@ -1367,16 +1437,20 @@ namespace OceanyaClient.Features.Viewport
             }
 
             FlashOverlay.BeginAnimation(OpacityProperty, null);
-            FlashOverlay.Opacity = 0;
             FlashOverlay.Visibility = Visibility.Visible;
+            FlashOverlay.Opacity = 1;
             DoubleAnimation fade = new DoubleAnimation
             {
-                From = 0.85,
+                From = 1,
                 To = 0,
-                Duration = TimeSpan.FromMilliseconds(220),
+                Duration = TimeSpan.FromMilliseconds(260),
                 FillBehavior = FillBehavior.Stop
             };
-            fade.Completed += (_, _) => FlashOverlay.Visibility = Visibility.Collapsed;
+            fade.Completed += (_, _) =>
+            {
+                FlashOverlay.Opacity = 0;
+                FlashOverlay.Visibility = Visibility.Collapsed;
+            };
             FlashOverlay.BeginAnimation(OpacityProperty, fade);
         }
 

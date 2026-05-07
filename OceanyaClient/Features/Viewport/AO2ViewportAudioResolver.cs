@@ -33,6 +33,55 @@ namespace OceanyaClient.Features.Viewport
         }
 
         /// <summary>
+        /// Resolves AO2's character shout SFX lookup used by objection/hold-it/take-that overlays.
+        /// </summary>
+        public static string? ResolveCharacterShoutPath(string? token, string? characterName, string? miscName)
+        {
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                return null;
+            }
+
+            string normalized = token.Trim().Replace('\\', '/');
+            string character = characterName?.Trim() ?? string.Empty;
+            string misc = miscName?.Trim() ?? string.Empty;
+
+            foreach (string baseFolder in Globals.BaseFolders ?? new List<string>())
+            {
+                if (string.IsNullOrWhiteSpace(baseFolder))
+                {
+                    continue;
+                }
+
+                foreach (string candidateRoot in EnumerateAo2SfxRoots(baseFolder, character, misc, includeSoundsPrefix: true))
+                {
+                    string? resolved = ResolveWithSuffixOrder(candidateRoot, normalized);
+                    if (!string.IsNullOrWhiteSpace(resolved))
+                    {
+                        return resolved;
+                    }
+                }
+
+                foreach (string candidateRoot in EnumerateAo2SfxRoots(baseFolder, character, misc, includeSoundsPrefix: false))
+                {
+                    string? resolved = ResolveWithSuffixOrder(candidateRoot, normalized);
+                    if (!string.IsNullOrWhiteSpace(resolved))
+                    {
+                        return resolved;
+                    }
+                }
+
+                string? fallback = ResolveWithSuffixOrder(Path.Combine(baseFolder, "sounds", "general"), normalized);
+                if (!string.IsNullOrWhiteSpace(fallback))
+                {
+                    return fallback;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
         /// Resolves a local AO2-style blip token.
         /// </summary>
         public static string? ResolveBlipPath(string? token)
@@ -137,6 +186,28 @@ namespace OceanyaClient.Features.Viewport
             }
 
             return null;
+        }
+
+        private static IEnumerable<string> EnumerateAo2SfxRoots(
+            string baseFolder,
+            string character,
+            string misc,
+            bool includeSoundsPrefix)
+        {
+            string prefix = includeSoundsPrefix ? "sounds" : string.Empty;
+            if (!string.IsNullOrWhiteSpace(character))
+            {
+                yield return Path.Combine(baseFolder, "characters", character, prefix);
+            }
+
+            if (!string.IsNullOrWhiteSpace(misc))
+            {
+                yield return Path.Combine(baseFolder, "themes", "default", "misc", misc, prefix);
+                yield return Path.Combine(baseFolder, "misc", misc, prefix);
+            }
+
+            yield return Path.Combine(baseFolder, "themes", "default", prefix);
+            yield return Path.Combine(baseFolder, prefix);
         }
 
         private static string? ResolveWithSuffixOrder(string rootFolder, string relativeToken)

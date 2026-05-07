@@ -11,10 +11,12 @@ namespace OceanyaClient.Features.Viewport
         private readonly AO2BlipPreviewPlayer musicPlayer = new AO2BlipPreviewPlayer();
         private readonly AO2BlipPreviewPlayer sfxPlayer = new AO2BlipPreviewPlayer();
         private readonly AO2BlipPreviewPlayer effectSfxPlayer = new AO2BlipPreviewPlayer();
+        private readonly AO2BlipPreviewPlayer shoutSfxPlayer = new AO2BlipPreviewPlayer();
         private readonly AO2BlipPreviewPlayer blipPlayer = new AO2BlipPreviewPlayer();
         private string currentMusicPath = string.Empty;
         private string currentSfxPath = string.Empty;
         private string currentEffectSfxPath = string.Empty;
+        private string currentShoutSfxPath = string.Empty;
         private string currentBlipPath = string.Empty;
         private bool disposed;
 
@@ -26,6 +28,7 @@ namespace OceanyaClient.Features.Viewport
             musicPlayer.Volume = (float)AudioSettings.MusicVolume;
             sfxPlayer.Volume = (float)AudioSettings.SfxVolume;
             effectSfxPlayer.Volume = (float)AudioSettings.SfxVolume;
+            shoutSfxPlayer.Volume = (float)AudioSettings.SfxVolume;
             blipPlayer.Volume = (float)AudioSettings.BlipVolume;
         }
 
@@ -37,6 +40,7 @@ namespace OceanyaClient.Features.Viewport
             musicPlayer.Stop();
             sfxPlayer.Stop();
             effectSfxPlayer.Stop();
+            shoutSfxPlayer.Stop();
             blipPlayer.Stop();
         }
 
@@ -87,6 +91,36 @@ namespace OceanyaClient.Features.Viewport
         public void PlaySfx(string? token)
         {
             string? path = AO2ViewportAudioResolver.ResolveSfxPath(token);
+            PlayResolvedSfx(path);
+        }
+
+        /// <summary>
+        /// Plays an AO2 character shout SFX token immediately.
+        /// </summary>
+        public void PlayShoutSfx(string? token, string? characterName, string? miscName)
+        {
+            string? path = AO2ViewportAudioResolver.ResolveCharacterShoutPath(token, characterName, miscName);
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return;
+            }
+
+            if (!string.Equals(currentShoutSfxPath, path, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!shoutSfxPlayer.TrySetBlip(path))
+                {
+                    return;
+                }
+
+                currentShoutSfxPath = path;
+            }
+
+            shoutSfxPlayer.Volume = (float)AudioSettings.SfxVolume;
+            _ = shoutSfxPlayer.PlayBlip();
+        }
+
+        private void PlayResolvedSfx(string? path)
+        {
             if (string.IsNullOrWhiteSpace(path))
             {
                 return;
@@ -179,6 +213,7 @@ namespace OceanyaClient.Features.Viewport
             musicPlayer.Dispose();
             sfxPlayer.Dispose();
             effectSfxPlayer.Dispose();
+            shoutSfxPlayer.Dispose();
             blipPlayer.Dispose();
         }
     }
