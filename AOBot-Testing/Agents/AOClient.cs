@@ -1041,6 +1041,11 @@ namespace AOBot_Testing.Agents
                 return ICMessage.DeskMods.Shown;
             }
 
+            if (resolved == ICMessage.DeskMods.Chat)
+            {
+                return ICMessage.DeskMods.Shown;
+            }
+
             return resolved;
         }
 

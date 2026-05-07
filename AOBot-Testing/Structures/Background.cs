@@ -390,7 +390,17 @@ namespace AOBot_Testing.Structures
 
             string[] bgFiles = Directory.GetFiles(backgroundDirectory, "*.*", SearchOption.TopDirectoryOnly);
             List<string> extensions = Globals.AllowedImageExtensions;
-            List<string> exclude = new List<string> { "defensedesk", "prosecutiondesk", "stand", "judgedesk" };
+            List<string> exclude = new List<string>
+            {
+                "defensedesk",
+                "helperdesk",
+                "prohelperdesk",
+                "prosecutiondesk",
+                "stand",
+                "judgedesk",
+                "jurydesk",
+                "seancedesk"
+            };
             List<string> bgFilesFiltered = new List<string>();
 
             foreach (string file in bgFiles)

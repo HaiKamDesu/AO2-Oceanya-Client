@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
@@ -43,6 +44,7 @@ namespace OceanyaClient.Features.Viewport
         private string[] chatMarkupEnd = Array.Empty<string>();
         private bool[] chatMarkupRemove = Array.Empty<bool>();
         private readonly Dictionary<Image, IAnimationPlayer> animationPlayers = new Dictionary<Image, IAnimationPlayer>();
+        private readonly Dictionary<Image, PlacedImageState> placedImageStates = new Dictionary<Image, PlacedImageState>();
         private readonly AO2ViewportAudioManager audioManager = new AO2ViewportAudioManager();
         private readonly Random screenShakeRandom = new Random();
         private readonly TranslateTransform backgroundShakeTransform = new TranslateTransform();
@@ -396,7 +398,7 @@ namespace OceanyaClient.Features.Viewport
             FlashOverlay.Visibility = Visibility.Collapsed;
             AO2ViewportAssetResolver.ViewportImagePlacement backgroundPlacement =
                 AO2ViewportAssetResolver.ResolveBackgroundPlacement(sceneClient.curBG, sceneClient.curPos);
-            SetPlacedImage(BackgroundImage, backgroundPlacement, true, Stretch.Fill);
+            SetPlacedAnimatedImage(BackgroundImage, backgroundPlacement, true, Stretch.Fill);
             SetAnimatedImage(CharacterImage, null, false);
             SetAnimatedImage(PairCharacterImage, null, false);
             SetPlacedImage(
@@ -600,7 +602,7 @@ namespace OceanyaClient.Features.Viewport
         {
             AO2ViewportAssetResolver.ViewportImagePlacement backgroundPlacement =
                 AO2ViewportAssetResolver.ResolveBackgroundPlacement(backgroundName, position);
-            SetPlacedImage(BackgroundImage, backgroundPlacement, true, Stretch.Fill);
+            SetPlacedAnimatedImage(BackgroundImage, backgroundPlacement, true, Stretch.Fill);
 
             bool isPreAnimation = phase == ViewportPhase.PreAnimation;
             bool isZoom = message != null && AO2ViewportAssetResolver.IsZoomEmote(message.EmoteModifier);
@@ -640,7 +642,7 @@ namespace OceanyaClient.Features.Viewport
             AO2ViewportAssetResolver.ViewportImagePlacement deskPlacement = shouldShowDesk
                 ? AO2ViewportAssetResolver.ResolveDeskPlacement(backgroundName, position)
                 : new AO2ViewportAssetResolver.ViewportImagePlacement(null, 0, 0, AO2ViewportAssetResolver.ViewportWidth, AO2ViewportAssetResolver.ViewportHeight);
-            SetPlacedImage(DeskImage, deskPlacement, shouldShowDesk, Stretch.Fill);
+            SetPlacedAnimatedImage(DeskImage, deskPlacement, shouldShowDesk, Stretch.Fill);
 
             RenderPairCharacter(message, character, centerAndHidePair || isZoom || isPreAnimation);
             RenderSpeedlines(message, position, character, phase == ViewportPhase.Speaking && isZoom);
@@ -909,6 +911,49 @@ namespace OceanyaClient.Features.Viewport
             Canvas.SetLeft(image, placement.Left);
             Canvas.SetTop(image, placement.Top);
             image.Visibility = visible && source != null ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private IAnimationPlayer? SetPlacedAnimatedImage(
+            Image image,
+            AO2ViewportAssetResolver.ViewportImagePlacement placement,
+            bool visible,
+            Stretch stretch)
+        {
+            image.Width = placement.Width;
+            image.Height = placement.Height;
+            image.Stretch = stretch;
+            Canvas.SetLeft(image, placement.Left);
+            Canvas.SetTop(image, placement.Top);
+
+            string path = placement.ImagePath ?? string.Empty;
+            if (!visible || string.IsNullOrWhiteSpace(path))
+            {
+                placedImageStates.Remove(image);
+                return SetAnimatedImage(image, null, false);
+            }
+
+            DateTime lastWriteTimeUtc = File.Exists(path)
+                ? File.GetLastWriteTimeUtc(path)
+                : DateTime.MinValue;
+            if (placedImageStates.TryGetValue(image, out PlacedImageState? current)
+                && string.Equals(current.Path, path, StringComparison.OrdinalIgnoreCase)
+                && current.LastWriteTimeUtc == lastWriteTimeUtc
+                && image.Source != null)
+            {
+                image.Visibility = Visibility.Visible;
+                return animationPlayers.TryGetValue(image, out IAnimationPlayer? existingPlayer)
+                    ? existingPlayer
+                    : null;
+            }
+
+            placedImageStates.Remove(image);
+            IAnimationPlayer? player = SetAnimatedImage(image, path, true);
+            if (image.Source != null)
+            {
+                placedImageStates[image] = new PlacedImageState(path, lastWriteTimeUtc);
+            }
+
+            return player;
         }
 
         private static void ApplyOffset(Image image, (int Horizontal, int Vertical) offset)
@@ -1346,6 +1391,7 @@ namespace OceanyaClient.Features.Viewport
 
         private void StopAnimation(Image image)
         {
+            placedImageStates.Remove(image);
             if (!animationPlayers.TryGetValue(image, out IAnimationPlayer? player))
             {
                 return;
@@ -1363,6 +1409,7 @@ namespace OceanyaClient.Features.Viewport
             }
 
             animationPlayers.Clear();
+            placedImageStates.Clear();
         }
 
         private void ScheduleContinuation(TimeSpan interval, Action continuation)
@@ -1621,5 +1668,7 @@ namespace OceanyaClient.Features.Viewport
             PreAnimation,
             Speaking
         }
+
+        private sealed record PlacedImageState(string Path, DateTime LastWriteTimeUtc);
     }
 }

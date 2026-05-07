@@ -1,6 +1,7 @@
 using AOBot_Testing.Agents;
 using AOBot_Testing.Structures;
 using Common;
+using OceanyaClient.Features.Viewport;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -61,7 +62,7 @@ namespace OceanyaClient.AdvancedFeatures
             }
 
             string designIniPath = Path.Combine(backgroundDirectory, "design.ini");
-            string positionKey = client.curPos.Trim();
+            string positionKey = ResolveOverlayKey(client);
 
             try
             {
@@ -113,7 +114,7 @@ namespace OceanyaClient.AdvancedFeatures
             }
 
             designIniPath = Path.Combine(backgroundDirectory, "design.ini");
-            positionKey = client.curPos.Trim();
+            positionKey = ResolveOverlayKey(client);
             return true;
         }
 
@@ -242,7 +243,7 @@ namespace OceanyaClient.AdvancedFeatures
             }
 
             string designIniPath = Path.Combine(backgroundDirectory, "design.ini");
-            string positionKey = client.curPos.Trim();
+            string positionKey = ResolveOverlayKey(client);
 
             try
             {
@@ -817,6 +818,14 @@ namespace OceanyaClient.AdvancedFeatures
             }
 
             return false;
+        }
+
+        private static string ResolveOverlayKey(AOClient client)
+        {
+            string resolved = AO2ViewportAssetResolver.ResolveBackgroundOverlayKey(client.curBG, client.curPos);
+            return string.IsNullOrWhiteSpace(resolved)
+                ? client.curPos.Trim()
+                : resolved.Trim();
         }
 
         private static bool TryGetOverlayValueFromDesignIni(string designIniPath, string positionKey, out string overlayValue)

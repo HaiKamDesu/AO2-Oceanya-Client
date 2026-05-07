@@ -1735,6 +1735,7 @@ namespace OceanyaClient
             Canvas.SetTop(chkInvertLog, 607 + verticalOffset);
             Canvas.SetTop(btnAreaNavigator, 603 + verticalOffset);
             Canvas.SetTop(btnViewport, 603 + verticalOffset);
+            Canvas.SetTop(btnSettings, 603 + verticalOffset);
 
             UpdateDreddFeatureEnabledState();
         }

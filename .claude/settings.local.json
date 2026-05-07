@@ -20,7 +20,12 @@
       "Bash(/bin/bash:*)",
       "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" build \"Oceanya Client.sln\" --configuration Release -nologo)",
       "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" test UnitTests/UnitTests.csproj --no-build --configuration Release --filter \"ClassName~Phase1ReleaseConfidenceTests|ClassName~Phase2ReleaseConfidenceTests\" --logger \"console;verbosity=normal\")",
-      "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" test UnitTests/UnitTests.csproj --no-build --configuration Release --filter \"FullyQualifiedName~Phase1ReleaseConfidenceTests|FullyQualifiedName~Phase2ReleaseConfidenceTests\" --logger \"console;verbosity=normal\")"
+      "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" test UnitTests/UnitTests.csproj --no-build --configuration Release --filter \"FullyQualifiedName~Phase1ReleaseConfidenceTests|FullyQualifiedName~Phase2ReleaseConfidenceTests\" --logger \"console;verbosity=normal\")",
+      "Skill(grep-and-read)",
+      "Bash(docker compose *)",
+      "Bash(docker port *)",
+      "Bash(docker exec tsuservercc *)",
+      "Bash(python3 *)"
     ]
   },
   "enableAllProjectMcpServers": false

@@ -126,12 +126,17 @@ namespace UnitTests
             
             // Create some test background images
             CreateEmptyFile(Path.Combine(testBgDir, "defenseempty.png"));
+            CreateEmptyFile(Path.Combine(testBgDir, "helperstand.png"));
+            CreateEmptyFile(Path.Combine(testBgDir, "jurystand.png"));
             CreateEmptyFile(Path.Combine(testBgDir, "witnessempty.png"));
             CreateEmptyFile(Path.Combine(testBgDir, "prosecutorempty.png"));
             CreateEmptyFile(Path.Combine(testBgDir, "background.png"));
             
             // Create a desk image (should be excluded)
             CreateEmptyFile(Path.Combine(testBgDir, "defensedesk.png"));
+            CreateEmptyFile(Path.Combine(testBgDir, "helperdesk.png"));
+            CreateEmptyFile(Path.Combine(testBgDir, "jurydesk.png"));
+            Background.RefreshCache();
         }
         
         [TearDown]
@@ -208,7 +213,7 @@ namespace UnitTests
             Assert.That(background, Is.Not.Null, "Background should be loaded from valid path");
             Assert.That(background, Is.Not.Null);
             Assert.That(background!.Name, Is.EqualTo("testbg"), "Background name should match the folder name");
-            Assert.That(background!.bgImages, Has.Count.EqualTo(4), "Background should have 4 images (excluding desk)");
+            Assert.That(background!.bgImages, Has.Count.EqualTo(6), "Background should include only non-desk images");
             
             // Verify desk image was excluded
             Assert.That(background!.bgImages, Has.None.Contains("defensedesk"),
@@ -337,11 +342,45 @@ namespace UnitTests
         }
 
         [Test]
+        public void Test_AO2ViewportAssetResolver_ResolvesDesignOverlayWithExtension()
+        {
+            string testBgDir = Path.Combine(_tempDir, "background", "testbg");
+            CreateEmptyFile(Path.Combine(testBgDir, "snow2.apng"));
+            File.WriteAllText(
+                Path.Combine(testBgDir, "design.ini"),
+                "positions=taiga_ws_day_1" + Environment.NewLine
+                + Environment.NewLine
+                + "[Overlays]" + Environment.NewLine
+                + "taiga_ws_day_1=snow2.apng" + Environment.NewLine);
+            CreateEmptyFile(Path.Combine(testBgDir, "taiga_ws_day_1.webp"));
+            Background.RefreshCache();
+
+            string? backgroundPath = AO2ViewportAssetResolver.ResolveBackgroundImage("testbg", "taiga_ws_day_1");
+            string? overlayPath = AO2ViewportAssetResolver.ResolveDeskImage("testbg", "taiga_ws_day_1");
+
+            Assert.That(backgroundPath, Is.EqualTo(Path.Combine(testBgDir, "taiga_ws_day_1.webp")));
+            Assert.That(overlayPath, Is.EqualTo(Path.Combine(testBgDir, "snow2.apng")));
+        }
+
+        [Test]
+        public void Test_AO2ViewportAssetResolver_UsesAo2HelperAndJuryDeskNames()
+        {
+            string testBgDir = Path.Combine(_tempDir, "background", "testbg");
+
+            Assert.That(
+                AO2ViewportAssetResolver.ResolveDeskImage("testbg", "hld"),
+                Is.EqualTo(Path.Combine(testBgDir, "helperdesk.png")));
+            Assert.That(
+                AO2ViewportAssetResolver.ResolveDeskImage("testbg", "jur"),
+                Is.EqualTo(Path.Combine(testBgDir, "jurydesk.png")));
+        }
+
+        [Test]
         public void Test_AO2ViewportAssetResolver_DeskVisibilityMatchesAo2PostPreanimState()
         {
             Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.Hidden, "def"), Is.False);
             Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.Shown, "def"), Is.True);
-            Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.Chat, "def"), Is.True);
+            Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.Chat, "def"), Is.False);
             Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.Chat, "custom"), Is.False);
             Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.ShownDuringPreanimHiddenAfter, "def"), Is.False);
             Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.HiddenDuringPreanimShownAfter, "def"), Is.True);
@@ -363,7 +402,7 @@ namespace UnitTests
                 Is.True);
             Assert.That(
                 AO2ViewportAssetResolver.ShouldShowDeskDuringPreAnimation(ICMessage.DeskMods.Chat, "def"),
-                Is.True);
+                Is.False);
             Assert.That(
                 AO2ViewportAssetResolver.ShouldShowDeskDuringPreAnimation(
                     ICMessage.DeskMods.ShownDuringPreanimCenteredAfter,

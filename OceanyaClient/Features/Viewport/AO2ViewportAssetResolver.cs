@@ -38,6 +38,7 @@ namespace OceanyaClient.Features.Viewport
         private static readonly string[] ImageExtensions = { ".webp", ".apng", ".gif", ".png", ".jpg", ".jpeg" };
         private static readonly TimeSpan DefaultShoutDuration = TimeSpan.FromMilliseconds(724);
         private static readonly TimeSpan DefaultPreAnimationDuration = TimeSpan.FromMilliseconds(1000);
+        private static readonly Dictionary<string, CachedImageSize> ImageSizeCache = new(StringComparer.OrdinalIgnoreCase);
 
         private static readonly Dictionary<string, string> LegacyPositionImageNames = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -54,11 +55,12 @@ namespace OceanyaClient.Features.Viewport
         private static readonly Dictionary<string, string> DeskImageNames = new(StringComparer.OrdinalIgnoreCase)
         {
             ["def"] = "defensedesk",
-            ["hld"] = "defensedesk",
-            ["hlp"] = "prosecutiondesk",
+            ["hld"] = "helperdesk",
+            ["hlp"] = "prohelperdesk",
             ["pro"] = "prosecutiondesk",
             ["jud"] = "judgedesk",
             ["wit"] = "stand",
+            ["jur"] = "jurydesk",
         };
 
         /// <summary>
@@ -132,6 +134,20 @@ namespace OceanyaClient.Features.Viewport
         public static string? ResolveDeskImage(string? backgroundName, string? position)
         {
             return ResolveDeskPlacement(backgroundName, position).ImagePath;
+        }
+
+        /// <summary>
+        /// Resolves the AO2 [Overlays] key for the current background/position pair.
+        /// </summary>
+        public static string ResolveBackgroundOverlayKey(string? backgroundName, string? position)
+        {
+            Background? background = ResolveBackground(backgroundName);
+            if (background == null)
+            {
+                return NormalizePosition(position);
+            }
+
+            return ResolveBackgroundPosition(background, position).BackgroundStem;
         }
 
         /// <summary>
@@ -430,6 +446,7 @@ namespace OceanyaClient.Features.Viewport
         public static bool ShouldShowDesk(ICMessage.DeskMods deskMod, string? position)
         {
             if (deskMod == ICMessage.DeskMods.Hidden
+                || deskMod == ICMessage.DeskMods.Chat
                 || deskMod == ICMessage.DeskMods.ShownDuringPreanimHiddenAfter
                 || deskMod == ICMessage.DeskMods.ShownDuringPreanimCenteredAfter)
             {
@@ -453,6 +470,7 @@ namespace OceanyaClient.Features.Viewport
         public static bool ShouldShowDeskDuringPreAnimation(ICMessage.DeskMods deskMod, string? position)
         {
             if (deskMod == ICMessage.DeskMods.Hidden
+                || deskMod == ICMessage.DeskMods.Chat
                 || deskMod == ICMessage.DeskMods.HiddenDuringPreanimShownAfter
                 || deskMod == ICMessage.DeskMods.HiddenDuringPreanimCenteredAfter)
             {
@@ -1002,9 +1020,21 @@ namespace OceanyaClient.Features.Viewport
         {
             try
             {
+                DateTime lastWriteTimeUtc = File.GetLastWriteTimeUtc(imagePath);
+                if (ImageSizeCache.TryGetValue(imagePath, out CachedImageSize? cached)
+                    && cached != null
+                    && cached.LastWriteTimeUtc == lastWriteTimeUtc)
+                {
+                    return (cached.Width, cached.Height);
+                }
+
                 ImageSource? source = LoadImage(imagePath);
                 if (source is System.Windows.Media.Imaging.BitmapSource bitmap)
                 {
+                    ImageSizeCache[imagePath] = new CachedImageSize(
+                        bitmap.PixelWidth,
+                        bitmap.PixelHeight,
+                        lastWriteTimeUtc);
                     return (bitmap.PixelWidth, bitmap.PixelHeight);
                 }
             }
@@ -1291,9 +1321,16 @@ namespace OceanyaClient.Features.Viewport
                 return null;
             }
 
+            string normalizedStem = stem.Trim();
+            string directCandidate = Path.Combine(directory, normalizedStem);
+            if (Path.HasExtension(normalizedStem) && File.Exists(directCandidate))
+            {
+                return directCandidate;
+            }
+
             foreach (string extension in ImageExtensions)
             {
-                string candidate = Path.Combine(directory, stem + extension);
+                string candidate = Path.Combine(directory, normalizedStem + extension);
                 if (File.Exists(candidate))
                 {
                     return candidate;
@@ -1477,5 +1514,7 @@ namespace OceanyaClient.Features.Viewport
         }
 
         private sealed record BackgroundPositionResolution(string BackgroundStem, string DeskStem, int? Origin);
+
+        private sealed record CachedImageSize(int Width, int Height, DateTime LastWriteTimeUtc);
     }
 }

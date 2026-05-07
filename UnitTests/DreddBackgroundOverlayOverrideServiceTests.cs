@@ -97,6 +97,7 @@ namespace UnitTests
             Directory.CreateDirectory(bgDir);
             string designIniPath = Path.Combine(bgDir, "design.ini");
             File.WriteAllText(designIniPath, "");
+            File.WriteAllText(Path.Combine(bgDir, "defenseempty.png"), "");
 
             string overlayPath = Path.Combine(bgDir, "ovr.png");
             File.WriteAllText(overlayPath, "");
@@ -117,7 +118,7 @@ namespace UnitTests
 
             Assert.That(applied, Is.True, error);
             string[] lines = File.ReadAllLines(designIniPath);
-            Assert.That(lines.Any(line => line.StartsWith("def=", StringComparison.OrdinalIgnoreCase)), Is.True);
+            Assert.That(lines.Any(line => line.StartsWith("defenseempty=", StringComparison.OrdinalIgnoreCase)), Is.True);
         }
 
         [Test]
