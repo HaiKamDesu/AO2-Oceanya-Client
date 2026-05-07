@@ -231,6 +231,12 @@ namespace OceanyaClient
         public string Word { get; set; } = string.Empty;
         public string SoundPath { get; set; } = string.Empty;
         public bool IsEnabled { get; set; } = true;
+
+        public override string ToString()
+        {
+            string soundText = string.IsNullOrWhiteSpace(SoundPath) ? "default notification SFX" : Path.GetFileName(SoundPath);
+            return $"Play {soundText} when \"{Word}\" appears";
+        }
     }
 
     public class ExtraAudioRule
@@ -241,6 +247,27 @@ namespace OceanyaClient
         public string Match { get; set; } = string.Empty;
         public int VolumePercent { get; set; } = 100;
         public bool IsEnabled { get; set; } = true;
+
+        public override string ToString()
+        {
+            string targetText = Target switch
+            {
+                ExtraAudioRuleTarget.Any => "all",
+                ExtraAudioRuleTarget.Character => $"character |{Match}|",
+                ExtraAudioRuleTarget.Showname => $"showname |{Match}|",
+                ExtraAudioRuleTarget.Player => $"player |{Match}|",
+                ExtraAudioRuleTarget.Blip => $"blip |{Match}|",
+                _ => Match
+            };
+
+            string kindText = Kind switch
+            {
+                ExtraAudioRuleKind.Blip => "blips",
+                _ => "audio"
+            };
+
+            return $"Set {targetText}'s {kindText} to {VolumePercent}% volume";
+        }
     }
 
     public class CharacterCreatorCutSelectionState

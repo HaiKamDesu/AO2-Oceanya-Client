@@ -35,10 +35,6 @@ namespace OceanyaClient
             InitializeComponent();
             Title = "Settings";
             Icon = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/OceanyaO.ico"));
-            AudioRuleKindComboBox.ItemsSource = Enum.GetValues(typeof(ExtraAudioRuleKind));
-            AudioRuleTargetComboBox.ItemsSource = Enum.GetValues(typeof(ExtraAudioRuleTarget));
-            AudioRuleKindComboBox.SelectedItem = ExtraAudioRuleKind.Blip;
-            AudioRuleTargetComboBox.SelectedItem = ExtraAudioRuleTarget.Character;
             CallwordRulesListBox.ItemsSource = callwordRules;
             AudioRulesListBox.ItemsSource = audioRules;
             ConfigEntriesListBox.ItemsSource = configEntries;
@@ -79,9 +75,19 @@ namespace OceanyaClient
             LogMaximumTextBox.Text = Ao2ConfigIniSettings.GetInt(configValues, "log_maximum", 0).ToString(CultureInfo.InvariantCulture);
 
             callwordRules.Clear();
+            HashSet<string> seenCallwords = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (CallwordRule rule in LoadConfigIniCallwords())
+            {
+                callwordRules.Add(rule);
+                seenCallwords.Add(rule.Word);
+            }
+
             foreach (CallwordRule rule in SaveFile.Data.CallwordRules)
             {
-                callwordRules.Add(Clone(rule));
+                if (seenCallwords.Add(rule.Word))
+                {
+                    callwordRules.Add(Clone(rule));
+                }
             }
 
             audioRules.Clear();
@@ -131,20 +137,26 @@ namespace OceanyaClient
 
         private void AddCallwordButton_Click(object sender, RoutedEventArgs e)
         {
-            string word = CallwordTextBox.Text?.Trim() ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(word))
+            CallwordRuleEditorWindow editor = new CallwordRuleEditorWindow(null) { Owner = HostWindow };
+            if (editor.ShowDialog() == true && editor.Rule != null)
+            {
+                callwordRules.Add(editor.Rule);
+            }
+        }
+
+        private void EditCallwordButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (CallwordRulesListBox.SelectedItem is not CallwordRule selected)
             {
                 return;
             }
 
-            callwordRules.Add(new CallwordRule
+            int index = callwordRules.IndexOf(selected);
+            CallwordRuleEditorWindow editor = new CallwordRuleEditorWindow(Clone(selected)) { Owner = HostWindow };
+            if (editor.ShowDialog() == true && editor.Rule != null && index >= 0)
             {
-                Word = word,
-                SoundPath = CallwordSoundPathTextBox.Text?.Trim() ?? string.Empty,
-                IsEnabled = true
-            });
-            CallwordTextBox.Text = string.Empty;
-            CallwordSoundPathTextBox.Text = string.Empty;
+                callwordRules[index] = editor.Rule;
+            }
         }
 
         private void RemoveCallwordButton_Click(object sender, RoutedEventArgs e)
@@ -157,28 +169,26 @@ namespace OceanyaClient
 
         private void AddAudioRuleButton_Click(object sender, RoutedEventArgs e)
         {
-            ExtraAudioRuleKind kind = AudioRuleKindComboBox.SelectedItem is ExtraAudioRuleKind selectedKind
-                ? selectedKind
-                : ExtraAudioRuleKind.Blip;
-            ExtraAudioRuleTarget target = AudioRuleTargetComboBox.SelectedItem is ExtraAudioRuleTarget selectedTarget
-                ? selectedTarget
-                : ExtraAudioRuleTarget.Character;
-            int volumePercent = TryParseInt(AudioRuleVolumeTextBox.Text, 100);
-            string match = AudioRuleMatchTextBox.Text?.Trim() ?? string.Empty;
-            if (target != ExtraAudioRuleTarget.Any && string.IsNullOrWhiteSpace(match))
+            ExtraAudioRuleEditorWindow editor = new ExtraAudioRuleEditorWindow(null) { Owner = HostWindow };
+            if (editor.ShowDialog() == true && editor.Rule != null)
+            {
+                audioRules.Add(editor.Rule);
+            }
+        }
+
+        private void EditAudioRuleButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (AudioRulesListBox.SelectedItem is not ExtraAudioRule selected)
             {
                 return;
             }
 
-            audioRules.Add(new ExtraAudioRule
+            int index = audioRules.IndexOf(selected);
+            ExtraAudioRuleEditorWindow editor = new ExtraAudioRuleEditorWindow(Clone(selected)) { Owner = HostWindow };
+            if (editor.ShowDialog() == true && editor.Rule != null && index >= 0)
             {
-                Name = string.IsNullOrWhiteSpace(AudioRuleNameTextBox.Text) ? "Audio rule" : AudioRuleNameTextBox.Text.Trim(),
-                Kind = kind,
-                Target = target,
-                Match = match,
-                VolumePercent = Math.Clamp(volumePercent, 0, 200),
-                IsEnabled = true
-            });
+                audioRules[index] = editor.Rule;
+            }
         }
 
         private void RemoveAudioRuleButton_Click(object sender, RoutedEventArgs e)
@@ -268,6 +278,7 @@ namespace OceanyaClient
                     configValues[entry.Key] = entry.Value;
                 }
             }
+            configValues["callwords"] = string.Join(", ", callwordRules.Select(rule => rule.Word).Where(word => !string.IsNullOrWhiteSpace(word)));
 
             Ao2ConfigIniSettings.Save(configValues);
             SaveFile.Save();
@@ -318,6 +329,30 @@ namespace OceanyaClient
                 VolumePercent = rule.VolumePercent,
                 IsEnabled = rule.IsEnabled
             };
+        }
+
+        private IEnumerable<CallwordRule> LoadConfigIniCallwords()
+        {
+            if (!configValues.TryGetValue("callwords", out string? raw) || string.IsNullOrWhiteSpace(raw))
+            {
+                yield break;
+            }
+
+            foreach (string word in raw.Split(new[] { ',', ';', '|', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                string trimmed = word.Trim().Trim('"');
+                if (string.IsNullOrWhiteSpace(trimmed))
+                {
+                    continue;
+                }
+
+                yield return new CallwordRule
+                {
+                    Word = trimmed,
+                    SoundPath = string.Empty,
+                    IsEnabled = true
+                };
+            }
         }
 
         private void RefreshConfigEntries()

@@ -15,9 +15,9 @@ Use this file as the first stop before broad repository searches. It should poin
 
 ## Client Settings And Audio
 - Doc: `Documentation/AO2Viewport.md`
-- Main code: `OceanyaClient/Components/Forms/SettingsWindow.xaml(.cs)`, `OceanyaClient/AudioSettings.cs`, `Common/SaveFile.cs`, `OceanyaClient/MainWindow.xaml`, `OceanyaClient/MainWindow.xaml.cs`
+- Main code: `OceanyaClient/Components/Forms/SettingsWindow.xaml(.cs)`, `OceanyaClient/Components/Forms/CallwordRuleEditorWindow.xaml(.cs)`, `OceanyaClient/Components/Forms/ExtraAudioRuleEditorWindow.xaml(.cs)`, `OceanyaClient/AudioSettings.cs`, `Common/SaveFile.cs`, `OceanyaClient/MainWindow.xaml`, `OceanyaClient/MainWindow.xaml.cs`
 - AO2 reference: `AO2-Client/src/options.cpp`, `AO2-Client/src/courtroom.cpp`
-- Notes: The shared dark settings dialog persists AO2-style music/SFX/blip sliders, client toggles, selected config.ini values, callword rules, and extra audio rules. The viewport/audio playback bridge uses the saved volumes/rules when the viewport is visible.
+- Notes: The shared dark settings dialog persists AO2-style music/SFX/blip sliders, client toggles, selected config.ini values, callword rules, and extra audio rules. Rule creation uses modal editors, dropdowns, file pickers, audio preview, and local character/blip catalogs instead of raw path/token typing. The viewport/audio playback bridge uses the saved volumes/rules when the viewport is visible.
 
 ## Character File Creator
 - Doc: `Documentation/CharacterFileCreator.md`

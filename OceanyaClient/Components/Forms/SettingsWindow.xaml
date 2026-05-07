@@ -125,6 +125,14 @@
             <Setter Property="FontSize" Value="11"/>
             <Setter Property="TextWrapping" Value="Wrap"/>
         </Style>
+        <Style x:Key="HelpGlyph" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#FF9FC3DF"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Text" Value="(?)"/>
+            <Setter Property="Margin" Value="6,0,0,0"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
         <Style x:Key="PageButton" TargetType="RadioButton">
             <Setter Property="Foreground" Value="#FFE8E8E8"/>
             <Setter Property="Background" Value="#FF242424"/>
@@ -210,7 +218,10 @@
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="54"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Text="Music" Style="{StaticResource LabelText}"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Music" Style="{StaticResource LabelText}"/>
+                                    <TextBlock Style="{StaticResource HelpGlyph}" ToolTip="Default music volume saved to config.ini as default_music."/>
+                                </StackPanel>
                                 <Slider Grid.Column="1" x:Name="MusicVolumeSlider" Minimum="0" Maximum="100" ValueChanged="AudioSlider_ValueChanged"/>
                                 <TextBlock Grid.Column="2" x:Name="MusicVolumeValueText" Style="{StaticResource LabelText}" HorizontalAlignment="Right"/>
                             </Grid>
@@ -220,7 +231,10 @@
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="54"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Text="SFX" Style="{StaticResource LabelText}"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="SFX" Style="{StaticResource LabelText}"/>
+                                    <TextBlock Style="{StaticResource HelpGlyph}" ToolTip="Default sound effect volume saved to config.ini as default_sfx."/>
+                                </StackPanel>
                                 <Slider Grid.Column="1" x:Name="SfxVolumeSlider" Minimum="0" Maximum="100" ValueChanged="AudioSlider_ValueChanged"/>
                                 <TextBlock Grid.Column="2" x:Name="SfxVolumeValueText" Style="{StaticResource LabelText}" HorizontalAlignment="Right"/>
                             </Grid>
@@ -230,47 +244,47 @@
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="54"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Text="Blips" Style="{StaticResource LabelText}"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Blips" Style="{StaticResource LabelText}"/>
+                                    <TextBlock Style="{StaticResource HelpGlyph}" ToolTip="Default talking blip volume saved to config.ini as default_blip."/>
+                                </StackPanel>
                                 <Slider Grid.Column="1" x:Name="BlipVolumeSlider" Minimum="0" Maximum="100" ValueChanged="AudioSlider_ValueChanged"/>
                                 <TextBlock Grid.Column="2" x:Name="BlipVolumeValueText" Style="{StaticResource LabelText}" HorizontalAlignment="Right"/>
                             </Grid>
 
-                            <TextBlock Text="Extra Audio Rules" Foreground="White" FontWeight="SemiBold" Margin="0,2,0,8"/>
-                            <ListBox x:Name="AudioRulesListBox" Height="130" Style="{StaticResource RuleList}" DisplayMemberPath="Name"/>
-                            <UniformGrid Columns="5" Margin="0,8,0,0">
-                                <TextBox x:Name="AudioRuleNameTextBox" Style="{StaticResource DarkTextBox}" Margin="0,0,6,0" Text="Blip rule"/>
-                                <ComboBox x:Name="AudioRuleKindComboBox" Style="{StaticResource DarkComboBox}" Margin="0,0,6,0"/>
-                                <ComboBox x:Name="AudioRuleTargetComboBox" Style="{StaticResource DarkComboBox}" Margin="0,0,6,0"/>
-                                <TextBox x:Name="AudioRuleMatchTextBox" Style="{StaticResource DarkTextBox}" Margin="0,0,6,0" ToolTip="Character, showname, player, or blip token"/>
-                                <TextBox x:Name="AudioRuleVolumeTextBox" Style="{StaticResource DarkTextBox}" Text="50" ToolTip="Volume percent"/>
-                            </UniformGrid>
+                            <StackPanel Orientation="Horizontal" Margin="0,2,0,8">
+                                <TextBlock Text="Extra Audio Rules" Foreground="White" FontWeight="SemiBold"/>
+                                <TextBlock Style="{StaticResource HelpGlyph}" ToolTip="Optional overrides for specific blips, characters, or shownames. Use Add/Edit so values come from known dropdowns."/>
+                            </StackPanel>
+                            <ListBox x:Name="AudioRulesListBox" Height="156" Style="{StaticResource RuleList}"/>
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
-                                <Button Content="Add Rule" Style="{StaticResource ModernButton}" Margin="0,0,8,0" Click="AddAudioRuleButton_Click"/>
-                                <Button Content="Remove Rule" Style="{StaticResource ModernButton}" Click="RemoveAudioRuleButton_Click"/>
+                                <Button Content="Add" Style="{StaticResource ModernButton}" Margin="0,0,8,0" Click="AddAudioRuleButton_Click"/>
+                                <Button Content="Edit" Style="{StaticResource ModernButton}" Margin="0,0,8,0" Click="EditAudioRuleButton_Click"/>
+                                <Button Content="Remove" Style="{StaticResource ModernButton}" Click="RemoveAudioRuleButton_Click"/>
                             </StackPanel>
                         </StackPanel>
 
                         <StackPanel x:Name="ClientPage" Visibility="Collapsed">
                             <TextBlock Text="Client" Foreground="White" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10"/>
-                            <CheckBox x:Name="StickyEffectsCheckBox" Content="Sticky effects" Foreground="White" Margin="0,0,0,10"/>
-                            <CheckBox x:Name="SwitchPosOnIniSwapCheckBox" Content="Switch position on INI swap" Foreground="White" Margin="0,0,0,10"/>
-                            <CheckBox x:Name="InvertIcLogsCheckBox" Content="Invert IC logs" Foreground="White" Margin="0,0,0,10"/>
-                            <CheckBox x:Name="OpenViewportOnStartupCheckBox" Content="Open viewport automatically when it was left shown" Foreground="White" Margin="0,0,0,10"/>
+                            <CheckBox x:Name="StickyEffectsCheckBox" Content="Sticky effects" Foreground="White" Margin="0,0,0,10" ToolTip="Keep selected effects around instead of clearing them after send."/>
+                            <CheckBox x:Name="SwitchPosOnIniSwapCheckBox" Content="Switch position on INI swap" Foreground="White" Margin="0,0,0,10" ToolTip="When changing character INI, also switch to that character's preferred side/position when known."/>
+                            <CheckBox x:Name="InvertIcLogsCheckBox" Content="Invert IC logs" Foreground="White" Margin="0,0,0,10" ToolTip="Show newest IC log messages at the opposite end of the log."/>
+                            <CheckBox x:Name="OpenViewportOnStartupCheckBox" Content="Open viewport automatically when it was left shown" Foreground="White" Margin="0,0,0,10" ToolTip="If GM viewport was visible when saved, open it automatically next time."/>
                         </StackPanel>
 
                         <StackPanel x:Name="ConfigPage" Visibility="Collapsed">
                             <TextBlock Text="AO2 Config" Foreground="White" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10"/>
                             <TextBlock x:Name="ConfigPathTextBlock" Style="{StaticResource SubText}" Margin="0,0,0,10"/>
                             <UniformGrid Columns="2">
-                                <CheckBox x:Name="ShakeCheckBox" Content="Screenshake" Foreground="White" Margin="0,0,12,10"/>
-                                <CheckBox x:Name="BlankBlipCheckBox" Content="Blank blips" Foreground="White" Margin="0,0,0,10"/>
+                                <CheckBox x:Name="ShakeCheckBox" Content="Screenshake" Foreground="White" Margin="0,0,12,10" ToolTip="Allow AO2 screenshake effects."/>
+                                <CheckBox x:Name="BlankBlipCheckBox" Content="Blank blips" Foreground="White" Margin="0,0,0,10" ToolTip="Use blank/silent blips when AO2 asks for blank blip behavior."/>
                             </UniformGrid>
                             <UniformGrid Columns="2">
-                                <StackPanel Margin="0,0,10,10"><TextBlock Text="Text crawl (ms)" Style="{StaticResource LabelText}"/><TextBox x:Name="TextCrawlTextBox" Style="{StaticResource DarkTextBox}"/></StackPanel>
-                                <StackPanel Margin="0,0,0,10"><TextBlock Text="Blip rate" Style="{StaticResource LabelText}"/><TextBox x:Name="BlipRateTextBox" Style="{StaticResource DarkTextBox}"/></StackPanel>
-                                <StackPanel Margin="0,0,10,10"><TextBlock Text="Chat rate limit" Style="{StaticResource LabelText}"/><TextBox x:Name="ChatRateLimitTextBox" Style="{StaticResource DarkTextBox}"/></StackPanel>
-                                <StackPanel Margin="0,0,0,10"><TextBlock Text="Stay time" Style="{StaticResource LabelText}"/><TextBox x:Name="StayTimeTextBox" Style="{StaticResource DarkTextBox}"/></StackPanel>
-                                <StackPanel Margin="0,0,10,10"><TextBlock Text="Log maximum" Style="{StaticResource LabelText}"/><TextBox x:Name="LogMaximumTextBox" Style="{StaticResource DarkTextBox}"/></StackPanel>
+                                <StackPanel Margin="0,0,10,10"><StackPanel Orientation="Horizontal"><TextBlock Text="Text crawl (ms)" Style="{StaticResource LabelText}"/><TextBlock Style="{StaticResource HelpGlyph}" ToolTip="Milliseconds between visible text crawl updates."/></StackPanel><TextBox x:Name="TextCrawlTextBox" Style="{StaticResource DarkTextBox}"/></StackPanel>
+                                <StackPanel Margin="0,0,0,10"><StackPanel Orientation="Horizontal"><TextBlock Text="Blip rate" Style="{StaticResource LabelText}"/><TextBlock Style="{StaticResource HelpGlyph}" ToolTip="How often blip sounds play while message text appears."/></StackPanel><TextBox x:Name="BlipRateTextBox" Style="{StaticResource DarkTextBox}"/></StackPanel>
+                                <StackPanel Margin="0,0,10,10"><StackPanel Orientation="Horizontal"><TextBlock Text="Chat rate limit" Style="{StaticResource LabelText}"/><TextBlock Style="{StaticResource HelpGlyph}" ToolTip="Delay/rate limit for outgoing chat. 0 means no local limit."/></StackPanel><TextBox x:Name="ChatRateLimitTextBox" Style="{StaticResource DarkTextBox}"/></StackPanel>
+                                <StackPanel Margin="0,0,0,10"><StackPanel Orientation="Horizontal"><TextBlock Text="Stay time" Style="{StaticResource LabelText}"/><TextBlock Style="{StaticResource HelpGlyph}" ToolTip="How long temporary courtroom elements stay visible before clearing."/></StackPanel><TextBox x:Name="StayTimeTextBox" Style="{StaticResource DarkTextBox}"/></StackPanel>
+                                <StackPanel Margin="0,0,10,10"><StackPanel Orientation="Horizontal"><TextBlock Text="Log maximum" Style="{StaticResource LabelText}"/><TextBlock Style="{StaticResource HelpGlyph}" ToolTip="Maximum saved log entries. 0 keeps current AO2 default behavior."/></StackPanel><TextBox x:Name="LogMaximumTextBox" Style="{StaticResource DarkTextBox}"/></StackPanel>
                             </UniformGrid>
                             <TextBlock Text="All config.ini keys" Foreground="White" FontWeight="SemiBold" Margin="0,8,0,8"/>
                             <ListBox x:Name="ConfigEntriesListBox"
@@ -284,8 +298,8 @@
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBox x:Name="ConfigKeyTextBox" Style="{StaticResource DarkTextBox}" Margin="0,0,8,0"/>
-                                <TextBox x:Name="ConfigValueTextBox" Grid.Column="1" Style="{StaticResource DarkTextBox}" Margin="0,0,8,0"/>
+                                <TextBox x:Name="ConfigKeyTextBox" Style="{StaticResource DarkTextBox}" Margin="0,0,8,0" ToolTip="Advanced raw config.ini key. Prefer fields above when available."/>
+                                <TextBox x:Name="ConfigValueTextBox" Grid.Column="1" Style="{StaticResource DarkTextBox}" Margin="0,0,8,0" ToolTip="Advanced raw config.ini value. This writes directly to config.ini."/>
                                 <Button Grid.Column="2" Content="Set Key" Style="{StaticResource ModernButton}" Click="SetConfigEntryButton_Click"/>
                             </Grid>
                             <Button Content="Restore Defaults" Width="130" HorizontalAlignment="Left" Margin="0,10,0,0" Style="{StaticResource ModernButton}" Click="RestoreDefaultsButton_Click"/>
@@ -295,18 +309,11 @@
                             <TextBlock Text="Callwords" Foreground="White" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10"/>
                             <TextBlock Text="Each rule checks incoming messages case-insensitively. Empty sound path uses AO2 word_call/default notification SFX."
                                        Style="{StaticResource SubText}" Margin="0,0,0,8"/>
-                            <ListBox x:Name="CallwordRulesListBox" Height="180" Style="{StaticResource RuleList}" DisplayMemberPath="Word"/>
-                            <Grid Margin="0,8,0,0">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="160"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBox x:Name="CallwordTextBox" Style="{StaticResource DarkTextBox}" Margin="0,0,8,0" ToolTip="Callword"/>
-                                <TextBox x:Name="CallwordSoundPathTextBox" Grid.Column="1" Style="{StaticResource DarkTextBox}" ToolTip="Optional custom SFX file path"/>
-                            </Grid>
+                            <ListBox x:Name="CallwordRulesListBox" Height="210" Style="{StaticResource RuleList}"/>
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
-                                <Button Content="Add Callword" Style="{StaticResource ModernButton}" Margin="0,0,8,0" Click="AddCallwordButton_Click"/>
-                                <Button Content="Remove Callword" Style="{StaticResource ModernButton}" Click="RemoveCallwordButton_Click"/>
+                                <Button Content="Add" Style="{StaticResource ModernButton}" Margin="0,0,8,0" Click="AddCallwordButton_Click"/>
+                                <Button Content="Edit" Style="{StaticResource ModernButton}" Margin="0,0,8,0" Click="EditCallwordButton_Click"/>
+                                <Button Content="Remove" Style="{StaticResource ModernButton}" Click="RemoveCallwordButton_Click"/>
                             </StackPanel>
                         </StackPanel>
                     </Grid>
