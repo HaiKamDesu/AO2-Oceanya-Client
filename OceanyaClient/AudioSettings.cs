@@ -1,4 +1,5 @@
 using System;
+using AOBot_Testing.Structures;
 using Common;
 
 namespace OceanyaClient
@@ -24,6 +25,29 @@ namespace OceanyaClient
         public static double BlipVolume => Math.Clamp(SaveFile.Data.AudioBlipVolume, 0.0, 1.0);
 
         /// <summary>
+        /// Gets a blip volume after applying saved extra audio rules.
+        /// </summary>
+        public static double ResolveBlipVolume(
+            string? characterName,
+            string? showname,
+            string? playerName,
+            string? blipToken)
+        {
+            double volume = BlipVolume;
+            foreach (ExtraAudioRule rule in SaveFile.Data.ExtraAudioRules)
+            {
+                if (!rule.IsEnabled || rule.Kind != ExtraAudioRuleKind.Blip || !RuleMatches(rule, characterName, showname, playerName, blipToken))
+                {
+                    continue;
+                }
+
+                volume *= Math.Clamp(rule.VolumePercent, 0, 200) / 100.0;
+            }
+
+            return Math.Clamp(volume, 0.0, 1.0);
+        }
+
+        /// <summary>
         /// Scales a base embedded-sound volume by the persisted SFX slider.
         /// </summary>
         public static float ScaleEmbeddedSfxVolume(float baseVolume)
@@ -45,6 +69,32 @@ namespace OceanyaClient
         public static double ScalarToPercent(double scalar)
         {
             return Math.Clamp(scalar, 0.0, 1.0) * 100.0;
+        }
+
+        private static bool RuleMatches(
+            ExtraAudioRule rule,
+            string? characterName,
+            string? showname,
+            string? playerName,
+            string? blipToken)
+        {
+            string match = rule.Match?.Trim() ?? string.Empty;
+            return rule.Target switch
+            {
+                ExtraAudioRuleTarget.Any => true,
+                ExtraAudioRuleTarget.Character => Contains(characterName, match),
+                ExtraAudioRuleTarget.Showname => Contains(showname, match),
+                ExtraAudioRuleTarget.Player => Contains(playerName, match),
+                ExtraAudioRuleTarget.Blip => Contains(blipToken, match),
+                _ => false
+            };
+        }
+
+        private static bool Contains(string? value, string match)
+        {
+            return !string.IsNullOrWhiteSpace(value)
+                && !string.IsNullOrWhiteSpace(match)
+                && value.IndexOf(match, StringComparison.OrdinalIgnoreCase) >= 0;
         }
     }
 }

@@ -285,8 +285,9 @@
                                     <ListView.View>
                                         <GridView ColumnHeaderContainerStyle="{StaticResource ServerGridHeaderStyle}">
                                             <GridViewColumn Header="ID" Width="44" DisplayMemberBinding="{Binding DisplayId}"/>
-                                            <GridViewColumn Header="Name" Width="245" DisplayMemberBinding="{Binding Name}"/>
+                                            <GridViewColumn Header="Name" Width="205" DisplayMemberBinding="{Binding Name}"/>
                                             <GridViewColumn Header="Players" Width="86" DisplayMemberBinding="{Binding PlayersText}"/>
+                                            <GridViewColumn Header="Ping" Width="64" DisplayMemberBinding="{Binding LatencyText}"/>
                                         </GridView>
                                     </ListView.View>
                                 </ListView>
@@ -317,8 +318,9 @@
                                     <ListView.View>
                                         <GridView ColumnHeaderContainerStyle="{StaticResource ServerGridHeaderStyle}">
                                             <GridViewColumn Header="ID" Width="44" DisplayMemberBinding="{Binding DisplayId}"/>
-                                            <GridViewColumn Header="Name" Width="245" DisplayMemberBinding="{Binding Name}"/>
+                                            <GridViewColumn Header="Name" Width="205" DisplayMemberBinding="{Binding Name}"/>
                                             <GridViewColumn Header="Players" Width="86" DisplayMemberBinding="{Binding PlayersText}"/>
+                                            <GridViewColumn Header="Ping" Width="64" DisplayMemberBinding="{Binding LatencyText}"/>
                                         </GridView>
                                     </ListView.View>
                                 </ListView>
@@ -353,8 +355,9 @@
                                     <ListView.View>
                                         <GridView ColumnHeaderContainerStyle="{StaticResource ServerGridHeaderStyle}">
                                             <GridViewColumn Header="ID" Width="44" DisplayMemberBinding="{Binding DisplayId}"/>
-                                            <GridViewColumn Header="Name" Width="245" DisplayMemberBinding="{Binding Name}"/>
+                                            <GridViewColumn Header="Name" Width="205" DisplayMemberBinding="{Binding Name}"/>
                                             <GridViewColumn Header="Players" Width="86" DisplayMemberBinding="{Binding PlayersText}"/>
+                                            <GridViewColumn Header="Ping" Width="64" DisplayMemberBinding="{Binding LatencyText}"/>
                                         </GridView>
                                     </ListView.View>
                                 </ListView>

@@ -2,133 +2,178 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:OceanyaClient"
-        Height="430"
-        Width="560"
-        MinHeight="400"
-        MinWidth="520">
+        Height="620"
+        Width="860"
+        MinHeight="520"
+        MinWidth="720">
     <local:OceanyaWindowContentControl.Resources>
         <Style x:Key="ModernButton" TargetType="Button">
             <Setter Property="Background" Value="#FF262626"/>
             <Setter Property="Foreground" Value="White"/>
-            <Setter Property="BorderBrush" Value="#444444"/>
+            <Setter Property="BorderBrush" Value="#555555"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding" Value="12,5"/>
-            <Setter Property="Height" Value="30"/>
+            <Setter Property="MinHeight" Value="30"/>
+        </Style>
+        <Style x:Key="DarkTextBox" TargetType="TextBox">
+            <Setter Property="Background" Value="#FF1E1E1E"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#555555"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,5"/>
+            <Setter Property="MinHeight" Value="30"/>
+        </Style>
+        <Style x:Key="DarkComboBoxItemStyle" TargetType="ComboBoxItem">
+            <Setter Property="Foreground" Value="#FFECECEC"/>
+            <Setter Property="Background" Value="#FF1F1F1F"/>
+            <Setter Property="Padding" Value="10,4"/>
             <Setter Property="Template">
                 <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border x:Name="ButtonBorder"
-                                Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="3">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="ItemBorder" Background="{TemplateBinding Background}">
+                            <ContentPresenter VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="#FF3D3D3D" TargetName="ButtonBorder"/>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#FF36506A"/>
                             </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter Property="Background" Value="#FF171717" TargetName="ButtonBorder"/>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#FF3D5E7F"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
         </Style>
-
-        <Style x:Key="LabelText" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="#FFD7D7D7"/>
-            <Setter Property="FontSize" Value="13"/>
-            <Setter Property="Margin" Value="0,0,0,4"/>
-        </Style>
-
-        <Style x:Key="SubText" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="#FFAEAEAE"/>
-            <Setter Property="FontSize" Value="11"/>
-            <Setter Property="TextWrapping" Value="Wrap"/>
-            <Setter Property="Margin" Value="0,2,0,0"/>
-        </Style>
-
-        <Style x:Key="DarkTabControlStyle" TargetType="TabControl">
-            <Setter Property="Background" Value="#CC1F1F1F"/>
-            <Setter Property="BorderBrush" Value="#FF444444"/>
+        <Style x:Key="DarkComboBox" TargetType="ComboBox">
+            <Setter Property="Foreground" Value="#FFF0F0F0"/>
+            <Setter Property="Background" Value="#FF262626"/>
+            <Setter Property="BorderBrush" Value="#FF555555"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding" Value="8"/>
+            <Setter Property="Padding" Value="10,0,28,0"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="ItemContainerStyle" Value="{StaticResource DarkComboBoxItemStyle}"/>
             <Setter Property="Template">
                 <Setter.Value>
-                    <ControlTemplate TargetType="TabControl">
+                    <ControlTemplate TargetType="ComboBox">
                         <Grid SnapsToDevicePixels="True">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="*"/>
-                            </Grid.RowDefinitions>
-                            <TabPanel Grid.Row="0"
-                                      IsItemsHost="True"
-                                      Margin="0,0,0,6"/>
-                            <Border Grid.Row="1"
+                            <Border x:Name="MainBorder"
                                     Background="{TemplateBinding Background}"
                                     BorderBrush="{TemplateBinding BorderBrush}"
                                     BorderThickness="{TemplateBinding BorderThickness}"
-                                    CornerRadius="3">
-                                <ContentPresenter ContentSource="SelectedContent"
-                                                  Margin="{TemplateBinding Padding}"/>
-                            </Border>
-                        </Grid>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <Style x:Key="DarkTabItemStyle" TargetType="TabItem">
-            <Setter Property="Foreground" Value="#FFEAEAEA"/>
-            <Setter Property="Background" Value="#FF262626"/>
-            <Setter Property="BorderBrush" Value="#FF444444"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding" Value="14,6"/>
-            <Setter Property="Margin" Value="0,0,6,0"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="TabItem">
-                        <Border x:Name="TabBorder"
-                                Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="3,3,0,0"
-                                Padding="{TemplateBinding Padding}">
-                            <ContentPresenter HorizontalAlignment="Center"
+                                    CornerRadius="3"/>
+                            <ToggleButton Focusable="False"
+                                          ClickMode="Press"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                          Background="Transparent"
+                                          BorderThickness="0">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border Background="Transparent"/>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+                            <ContentPresenter Margin="{TemplateBinding Padding}"
                                               VerticalAlignment="Center"
-                                              ContentSource="Header"/>
-                        </Border>
+                                              IsHitTestVisible="False"
+                                              Content="{TemplateBinding SelectionBoxItem}"
+                                              TextElement.Foreground="{TemplateBinding Foreground}"/>
+                            <Path HorizontalAlignment="Right"
+                                  VerticalAlignment="Center"
+                                  Margin="0,0,10,0"
+                                  IsHitTestVisible="False"
+                                  Fill="#FFDCDCDC"
+                                  Data="M 0 0 L 8 0 L 4 5 Z"/>
+                            <Popup x:Name="PART_Popup"
+                                   Placement="Bottom"
+                                   IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   AllowsTransparency="True"
+                                   Focusable="False"
+                                   PopupAnimation="Fade">
+                                <Border Margin="0,2,0,0"
+                                        MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
+                                        Background="#FF1F1F1F"
+                                        BorderBrush="#FF4A4A4A"
+                                        BorderThickness="1"
+                                        CornerRadius="3">
+                                    <ScrollViewer CanContentScroll="True" MaxHeight="320">
+                                        <ItemsPresenter/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
                         <ControlTemplate.Triggers>
-                            <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="TabBorder" Property="Background" Value="#FF3D5E7F"/>
-                                <Setter TargetName="TabBorder" Property="BorderBrush" Value="#FF6E93BB"/>
-                            </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="TabBorder" Property="Background" Value="#FF303030"/>
+                                <Setter TargetName="MainBorder" Property="Background" Value="#FF2A2A2A"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                <Setter TargetName="MainBorder" Property="BorderBrush" Value="#FF6E93BB"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
         </Style>
-
-        <Style x:Key="ConfigSliderStyle" TargetType="Slider">
+        <Style x:Key="LabelText" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#FFE2E2E2"/>
+            <Setter Property="FontSize" Value="13"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
-            <Setter Property="Margin" Value="0,2,0,0"/>
         </Style>
-
-        <Style x:Key="ConfigValueTextStyle" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="#FFD8D8D8"/>
-            <Setter Property="VerticalAlignment" Value="Center"/>
-            <Setter Property="HorizontalAlignment" Value="Right"/>
-            <Setter Property="Margin" Value="0,2,0,0"/>
-            <Setter Property="FontSize" Value="12"/>
+        <Style x:Key="SubText" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#FFAAAAAA"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+        </Style>
+        <Style x:Key="PageButton" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="#FFE8E8E8"/>
+            <Setter Property="Background" Value="#FF242424"/>
+            <Setter Property="BorderBrush" Value="#FF444444"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="12,9"/>
+            <Setter Property="Margin" Value="0,0,0,6"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="Chrome"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="3"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#FF33536B"/>
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="#FF79A6C7"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="#FF777777"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="PanelBorder" TargetType="Border">
+            <Setter Property="Background" Value="#CC202020"/>
+            <Setter Property="BorderBrush" Value="#FF444444"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Padding" Value="12"/>
+            <Setter Property="Margin" Value="0,0,0,12"/>
+        </Style>
+        <Style x:Key="RuleList" TargetType="ListBox">
+            <Setter Property="Background" Value="#FF1B1B1B"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#FF444444"/>
+            <Setter Property="BorderThickness" Value="1"/>
         </Style>
     </local:OceanyaWindowContentControl.Resources>
 
-    <Grid Margin="12,10,12,12">
+    <Grid Margin="12">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -136,67 +181,142 @@
         </Grid.RowDefinitions>
 
         <StackPanel Grid.Row="0" Margin="0,0,0,10">
-            <TextBlock Text="Client Settings" Foreground="White" FontSize="16" FontWeight="SemiBold"/>
-            <TextBlock Text="These settings are persisted locally and applied across sessions." Style="{StaticResource SubText}" Margin="0,4,0,0"/>
+            <TextBlock Text="Client Settings" Foreground="White" FontSize="17" FontWeight="SemiBold"/>
+            <TextBlock Text="AO2 config.ini values save back to the selected config file. Oceanya-only rules save to savefile."
+                       Style="{StaticResource SubText}" Margin="0,4,0,0"/>
         </StackPanel>
 
-        <TabControl Grid.Row="1"
-                    x:Name="SettingsTabControl"
-                    Style="{StaticResource DarkTabControlStyle}">
-            <TabItem Header="Audio" Style="{StaticResource DarkTabItemStyle}">
-                <Grid Margin="2">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="168"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
 
-                    <TextBlock Text="Audio volume"
-                               Foreground="#FFE6E6E6"
-                               FontSize="14"
-                               FontWeight="SemiBold"
-                               Margin="0,0,0,8"/>
+            <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                <RadioButton x:Name="AudioPageButton" Content="Audio" IsChecked="True" Style="{StaticResource PageButton}" Checked="PageButton_Checked"/>
+                <RadioButton x:Name="ClientPageButton" Content="Client" Style="{StaticResource PageButton}" Checked="PageButton_Checked"/>
+                <RadioButton x:Name="ConfigPageButton" Content="AO2 Config" Style="{StaticResource PageButton}" Checked="PageButton_Checked"/>
+                <RadioButton x:Name="CallwordsPageButton" Content="Callwords" Style="{StaticResource PageButton}" Checked="PageButton_Checked"/>
+            </StackPanel>
 
-                    <Grid Grid.Row="1" Margin="0,0,0,12">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="150"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="58"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Music" Style="{StaticResource LabelText}"/>
-                        <Slider Grid.Column="1" x:Name="MusicVolumeSlider" Minimum="0" Maximum="100" ValueChanged="AudioSlider_ValueChanged" Style="{StaticResource ConfigSliderStyle}"/>
-                        <TextBlock Grid.Column="2" x:Name="MusicVolumeValueText" Style="{StaticResource ConfigValueTextStyle}"/>
+            <Border Grid.Column="1" Style="{StaticResource PanelBorder}" Margin="0">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <Grid>
+                        <StackPanel x:Name="AudioPage">
+                            <TextBlock Text="Audio" Foreground="White" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10"/>
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="140"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="54"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Music" Style="{StaticResource LabelText}"/>
+                                <Slider Grid.Column="1" x:Name="MusicVolumeSlider" Minimum="0" Maximum="100" ValueChanged="AudioSlider_ValueChanged"/>
+                                <TextBlock Grid.Column="2" x:Name="MusicVolumeValueText" Style="{StaticResource LabelText}" HorizontalAlignment="Right"/>
+                            </Grid>
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="140"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="54"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="SFX" Style="{StaticResource LabelText}"/>
+                                <Slider Grid.Column="1" x:Name="SfxVolumeSlider" Minimum="0" Maximum="100" ValueChanged="AudioSlider_ValueChanged"/>
+                                <TextBlock Grid.Column="2" x:Name="SfxVolumeValueText" Style="{StaticResource LabelText}" HorizontalAlignment="Right"/>
+                            </Grid>
+                            <Grid Margin="0,0,0,18">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="140"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="54"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Blips" Style="{StaticResource LabelText}"/>
+                                <Slider Grid.Column="1" x:Name="BlipVolumeSlider" Minimum="0" Maximum="100" ValueChanged="AudioSlider_ValueChanged"/>
+                                <TextBlock Grid.Column="2" x:Name="BlipVolumeValueText" Style="{StaticResource LabelText}" HorizontalAlignment="Right"/>
+                            </Grid>
+
+                            <TextBlock Text="Extra Audio Rules" Foreground="White" FontWeight="SemiBold" Margin="0,2,0,8"/>
+                            <ListBox x:Name="AudioRulesListBox" Height="130" Style="{StaticResource RuleList}" DisplayMemberPath="Name"/>
+                            <UniformGrid Columns="5" Margin="0,8,0,0">
+                                <TextBox x:Name="AudioRuleNameTextBox" Style="{StaticResource DarkTextBox}" Margin="0,0,6,0" Text="Blip rule"/>
+                                <ComboBox x:Name="AudioRuleKindComboBox" Style="{StaticResource DarkComboBox}" Margin="0,0,6,0"/>
+                                <ComboBox x:Name="AudioRuleTargetComboBox" Style="{StaticResource DarkComboBox}" Margin="0,0,6,0"/>
+                                <TextBox x:Name="AudioRuleMatchTextBox" Style="{StaticResource DarkTextBox}" Margin="0,0,6,0" ToolTip="Character, showname, player, or blip token"/>
+                                <TextBox x:Name="AudioRuleVolumeTextBox" Style="{StaticResource DarkTextBox}" Text="50" ToolTip="Volume percent"/>
+                            </UniformGrid>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+                                <Button Content="Add Rule" Style="{StaticResource ModernButton}" Margin="0,0,8,0" Click="AddAudioRuleButton_Click"/>
+                                <Button Content="Remove Rule" Style="{StaticResource ModernButton}" Click="RemoveAudioRuleButton_Click"/>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <StackPanel x:Name="ClientPage" Visibility="Collapsed">
+                            <TextBlock Text="Client" Foreground="White" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10"/>
+                            <CheckBox x:Name="StickyEffectsCheckBox" Content="Sticky effects" Foreground="White" Margin="0,0,0,10"/>
+                            <CheckBox x:Name="SwitchPosOnIniSwapCheckBox" Content="Switch position on INI swap" Foreground="White" Margin="0,0,0,10"/>
+                            <CheckBox x:Name="InvertIcLogsCheckBox" Content="Invert IC logs" Foreground="White" Margin="0,0,0,10"/>
+                            <CheckBox x:Name="OpenViewportOnStartupCheckBox" Content="Open viewport automatically when it was left shown" Foreground="White" Margin="0,0,0,10"/>
+                        </StackPanel>
+
+                        <StackPanel x:Name="ConfigPage" Visibility="Collapsed">
+                            <TextBlock Text="AO2 Config" Foreground="White" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10"/>
+                            <TextBlock x:Name="ConfigPathTextBlock" Style="{StaticResource SubText}" Margin="0,0,0,10"/>
+                            <UniformGrid Columns="2">
+                                <CheckBox x:Name="ShakeCheckBox" Content="Screenshake" Foreground="White" Margin="0,0,12,10"/>
+                                <CheckBox x:Name="BlankBlipCheckBox" Content="Blank blips" Foreground="White" Margin="0,0,0,10"/>
+                            </UniformGrid>
+                            <UniformGrid Columns="2">
+                                <StackPanel Margin="0,0,10,10"><TextBlock Text="Text crawl (ms)" Style="{StaticResource LabelText}"/><TextBox x:Name="TextCrawlTextBox" Style="{StaticResource DarkTextBox}"/></StackPanel>
+                                <StackPanel Margin="0,0,0,10"><TextBlock Text="Blip rate" Style="{StaticResource LabelText}"/><TextBox x:Name="BlipRateTextBox" Style="{StaticResource DarkTextBox}"/></StackPanel>
+                                <StackPanel Margin="0,0,10,10"><TextBlock Text="Chat rate limit" Style="{StaticResource LabelText}"/><TextBox x:Name="ChatRateLimitTextBox" Style="{StaticResource DarkTextBox}"/></StackPanel>
+                                <StackPanel Margin="0,0,0,10"><TextBlock Text="Stay time" Style="{StaticResource LabelText}"/><TextBox x:Name="StayTimeTextBox" Style="{StaticResource DarkTextBox}"/></StackPanel>
+                                <StackPanel Margin="0,0,10,10"><TextBlock Text="Log maximum" Style="{StaticResource LabelText}"/><TextBox x:Name="LogMaximumTextBox" Style="{StaticResource DarkTextBox}"/></StackPanel>
+                            </UniformGrid>
+                            <TextBlock Text="All config.ini keys" Foreground="White" FontWeight="SemiBold" Margin="0,8,0,8"/>
+                            <ListBox x:Name="ConfigEntriesListBox"
+                                     Height="150"
+                                     Style="{StaticResource RuleList}"
+                                     DisplayMemberPath="DisplayText"
+                                     SelectionChanged="ConfigEntriesListBox_SelectionChanged"/>
+                            <Grid Margin="0,8,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="180"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="ConfigKeyTextBox" Style="{StaticResource DarkTextBox}" Margin="0,0,8,0"/>
+                                <TextBox x:Name="ConfigValueTextBox" Grid.Column="1" Style="{StaticResource DarkTextBox}" Margin="0,0,8,0"/>
+                                <Button Grid.Column="2" Content="Set Key" Style="{StaticResource ModernButton}" Click="SetConfigEntryButton_Click"/>
+                            </Grid>
+                            <Button Content="Restore Defaults" Width="130" HorizontalAlignment="Left" Margin="0,10,0,0" Style="{StaticResource ModernButton}" Click="RestoreDefaultsButton_Click"/>
+                        </StackPanel>
+
+                        <StackPanel x:Name="CallwordsPage" Visibility="Collapsed">
+                            <TextBlock Text="Callwords" Foreground="White" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10"/>
+                            <TextBlock Text="Each rule checks incoming messages case-insensitively. Empty sound path uses AO2 word_call/default notification SFX."
+                                       Style="{StaticResource SubText}" Margin="0,0,0,8"/>
+                            <ListBox x:Name="CallwordRulesListBox" Height="180" Style="{StaticResource RuleList}" DisplayMemberPath="Word"/>
+                            <Grid Margin="0,8,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="160"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="CallwordTextBox" Style="{StaticResource DarkTextBox}" Margin="0,0,8,0" ToolTip="Callword"/>
+                                <TextBox x:Name="CallwordSoundPathTextBox" Grid.Column="1" Style="{StaticResource DarkTextBox}" ToolTip="Optional custom SFX file path"/>
+                            </Grid>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+                                <Button Content="Add Callword" Style="{StaticResource ModernButton}" Margin="0,0,8,0" Click="AddCallwordButton_Click"/>
+                                <Button Content="Remove Callword" Style="{StaticResource ModernButton}" Click="RemoveCallwordButton_Click"/>
+                            </StackPanel>
+                        </StackPanel>
                     </Grid>
-
-                    <Grid Grid.Row="2" Margin="0,0,0,12">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="150"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="58"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="SFX" Style="{StaticResource LabelText}"/>
-                        <Slider Grid.Column="1" x:Name="SfxVolumeSlider" Minimum="0" Maximum="100" ValueChanged="AudioSlider_ValueChanged" Style="{StaticResource ConfigSliderStyle}"/>
-                        <TextBlock Grid.Column="2" x:Name="SfxVolumeValueText" Style="{StaticResource ConfigValueTextStyle}"/>
-                    </Grid>
-
-                    <Grid Grid.Row="3">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="150"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="58"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Blips" Style="{StaticResource LabelText}"/>
-                        <Slider Grid.Column="1" x:Name="BlipVolumeSlider" Minimum="0" Maximum="100" ValueChanged="AudioSlider_ValueChanged" Style="{StaticResource ConfigSliderStyle}"/>
-                        <TextBlock Grid.Column="2" x:Name="BlipVolumeValueText" Style="{StaticResource ConfigValueTextStyle}"/>
-                    </Grid>
-                </Grid>
-            </TabItem>
-        </TabControl>
+                </ScrollViewer>
+            </Border>
+        </Grid>
 
         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
-            <Button Width="100" Height="30" Margin="0,0,8,0" Content="Save" Style="{StaticResource ModernButton}" Click="SaveButton_Click"/>
-            <Button Width="100" Height="30" Content="Cancel" Style="{StaticResource ModernButton}" Click="CancelButton_Click"/>
+            <Button Width="100" Margin="0,0,8,0" Content="Save" Style="{StaticResource ModernButton}" Click="SaveButton_Click"/>
+            <Button Width="100" Content="Cancel" Style="{StaticResource ModernButton}" Click="CancelButton_Click"/>
         </StackPanel>
     </Grid>
 </local:OceanyaWindowContentControl>

@@ -396,7 +396,8 @@
                           Canvas.Top="607" Foreground="White" FontFamily="Arial" FontSize="10" 
                           Width="82" Height="16" BorderBrush="Black" 
                           Checked="chkStickyEffects_Checked" Unchecked="chkStickyEffects_Checked" 
-                          Canvas.Left="10" Focusable="False" IsTabStop="False" VerticalContentAlignment="Center"/>
+                          Canvas.Left="10" Focusable="False" IsTabStop="False" VerticalContentAlignment="Center"
+                          Visibility="Collapsed"/>
 
                 <Button x:Name="btnRefreshCharacters" Height="24" Width="24" 
                         AutomationProperties.AutomationId="Main.OpenCharacterFolderVisualizer"
@@ -474,7 +475,8 @@
                           Canvas.Top="607" Foreground="White" FontFamily="Arial" FontSize="10" 
                           Width="127" Height="16" BorderBrush="Black" 
                           Checked="chkPosOnIniSwap_Checked" Unchecked="chkPosOnIniSwap_Checked" 
-                          Canvas.Left="97" Focusable="False" IsTabStop="False" VerticalContentAlignment="Center"/>
+                          Canvas.Left="97" Focusable="False" IsTabStop="False" VerticalContentAlignment="Center"
+                          Visibility="Collapsed"/>
 
                 <Button x:Name="btnDebug" Content="Button" Height="18" 
                         Canvas.Left="442" Canvas.Top="607" Width="38" 
@@ -484,7 +486,8 @@
                     Canvas.Top="607" Foreground="White" FontFamily="Arial" FontSize="10" 
                     Width="127" Height="16" BorderBrush="Black" 
                     Checked="chkInvertLog_Checked" Unchecked="chkInvertLog_Checked" 
-                    Canvas.Left="229" Focusable="False" IsTabStop="False" VerticalContentAlignment="Center" HorizontalAlignment="Center" VerticalAlignment="Top"/>
+                    Canvas.Left="229" Focusable="False" IsTabStop="False" VerticalContentAlignment="Center" HorizontalAlignment="Center" VerticalAlignment="Top"
+                    Visibility="Collapsed"/>
 
                 <Button x:Name="btnAreaNavigator"
                         AutomationProperties.AutomationId="Main.AreaNavigator.Open"

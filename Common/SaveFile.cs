@@ -208,6 +208,39 @@ namespace OceanyaClient
         public double Height { get; set; } = 328;
         public double? Left { get; set; }
         public double? Top { get; set; }
+        public bool IsVisible { get; set; }
+    }
+
+    public enum ExtraAudioRuleKind
+    {
+        Blip = 0,
+        Sfx = 1
+    }
+
+    public enum ExtraAudioRuleTarget
+    {
+        Any = 0,
+        Character = 1,
+        Showname = 2,
+        Player = 3,
+        Blip = 4
+    }
+
+    public class CallwordRule
+    {
+        public string Word { get; set; } = string.Empty;
+        public string SoundPath { get; set; } = string.Empty;
+        public bool IsEnabled { get; set; } = true;
+    }
+
+    public class ExtraAudioRule
+    {
+        public string Name { get; set; } = string.Empty;
+        public ExtraAudioRuleKind Kind { get; set; } = ExtraAudioRuleKind.Blip;
+        public ExtraAudioRuleTarget Target { get; set; } = ExtraAudioRuleTarget.Any;
+        public string Match { get; set; } = string.Empty;
+        public int VolumePercent { get; set; } = 100;
+        public bool IsEnabled { get; set; } = true;
     }
 
     public class CharacterCreatorCutSelectionState
@@ -370,6 +403,8 @@ namespace OceanyaClient
         public double AudioMusicVolume { get; set; } = 0.5;
         public double AudioSfxVolume { get; set; } = 1.0;
         public double AudioBlipVolume { get; set; } = 0.5;
+        public List<CallwordRule> CallwordRules { get; set; } = new List<CallwordRule>();
+        public List<ExtraAudioRule> ExtraAudioRules { get; set; } = new List<ExtraAudioRule>();
         public double CharacterCreatorEmoteTileWidth { get; set; } = 420;
         public double CharacterCreatorEmoteTileHeight { get; set; } = 430;
         public double CharacterCreatorCuttingPreviewHeight { get; set; } = 170;
@@ -611,6 +646,8 @@ namespace OceanyaClient
             data.AudioMusicVolume = Math.Clamp(data.AudioMusicVolume, 0.0, 1.0);
             data.AudioSfxVolume = Math.Clamp(data.AudioSfxVolume, 0.0, 1.0);
             data.AudioBlipVolume = Math.Clamp(data.AudioBlipVolume, 0.0, 1.0);
+            data.CallwordRules = NormalizeCallwordRules(data.CallwordRules);
+            data.ExtraAudioRules = NormalizeExtraAudioRules(data.ExtraAudioRules);
             data.CharacterCreatorEmoteTileWidth = Math.Clamp(data.CharacterCreatorEmoteTileWidth, 320, 760);
             data.CharacterCreatorEmoteTileHeight = Math.Clamp(data.CharacterCreatorEmoteTileHeight, 330, 820);
             data.CharacterCreatorCuttingPreviewHeight = Math.Clamp(data.CharacterCreatorCuttingPreviewHeight, 120, 520);
@@ -778,6 +815,39 @@ namespace OceanyaClient
             settings.MaxTokens = Math.Clamp(settings.MaxTokens, 64, 4096);
             settings.MaxPromptMessages = Math.Clamp(settings.MaxPromptMessages, 0, 1000);
             settings.PersonalityPrompt ??= string.Empty;
+        }
+
+        private static List<CallwordRule> NormalizeCallwordRules(List<CallwordRule>? rules)
+        {
+            return (rules ?? new List<CallwordRule>())
+                .Where(rule => rule != null)
+                .Select(rule => new CallwordRule
+                {
+                    Word = rule.Word?.Trim() ?? string.Empty,
+                    SoundPath = rule.SoundPath?.Trim() ?? string.Empty,
+                    IsEnabled = rule.IsEnabled
+                })
+                .Where(rule => !string.IsNullOrWhiteSpace(rule.Word))
+                .GroupBy(rule => rule.Word, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .ToList();
+        }
+
+        private static List<ExtraAudioRule> NormalizeExtraAudioRules(List<ExtraAudioRule>? rules)
+        {
+            return (rules ?? new List<ExtraAudioRule>())
+                .Where(rule => rule != null)
+                .Select(rule => new ExtraAudioRule
+                {
+                    Name = string.IsNullOrWhiteSpace(rule.Name) ? "Audio rule" : rule.Name.Trim(),
+                    Kind = Enum.IsDefined(typeof(ExtraAudioRuleKind), rule.Kind) ? rule.Kind : ExtraAudioRuleKind.Blip,
+                    Target = Enum.IsDefined(typeof(ExtraAudioRuleTarget), rule.Target) ? rule.Target : ExtraAudioRuleTarget.Any,
+                    Match = rule.Match?.Trim() ?? string.Empty,
+                    VolumePercent = Math.Clamp(rule.VolumePercent, 0, 200),
+                    IsEnabled = rule.IsEnabled
+                })
+                .Where(rule => rule.Target == ExtraAudioRuleTarget.Any || !string.IsNullOrWhiteSpace(rule.Match))
+                .ToList();
         }
 
         private static void ClampPresetValues(FolderVisualizerViewPreset preset)

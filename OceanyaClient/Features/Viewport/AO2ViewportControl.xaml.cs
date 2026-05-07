@@ -712,7 +712,7 @@ namespace OceanyaClient.Features.Viewport
             if (showChat)
             {
                 currentChatBlipToken = ResolveViewportBlipToken(character, message);
-                audioManager.PrepareBlip(currentChatBlipToken);
+                audioManager.PrepareBlip(currentChatBlipToken, character?.Name, showname);
                 ChatPreview.RefreshPreview();
                 if (shouldStartTextReveal)
                 {

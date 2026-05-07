@@ -18,6 +18,8 @@ namespace OceanyaClient.Features.Viewport
         private string currentEffectSfxPath = string.Empty;
         private string currentShoutSfxPath = string.Empty;
         private string currentBlipPath = string.Empty;
+        private string currentBlipCharacterName = string.Empty;
+        private string currentBlipShowname = string.Empty;
         private bool disposed;
 
         /// <summary>
@@ -47,24 +49,37 @@ namespace OceanyaClient.Features.Viewport
         /// <summary>
         /// Preloads a blip sound for the next text reveal.
         /// </summary>
-        public void PrepareBlip(string? token)
+        public void PrepareBlip(string? token, string? characterName = null, string? showname = null)
         {
             string? path = AO2ViewportAudioResolver.ResolveBlipPath(token);
             if (string.IsNullOrWhiteSpace(path))
             {
                 currentBlipPath = string.Empty;
+                currentBlipCharacterName = string.Empty;
+                currentBlipShowname = string.Empty;
                 return;
             }
 
+            currentBlipCharacterName = characterName?.Trim() ?? string.Empty;
+            currentBlipShowname = showname?.Trim() ?? string.Empty;
             if (string.Equals(currentBlipPath, path, StringComparison.OrdinalIgnoreCase))
             {
+                blipPlayer.Volume = (float)AudioSettings.ResolveBlipVolume(
+                    currentBlipCharacterName,
+                    currentBlipShowname,
+                    null,
+                    token);
                 return;
             }
 
             if (blipPlayer.TrySetBlip(path))
             {
                 currentBlipPath = path;
-                blipPlayer.Volume = (float)AudioSettings.BlipVolume;
+                blipPlayer.Volume = (float)AudioSettings.ResolveBlipVolume(
+                    currentBlipCharacterName,
+                    currentBlipShowname,
+                    null,
+                    token);
                 return;
             }
 
@@ -81,7 +96,6 @@ namespace OceanyaClient.Features.Viewport
                 return;
             }
 
-            blipPlayer.Volume = (float)AudioSettings.BlipVolume;
             _ = blipPlayer.PlayBlip();
         }
 

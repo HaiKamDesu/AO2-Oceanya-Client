@@ -17,7 +17,7 @@ Use this file as the first stop before broad repository searches. It should poin
 - Doc: `Documentation/AO2Viewport.md`
 - Main code: `OceanyaClient/Components/Forms/SettingsWindow.xaml(.cs)`, `OceanyaClient/AudioSettings.cs`, `Common/SaveFile.cs`, `OceanyaClient/MainWindow.xaml`, `OceanyaClient/MainWindow.xaml.cs`
 - AO2 reference: `AO2-Client/src/options.cpp`, `AO2-Client/src/courtroom.cpp`
-- Notes: The shared dark settings dialog persists AO2-style music/SFX/blip sliders, and the viewport/audio playback bridge uses those volumes when the viewport is visible.
+- Notes: The shared dark settings dialog persists AO2-style music/SFX/blip sliders, client toggles, selected config.ini values, callword rules, and extra audio rules. The viewport/audio playback bridge uses the saved volumes/rules when the viewport is visible.
 
 ## Character File Creator
 - Doc: `Documentation/CharacterFileCreator.md`

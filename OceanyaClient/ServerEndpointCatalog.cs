@@ -40,6 +40,7 @@ namespace OceanyaClient
         private ServerPingStatus _pingStatus = ServerPingStatus.Unknown;
         private int? _onlinePlayers;
         private int? _maxPlayers;
+        private int? _latencyMilliseconds;
 
         public required string Name { get; init; }
         public required string Endpoint { get; init; }
@@ -77,6 +78,7 @@ namespace OceanyaClient
                 Notify(nameof(IsAoClientCompatible));
                 Notify(nameof(IsSelectable));
                 Notify(nameof(PlayersText));
+                Notify(nameof(LatencyText));
                 Notify(nameof(AvailabilityText));
             }
         }
@@ -106,6 +108,18 @@ namespace OceanyaClient
                 Notify(nameof(HasKnownPlayerCounts));
                 Notify(nameof(PlayersText));
                 Notify(nameof(AvailabilityText));
+            }
+        }
+
+        public int? LatencyMilliseconds
+        {
+            get => _latencyMilliseconds;
+            set
+            {
+                if (_latencyMilliseconds == value) return;
+                _latencyMilliseconds = value;
+                Notify(nameof(LatencyMilliseconds));
+                Notify(nameof(LatencyText));
             }
         }
 
@@ -172,6 +186,21 @@ namespace OceanyaClient
                 }
 
                 return $"{OnlinePlayers.GetValueOrDefault()}/{MaxPlayers.GetValueOrDefault()}";
+            }
+        }
+
+        public string LatencyText
+        {
+            get
+            {
+                if (PingStatus == ServerPingStatus.Unknown || PingStatus == ServerPingStatus.Pinging)
+                {
+                    return string.Empty;
+                }
+
+                return LatencyMilliseconds.HasValue
+                    ? $"{LatencyMilliseconds.Value}ms"
+                    : string.Empty;
             }
         }
 

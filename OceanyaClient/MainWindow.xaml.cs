@@ -38,6 +38,7 @@ namespace OceanyaClient
         private readonly Dictionary<AOClient, List<PendingAiOriginResponse>> pendingAiOriginResponses = new Dictionary<AOClient, List<PendingAiOriginResponse>>();
         private readonly Dictionary<AOClient, bool> aiOriginResponseVisibility = new Dictionary<AOClient, bool>();
         private readonly IAiChatCompletionService aiCompletionService = new AiChatCompletionService();
+        private readonly CallwordAudioNotifier callwordAudioNotifier = new CallwordAudioNotifier();
         private AOClient? currentClient;
         private AOClient? singleInternalClient;
         private AOClient? boundSingleClientProfile;
@@ -306,6 +307,7 @@ namespace OceanyaClient
             chkPosOnIniSwap.IsChecked = SaveFile.Data.SwitchPosOnIniSwap;
             chkSticky.IsChecked = SaveFile.Data.StickyEffect;
             chkInvertLog.IsChecked = SaveFile.Data.InvertICLog;
+            ApplySavedClientSettingsToRuntime();
             InitializeDreddFeatureUi();
 
             btnDebug.Visibility = debug ? Visibility.Visible : Visibility.Collapsed;
@@ -328,6 +330,10 @@ namespace OceanyaClient
 
             hasRaisedFinishedLoading = true;
             MarkAutomationReady();
+            if (SaveFile.Data.GMViewportWindowState?.IsVisible == true)
+            {
+                Dispatcher.BeginInvoke(new Action(OpenViewportWindow));
+            }
             FinishedLoading?.Invoke();
         }
 
@@ -350,6 +356,7 @@ namespace OceanyaClient
                 isMainWindowClosing = true;
                 viewportContent?.AttachClient(null, null);
                 viewportWindow?.Close();
+                callwordAudioNotifier.Dispose();
             };
         }
         private void RenameClient(AOClient bot)
@@ -1105,6 +1112,11 @@ namespace OceanyaClient
             bool isSentFromSelf,
             ICMessage.TextColors textColor)
         {
+            if (!isSentFromSelf)
+            {
+                callwordAudioNotifier.TryNotify(message);
+            }
+
             IReadOnlyList<LogMessageActionLink>? nameLinks = null;
             if (isSentFromSelf
                 && TryTakePendingAiOriginResponse(profileClient, "IC", showName, message, out PendingAiOriginResponse? pendingResponse)
@@ -1192,6 +1204,10 @@ namespace OceanyaClient
             bool isSentFromSelf = !isFromServer
                 && !string.IsNullOrWhiteSpace(profileClient.OOCShowname)
                 && string.Equals(showName, profileClient.OOCShowname, StringComparison.OrdinalIgnoreCase);
+            if (!isSentFromSelf)
+            {
+                callwordAudioNotifier.TryNotify(message);
+            }
 
             IReadOnlyList<LogMessageActionLink>? nameLinks = null;
             if (isSentFromSelf
@@ -2739,6 +2755,15 @@ namespace OceanyaClient
 
         private void btnViewport_Click(object sender, RoutedEventArgs e)
         {
+            if (viewportWindow?.IsVisible == true)
+            {
+                SaveFile.Data.GMViewportWindowState ??= new ViewportWindowState();
+                SaveFile.Data.GMViewportWindowState.IsVisible = false;
+                SaveFile.Save();
+                viewportWindow.Hide();
+                return;
+            }
+
             OpenViewportWindow();
         }
 
@@ -2759,6 +2784,9 @@ namespace OceanyaClient
 
                 viewportWindow.Activate();
                 RefreshViewportAttachment();
+                SaveFile.Data.GMViewportWindowState ??= new ViewportWindowState();
+                SaveFile.Data.GMViewportWindowState.IsVisible = true;
+                SaveFile.Save();
                 return;
             }
 
@@ -2809,6 +2837,9 @@ namespace OceanyaClient
                 }
 
                 eventArgs.Cancel = true;
+                SaveFile.Data.GMViewportWindowState ??= new ViewportWindowState();
+                SaveFile.Data.GMViewportWindowState.IsVisible = false;
+                SaveFile.Save();
                 viewportWindow?.Hide();
             };
             viewportWindow.Closed += (_, _) =>
@@ -2823,6 +2854,9 @@ namespace OceanyaClient
             viewportWindow.Activate();
             NormalizeVisibleViewportWindowSize(preferWidth: true);
             CaptureViewportWindowState();
+            SaveFile.Data.GMViewportWindowState ??= new ViewportWindowState();
+            SaveFile.Data.GMViewportWindowState.IsVisible = true;
+            SaveFile.Save();
         }
 
         private void OpenSettingsWindow()
@@ -2834,6 +2868,7 @@ namespace OceanyaClient
             }
 
             SettingsWindow settingsContent = new SettingsWindow();
+            settingsContent.SettingsSaved += ApplySavedClientSettingsToRuntime;
             Window owner = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
             settingsWindow = OceanyaWindowManager.CreateWindow(
                 settingsContent,
@@ -2854,10 +2889,25 @@ namespace OceanyaClient
                 });
             settingsWindow.Closed += (_, _) =>
             {
+                settingsContent.SettingsSaved -= ApplySavedClientSettingsToRuntime;
                 settingsWindow = null;
             };
             settingsWindow.Show();
             settingsWindow.Activate();
+        }
+
+        private void ApplySavedClientSettingsToRuntime()
+        {
+            ICMessageSettingsControl.stickyEffects = SaveFile.Data.StickyEffect;
+            chkSticky.IsChecked = SaveFile.Data.StickyEffect;
+            chkPosOnIniSwap.IsChecked = SaveFile.Data.SwitchPosOnIniSwap;
+            chkInvertLog.IsChecked = SaveFile.Data.InvertICLog;
+            foreach (AOClient client in clients.Values)
+            {
+                client.switchPosWhenChangingINI = SaveFile.Data.SwitchPosOnIniSwap;
+            }
+
+            ICLogControl.SetInvertOnClientLogs(SaveFile.Data.InvertICLog);
         }
 
         private void RefreshViewportAttachment()
@@ -3064,7 +3114,8 @@ namespace OceanyaClient
                 Width = Math.Max(GetViewportMinimumWindowWidth(), viewportWindow.Width),
                 Height = Math.Max(GetViewportMinimumWindowHeight(), viewportWindow.Height),
                 Left = viewportWindow.Left,
-                Top = viewportWindow.Top
+                Top = viewportWindow.Top,
+                IsVisible = viewportWindow.IsVisible
             };
             SaveFile.Save();
         }

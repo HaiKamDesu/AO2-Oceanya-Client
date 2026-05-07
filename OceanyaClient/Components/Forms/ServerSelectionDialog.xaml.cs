@@ -168,12 +168,15 @@ namespace OceanyaClient
                             {
                                 server.OnlinePlayers = null;
                                 server.MaxPlayers = null;
+                                server.LatencyMilliseconds = null;
                                 server.PingStatus = ServerPingStatus.Pinging;
                             }
                         });
 
+                        Stopwatch stopwatch = Stopwatch.StartNew();
                         (bool success, int? players, int? maxPlayers, bool incompatibleClient) =
                             await ServerEndpointCatalog.ProbeEndpointAsync(capturedBatch.Endpoint, cancellationToken);
+                        stopwatch.Stop();
 
                         ServerPingStatus newStatus = incompatibleClient
                             ? ServerPingStatus.IncompatibleClient
@@ -182,6 +185,9 @@ namespace OceanyaClient
                                 : ServerPingStatus.Offline;
                         int? newPlayers = success ? players : null;
                         int? newMax = success ? maxPlayers : null;
+                        int? latency = (success || incompatibleClient)
+                            ? Math.Max(0, (int)Math.Round(stopwatch.Elapsed.TotalMilliseconds))
+                            : null;
 
                         // Apply result on the UI thread so INPC updates the ListView rows.
                         await Dispatcher.InvokeAsync(() =>
@@ -190,6 +196,7 @@ namespace OceanyaClient
                             {
                                 server.OnlinePlayers = newPlayers;
                                 server.MaxPlayers = newMax;
+                                server.LatencyMilliseconds = latency;
                                 server.PingStatus = newStatus;
                             }
 
@@ -696,6 +703,7 @@ namespace OceanyaClient
                     ? entries.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToList()
                     : entries.OrderByDescending(item => item.Name, StringComparer.OrdinalIgnoreCase).ToList(),
                 "Players" => SortByPlayers(entries, ascending),
+                "Ping" => SortByPing(entries, ascending),
                 _ => entries.ToList()
             };
         }
@@ -718,6 +726,17 @@ namespace OceanyaClient
             return sortedWithPlayers.Concat(withoutPlayers).ToList();
         }
 
+        private static List<ServerEndpointDefinition> SortByPing(IEnumerable<ServerEndpointDefinition> entries, bool ascending)
+        {
+            IEnumerable<ServerEndpointDefinition> withPing = entries.Where(item => item.LatencyMilliseconds.HasValue);
+            IEnumerable<ServerEndpointDefinition> withoutPing = entries.Where(item => !item.LatencyMilliseconds.HasValue);
+            IEnumerable<ServerEndpointDefinition> sortedWithPing = ascending
+                ? withPing.OrderBy(item => item.LatencyMilliseconds!.Value)
+                : withPing.OrderByDescending(item => item.LatencyMilliseconds!.Value);
+
+            return sortedWithPing.Concat(withoutPing).ToList();
+        }
+
         private void GridHeader_Click(object sender, RoutedEventArgs e)
         {
             if (sender is not GridViewColumnHeader header || header.Content is not string columnName)
@@ -727,7 +746,8 @@ namespace OceanyaClient
 
             if (!string.Equals(columnName, "ID", StringComparison.Ordinal)
                 && !string.Equals(columnName, "Name", StringComparison.Ordinal)
-                && !string.Equals(columnName, "Players", StringComparison.Ordinal))
+                && !string.Equals(columnName, "Players", StringComparison.Ordinal)
+                && !string.Equals(columnName, "Ping", StringComparison.Ordinal))
             {
                 return;
             }
