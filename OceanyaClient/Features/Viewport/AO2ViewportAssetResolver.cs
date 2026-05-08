@@ -962,15 +962,13 @@ namespace OceanyaClient.Features.Viewport
             string[] splitPosition = normalizedPosition.Split(':');
             string realPosition = splitPosition.Length > 0 ? splitPosition[0] : normalizedPosition;
 
-            int? origin = TryReadInt(ReadDesignValue(background.PathToFile, normalizedPosition + "/origin"));
-            if (!origin.HasValue
-                && ResolveImageStem(background.PathToFile, "court") != null
+            if (ResolveImageStem(background.PathToFile, "court") != null
                 && !string.IsNullOrWhiteSpace(ReadDesignValue(background.PathToFile, "court:" + realPosition + "/origin")))
             {
                 normalizedPosition = "court:" + realPosition;
                 splitPosition = normalizedPosition.Split(':');
-                origin = TryReadInt(ReadDesignValue(background.PathToFile, normalizedPosition + "/origin"));
             }
+            int? origin = TryReadInt(ReadDesignValue(background.PathToFile, normalizedPosition + "/origin"));
 
             bool hasWitnessEmpty = ResolveImageStem(background.PathToFile, "witnessempty") != null;
             string backgroundStem = hasWitnessEmpty ? "witnessempty" : "wit";
@@ -1329,6 +1327,14 @@ namespace OceanyaClient.Features.Viewport
             }
 
             string normalizedStem = stem.Trim();
+
+            // AO2 parity: AO2 treats design.ini values as VPaths (relative), so absolute paths
+            // (e.g. from mis-authored design.ini files) are never resolved. Match that behavior.
+            if (Path.IsPathRooted(normalizedStem))
+            {
+                return null;
+            }
+
             string directCandidate = Path.Combine(directory, normalizedStem);
             if (Path.HasExtension(normalizedStem) && File.Exists(directCandidate))
             {

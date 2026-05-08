@@ -438,9 +438,7 @@ namespace OceanyaClient.Features.Viewport
                 ?? sceneClient?.currentINI
                 ?? messageSourceClient?.currentINI;
             string background = messageSourceClient?.curBG ?? sceneClient?.curBG ?? string.Empty;
-            string position = string.IsNullOrWhiteSpace(message.Side)
-                ? messageSourceClient?.curPos ?? sceneClient?.curPos ?? string.Empty
-                : message.Side;
+            string position = message.Side?.Trim() ?? string.Empty;
             string showname = string.IsNullOrWhiteSpace(message.ShowName)
                 ? character?.configINI.ShowName ?? message.Character
                 : message.ShowName;

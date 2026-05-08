@@ -385,6 +385,14 @@ namespace OceanyaClient
                 return validationTarget;
             }
 
+            // Skip probe if already confirmed reachable — avoids triggering tsuCC's 5-second
+            // reconnect cooldown immediately before the actual client connection.
+            if (validationTarget.PingStatus == ServerPingStatus.Online ||
+                validationTarget.PingStatus == ServerPingStatus.IncompatibleClient)
+            {
+                return validationTarget;
+            }
+
             (bool success, int? players, int? maxPlayers, bool incompatibleClient) =
                 await ServerEndpointCatalog.ProbeEndpointAsync(validationTarget.Endpoint, CancellationToken.None);
 

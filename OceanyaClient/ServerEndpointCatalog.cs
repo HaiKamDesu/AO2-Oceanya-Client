@@ -698,6 +698,7 @@ namespace OceanyaClient
                             result.Success = true;
                             result.Players = players;
                             result.MaxPlayers = maxPlayers;
+                            try { await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, string.Empty, cancellationToken); } catch { }
                             return result;
                         }
 
@@ -706,6 +707,8 @@ namespace OceanyaClient
                             TryParseProbeRejectionPacket(packet, out string rejectionReason);
                             result.RejectionReason = rejectionReason;
                             result.IncompatibleClient = LooksLikeIncompatibleClientRejection(rejectionReason);
+                            result.Success = !result.IncompatibleClient;
+                            try { await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, string.Empty, cancellationToken); } catch { }
                             return result;
                         }
                     }
@@ -776,6 +779,7 @@ namespace OceanyaClient
                             TryParseProbeRejectionPacket(packet, out string rejectionReason);
                             result.RejectionReason = rejectionReason;
                             result.IncompatibleClient = LooksLikeIncompatibleClientRejection(rejectionReason);
+                            result.Success = !result.IncompatibleClient;
                             return result;
                         }
                     }
