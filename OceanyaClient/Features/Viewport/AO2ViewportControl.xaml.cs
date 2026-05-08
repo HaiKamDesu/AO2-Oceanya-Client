@@ -396,9 +396,13 @@ namespace OceanyaClient.Features.Viewport
             audioManager.StopAll();
             FlashOverlay.BeginAnimation(OpacityProperty, null);
             FlashOverlay.Visibility = Visibility.Collapsed;
+            AO2ViewportAssetResolver.ViewportDisplayOptions displayOptions =
+                AO2ViewportAssetResolver.ResolveDisplayOptions(sceneClient.curBG);
             AO2ViewportAssetResolver.ViewportImagePlacement backgroundPlacement =
                 AO2ViewportAssetResolver.ResolveBackgroundPlacement(sceneClient.curBG, sceneClient.curPos);
-            SetPlacedAnimatedImage(BackgroundImage, backgroundPlacement, true, Stretch.Fill);
+            RenderOptions.SetBitmapScalingMode(BackgroundImage, displayOptions.ScalingMode);
+            RenderOptions.SetBitmapScalingMode(DeskImage, displayOptions.ScalingMode);
+            SetPlacedAnimatedImage(BackgroundImage, backgroundPlacement, true, displayOptions.StretchMode);
             SetAnimatedImage(CharacterImage, null, false);
             SetAnimatedImage(PairCharacterImage, null, false);
             SetPlacedImage(
@@ -600,9 +604,13 @@ namespace OceanyaClient.Features.Viewport
             ViewportPhase phase = ViewportPhase.Speaking,
             bool startTextReveal = true)
         {
+            AO2ViewportAssetResolver.ViewportDisplayOptions displayOptions =
+                AO2ViewportAssetResolver.ResolveDisplayOptions(backgroundName);
             AO2ViewportAssetResolver.ViewportImagePlacement backgroundPlacement =
                 AO2ViewportAssetResolver.ResolveBackgroundPlacement(backgroundName, position);
-            SetPlacedAnimatedImage(BackgroundImage, backgroundPlacement, true, Stretch.Fill);
+            RenderOptions.SetBitmapScalingMode(BackgroundImage, displayOptions.ScalingMode);
+            RenderOptions.SetBitmapScalingMode(DeskImage, displayOptions.ScalingMode);
+            SetPlacedAnimatedImage(BackgroundImage, backgroundPlacement, true, displayOptions.StretchMode);
 
             bool isPreAnimation = phase == ViewportPhase.PreAnimation;
             bool isZoom = message != null && AO2ViewportAssetResolver.IsZoomEmote(message.EmoteModifier);
@@ -642,7 +650,7 @@ namespace OceanyaClient.Features.Viewport
             AO2ViewportAssetResolver.ViewportImagePlacement deskPlacement = shouldShowDesk
                 ? AO2ViewportAssetResolver.ResolveDeskPlacement(backgroundName, position)
                 : new AO2ViewportAssetResolver.ViewportImagePlacement(null, 0, 0, AO2ViewportAssetResolver.ViewportWidth, AO2ViewportAssetResolver.ViewportHeight);
-            SetPlacedAnimatedImage(DeskImage, deskPlacement, shouldShowDesk, Stretch.Fill);
+            SetPlacedAnimatedImage(DeskImage, deskPlacement, shouldShowDesk, displayOptions.StretchMode);
 
             RenderPairCharacter(message, character, centerAndHidePair || isZoom || isPreAnimation);
             RenderSpeedlines(message, position, character, phase == ViewportPhase.Speaking && isZoom);

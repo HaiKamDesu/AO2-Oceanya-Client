@@ -39,6 +39,8 @@ namespace OceanyaClient.Features.Viewport
         private static readonly TimeSpan DefaultShoutDuration = TimeSpan.FromMilliseconds(724);
         private static readonly TimeSpan DefaultPreAnimationDuration = TimeSpan.FromMilliseconds(1000);
         private static readonly Dictionary<string, CachedImageSize> ImageSizeCache = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, ParsedDesignIni> DesignIniCache = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, (BackgroundPositionResolution Resolution, DateTime DesignIniWriteTimeUtc)> PositionResolutionCache = new(StringComparer.OrdinalIgnoreCase);
 
         private static readonly Dictionary<string, string> LegacyPositionImageNames = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -148,6 +150,34 @@ namespace OceanyaClient.Features.Viewport
             }
 
             return ResolveBackgroundPosition(background, position).BackgroundStem;
+        }
+
+        /// <summary>
+        /// Resolves scaling and stretch display options from the background's design.ini.
+        /// </summary>
+        public static ViewportDisplayOptions ResolveDisplayOptions(string? backgroundName)
+        {
+            Background? background = ResolveBackground(backgroundName);
+            if (background == null)
+            {
+                return ViewportDisplayOptions.Default;
+            }
+
+            string scalingRaw = ReadDesignValue(background.PathToFile, "scaling").Trim();
+            string stretchRaw = ReadDesignValue(background.PathToFile, "stretch").Trim();
+
+            BitmapScalingMode scalingMode = scalingRaw.ToLowerInvariant() switch
+            {
+                "pixel" => BitmapScalingMode.NearestNeighbor,
+                "fast" => BitmapScalingMode.LowQuality,
+                _ => BitmapScalingMode.HighQuality
+            };
+
+            bool stretchEnabled = !string.Equals(stretchRaw, "false", StringComparison.OrdinalIgnoreCase)
+                && stretchRaw != "0";
+            Stretch stretchMode = stretchEnabled ? Stretch.Fill : Stretch.None;
+
+            return new ViewportDisplayOptions(scalingMode, stretchMode);
         }
 
         /// <summary>
@@ -920,6 +950,15 @@ namespace OceanyaClient.Features.Viewport
         private static BackgroundPositionResolution ResolveBackgroundPosition(Background background, string? position)
         {
             string normalizedPosition = NormalizePosition(position);
+            string designIniPath = Path.Combine(background.PathToFile, "design.ini");
+            DateTime designIniTime = File.Exists(designIniPath) ? File.GetLastWriteTimeUtc(designIniPath) : DateTime.MinValue;
+            string cacheKey = background.PathToFile + "\0" + normalizedPosition;
+            if (PositionResolutionCache.TryGetValue(cacheKey, out (BackgroundPositionResolution Resolution, DateTime DesignIniWriteTimeUtc) cachedEntry)
+                && cachedEntry.DesignIniWriteTimeUtc == designIniTime)
+            {
+                return cachedEntry.Resolution;
+            }
+
             string[] splitPosition = normalizedPosition.Split(':');
             string realPosition = splitPosition.Length > 0 ? splitPosition[0] : normalizedPosition;
 
@@ -933,8 +972,9 @@ namespace OceanyaClient.Features.Viewport
                 origin = TryReadInt(ReadDesignValue(background.PathToFile, normalizedPosition + "/origin"));
             }
 
-            string backgroundStem = ResolveImageStem(background.PathToFile, "witnessempty") != null ? "witnessempty" : "wit";
-            string deskStem = ResolveImageStem(background.PathToFile, "witnessempty") != null ? "stand" : "wit_overlay";
+            bool hasWitnessEmpty = ResolveImageStem(background.PathToFile, "witnessempty") != null;
+            string backgroundStem = hasWitnessEmpty ? "witnessempty" : "wit";
+            string deskStem = hasWitnessEmpty ? "stand" : "wit_overlay";
 
             if (string.Equals(realPosition, "def", StringComparison.OrdinalIgnoreCase)
                 && ResolveImageStem(background.PathToFile, "defenseempty") != null)
@@ -983,7 +1023,9 @@ namespace OceanyaClient.Features.Viewport
                 deskStem = overlayOverride;
             }
 
-            return new BackgroundPositionResolution(backgroundStem, deskStem, origin);
+            var resolution = new BackgroundPositionResolution(backgroundStem, deskStem, origin);
+            PositionResolutionCache[cacheKey] = (resolution, designIniTime);
+            return resolution;
         }
 
         private static ViewportImagePlacement BuildPlacement(string? imagePath, int? origin)
@@ -1051,22 +1093,19 @@ namespace OceanyaClient.Features.Viewport
             return ReadIniValue(Path.Combine(backgroundDirectory, "design.ini"), identifier);
         }
 
-        private static string ReadIniValue(string path, string identifier)
+        private static ParsedDesignIni GetOrParseDesignIni(string path)
         {
-            if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(identifier) || !File.Exists(path))
+            DateTime lastWrite = File.GetLastWriteTimeUtc(path);
+            if (DesignIniCache.TryGetValue(path, out ParsedDesignIni? cached) && cached.LastWriteTimeUtc == lastWrite)
             {
-                return string.Empty;
+                return cached;
             }
 
+            var sectionDicts = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+            var sectionLists = new Dictionary<string, List<KeyValuePair<string, string>>>(StringComparer.OrdinalIgnoreCase);
             string currentSection = string.Empty;
-            string targetSection = string.Empty;
-            string targetKey = identifier;
-            int slashIndex = identifier.LastIndexOf('/');
-            if (slashIndex >= 0)
-            {
-                targetSection = identifier[..slashIndex].Trim();
-                targetKey = identifier[(slashIndex + 1)..].Trim();
-            }
+            sectionDicts[currentSection] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            sectionLists[currentSection] = new List<KeyValuePair<string, string>>();
 
             foreach (string rawLine in File.ReadLines(path))
             {
@@ -1079,28 +1118,53 @@ namespace OceanyaClient.Features.Viewport
                 if (line.StartsWith("[", StringComparison.Ordinal) && line.EndsWith("]", StringComparison.Ordinal))
                 {
                     currentSection = line[1..^1].Trim();
+                    if (!sectionDicts.ContainsKey(currentSection))
+                    {
+                        sectionDicts[currentSection] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                        sectionLists[currentSection] = new List<KeyValuePair<string, string>>();
+                    }
+
                     continue;
                 }
 
-                if (!string.Equals(currentSection, targetSection, StringComparison.OrdinalIgnoreCase))
+                int eq = line.IndexOf('=');
+                if (eq <= 0)
                 {
                     continue;
                 }
 
-                int separator = line.IndexOf('=');
-                if (separator <= 0)
-                {
-                    continue;
-                }
-
-                string key = line[..separator].Trim();
-                if (string.Equals(key, targetKey, StringComparison.OrdinalIgnoreCase))
-                {
-                    return line[(separator + 1)..].Trim();
-                }
+                string k = line[..eq].Trim();
+                string v = line[(eq + 1)..].Trim();
+                sectionDicts[currentSection][k] = v;
+                sectionLists[currentSection].Add(new KeyValuePair<string, string>(k, v));
             }
 
-            return string.Empty;
+            var result = new ParsedDesignIni(lastWrite, sectionDicts, sectionLists);
+            DesignIniCache[path] = result;
+            return result;
+        }
+
+        private static string ReadIniValue(string path, string identifier)
+        {
+            if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(identifier) || !File.Exists(path))
+            {
+                return string.Empty;
+            }
+
+            string targetSection = string.Empty;
+            string targetKey = identifier;
+            int slashIndex = identifier.LastIndexOf('/');
+            if (slashIndex >= 0)
+            {
+                targetSection = identifier[..slashIndex].Trim();
+                targetKey = identifier[(slashIndex + 1)..].Trim();
+            }
+
+            ParsedDesignIni parsed = GetOrParseDesignIni(path);
+            return parsed.SectionDicts.TryGetValue(targetSection, out Dictionary<string, string>? section)
+                && section.TryGetValue(targetKey, out string? value)
+                ? value
+                : string.Empty;
         }
 
         private static string ReadIniSectionValue(string path, string section, string key)
@@ -1113,83 +1177,26 @@ namespace OceanyaClient.Features.Viewport
                 return string.Empty;
             }
 
-            string currentSection = string.Empty;
-            foreach (string rawLine in File.ReadLines(path))
-            {
-                string line = (rawLine ?? string.Empty).Trim().TrimStart('\uFEFF');
-                if (string.IsNullOrWhiteSpace(line) || line.StartsWith(";", StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                if (line.StartsWith("[", StringComparison.Ordinal) && line.EndsWith("]", StringComparison.Ordinal))
-                {
-                    currentSection = line[1..^1].Trim();
-                    continue;
-                }
-
-                if (!string.Equals(currentSection, section, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                int separator = line.IndexOf('=');
-                if (separator <= 0)
-                {
-                    continue;
-                }
-
-                if (string.Equals(line[..separator].Trim(), key.Trim(), StringComparison.OrdinalIgnoreCase))
-                {
-                    return line[(separator + 1)..].Trim();
-                }
-            }
-
-            return string.Empty;
+            ParsedDesignIni parsed = GetOrParseDesignIni(path);
+            return parsed.SectionDicts.TryGetValue(section, out Dictionary<string, string>? sectionDict)
+                && sectionDict.TryGetValue(key.Trim(), out string? value)
+                ? value
+                : string.Empty;
         }
 
         private static IReadOnlyList<KeyValuePair<string, string>> ReadIniSectionEntries(string path, string section)
         {
-            List<KeyValuePair<string, string>> result = new List<KeyValuePair<string, string>>();
             if (string.IsNullOrWhiteSpace(path)
                 || string.IsNullOrWhiteSpace(section)
                 || !File.Exists(path))
             {
-                return result;
+                return Array.Empty<KeyValuePair<string, string>>();
             }
 
-            string currentSection = string.Empty;
-            foreach (string rawLine in File.ReadLines(path))
-            {
-                string line = (rawLine ?? string.Empty).Trim().TrimStart('\uFEFF');
-                if (string.IsNullOrWhiteSpace(line) || line.StartsWith(";", StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                if (line.StartsWith("[", StringComparison.Ordinal) && line.EndsWith("]", StringComparison.Ordinal))
-                {
-                    currentSection = line[1..^1].Trim();
-                    continue;
-                }
-
-                if (!string.Equals(currentSection, section, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                int separator = line.IndexOf('=');
-                if (separator <= 0)
-                {
-                    continue;
-                }
-
-                result.Add(new KeyValuePair<string, string>(
-                    line[..separator].Trim(),
-                    line[(separator + 1)..].Trim()));
-            }
-
-            return result;
+            ParsedDesignIni parsed = GetOrParseDesignIni(path);
+            return parsed.SectionLists.TryGetValue(section, out List<KeyValuePair<string, string>>? list)
+                ? list
+                : Array.Empty<KeyValuePair<string, string>>();
         }
 
         private static int ReadConfigIniInt(string key, int defaultValue, int? minimum = null)
@@ -1515,6 +1522,32 @@ namespace OceanyaClient.Features.Viewport
 
         private sealed record BackgroundPositionResolution(string BackgroundStem, string DeskStem, int? Origin);
 
+        /// <summary>
+        /// Display rendering options derived from a background's design.ini.
+        /// </summary>
+        public sealed record ViewportDisplayOptions(BitmapScalingMode ScalingMode, Stretch StretchMode)
+        {
+            /// <summary>Default options when no design.ini is present or the background is unknown.</summary>
+            public static readonly ViewportDisplayOptions Default = new(BitmapScalingMode.HighQuality, Stretch.Fill);
+        }
+
         private sealed record CachedImageSize(int Width, int Height, DateTime LastWriteTimeUtc);
+
+        private sealed class ParsedDesignIni
+        {
+            public ParsedDesignIni(
+                DateTime lastWriteTimeUtc,
+                Dictionary<string, Dictionary<string, string>> sectionDicts,
+                Dictionary<string, List<KeyValuePair<string, string>>> sectionLists)
+            {
+                LastWriteTimeUtc = lastWriteTimeUtc;
+                SectionDicts = sectionDicts;
+                SectionLists = sectionLists;
+            }
+
+            public DateTime LastWriteTimeUtc { get; }
+            public Dictionary<string, Dictionary<string, string>> SectionDicts { get; }
+            public Dictionary<string, List<KeyValuePair<string, string>>> SectionLists { get; }
+        }
     }
 }
