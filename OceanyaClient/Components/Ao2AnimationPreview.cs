@@ -37,13 +37,13 @@ namespace OceanyaClient
         private const double DefaultFrameDelayMilliseconds = 100d;
         internal static readonly TimeSpan MinimumAnimationTickInterval = TimeSpan.FromMilliseconds(1);
         private const int StaticPreviewCacheEntryLimit = 256;
-        private const int MaxAnimatedPreviewDimension = 360;
+        internal const int MaxAnimatedPreviewDimension = 360;
         private const int MaxAnimatedPreviewFrames = 180;
 
         private static readonly ImageSource FallbackImage = LoadEmbeddedFallback();
         private static readonly object StaticPreviewCacheLock = new object();
-        private static readonly Dictionary<(string path, int width), WeakReference<ImageSource>> StaticPreviewCache =
-            new Dictionary<(string path, int width), WeakReference<ImageSource>>();
+        private static readonly Dictionary<(string path, int width, int maxDim), WeakReference<ImageSource>> StaticPreviewCache =
+            new Dictionary<(string path, int width, int maxDim), WeakReference<ImageSource>>();
         private static readonly ConcurrentDictionary<string, bool> ApngDetectionCache =
             new ConcurrentDictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
 
@@ -139,7 +139,7 @@ namespace OceanyaClient
             return null;
         }
 
-        public static ImageSource LoadStaticPreviewImage(string? path, int decodePixelWidth, ImageSource? fallback = null)
+        public static ImageSource LoadStaticPreviewImage(string? path, int decodePixelWidth, ImageSource? fallback = null, int maxDimension = MaxAnimatedPreviewDimension)
         {
             ImageSource selectedFallback = fallback ?? FallbackImage;
             string? resolvedPath = ResolveAo2ImagePath(path);
@@ -149,21 +149,21 @@ namespace OceanyaClient
             }
 
             int normalizedDecodeWidth = Math.Max(0, decodePixelWidth);
-            if (TryGetCachedStaticPreview(resolvedPath, normalizedDecodeWidth, out ImageSource? cachedImage)
+            if (TryGetCachedStaticPreview(resolvedPath, normalizedDecodeWidth, maxDimension, out ImageSource? cachedImage)
                 && cachedImage != null)
             {
                 return cachedImage;
             }
 
             ImageSource result;
-            if (TryLoadFirstFrame(resolvedPath, out ImageSource? firstFrame, out _)
+            if (TryLoadFirstFrame(resolvedPath, out ImageSource? firstFrame, out _, maxDimension)
                 && firstFrame != null
                 && IsPotentialAnimatedPath(resolvedPath))
             {
                 result = firstFrame is BitmapSource bitmapFirstFrame
                     ? ScaleBitmapForPreview(bitmapFirstFrame, decodePixelWidth)
                     : firstFrame;
-                CacheStaticPreview(resolvedPath, normalizedDecodeWidth, result);
+                CacheStaticPreview(resolvedPath, normalizedDecodeWidth, maxDimension, result);
                 return result;
             }
 
@@ -191,7 +191,7 @@ namespace OceanyaClient
                 result = selectedFallback;
             }
 
-            CacheStaticPreview(resolvedPath, normalizedDecodeWidth, result);
+            CacheStaticPreview(resolvedPath, normalizedDecodeWidth, maxDimension, result);
             return result;
         }
 
@@ -250,9 +250,10 @@ namespace OceanyaClient
 
             // APNG and WebP use the frame-decoder path.
             // GIF uses the legacy gif-specific player first for reliability.
+            int maxDimension = MaxAnimatedPreviewDimension;
             if (extension == ".webp" || isApng)
             {
-                if (BitmapFrameAnimationPlayer.TryCreate(resolvedPath, loop, out BitmapFrameAnimationPlayer? bitmapPlayer)
+                if (BitmapFrameAnimationPlayer.TryCreate(resolvedPath, loop, out BitmapFrameAnimationPlayer? bitmapPlayer, maxDimension)
                     && bitmapPlayer != null)
                 {
                     player = bitmapPlayer;
@@ -276,7 +277,7 @@ namespace OceanyaClient
                     // ignored
                 }
 
-                if (BitmapFrameAnimationPlayer.TryCreate(resolvedPath, loop, out BitmapFrameAnimationPlayer? bitmapPlayer)
+                if (BitmapFrameAnimationPlayer.TryCreate(resolvedPath, loop, out BitmapFrameAnimationPlayer? bitmapPlayer, maxDimension)
                     && bitmapPlayer != null)
                 {
                     player = bitmapPlayer;
@@ -287,7 +288,7 @@ namespace OceanyaClient
             return false;
         }
 
-        public static bool TryLoadFirstFrame(string path, out ImageSource? initialFrame, out double estimatedDurationMs)
+        public static bool TryLoadFirstFrame(string path, out ImageSource? initialFrame, out double estimatedDurationMs, int maxDimension = MaxAnimatedPreviewDimension)
         {
             initialFrame = null;
             estimatedDurationMs = 0;
@@ -301,7 +302,7 @@ namespace OceanyaClient
             {
                 string extension = Path.GetExtension(resolvedPath).ToLowerInvariant();
                 if (IsPotentialAnimatedPath(resolvedPath)
-                    && TryDecodeFirstAnimationFrame(resolvedPath, out BitmapSource? decodedFrame, out double decodedDurationMs)
+                    && TryDecodeFirstAnimationFrame(resolvedPath, out BitmapSource? decodedFrame, out double decodedDurationMs, maxDimension)
                     && decodedFrame != null)
                 {
                     initialFrame = decodedFrame;
@@ -330,7 +331,7 @@ namespace OceanyaClient
             }
         }
 
-        internal static bool TryDecodeFirstAnimationFrame(string path, out BitmapSource? frame, out double estimatedDurationMs)
+        internal static bool TryDecodeFirstAnimationFrame(string path, out BitmapSource? frame, out double estimatedDurationMs, int maxDimension = MaxAnimatedPreviewDimension)
         {
             frame = null;
             estimatedDurationMs = 0;
@@ -350,7 +351,7 @@ namespace OceanyaClient
                 }
 
                 if (ShouldPreferMagickDecoder(extension, path)
-                    && TryDecodeAnimationFramesWithMagick(path, out List<BitmapSource>? magickFrames, out List<TimeSpan>? magickDurations)
+                    && TryDecodeAnimationFramesWithMagick(path, out List<BitmapSource>? magickFrames, out List<TimeSpan>? magickDurations, maxDimension)
                     && magickFrames != null
                     && magickDurations != null
                     && magickFrames.Count > 0)
@@ -453,7 +454,8 @@ namespace OceanyaClient
         internal static bool TryDecodeAnimationFrames(
             string path,
             out List<BitmapSource>? frames,
-            out List<TimeSpan>? frameDurations)
+            out List<TimeSpan>? frameDurations,
+            int maxDimension = MaxAnimatedPreviewDimension)
         {
             frames = null;
             frameDurations = null;
@@ -474,7 +476,7 @@ namespace OceanyaClient
                 }
 
                 if (ShouldPreferMagickDecoder(extension, path)
-                    && TryDecodeAnimationFramesWithMagick(path, out List<BitmapSource>? magickFrames, out List<TimeSpan>? magickDurations)
+                    && TryDecodeAnimationFramesWithMagick(path, out List<BitmapSource>? magickFrames, out List<TimeSpan>? magickDurations, maxDimension)
                     && magickFrames != null
                     && magickDurations != null
                     && magickFrames.Count > 1
@@ -585,7 +587,8 @@ namespace OceanyaClient
         private static bool TryDecodeAnimationFramesWithMagick(
             string path,
             out List<BitmapSource>? frames,
-            out List<TimeSpan>? frameDurations)
+            out List<TimeSpan>? frameDurations,
+            int maxDimension = MaxAnimatedPreviewDimension)
         {
             frames = null;
             frameDurations = null;
@@ -636,7 +639,7 @@ namespace OceanyaClient
                     (int targetWidth, int targetHeight) = ComputePreviewDimensions(
                         sourceWidth,
                         sourceHeight,
-                        MaxAnimatedPreviewDimension);
+                        maxDimension);
                     if (targetWidth != sourceWidth || targetHeight != sourceHeight)
                     {
                         frameImage.FilterType = FilterType.Triangle;
@@ -764,10 +767,10 @@ namespace OceanyaClient
             return NormalizeBitmapForUi(scaled);
         }
 
-        private static bool TryGetCachedStaticPreview(string path, int decodePixelWidth, out ImageSource? image)
+        private static bool TryGetCachedStaticPreview(string path, int decodePixelWidth, int maxDimension, out ImageSource? image)
         {
             image = null;
-            (string path, int width) cacheKey = (path, decodePixelWidth);
+            (string path, int width, int maxDim) cacheKey = (path, decodePixelWidth, maxDimension);
             lock (StaticPreviewCacheLock)
             {
                 if (!StaticPreviewCache.TryGetValue(cacheKey, out WeakReference<ImageSource>? reference))
@@ -786,9 +789,9 @@ namespace OceanyaClient
             }
         }
 
-        private static void CacheStaticPreview(string path, int decodePixelWidth, ImageSource image)
+        private static void CacheStaticPreview(string path, int decodePixelWidth, int maxDimension, ImageSource image)
         {
-            (string path, int width) cacheKey = (path, decodePixelWidth);
+            (string path, int width, int maxDim) cacheKey = (path, decodePixelWidth, maxDimension);
             lock (StaticPreviewCacheLock)
             {
                 StaticPreviewCache[cacheKey] = new WeakReference<ImageSource>(image);
@@ -797,7 +800,7 @@ namespace OceanyaClient
                     return;
                 }
 
-                List<(string path, int width)> keys = StaticPreviewCache.Keys.ToList();
+                List<(string path, int width, int maxDim)> keys = StaticPreviewCache.Keys.ToList();
                 int removeCount = StaticPreviewCache.Count - StaticPreviewCacheEntryLimit;
                 for (int i = 0; i < removeCount && i < keys.Count; i++)
                 {
@@ -1163,12 +1166,12 @@ namespace OceanyaClient
             this.loop = loop;
         }
 
-        public static bool TryCreate(string path, bool loop, out BitmapFrameAnimationPlayer? player)
+        public static bool TryCreate(string path, bool loop, out BitmapFrameAnimationPlayer? player, int maxDimension = Ao2AnimationPreview.MaxAnimatedPreviewDimension)
         {
             player = null;
             try
             {
-                if (!Ao2AnimationPreview.TryDecodeAnimationFrames(path, out List<BitmapSource>? decodedFrames, out List<TimeSpan>? decodedDurations)
+                if (!Ao2AnimationPreview.TryDecodeAnimationFrames(path, out List<BitmapSource>? decodedFrames, out List<TimeSpan>? decodedDurations, maxDimension)
                     || decodedFrames == null
                     || decodedDurations == null
                     || decodedFrames.Count <= 1

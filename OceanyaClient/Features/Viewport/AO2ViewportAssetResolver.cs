@@ -166,11 +166,15 @@ namespace OceanyaClient.Features.Viewport
             string scalingRaw = ReadDesignValue(background.PathToFile, "scaling").Trim();
             string stretchRaw = ReadDesignValue(background.PathToFile, "stretch").Trim();
 
+            // AO2 parity: "smooth"/"auto" → Qt::SmoothTransformation (bilinear) = WPF Linear.
+            // "pixel"/"fast" → Qt::FastTransformation (nearest neighbor).
+            // HighQuality/Fant is softer than bilinear and does not match AO2 output.
             BitmapScalingMode scalingMode = scalingRaw.ToLowerInvariant() switch
             {
                 "pixel" => BitmapScalingMode.NearestNeighbor,
-                "fast" => BitmapScalingMode.LowQuality,
-                _ => BitmapScalingMode.HighQuality
+                "fast" => BitmapScalingMode.NearestNeighbor,
+                "smooth" => BitmapScalingMode.Linear,
+                _ => BitmapScalingMode.Linear
             };
 
             bool stretchEnabled = !string.Equals(stretchRaw, "false", StringComparison.OrdinalIgnoreCase)
@@ -1639,7 +1643,7 @@ namespace OceanyaClient.Features.Viewport
         public sealed record ViewportDisplayOptions(BitmapScalingMode ScalingMode, Stretch StretchMode)
         {
             /// <summary>Default options when no design.ini is present or the background is unknown.</summary>
-            public static readonly ViewportDisplayOptions Default = new(BitmapScalingMode.HighQuality, Stretch.Fill);
+            public static readonly ViewportDisplayOptions Default = new(BitmapScalingMode.Linear, Stretch.Fill);
         }
 
         private sealed record CachedImageSize(int Width, int Height, DateTime LastWriteTimeUtc);
