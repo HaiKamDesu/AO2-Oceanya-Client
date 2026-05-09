@@ -1,7 +1,8 @@
-﻿using Common;
+using Common;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
@@ -24,20 +25,22 @@ namespace OceanyaClient
         /// <inheritdoc/>
         public override bool IsUserResizeEnabled => true;
 
-        // Use a concurrent queue to buffer messages during initialization
-        private ConcurrentQueue<string> _pendingMessages = new ConcurrentQueue<string>();
+        private ConcurrentQueue<CustomConsole.LogEntry> _pendingEntries = new ConcurrentQueue<CustomConsole.LogEntry>();
 
-        // Document objects
         private FlowDocument _consoleDocument = null!;
         private Paragraph _currentParagraph = null!;
 
-        // Buffer settings
-        private const int MAX_DOCUMENT_LINES = 5000; // Adjust based on memory constraints
+        private const int MAX_DOCUMENT_LINES = 5000;
         private int _lineCount = 0;
 
-        // Batch update control
         private DispatcherTimer? _updateTimer;
-        private const int UPDATE_INTERVAL_MS = 100; // Adjust based on UI responsiveness needs
+        private const int UPDATE_INTERVAL_MS = 100;
+
+        // Categories currently enabled for display (from SaveFile)
+        private HashSet<string> _enabledCategories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Whether we are in the middle of a filter-rebuild (suppresses saves)
+        private bool _suppressCategoryChangeSave = false;
 
         public static void ShowWindow()
         {
@@ -66,36 +69,28 @@ namespace OceanyaClient
             Title = "Debug Console";
             Icon = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/OceanyaO.ico"));
 
-            // Initialize document
             InitializeConsoleDocument();
-
-            // Start update timer for batched updates
             InitializeUpdateTimer();
 
-            // Subscribe to console messages
-            CustomConsole.OnWriteLine += QueueMessage;
+            CustomConsole.OnLogEntry += QueueEntry;
         }
 
         private void InitializeConsoleDocument()
         {
             _consoleDocument = new FlowDocument();
-            _consoleDocument.PageWidth = double.NaN; // Auto width
-
-            // Critical: Set document background to transparent
+            _consoleDocument.PageWidth = double.NaN;
             _consoleDocument.Background = Brushes.Transparent;
             _consoleDocument.Foreground = Brushes.LightGray;
             _consoleDocument.FontFamily = new FontFamily("Consolas");
             _consoleDocument.FontSize = 12;
             _consoleDocument.TextAlignment = TextAlignment.Left;
 
-            // Create initial paragraph with transparent background
             _currentParagraph = new Paragraph();
             _currentParagraph.Background = Brushes.Transparent;
             _currentParagraph.LineHeight = 1.0;
             _currentParagraph.Margin = new Thickness(0);
             _consoleDocument.Blocks.Add(_currentParagraph);
 
-            // Apply document to RichTextBox
             ConsoleTextBox.Document = _consoleDocument;
         }
 
@@ -103,7 +98,7 @@ namespace OceanyaClient
         {
             _updateTimer = new DispatcherTimer();
             _updateTimer.Interval = TimeSpan.FromMilliseconds(UPDATE_INTERVAL_MS);
-            _updateTimer.Tick += (s, e) => ProcessPendingMessages();
+            _updateTimer.Tick += (s, e) => ProcessPendingEntries();
             _updateTimer.Start();
         }
 
@@ -111,35 +106,35 @@ namespace OceanyaClient
         {
             try
             {
-                // Create a snapshot of the current lines to avoid modification during enumeration
-                List<string> linesCopy;
+                LoadCategoryFilterState();
 
+                List<CustomConsole.LogEntry> entriesCopy;
                 try
                 {
-                    linesCopy = new List<string>(CustomConsole.lines);
+                    entriesCopy = new List<CustomConsole.LogEntry>(CustomConsole.logEntries);
                 }
                 catch (Exception ex)
                 {
-                    AddMessageToDocument($"Error copying console lines: {ex.Message}");
-                    linesCopy = new List<string>();
+                    AddEntryToDocument(new CustomConsole.LogEntry(
+                        $"Error copying console entries: {ex.Message}",
+                        CustomConsole.LogLevel.Error,
+                        CustomConsole.LogCategory.System,
+                        DateTime.Now));
+                    entriesCopy = new List<CustomConsole.LogEntry>();
                 }
 
-                // Bulk add all existing messages
-                if (linesCopy.Count > 0)
+                if (entriesCopy.Count > 0)
                 {
-                    // For very large history, we might want to only load the last N messages
-                    int startIndex = Math.Max(0, linesCopy.Count - MAX_DOCUMENT_LINES);
-                    for (int i = startIndex; i < linesCopy.Count; i++)
+                    int startIndex = Math.Max(0, entriesCopy.Count - MAX_DOCUMENT_LINES);
+                    for (int i = startIndex; i < entriesCopy.Count; i++)
                     {
-                        AddMessageToDocument(linesCopy[i]);
+                        if (IsEntryVisible(entriesCopy[i]))
+                            AddEntryToDocument(entriesCopy[i]);
                     }
-
-                    // Force scroll to end after initial load
                     ScrollToBottom();
                 }
 
-                // Process any messages that came in during initialization
-                ProcessPendingMessages();
+                ProcessPendingEntries();
             }
             catch (Exception ex)
             {
@@ -150,15 +145,10 @@ namespace OceanyaClient
 
         private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
         {
-            // Stop processing updates
-            if (_updateTimer != null)
-            {
-                _updateTimer.Stop();
-                _updateTimer = null;
-            }
+            _updateTimer?.Stop();
+            _updateTimer = null;
 
-            // Unsubscribe from events
-            CustomConsole.OnWriteLine -= QueueMessage;
+            CustomConsole.OnLogEntry -= QueueEntry;
 
             lock (_instanceLock)
             {
@@ -166,104 +156,199 @@ namespace OceanyaClient
             }
         }
 
-        private void ProcessPendingMessages()
-        {
-            if (_pendingMessages.IsEmpty)
-                return;
+        // ── Category filter ──────────────────────────────────────────────────────
 
-            // Process pending messages in batches
-            int batchSize = 100; // Process up to 100 messages per tick
+        private void LoadCategoryFilterState()
+        {
+            _suppressCategoryChangeSave = true;
+            try
+            {
+                _enabledCategories = new HashSet<string>(
+                    SaveFile.Data.EnabledLogCategories,
+                    StringComparer.OrdinalIgnoreCase);
+
+                FilterSystem.IsChecked  = _enabledCategories.Contains("System");
+                FilterNetwork.IsChecked = _enabledCategories.Contains("Network");
+                FilterIC.IsChecked      = _enabledCategories.Contains("IC");
+                FilterOOC.IsChecked     = _enabledCategories.Contains("OOC");
+
+                UpdateFilterSummary();
+            }
+            finally
+            {
+                _suppressCategoryChangeSave = false;
+            }
+        }
+
+        private void CategoryFilter_Changed(object sender, RoutedEventArgs e)
+        {
+            _enabledCategories.Clear();
+            if (FilterSystem.IsChecked == true)  _enabledCategories.Add("System");
+            if (FilterNetwork.IsChecked == true) _enabledCategories.Add("Network");
+            if (FilterIC.IsChecked == true)      _enabledCategories.Add("IC");
+            if (FilterOOC.IsChecked == true)     _enabledCategories.Add("OOC");
+
+            UpdateFilterSummary();
+
+            if (!_suppressCategoryChangeSave)
+            {
+                SaveFile.Data.EnabledLogCategories = _enabledCategories.ToList();
+                SaveFile.Save();
+            }
+
+            RebuildDocument();
+        }
+
+        private void UpdateFilterSummary()
+        {
+            if (_enabledCategories.Count == 4)
+            {
+                FilterSummaryLabel.Text = "All categories shown";
+            }
+            else if (_enabledCategories.Count == 0)
+            {
+                FilterSummaryLabel.Text = "No categories shown";
+            }
+            else
+            {
+                FilterSummaryLabel.Text = $"Showing: {string.Join(", ", _enabledCategories.Order())}";
+            }
+        }
+
+        private bool IsEntryVisible(CustomConsole.LogEntry entry)
+            => _enabledCategories.Contains(entry.Category.ToString());
+
+        private void RebuildDocument()
+        {
+            _currentParagraph.Inlines.Clear();
+            _lineCount = 0;
+
+            List<CustomConsole.LogEntry> snapshot;
+            try { snapshot = new List<CustomConsole.LogEntry>(CustomConsole.logEntries); }
+            catch { return; }
+
+            int startIndex = Math.Max(0, snapshot.Count - MAX_DOCUMENT_LINES);
+            for (int i = startIndex; i < snapshot.Count; i++)
+            {
+                if (IsEntryVisible(snapshot[i]))
+                    AddEntryToDocument(snapshot[i]);
+            }
+
+            ScrollToBottom();
+        }
+
+        // ── Message processing ───────────────────────────────────────────────────
+
+        private void ProcessPendingEntries()
+        {
+            if (_pendingEntries.IsEmpty) return;
+
+            int batchSize = 100;
             int processed = 0;
 
-            while (_pendingMessages.TryDequeue(out string? message) && processed < batchSize)
+            while (_pendingEntries.TryDequeue(out CustomConsole.LogEntry? entry) && processed < batchSize)
             {
-                if (message != null)
+                if (entry != null && IsEntryVisible(entry))
                 {
-                    AddMessageToDocument(message);
+                    AddEntryToDocument(entry);
                     processed++;
                 }
             }
 
-            // If we processed any messages and we're at the bottom, scroll down
             if (processed > 0 && IsScrolledToBottom())
-            {
                 ScrollToBottom();
-            }
         }
 
-        // Segment brushes
-        private static readonly Brush TimestampBrush = new SolidColorBrush(Color.FromRgb(0x66, 0x66, 0x66));
-        private static readonly Brush InfoBrush = new SolidColorBrush(Color.FromRgb(0xCC, 0xCC, 0xCC));
-        private static readonly Brush ErrorBrush = new SolidColorBrush(Color.FromRgb(0xFF, 0x66, 0x66));
-        private static readonly Brush WarningBrush = new SolidColorBrush(Color.FromRgb(0xFF, 0xCC, 0x44));
-        private static readonly Brush DebugBrush = new SolidColorBrush(Color.FromRgb(0xFF, 0xAA, 0x33));
-        private static readonly Brush AiPrefixBrush = new SolidColorBrush(Color.FromRgb(0x4D, 0xD9, 0xE8));
+        // ── Brush definitions ────────────────────────────────────────────────────
+
+        private static readonly Brush TimestampBrush     = new SolidColorBrush(Color.FromRgb(0x66, 0x66, 0x66));
+        private static readonly Brush InfoBrush          = new SolidColorBrush(Color.FromRgb(0xCC, 0xCC, 0xCC));
+        private static readonly Brush ErrorBrush         = new SolidColorBrush(Color.FromRgb(0xFF, 0x66, 0x66));
+        private static readonly Brush WarningBrush       = new SolidColorBrush(Color.FromRgb(0xFF, 0xCC, 0x44));
+        private static readonly Brush DebugBrush         = new SolidColorBrush(Color.FromRgb(0xFF, 0xAA, 0x33));
+        private static readonly Brush AiPrefixBrush      = new SolidColorBrush(Color.FromRgb(0x4D, 0xD9, 0xE8));
         private static readonly Brush LevelIndicatorBrush = new SolidColorBrush(Color.FromRgb(0x55, 0x55, 0x55));
-        private static readonly Brush ContinuationBrush = new SolidColorBrush(Color.FromRgb(0x88, 0x77, 0x77));
+        private static readonly Brush ContinuationBrush  = new SolidColorBrush(Color.FromRgb(0x88, 0x77, 0x77));
 
-        private void AddMessageToDocument(string text)
+        // Category badge colors
+        private static readonly Brush CatSystemBrush  = new SolidColorBrush(Color.FromRgb(0x77, 0x77, 0x77));
+        private static readonly Brush CatNetworkBrush = new SolidColorBrush(Color.FromRgb(0x4D, 0xA6, 0xFF));
+        private static readonly Brush CatICBrush      = new SolidColorBrush(Color.FromRgb(0xA8, 0x7F, 0xFF));
+        private static readonly Brush CatOOCBrush     = new SolidColorBrush(Color.FromRgb(0xFF, 0xD9, 0x66));
+
+        private static Brush GetCategoryBrush(CustomConsole.LogCategory category) => category switch
         {
-            if (text == null) return;
+            CustomConsole.LogCategory.Network => CatNetworkBrush,
+            CustomConsole.LogCategory.IC      => CatICBrush,
+            CustomConsole.LogCategory.OOC     => CatOOCBrush,
+            _                                 => CatSystemBrush
+        };
 
+        private static string GetCategoryBadge(CustomConsole.LogCategory category) => category switch
+        {
+            CustomConsole.LogCategory.Network => "[NET]",
+            CustomConsole.LogCategory.IC      => "[IC] ",
+            CustomConsole.LogCategory.OOC     => "[OOC]",
+            _                                 => "[SYS]"
+        };
+
+        private void AddEntryToDocument(CustomConsole.LogEntry entry)
+        {
             if (_lineCount >= MAX_DOCUMENT_LINES)
-            {
                 TrimDocument();
-            }
 
-            AppendColorizedLine(text);
+            AppendColorizedEntry(entry);
             _lineCount++;
         }
 
-        private void AppendColorizedLine(string text)
+        private void AppendColorizedEntry(CustomConsole.LogEntry entry)
         {
+            string text = entry.Text;
+
+            // Timestamp
+            AppendRun($"[{entry.Timestamp:yyyy-MM-dd HH:mm:ss}]", TimestampBrush);
+
+            // Category badge
+            Brush catBrush = GetCategoryBrush(entry.Category);
+            AppendRun($" {GetCategoryBadge(entry.Category)}", catBrush);
+
             string remaining = text;
 
-            // Extract timestamp prefix "[YYYY-MM-DD HH:mm:ss]"
-            if (remaining.Length > 2 && remaining[0] == '[')
-            {
-                int closeBracket = remaining.IndexOf(']', 1);
-                if (closeBracket > 0 && closeBracket <= 22)
-                {
-                    AppendRun(remaining.Substring(0, closeBracket + 1), TimestampBrush);
-                    remaining = remaining.Substring(closeBracket + 1);
-                }
-            }
-
-            // Detect log level from leading emoji pattern " ❌", " ⚠️", " 🔍", " ℹ️"
+            // Detect log level emoji
             Brush bodyBrush;
             string emojiPrefix;
 
-            if (remaining.StartsWith(" ❌"))
+            if (remaining.StartsWith(" ❌") || remaining.StartsWith("❌"))
             {
-                emojiPrefix = " ❌";
+                emojiPrefix = remaining.StartsWith(" ❌") ? " ❌" : "❌";
                 bodyBrush = ErrorBrush;
             }
-            else if (remaining.StartsWith(" ⚠️"))
+            else if (remaining.StartsWith(" ⚠️") || remaining.StartsWith("⚠️"))
             {
-                emojiPrefix = " ⚠️";
+                emojiPrefix = remaining.StartsWith(" ⚠️") ? " ⚠️" : "⚠️";
                 bodyBrush = WarningBrush;
             }
-            else if (remaining.StartsWith(" 🔍"))
+            else if (remaining.StartsWith(" 🔍") || remaining.StartsWith("🔍"))
             {
-                emojiPrefix = " 🔍";
+                emojiPrefix = remaining.StartsWith(" 🔍") ? " 🔍" : "🔍";
                 bodyBrush = DebugBrush;
             }
-            else if (remaining.StartsWith(" ℹ️"))
+            else if (remaining.StartsWith(" ℹ️") || remaining.StartsWith("ℹ️"))
             {
-                emojiPrefix = " ℹ️";
+                emojiPrefix = remaining.StartsWith(" ℹ️") ? " ℹ️" : "ℹ️";
                 bodyBrush = InfoBrush;
             }
             else
             {
-                // Exception detail lines ("   Exception:", "   Message:", etc.) or plain lines
-                AppendRun(remaining + Environment.NewLine, ContinuationBrush);
+                // Exception detail lines or plain continuation text
+                AppendRun(" " + remaining + Environment.NewLine, ContinuationBrush);
                 return;
             }
 
             AppendRun(emojiPrefix, LevelIndicatorBrush);
             remaining = remaining.Substring(emojiPrefix.Length);
 
-            // Check for [AI:name] prefix after the emoji
+            // [AI:name] prefix
             if (remaining.StartsWith(" [AI:"))
             {
                 int aiClose = remaining.IndexOf(']', 5);
@@ -288,53 +373,33 @@ namespace OceanyaClient
 
         private void TrimDocument()
         {
-            // Remove older lines when we hit the limit
-            // This is more efficient than removing one line at a time
-            int linesToRemove = MAX_DOCUMENT_LINES / 5; // Remove 20% of max lines
-
-            // Since we're using a single paragraph, we need to remove the first N runs
+            int linesToRemove = MAX_DOCUMENT_LINES / 5;
             int runCount = _currentParagraph.Inlines.Count;
-            int removeCount = Math.Min(linesToRemove * 2, runCount - 10); // Each line is text + newline
+            int removeCount = Math.Min(linesToRemove * 2, runCount - 10);
 
             if (removeCount > 0)
             {
                 for (int i = 0; i < removeCount; i++)
                 {
                     if (_currentParagraph.Inlines.FirstInline != null)
-                    {
                         _currentParagraph.Inlines.Remove(_currentParagraph.Inlines.FirstInline);
-                    }
                 }
-
-                _lineCount -= removeCount / 2; // Account for newlines in the count
+                _lineCount -= removeCount / 2;
             }
         }
 
-        private void QueueMessage(string text)
+        private void QueueEntry(CustomConsole.LogEntry entry)
         {
-            // Queue the message for processing in the UI thread
-            if (!string.IsNullOrEmpty(text))
-            {
-                _pendingMessages.Enqueue(text);
-            }
+            _pendingEntries.Enqueue(entry);
         }
 
         private void ScrollToBottom()
         {
-            if (ConsoleTextBox != null)
+            ConsoleTextBox.Dispatcher.InvokeAsync(() =>
             {
-                ConsoleTextBox.Dispatcher.InvokeAsync(() =>
-                {
-                    try
-                    {
-                        ConsoleTextBox.ScrollToEnd();
-                    }
-                    catch (Exception)
-                    {
-                        // Silently handle scroll errors
-                    }
-                }, DispatcherPriority.Background);
-            }
+                try { ConsoleTextBox.ScrollToEnd(); }
+                catch { }
+            }, DispatcherPriority.Background);
         }
 
         private bool IsScrolledToBottom()
@@ -343,9 +408,9 @@ namespace OceanyaClient
             {
                 return ConsoleTextBox.VerticalOffset >= ConsoleTextBox.ExtentHeight - ConsoleTextBox.ViewportHeight - 10;
             }
-            catch (Exception)
+            catch
             {
-                return true; // Default to scrolling if we can't determine the position
+                return true;
             }
         }
 
@@ -356,31 +421,19 @@ namespace OceanyaClient
                 for (DependencyObject? current = source; current != null;)
                 {
                     if (current.GetType().Name.Contains("Button", StringComparison.Ordinal))
-                    {
                         return;
-                    }
 
                     if (current is FrameworkElement element)
-                    {
                         current = element.Parent ?? element.TemplatedParent as DependencyObject;
-                    }
                     else
-                    {
                         break;
-                    }
                 }
             }
 
             if (e.ChangedButton == MouseButton.Left)
             {
-                try
-                {
-                    DragMove();
-                }
-                catch (Exception)
-                {
-                    // Ignore drag exceptions
-                }
+                try { DragMove(); }
+                catch { }
             }
         }
 

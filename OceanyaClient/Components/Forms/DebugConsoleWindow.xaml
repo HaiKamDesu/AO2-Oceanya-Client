@@ -1,4 +1,4 @@
-﻿<local:OceanyaWindowContentControl x:Class="OceanyaClient.DebugConsoleWindow"
+<local:OceanyaWindowContentControl x:Class="OceanyaClient.DebugConsoleWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:OceanyaClient"
@@ -14,10 +14,8 @@
         <!-- Console RichTextBox style -->
         <Style x:Key="ConsoleRichTextBoxStyle" TargetType="{x:Type RichTextBox}">
             <Setter Property="Background" Value="#33262626"/>
-            <!-- Changed opacity to 20% -->
             <Setter Property="Foreground" Value="White"/>
             <Setter Property="BorderBrush" Value="#44444444"/>
-            <!-- Made border slightly transparent too -->
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding" Value="8,5"/>
             <Setter Property="FontSize" Value="13"/>
@@ -28,6 +26,51 @@
             <Setter Property="FontFamily" Value="Consolas"/>
         </Style>
 
+        <!-- Filter toggle button style -->
+        <Style x:Key="FilterToggleButtonStyle" TargetType="{x:Type ToggleButton}">
+            <Setter Property="Background" Value="#2A2A2A"/>
+            <Setter Property="Foreground" Value="#CCCCCC"/>
+            <Setter Property="BorderBrush" Value="#555555"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="10,5"/>
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ToggleButton}">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="3"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#3A3A3A"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#777777"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#1E3A5F"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#4DA6FF"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Category checkbox style -->
+        <Style x:Key="CategoryCheckBoxStyle" TargetType="{x:Type CheckBox}">
+            <Setter Property="Foreground" Value="#CCCCCC"/>
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Margin" Value="0,3"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+
         <!-- Close Button Style -->
         <Style x:Key="CloseButtonStyle" TargetType="{x:Type Button}">
             <Setter Property="Background" Value="Transparent"/>
@@ -36,9 +79,9 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type Button}">
-                        <Border x:Name="ButtonBorder" 
-                                Background="{TemplateBinding Background}" 
-                                BorderBrush="{TemplateBinding BorderBrush}" 
+                        <Border x:Name="ButtonBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
@@ -73,16 +116,88 @@
     <local:OceanyaWindowContentControl.Opacity>1</local:OceanyaWindowContentControl.Opacity>
 
     <Grid Margin="10,10,10,10">
-                <RichTextBox x:Name="ConsoleTextBox"
-                         Style="{StaticResource ConsoleRichTextBoxStyle}"
-                         Background="#26262626">
-                    <!-- Using an even more transparent background here -->
-                    <RichTextBox.Resources>
-                        <!-- Override selection color to maintain theme -->
-                        <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" Color="#3399FF" Opacity="0.4"/>
-                        <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}" Color="White"/>
-                    </RichTextBox.Resources>
-                    <!-- The document will be set programmatically -->
-                </RichTextBox>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Category filter bar -->
+        <Grid Grid.Row="0" Margin="0,0,0,6">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <ToggleButton x:Name="FilterDropdownToggle"
+                          Grid.Column="0"
+                          Style="{StaticResource FilterToggleButtonStyle}">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="Log Filters" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="FilterArrow" Text=" ▼" VerticalAlignment="Center" Foreground="#888888"/>
+                </StackPanel>
+            </ToggleButton>
+
+            <Popup Grid.Column="0"
+                   x:Name="FilterPopup"
+                   PlacementTarget="{Binding ElementName=FilterDropdownToggle}"
+                   Placement="Bottom"
+                   IsOpen="{Binding IsChecked, ElementName=FilterDropdownToggle, Mode=TwoWay}"
+                   StaysOpen="False"
+                   AllowsTransparency="True"
+                   PopupAnimation="Fade">
+                <Border Background="#1E1E1E"
+                        BorderBrush="#555555"
+                        BorderThickness="1"
+                        CornerRadius="3"
+                        Padding="12,8"
+                        Effect="{x:Null}">
+                    <StackPanel MinWidth="180">
+                        <TextBlock Text="CATEGORIES" Foreground="#666666" FontFamily="Consolas" FontSize="10"
+                                   Margin="0,0,0,6"/>
+                        <CheckBox x:Name="FilterSystem"
+                                  Content="System"
+                                  Style="{StaticResource CategoryCheckBoxStyle}"
+                                  Checked="CategoryFilter_Changed"
+                                  Unchecked="CategoryFilter_Changed"/>
+                        <CheckBox x:Name="FilterNetwork"
+                                  Content="Network (Packets)"
+                                  Style="{StaticResource CategoryCheckBoxStyle}"
+                                  Checked="CategoryFilter_Changed"
+                                  Unchecked="CategoryFilter_Changed"/>
+                        <CheckBox x:Name="FilterIC"
+                                  Content="IC Messages"
+                                  Style="{StaticResource CategoryCheckBoxStyle}"
+                                  Checked="CategoryFilter_Changed"
+                                  Unchecked="CategoryFilter_Changed"/>
+                        <CheckBox x:Name="FilterOOC"
+                                  Content="OOC Messages"
+                                  Style="{StaticResource CategoryCheckBoxStyle}"
+                                  Checked="CategoryFilter_Changed"
+                                  Unchecked="CategoryFilter_Changed"/>
+                    </StackPanel>
+                </Border>
+            </Popup>
+
+            <!-- Active filter summary label -->
+            <TextBlock x:Name="FilterSummaryLabel"
+                       Grid.Column="1"
+                       Foreground="#666666"
+                       FontFamily="Consolas"
+                       FontSize="11"
+                       VerticalAlignment="Center"
+                       Margin="8,0,0,0"
+                       TextTrimming="CharacterEllipsis"/>
+        </Grid>
+
+        <!-- Console output -->
+        <RichTextBox x:Name="ConsoleTextBox"
+                     Grid.Row="1"
+                     Style="{StaticResource ConsoleRichTextBoxStyle}"
+                     Background="#26262626">
+            <RichTextBox.Resources>
+                <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" Color="#3399FF" Opacity="0.4"/>
+                <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}" Color="White"/>
+            </RichTextBox.Resources>
+        </RichTextBox>
     </Grid>
 </local:OceanyaWindowContentControl>

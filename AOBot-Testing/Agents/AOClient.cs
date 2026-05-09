@@ -261,7 +261,7 @@ namespace AOBot_Testing.Agents
                     IncludeSlide = SupportsServerFeature("CUSTOM_BLIPS")
                 };
                 string command = ICMessage.GetCommand(msg, serializationOptions);
-                CustomConsole.Debug("Outgoing IC packet: " + command);
+                CustomConsole.Info("Outgoing IC packet: " + command, Common.CustomConsole.LogCategory.Network);
 
                 /// If the message is queued, add it to the list of pending messages.
                 /// It'll be sent when the current messages are done processing.
@@ -501,10 +501,11 @@ namespace AOBot_Testing.Agents
                     }
                 }
 
-                CustomConsole.Debug("Server features: " + string.Join(", ", serverFeatures.OrderBy(feature => feature, StringComparer.OrdinalIgnoreCase)));
+                CustomConsole.Info("Server features: " + string.Join(", ", serverFeatures.OrderBy(feature => feature, StringComparer.OrdinalIgnoreCase)), Common.CustomConsole.LogCategory.System);
             }
             else if (message.StartsWith("MS#"))
             {
+                CustomConsole.Info("Incoming IC packet: " + message, Common.CustomConsole.LogCategory.Network);
                 ICMessage? icMessage = ICMessage.FromConsoleLine(message);
                 if (icMessage != null)
                 {

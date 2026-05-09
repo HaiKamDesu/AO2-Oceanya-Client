@@ -463,6 +463,7 @@ namespace OceanyaClient
         public double AudioMusicVolume { get; set; } = 0.5;
         public double AudioSfxVolume { get; set; } = 1.0;
         public double AudioBlipVolume { get; set; } = 0.5;
+        public List<string> EnabledLogCategories { get; set; } = new List<string> { "System", "Network", "IC", "OOC" };
         public List<CallwordRule> CallwordRules { get; set; } = new List<CallwordRule>();
         public List<ExtraAudioRule> ExtraAudioRules { get; set; } = new List<ExtraAudioRule>();
         public double CharacterCreatorEmoteTileWidth { get; set; } = 420;

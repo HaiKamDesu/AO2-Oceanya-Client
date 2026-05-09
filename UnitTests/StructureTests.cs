@@ -380,8 +380,13 @@ namespace UnitTests
         {
             Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.Hidden, "def"), Is.False);
             Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.Shown, "def"), Is.True);
-            Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.Chat, "def"), Is.False);
-            Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.Chat, "custom"), Is.False);
+            // AO2 legacy "chat": position-dependent — show for all except jud/hld/hlp
+            Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.Chat, "def"), Is.True);
+            Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.Chat, "wit"), Is.True);
+            Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.Chat, "null"), Is.True);
+            Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.Chat, "jud"), Is.False);
+            Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.Chat, "hld"), Is.False);
+            Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.Chat, "hlp"), Is.False);
             Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.ShownDuringPreanimHiddenAfter, "def"), Is.False);
             Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.HiddenDuringPreanimShownAfter, "def"), Is.True);
             Assert.That(AO2ViewportAssetResolver.ShouldShowDesk(ICMessage.DeskMods.ShownDuringPreanimCenteredAfter, "def"), Is.False);
@@ -400,8 +405,12 @@ namespace UnitTests
                     ICMessage.DeskMods.ShownDuringPreanimHiddenAfter,
                     "def"),
                 Is.True);
+            // AO2 legacy "chat": position-dependent during preanim too
             Assert.That(
                 AO2ViewportAssetResolver.ShouldShowDeskDuringPreAnimation(ICMessage.DeskMods.Chat, "def"),
+                Is.True);
+            Assert.That(
+                AO2ViewportAssetResolver.ShouldShowDeskDuringPreAnimation(ICMessage.DeskMods.Chat, "jud"),
                 Is.False);
             Assert.That(
                 AO2ViewportAssetResolver.ShouldShowDeskDuringPreAnimation(

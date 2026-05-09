@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using AOBot_Testing.Agents;
 using AOBot_Testing.Structures;
@@ -434,9 +435,7 @@ namespace OceanyaClient.Features.Viewport
             immediatePreAnimActive = false;
             StopPendingMessageTimer();
             StopScreenShake();
-            CharacterFolder? character = AO2ViewportAssetResolver.ResolveCharacter(message.Character)
-                ?? sceneClient?.currentINI
-                ?? messageSourceClient?.currentINI;
+            CharacterFolder? character = AO2ViewportAssetResolver.ResolveCharacter(message.Character);
             string background = messageSourceClient?.curBG ?? sceneClient?.curBG ?? string.Empty;
             string position = message.Side?.Trim() ?? string.Empty;
             string showname = string.IsNullOrWhiteSpace(message.ShowName)
@@ -606,6 +605,8 @@ namespace OceanyaClient.Features.Viewport
                 AO2ViewportAssetResolver.ResolveDisplayOptions(backgroundName);
             AO2ViewportAssetResolver.ViewportImagePlacement backgroundPlacement =
                 AO2ViewportAssetResolver.ResolveBackgroundPlacement(backgroundName, position);
+            CustomConsole.Info($"[Viewport] bg=\"{backgroundName}\" pos=\"{position}\" → bgImage=\"{backgroundPlacement.ImagePath ?? "(null)"}\"",
+                Common.CustomConsole.LogCategory.IC);
             RenderOptions.SetBitmapScalingMode(BackgroundImage, displayOptions.ScalingMode);
             RenderOptions.SetBitmapScalingMode(DeskImage, displayOptions.ScalingMode);
             SetPlacedAnimatedImage(BackgroundImage, backgroundPlacement, true, displayOptions.StretchMode);
@@ -623,6 +624,8 @@ namespace OceanyaClient.Features.Viewport
             AO2ViewportAssetResolver.ResolvedCharacterAnimation resolvedCharacterAnimation = isPreAnimation
                 ? AO2ViewportAssetResolver.ResolveCharacterPreAnimationDetails(character, message?.PreAnim)
                 : AO2ViewportAssetResolver.ResolveCharacterDialogAnimationDetails(character, emoteName, useTalkingSprite);
+            CustomConsole.Info($"[Viewport] char=\"{character?.configINI?.Name ?? "(null)"}\" emote=\"{emoteName}\" talking={useTalkingSprite} → assetPath=\"{resolvedCharacterAnimation.AssetPath ?? "(null)"}\"",
+                Common.CustomConsole.LogCategory.IC);
             Action<int>? frameHandler = message == null
                 ? null
                 : BuildFrameEffectHandler(
@@ -1067,7 +1070,33 @@ namespace OceanyaClient.Features.Viewport
                 message.Character,
                 AO2ViewportAssetResolver.ResolveCharacterChatToken(AO2ViewportAssetResolver.ResolveCharacter(message.Character)));
             SetAnimatedImage(ShoutOverlayImage, shoutPath, !string.IsNullOrWhiteSpace(shoutPath), loop: false);
+            ApplyHeightBasedShoutScaling();
             Panel.SetZIndex(ShoutOverlayImage, 9);
+        }
+
+        // AO2 parity: shout overlays scale so the image height fills the viewport height exactly,
+        // preserving aspect ratio. Width may exceed the viewport and is clipped by the canvas.
+        // This matches AO2's AnimationLayer::calculateFrameGeometry() height-based scale formula.
+        private void ApplyHeightBasedShoutScaling()
+        {
+            if (ShoutOverlayImage.Source is not BitmapSource bitmap
+                || bitmap.PixelHeight <= 0 || bitmap.PixelWidth <= 0)
+            {
+                ShoutOverlayImage.Width = AO2ViewportAssetResolver.ViewportWidth;
+                ShoutOverlayImage.Height = AO2ViewportAssetResolver.ViewportHeight;
+                ShoutOverlayImage.Stretch = Stretch.Uniform;
+                Canvas.SetLeft(ShoutOverlayImage, 0);
+                Canvas.SetTop(ShoutOverlayImage, 0);
+                return;
+            }
+
+            double scale = (double)AO2ViewportAssetResolver.ViewportHeight / bitmap.PixelHeight;
+            double scaledWidth = bitmap.PixelWidth * scale;
+            ShoutOverlayImage.Width = scaledWidth;
+            ShoutOverlayImage.Height = AO2ViewportAssetResolver.ViewportHeight;
+            ShoutOverlayImage.Stretch = Stretch.Fill;
+            Canvas.SetLeft(ShoutOverlayImage, (AO2ViewportAssetResolver.ViewportWidth - scaledWidth) / 2.0);
+            Canvas.SetTop(ShoutOverlayImage, 0);
         }
 
         private static string ResolveShoutSfxToken(ICMessage message)

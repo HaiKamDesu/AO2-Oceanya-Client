@@ -13,7 +13,9 @@
         </Grid.RowDefinitions>
 
         <Canvas x:Name="ViewportCanvas" Grid.Row="0" Width="256" Height="192" Background="Black" ClipToBounds="True">
-            <Image x:Name="BackgroundImage" Width="256" Height="192" Stretch="Fill" Panel.ZIndex="0"/>
+            <!-- ViewportFallbackImage: static layer shown when bg is transparent/absent. Set Source here to use a custom fallback image. -->
+            <Image x:Name="ViewportFallbackImage" Width="256" Height="192" Stretch="Fill" Panel.ZIndex="0" Source="pack://application:,,,/OceanyaClient;component/Resources/ViewportFallback.png"/>
+            <Image x:Name="BackgroundImage" Width="256" Height="192" Stretch="Fill" Panel.ZIndex="1"/>
             <Image x:Name="SpeedlinesImage" Width="256" Height="192" Stretch="Fill" Visibility="Collapsed" Panel.ZIndex="1"/>
             <Image x:Name="CharacterImage" Width="256" Height="192" Stretch="Uniform" Visibility="Collapsed" Panel.ZIndex="4"/>
             <Image x:Name="PairCharacterImage" Width="256" Height="192" Stretch="Uniform" Visibility="Collapsed" Panel.ZIndex="3"/>

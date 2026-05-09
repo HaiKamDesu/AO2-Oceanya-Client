@@ -188,6 +188,7 @@ namespace OceanyaClient.Features.Viewport
             Background? background = ResolveBackground(backgroundName);
             if (background == null)
             {
+                CustomConsole.Warning($"[Viewport] ResolveBackground(\"{backgroundName}\") returned null. BaseFolders={string.Join(";", Globals.BaseFolders ?? new System.Collections.Generic.List<string>())}");
                 return DefaultPlacement(null);
             }
 
@@ -195,6 +196,24 @@ namespace OceanyaClient.Features.Viewport
             string? imagePath = ResolveImageStem(background.PathToFile, resolution.BackgroundStem)
                 ?? background.GetBGImage(NormalizePosition(position))
                 ?? background.bgImages.FirstOrDefault(File.Exists);
+
+            if (string.IsNullOrWhiteSpace(imagePath))
+            {
+                CustomConsole.Warning($"[Viewport] No image for bg=\"{backgroundName}\" pos=\"{position}\" stem=\"{resolution.BackgroundStem}\" pathToFile=\"{background.PathToFile}\"");
+                // AO2 parity: when the named background exists but has no image for this position,
+                // fall back to background/default/ — same as AO2's missing-position behavior.
+                Background? defaultBg = Background.FromBGPath("default");
+                if (defaultBg != null
+                    && !string.Equals(defaultBg.PathToFile, background.PathToFile, StringComparison.OrdinalIgnoreCase))
+                {
+                    BackgroundPositionResolution defaultResolution = ResolveBackgroundPosition(defaultBg, position);
+                    string? defaultImagePath = ResolveImageStem(defaultBg.PathToFile, defaultResolution.BackgroundStem)
+                        ?? defaultBg.GetBGImage(NormalizePosition(position))
+                        ?? defaultBg.bgImages.FirstOrDefault(File.Exists);
+                    CustomConsole.Log($"[Viewport] Default bg fallback: stem=\"{defaultResolution.BackgroundStem}\" imagePath=\"{defaultImagePath}\"");
+                    return BuildPlacement(defaultImagePath, defaultResolution.Origin);
+                }
+            }
 
             return BuildPlacement(imagePath, resolution.Origin);
         }
@@ -273,6 +292,18 @@ namespace OceanyaClient.Features.Viewport
         {
             if (!TryResolveDialogAnimationName(character, emoteName, out string characterDirectory, out string normalizedAnimationName))
             {
+                // Character not found locally — skip emote resolution and go straight to placeholder.
+                foreach (string baseFolder in Globals.BaseFolders ?? Enumerable.Empty<string>())
+                {
+                    foreach (string ext in ImageExtensions)
+                    {
+                        string themePlaceholder = Path.Combine(baseFolder, "themes", "default", "placeholder" + ext);
+                        if (File.Exists(themePlaceholder))
+                        {
+                            return new ResolvedCharacterAnimation(themePlaceholder, "placeholder");
+                        }
+                    }
+                }
                 return new ResolvedCharacterAnimation(null, string.Empty);
             }
 
@@ -300,6 +331,20 @@ namespace OceanyaClient.Features.Viewport
                 if (!string.IsNullOrWhiteSpace(resolved))
                 {
                     return new ResolvedCharacterAnimation(resolved, candidate);
+                }
+            }
+
+            // AO2 parity: if no placeholder found in the character folder, fall back to
+            // themes/default/placeholder — same second-tier fallback AO2 uses.
+            foreach (string baseFolder in Globals.BaseFolders ?? Enumerable.Empty<string>())
+            {
+                foreach (string ext in ImageExtensions)
+                {
+                    string themePlaceholder = Path.Combine(baseFolder, "themes", "default", "placeholder" + ext);
+                    if (File.Exists(themePlaceholder))
+                    {
+                        return new ResolvedCharacterAnimation(themePlaceholder, "placeholder");
+                    }
                 }
             }
 
@@ -476,11 +521,18 @@ namespace OceanyaClient.Features.Viewport
         public static bool ShouldShowDesk(ICMessage.DeskMods deskMod, string? position)
         {
             if (deskMod == ICMessage.DeskMods.Hidden
-                || deskMod == ICMessage.DeskMods.Chat
                 || deskMod == ICMessage.DeskMods.ShownDuringPreanimHiddenAfter
                 || deskMod == ICMessage.DeskMods.ShownDuringPreanimCenteredAfter)
             {
                 return false;
+            }
+
+            if (deskMod == ICMessage.DeskMods.Chat)
+            {
+                // AO2 legacy "chat" behavior: position-dependent.
+                // Hide desk only for jud, hld, hlp; show for all other positions.
+                string normalizedPos = NormalizePosition(position);
+                return normalizedPos is not ("jud" or "hld" or "hlp");
             }
 
             if (deskMod == ICMessage.DeskMods.Shown
@@ -490,8 +542,10 @@ namespace OceanyaClient.Features.Viewport
                 return true;
             }
 
-            string normalizedPosition = NormalizePosition(position);
-            return normalizedPosition is "def" or "hld" or "pro" or "hlp" or "jud" or "wit";
+            // AO2 parity: get_pos_path() always produces a desk image stem for every position —
+            // unknown positions default to the witness stand desk. Show desk and let
+            // ResolveDeskPlacement decide whether the image actually exists.
+            return true;
         }
 
         /// <summary>
@@ -500,11 +554,17 @@ namespace OceanyaClient.Features.Viewport
         public static bool ShouldShowDeskDuringPreAnimation(ICMessage.DeskMods deskMod, string? position)
         {
             if (deskMod == ICMessage.DeskMods.Hidden
-                || deskMod == ICMessage.DeskMods.Chat
                 || deskMod == ICMessage.DeskMods.HiddenDuringPreanimShownAfter
                 || deskMod == ICMessage.DeskMods.HiddenDuringPreanimCenteredAfter)
             {
                 return false;
+            }
+
+            if (deskMod == ICMessage.DeskMods.Chat)
+            {
+                // AO2 legacy "chat" behavior: position-dependent (same as speaking phase).
+                string normalizedPos = NormalizePosition(position);
+                return normalizedPos is not ("jud" or "hld" or "hlp");
             }
 
             if (deskMod == ICMessage.DeskMods.Shown
@@ -925,7 +985,32 @@ namespace OceanyaClient.Features.Viewport
         private static Background? ResolveBackground(string? backgroundName)
         {
             string normalized = (backgroundName ?? string.Empty).Trim();
-            return string.IsNullOrWhiteSpace(normalized) ? null : Background.FromBGPath(normalized);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                Background? defaultResult = Background.FromBGPath("default");
+                if (defaultResult == null)
+                {
+                    CustomConsole.Warning($"[Viewport] Background.FromBGPath(\"default\") returned null. BaseFolders={string.Join(";", Globals.BaseFolders ?? new System.Collections.Generic.List<string>())}");
+                }
+                return defaultResult;
+            }
+
+            Background? background = Background.FromBGPath(normalized);
+            if (background != null)
+            {
+                return background;
+            }
+
+            // AO2 parity: when the named background directory is not found, fall back to
+            // background/default/ — resolved from the user's AO2 installation mount paths.
+            if (!string.Equals(normalized, "default", StringComparison.OrdinalIgnoreCase))
+            {
+                Background? fallback = Background.FromBGPath("default");
+                CustomConsole.Log($"[Viewport] BG \"{normalized}\" not found locally, falling back to default. fallback={fallback?.PathToFile ?? "null"}");
+                return fallback;
+            }
+
+            return null;
         }
 
         private static string NormalizePosition(string? position)

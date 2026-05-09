@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -25,14 +25,44 @@ namespace Common
         }
 
         /// <summary>
-        /// Collection of logged lines
+        /// Logical category of a log entry, used for filtering in the debug console
+        /// </summary>
+        public enum LogCategory
+        {
+            /// <summary>Internal app state, startup, connection, server features</summary>
+            System,
+            /// <summary>Raw AO2 network packets (send/receive)</summary>
+            Network,
+            /// <summary>IC (in-character) chat messages</summary>
+            IC,
+            /// <summary>OOC (out-of-character) chat messages</summary>
+            OOC
+        }
+
+        /// <summary>
+        /// A single structured log entry
+        /// </summary>
+        public record LogEntry(string Text, LogLevel Level, LogCategory Category, DateTime Timestamp);
+
+        /// <summary>
+        /// Collection of raw formatted log strings (kept for backward compat / test capture)
         /// </summary>
         public static List<string> lines = new List<string>();
-        
+
         /// <summary>
-        /// Event that fires when a new line is written
+        /// Collection of structured log entries (used by the debug console for filtering)
+        /// </summary>
+        public static List<LogEntry> logEntries = new List<LogEntry>();
+
+        /// <summary>
+        /// Fires with the formatted string whenever a line is written (backward-compat)
         /// </summary>
         public static Action<string>? OnWriteLine;
+
+        /// <summary>
+        /// Fires with the full structured entry whenever a line is written
+        /// </summary>
+        public static Action<LogEntry>? OnLogEntry;
 
         /// <summary>
         /// Base method for all logging - writes a message to the console with timestamp
@@ -50,7 +80,8 @@ namespace Common
         /// <summary>
         /// Writes a log message with the specified log level and optional exception details
         /// </summary>
-        public static void Log(string message, LogLevel level = LogLevel.Info, Exception? exception = null, 
+        public static void Log(string message, LogLevel level = LogLevel.Info, LogCategory category = LogCategory.System,
+            Exception? exception = null,
             [CallerFilePath] string sourceFile = "", [CallerLineNumber] int sourceLine = 0)
         {
             var levelPrefix = level switch
@@ -64,72 +95,89 @@ namespace Common
 
             string fileName = Path.GetFileName(sourceFile);
             string formattedMessage = $"{levelPrefix} {message}";
-            
+
             // Add source location for non-info messages
             if (level != LogLevel.Info)
             {
                 formattedMessage += $" [{fileName}:{sourceLine}]";
             }
 
-            WriteLine(formattedMessage);
+            var entry = new LogEntry(formattedMessage, level, category, DateTime.Now);
+            logEntries.Add(entry);
+            OnLogEntry?.Invoke(entry);
 
-            // Log exception details if present
+            string timestampedMessage = $"[{entry.Timestamp:yyyy-MM-dd HH:mm:ss}] {formattedMessage}";
+            Console.WriteLine(timestampedMessage);
+            System.Diagnostics.Debug.WriteLine(timestampedMessage);
+            lines.Add(timestampedMessage);
+            OnWriteLine?.Invoke(timestampedMessage);
+
             if (exception != null)
             {
-                // Get file name and line number from stack trace if available
                 var stackTrace = new StackTrace(exception, true);
                 var frame = stackTrace.GetFrame(0);
                 var exLineNumber = frame?.GetFileLineNumber() ?? 0;
                 var exFileName = Path.GetFileName(frame?.GetFileName() ?? "unknown");
 
-                WriteLine($"   Exception: {exception.GetType().Name}");
-                WriteLine($"   Message: {exception.Message}");
-                WriteLine($"   Location: {exFileName}:{exLineNumber}");
-                
-                // Get the first line of the stack trace for brevity
+                LogExceptionLine($"   Exception: {exception.GetType().Name}", level, category, entry.Timestamp);
+                LogExceptionLine($"   Message: {exception.Message}", level, category, entry.Timestamp);
+                LogExceptionLine($"   Location: {exFileName}:{exLineNumber}", level, category, entry.Timestamp);
+
                 var firstStackLine = exception.StackTrace?.Split('\n').FirstOrDefault()?.Trim();
                 if (!string.IsNullOrEmpty(firstStackLine))
                 {
-                    WriteLine($"   Stack: {firstStackLine}");
+                    LogExceptionLine($"   Stack: {firstStackLine}", level, category, entry.Timestamp);
                 }
 
-                // Log inner exception if present
                 if (exception.InnerException != null)
                 {
-                    WriteLine($"   Inner Exception: {exception.InnerException.Message}");
+                    LogExceptionLine($"   Inner Exception: {exception.InnerException.Message}", level, category, entry.Timestamp);
                 }
             }
+        }
+
+        private static void LogExceptionLine(string text, LogLevel level, LogCategory category, DateTime timestamp)
+        {
+            var entry = new LogEntry(text, level, category, timestamp);
+            logEntries.Add(entry);
+            OnLogEntry?.Invoke(entry);
+
+            string timestampedMessage = $"[{timestamp:yyyy-MM-dd HH:mm:ss}] {text}";
+            Console.WriteLine(timestampedMessage);
+            System.Diagnostics.Debug.WriteLine(timestampedMessage);
+            lines.Add(timestampedMessage);
+            OnWriteLine?.Invoke(timestampedMessage);
         }
 
         /// <summary>
         /// Logs an informational message
         /// </summary>
-        public static void Info(string message, 
-            [CallerFilePath] string sourceFile = "", [CallerLineNumber] int sourceLine = 0) 
-            => Log(message, LogLevel.Info, null, sourceFile, sourceLine);
+        public static void Info(string message, LogCategory category = LogCategory.System,
+            [CallerFilePath] string sourceFile = "", [CallerLineNumber] int sourceLine = 0)
+            => Log(message, LogLevel.Info, category, null, sourceFile, sourceLine);
 
         /// <summary>
         /// Logs a warning message with optional exception details
         /// </summary>
-        public static void Warning(string message, Exception? ex = null, 
-            [CallerFilePath] string sourceFile = "", [CallerLineNumber] int sourceLine = 0) 
-            => Log(message, LogLevel.Warning, ex, sourceFile, sourceLine);
+        public static void Warning(string message, Exception? ex = null, LogCategory category = LogCategory.System,
+            [CallerFilePath] string sourceFile = "", [CallerLineNumber] int sourceLine = 0)
+            => Log(message, LogLevel.Warning, category, ex, sourceFile, sourceLine);
 
         /// <summary>
         /// Logs an error message with optional exception details
         /// </summary>
-        public static void Error(string message, Exception? ex = null, 
-            [CallerFilePath] string sourceFile = "", [CallerLineNumber] int sourceLine = 0) 
-            => Log(message, LogLevel.Error, ex, sourceFile, sourceLine);
+        public static void Error(string message, Exception? ex = null, LogCategory category = LogCategory.System,
+            [CallerFilePath] string sourceFile = "", [CallerLineNumber] int sourceLine = 0)
+            => Log(message, LogLevel.Error, category, ex, sourceFile, sourceLine);
 
         /// <summary>
         /// Logs a debug message (only in debug builds)
         /// </summary>
-        public static void Debug(string message, 
+        public static void Debug(string message, LogCategory category = LogCategory.System,
             [CallerFilePath] string sourceFile = "", [CallerLineNumber] int sourceLine = 0)
         {
             #if DEBUG
-            Log(message, LogLevel.Debug, null, sourceFile, sourceLine);
+            Log(message, LogLevel.Debug, category, null, sourceFile, sourceLine);
             #endif
         }
     }
