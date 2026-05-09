@@ -230,8 +230,18 @@ namespace OceanyaClient.Features.Viewport
             }
 
             BackgroundPositionResolution resolution = ResolveBackgroundPosition(background, position);
-            string? imagePath = ResolveImageStem(background.PathToFile, resolution.DeskStem);
-            return BuildPlacement(imagePath, resolution.Origin);
+            string? deskImagePath = ResolveImageStem(background.PathToFile, resolution.DeskStem);
+
+            // AO2 parity: in set_scene(), ui_vp_desk is resized and moved to exactly the same
+            // rect as ui_vp_background (scaled_frame_size and scaled_pos are computed from the
+            // background image's frame size, then applied to both widgets). The desk image is
+            // then stretched to fill that rect — it never drives its own placement dimensions.
+            string? bgImagePath = ResolveImageStem(background.PathToFile, resolution.BackgroundStem)
+                ?? background.GetBGImage(NormalizePosition(position))
+                ?? background.bgImages.FirstOrDefault(File.Exists);
+            ViewportImagePlacement bgPlacement = BuildPlacement(bgImagePath, resolution.Origin);
+
+            return new ViewportImagePlacement(deskImagePath, bgPlacement.Left, bgPlacement.Top, bgPlacement.Width, bgPlacement.Height);
         }
 
         /// <summary>
@@ -1118,11 +1128,6 @@ namespace OceanyaClient.Features.Viewport
                 return DefaultPlacement(null);
             }
 
-            if (!origin.HasValue)
-            {
-                return DefaultPlacement(imagePath);
-            }
-
             (int width, int height) = TryGetImageSize(imagePath);
             if (width <= 0 || height <= 0)
             {
@@ -1130,10 +1135,25 @@ namespace OceanyaClient.Features.Viewport
             }
 
             double scale = (double)ViewportHeight / height;
-            double scaledWidth = width * scale;
-            double scaledHeight = height * scale;
-            double left = -(origin.Value * scale - (ViewportWidth / 2.0));
-            return new ViewportImagePlacement(imagePath, left, 0, scaledWidth, scaledHeight);
+
+            // AO2 parity: QSize::operator*(qreal) applies qRound to each dimension.
+            // qRound(x) = floor(x + 0.5) — round half toward +infinity.
+            int scaledWidth = (int)Math.Floor(width * scale + 0.5);
+            int scaledHeight = (int)Math.Floor(height * scale + 0.5);
+
+            if (!origin.HasValue)
+            {
+                // AO2 parity: no origin → background widget stays at viewport size (256×192),
+                // image is scaled to height 192 (aspect-ratio preserved) and centered via
+                // Qt::AlignCenter on the QLabel. The widget clips any overhang left/right.
+                // Integer division matches Qt's alignment arithmetic.
+                int left = (ViewportWidth - scaledWidth) / 2;
+                return new ViewportImagePlacement(imagePath, left, 0, scaledWidth, scaledHeight);
+            }
+
+            // AO2 parity: QPoint(double, 0) — C++ double→int conversion truncates toward zero.
+            int leftWithOrigin = (int)(-(origin.Value * scale - (ViewportWidth / 2)));
+            return new ViewportImagePlacement(imagePath, leftWithOrigin, 0, scaledWidth, scaledHeight);
         }
 
         private static ViewportImagePlacement DefaultPlacement(string? imagePath)
