@@ -287,6 +287,8 @@ namespace OceanyaClient.Features.Viewport
                 return;
             }
 
+            bool hadClient = sceneClient != null || messageSourceClient != null;
+            bool sameMessageSource = ReferenceEquals(messageSourceClient, incomingMessageClient ?? client);
             DetachClientEvents();
             sceneClient = client;
             messageSourceClient = incomingMessageClient ?? client;
@@ -297,7 +299,10 @@ namespace OceanyaClient.Features.Viewport
                 return;
             }
 
-            RenderBackgroundOnly();
+            if (!hadClient || !sameMessageSource)
+            {
+                RenderBackgroundOnly();
+            }
         }
 
         private void AttachClientEvents()
@@ -605,8 +610,9 @@ namespace OceanyaClient.Features.Viewport
                 AO2ViewportAssetResolver.ResolveDisplayOptions(backgroundName);
             AO2ViewportAssetResolver.ViewportImagePlacement backgroundPlacement =
                 AO2ViewportAssetResolver.ResolveBackgroundPlacement(backgroundName, position);
-            CustomConsole.Info($"[Viewport] bg=\"{backgroundName}\" pos=\"{position}\" → bgImage=\"{backgroundPlacement.ImagePath ?? "(null)"}\"",
-                Common.CustomConsole.LogCategory.IC);
+            CustomConsole.Debug(
+                $"Render scene bg=\"{backgroundName}\" pos=\"{position}\" bgImage=\"{backgroundPlacement.ImagePath ?? "(null)"}\"",
+                CustomConsole.LogCategory.Viewport);
             RenderOptions.SetBitmapScalingMode(BackgroundImage, displayOptions.ScalingMode);
             RenderOptions.SetBitmapScalingMode(DeskImage, displayOptions.ScalingMode);
             SetPlacedAnimatedImage(BackgroundImage, backgroundPlacement, true, displayOptions.StretchMode);
@@ -624,8 +630,9 @@ namespace OceanyaClient.Features.Viewport
             AO2ViewportAssetResolver.ResolvedCharacterAnimation resolvedCharacterAnimation = isPreAnimation
                 ? AO2ViewportAssetResolver.ResolveCharacterPreAnimationDetails(character, message?.PreAnim)
                 : AO2ViewportAssetResolver.ResolveCharacterDialogAnimationDetails(character, emoteName, useTalkingSprite);
-            CustomConsole.Info($"[Viewport] char=\"{character?.configINI?.Name ?? "(null)"}\" emote=\"{emoteName}\" talking={useTalkingSprite} → assetPath=\"{resolvedCharacterAnimation.AssetPath ?? "(null)"}\"",
-                Common.CustomConsole.LogCategory.IC);
+            CustomConsole.Debug(
+                $"Render character char=\"{character?.configINI?.Name ?? "(null)"}\" emote=\"{emoteName}\" talking={useTalkingSprite} assetPath=\"{resolvedCharacterAnimation.AssetPath ?? "(null)"}\"",
+                CustomConsole.LogCategory.Viewport);
             Action<int>? frameHandler = message == null
                 ? null
                 : BuildFrameEffectHandler(

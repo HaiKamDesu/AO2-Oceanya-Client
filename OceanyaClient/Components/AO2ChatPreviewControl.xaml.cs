@@ -367,9 +367,19 @@ namespace OceanyaClient
                     continue;
                 }
 
-                if (TryApplyAo2ColorMarkup(style, textElement, safeDefaultColorIndex, colorStack, out bool skip)
-                    && skip)
+                if (TryApplyAo2ColorMarkup(
+                    style,
+                    textElement,
+                    safeDefaultColorIndex,
+                    colorStack,
+                    out bool skip,
+                    out Color markerColor))
                 {
+                    if (!skip)
+                    {
+                        yield return (textElement, markerColor);
+                    }
+
                     continue;
                 }
 
@@ -377,14 +387,16 @@ namespace OceanyaClient
             }
         }
 
-        private static bool TryApplyAo2ColorMarkup(
+        private bool TryApplyAo2ColorMarkup(
             AO2ChatPreviewStyle style,
             string textElement,
             int defaultColorIndex,
             Stack<int> colorStack,
-            out bool skip)
+            out bool skip,
+            out Color markerColor)
         {
             skip = false;
+            markerColor = GetMessageColor(style, colorStack.Count > 0 ? colorStack.Peek() : defaultColorIndex);
             for (int i = 0; i < style.ChatColors.Length; i++)
             {
                 string start = style.ChatMarkupStart[i] ?? string.Empty;
@@ -399,11 +411,13 @@ namespace OceanyaClient
                 {
                     if (colorStack.Count > 0 && colorStack.Peek() == i && defaultColorIndex != i)
                     {
+                        markerColor = GetMessageColor(style, colorStack.Peek());
                         colorStack.Pop();
                     }
                     else
                     {
                         colorStack.Push(i);
+                        markerColor = GetMessageColor(style, colorStack.Peek());
                     }
 
                     skip = style.ChatMarkupRemove[i];
@@ -413,6 +427,7 @@ namespace OceanyaClient
                 if (string.Equals(textElement, start, StringComparison.Ordinal))
                 {
                     colorStack.Push(i);
+                    markerColor = GetMessageColor(style, colorStack.Peek());
                     skip = style.ChatMarkupRemove[i];
                     return true;
                 }
@@ -421,6 +436,7 @@ namespace OceanyaClient
                     && colorStack.Peek() == i
                     && string.Equals(textElement, end, StringComparison.Ordinal))
                 {
+                    markerColor = GetMessageColor(style, colorStack.Peek());
                     colorStack.Pop();
                     skip = style.ChatMarkupRemove[i];
                     return true;

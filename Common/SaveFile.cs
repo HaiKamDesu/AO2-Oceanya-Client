@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -458,12 +459,18 @@ namespace OceanyaClient
             IsMaximized = false
         };
         public ViewportWindowState GMViewportWindowState { get; set; } = new ViewportWindowState();
+        public VisualizerWindowState GMMainWindowState { get; set; } = new VisualizerWindowState
+        {
+            Width = 510,
+            Height = 676
+        };
         public string GMViewportChatBackgroundColor { get; set; } = string.Empty;
         public double CharacterCreatorPreviewVolume { get; set; } = 1.0;
         public double AudioMusicVolume { get; set; } = 0.5;
         public double AudioSfxVolume { get; set; } = 1.0;
         public double AudioBlipVolume { get; set; } = 0.5;
-        public List<string> EnabledLogCategories { get; set; } = new List<string> { "System", "Network", "IC", "OOC" };
+        public List<string> EnabledLogCategories { get; set; } =
+            new List<string> { "System", "Network", "IC", "OOC", "Viewport" };
         public List<CallwordRule> CallwordRules { get; set; } = new List<CallwordRule>();
         public List<ExtraAudioRule> ExtraAudioRules { get; set; } = new List<ExtraAudioRule>();
         public double CharacterCreatorEmoteTileWidth { get; set; } = 420;
@@ -492,11 +499,7 @@ namespace OceanyaClient
 
     public static class SaveFile
     {
-        private static readonly string defaultSaveFilePath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "OceanyaClient",
-            "savefile.json"
-        );
+        private static readonly string defaultSaveFilePath = ResolveDefaultSaveFilePath();
         private static string saveFilePath = defaultSaveFilePath;
 
         private static SaveData _data = new SaveData();
@@ -517,6 +520,11 @@ namespace OceanyaClient
         }
 
         public static string CurrentStoragePath => saveFilePath;
+
+        public static bool IsUsingDevelopmentStorage =>
+            saveFilePath.Contains(
+                Path.Combine("OceanyaClientDev", "savefile.json"),
+                StringComparison.OrdinalIgnoreCase);
 
         public static void ConfigureStoragePathForTests(string path)
         {
@@ -676,11 +684,23 @@ namespace OceanyaClient
                 IsMaximized = false
             };
             data.GMViewportWindowState ??= new ViewportWindowState();
+            data.GMMainWindowState ??= new VisualizerWindowState
+            {
+                Width = 510,
+                Height = 676
+            };
             data.GMViewportChatBackgroundColor = NormalizeOptionalColor(data.GMViewportChatBackgroundColor);
             ClampWindowState(data.FolderVisualizerWindowState);
             ClampWindowState(data.EmoteVisualizerWindowState);
             ClampWindowState(data.CharacterCreatorWindowState);
+            ClampMainWindowState(data.GMMainWindowState);
             ClampViewportWindowState(data.GMViewportWindowState);
+            data.EnabledLogCategories ??= new List<string>();
+            if (data.EnabledLogCategories.Count == 0)
+            {
+                data.EnabledLogCategories.AddRange(new[] { "System", "Network", "IC", "OOC", "Viewport" });
+            }
+
             data.CharacterFolderPreviewEmoteOverrides ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             data.CharacterFolderPreviewEmoteOverrides = data.CharacterFolderPreviewEmoteOverrides
                 .Where(pair => !string.IsNullOrWhiteSpace(pair.Key) && pair.Value > 0)
@@ -1624,6 +1644,21 @@ namespace OceanyaClient
             }
         }
 
+        private static void ClampMainWindowState(VisualizerWindowState state)
+        {
+            state.Width = Math.Clamp(state.Width, 510, 6000);
+            state.Height = Math.Clamp(state.Height, 676, 4000);
+            if (state.Left.HasValue && (double.IsInfinity(state.Left.Value) || double.IsNaN(state.Left.Value)))
+            {
+                state.Left = null;
+            }
+
+            if (state.Top.HasValue && (double.IsInfinity(state.Top.Value) || double.IsNaN(state.Top.Value)))
+            {
+                state.Top = null;
+            }
+        }
+
         private static void ClampViewportWindowState(ViewportWindowState state)
         {
             state.Width = Math.Clamp(state.Width, 258, 6000);
@@ -1637,6 +1672,26 @@ namespace OceanyaClient
             {
                 state.Top = null;
             }
+        }
+
+        private static string ResolveDefaultSaveFilePath()
+        {
+            string profileName = Debugger.IsAttached
+                || string.Equals(
+                    Environment.GetEnvironmentVariable("OCEANYA_CLIENT_PROFILE"),
+                    "Development",
+                    StringComparison.OrdinalIgnoreCase)
+                || string.Equals(
+                    Environment.GetEnvironmentVariable("OCEANYA_CLIENT_PROFILE"),
+                    "Dev",
+                    StringComparison.OrdinalIgnoreCase)
+                ? "OceanyaClientDev"
+                : "OceanyaClient";
+
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                profileName,
+                "savefile.json");
         }
 
         private static string NormalizeOptionalColor(string? value)

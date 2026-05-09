@@ -192,7 +192,9 @@ namespace OceanyaClient.Features.Viewport
             Background? background = ResolveBackground(backgroundName);
             if (background == null)
             {
-                CustomConsole.Warning($"[Viewport] ResolveBackground(\"{backgroundName}\") returned null. BaseFolders={string.Join(";", Globals.BaseFolders ?? new System.Collections.Generic.List<string>())}");
+                CustomConsole.Warning(
+                    $"ResolveBackground(\"{backgroundName}\") returned null. BaseFolders={string.Join(";", Globals.BaseFolders ?? new System.Collections.Generic.List<string>())}",
+                    category: CustomConsole.LogCategory.Viewport);
                 return DefaultPlacement(null);
             }
 
@@ -203,7 +205,9 @@ namespace OceanyaClient.Features.Viewport
 
             if (string.IsNullOrWhiteSpace(imagePath))
             {
-                CustomConsole.Warning($"[Viewport] No image for bg=\"{backgroundName}\" pos=\"{position}\" stem=\"{resolution.BackgroundStem}\" pathToFile=\"{background.PathToFile}\"");
+                CustomConsole.Warning(
+                    $"No image for bg=\"{backgroundName}\" pos=\"{position}\" stem=\"{resolution.BackgroundStem}\" pathToFile=\"{background.PathToFile}\"",
+                    category: CustomConsole.LogCategory.Viewport);
                 // AO2 parity: when the named background exists but has no image for this position,
                 // fall back to background/default/ — same as AO2's missing-position behavior.
                 Background? defaultBg = Background.FromBGPath("default");
@@ -214,7 +218,9 @@ namespace OceanyaClient.Features.Viewport
                     string? defaultImagePath = ResolveImageStem(defaultBg.PathToFile, defaultResolution.BackgroundStem)
                         ?? defaultBg.GetBGImage(NormalizePosition(position))
                         ?? defaultBg.bgImages.FirstOrDefault(File.Exists);
-                    CustomConsole.Log($"[Viewport] Default bg fallback: stem=\"{defaultResolution.BackgroundStem}\" imagePath=\"{defaultImagePath}\"");
+                    CustomConsole.Info(
+                        $"Default bg fallback: stem=\"{defaultResolution.BackgroundStem}\" imagePath=\"{defaultImagePath}\"",
+                        CustomConsole.LogCategory.Viewport);
                     return BuildPlacement(defaultImagePath, defaultResolution.Origin);
                 }
             }
@@ -1004,7 +1010,9 @@ namespace OceanyaClient.Features.Viewport
                 Background? defaultResult = Background.FromBGPath("default");
                 if (defaultResult == null)
                 {
-                    CustomConsole.Warning($"[Viewport] Background.FromBGPath(\"default\") returned null. BaseFolders={string.Join(";", Globals.BaseFolders ?? new System.Collections.Generic.List<string>())}");
+                    CustomConsole.Warning(
+                        $"Background.FromBGPath(\"default\") returned null. BaseFolders={string.Join(";", Globals.BaseFolders ?? new System.Collections.Generic.List<string>())}",
+                        category: CustomConsole.LogCategory.Viewport);
                 }
                 return defaultResult;
             }
@@ -1020,7 +1028,9 @@ namespace OceanyaClient.Features.Viewport
             if (!string.Equals(normalized, "default", StringComparison.OrdinalIgnoreCase))
             {
                 Background? fallback = Background.FromBGPath("default");
-                CustomConsole.Log($"[Viewport] BG \"{normalized}\" not found locally, falling back to default. fallback={fallback?.PathToFile ?? "null"}");
+                CustomConsole.Info(
+                    $"BG \"{normalized}\" not found locally, falling back to default. fallback={fallback?.PathToFile ?? "null"}",
+                    CustomConsole.LogCategory.Viewport);
                 return fallback;
             }
 

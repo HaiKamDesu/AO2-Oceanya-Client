@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -36,7 +37,9 @@ namespace Common
             /// <summary>IC (in-character) chat messages</summary>
             IC,
             /// <summary>OOC (out-of-character) chat messages</summary>
-            OOC
+            OOC,
+            /// <summary>AO2 viewport rendering and playback diagnostics</summary>
+            Viewport
         }
 
         /// <summary>

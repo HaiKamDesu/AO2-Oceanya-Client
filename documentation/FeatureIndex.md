@@ -13,6 +13,11 @@ Use this file as the first stop before broad repository searches. It should poin
 - AO2 reference: `AO2-Client/src/courtroom.cpp`, `AO2-Client/src/courtroom.h`, `AO2-Client/src/animationlayer.*`
 - Notes: GM multi-client `V` button opens an owned 256x192 AO2 render surface for background, character, desk, effect, and chatbox layers.
 
+## Debug Console And Logging
+- Doc: `Documentation/DebugConsoleAndLogging.md`
+- Main code: `Common/CustomConsole.cs`, `OceanyaClient/Components/Forms/DebugConsoleWindow.xaml(.cs)`
+- Notes: Structured log entries carry level and category metadata. The debug console filters System, Network, IC, OOC, and Viewport logs.
+
 ## Client Settings And Audio
 - Doc: `Documentation/AO2Viewport.md`
 - Main code: `OceanyaClient/Components/Forms/SettingsWindow.xaml(.cs)`, `OceanyaClient/Components/Forms/CallwordRuleEditorWindow.xaml(.cs)`, `OceanyaClient/Components/Forms/ExtraAudioRuleEditorWindow.xaml(.cs)`, `OceanyaClient/AudioSettings.cs`, `Common/SaveFile.cs`, `OceanyaClient/MainWindow.xaml`, `OceanyaClient/MainWindow.xaml.cs`

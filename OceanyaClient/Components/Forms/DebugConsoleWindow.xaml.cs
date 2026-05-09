@@ -171,6 +171,7 @@ namespace OceanyaClient
                 FilterNetwork.IsChecked = _enabledCategories.Contains("Network");
                 FilterIC.IsChecked      = _enabledCategories.Contains("IC");
                 FilterOOC.IsChecked     = _enabledCategories.Contains("OOC");
+                FilterViewport.IsChecked = _enabledCategories.Contains("Viewport");
 
                 UpdateFilterSummary();
             }
@@ -187,6 +188,7 @@ namespace OceanyaClient
             if (FilterNetwork.IsChecked == true) _enabledCategories.Add("Network");
             if (FilterIC.IsChecked == true)      _enabledCategories.Add("IC");
             if (FilterOOC.IsChecked == true)     _enabledCategories.Add("OOC");
+            if (FilterViewport.IsChecked == true) _enabledCategories.Add("Viewport");
 
             UpdateFilterSummary();
 
@@ -201,7 +203,7 @@ namespace OceanyaClient
 
         private void UpdateFilterSummary()
         {
-            if (_enabledCategories.Count == 4)
+            if (_enabledCategories.Count == Enum.GetValues(typeof(CustomConsole.LogCategory)).Length)
             {
                 FilterSummaryLabel.Text = "All categories shown";
             }
@@ -275,12 +277,14 @@ namespace OceanyaClient
         private static readonly Brush CatNetworkBrush = new SolidColorBrush(Color.FromRgb(0x4D, 0xA6, 0xFF));
         private static readonly Brush CatICBrush      = new SolidColorBrush(Color.FromRgb(0xA8, 0x7F, 0xFF));
         private static readonly Brush CatOOCBrush     = new SolidColorBrush(Color.FromRgb(0xFF, 0xD9, 0x66));
+        private static readonly Brush CatViewportBrush = new SolidColorBrush(Color.FromRgb(0x66, 0xD9, 0x99));
 
         private static Brush GetCategoryBrush(CustomConsole.LogCategory category) => category switch
         {
             CustomConsole.LogCategory.Network => CatNetworkBrush,
             CustomConsole.LogCategory.IC      => CatICBrush,
             CustomConsole.LogCategory.OOC     => CatOOCBrush,
+            CustomConsole.LogCategory.Viewport => CatViewportBrush,
             _                                 => CatSystemBrush
         };
 
@@ -289,6 +293,7 @@ namespace OceanyaClient
             CustomConsole.LogCategory.Network => "[NET]",
             CustomConsole.LogCategory.IC      => "[IC] ",
             CustomConsole.LogCategory.OOC     => "[OOC]",
+            CustomConsole.LogCategory.Viewport => "[VPT]",
             _                                 => "[SYS]"
         };
 

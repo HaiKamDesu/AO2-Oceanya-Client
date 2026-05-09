@@ -48,6 +48,7 @@ namespace OceanyaClient
         private AO2ViewportWindowContent? viewportContent;
         private bool isMainWindowClosing;
         private bool hasHookedHostWindowClosing;
+        private bool hasAppliedMainWindowState;
         private readonly bool useSingleInternalClient = SaveFile.Data.UseSingleInternalClient;
         private readonly bool aiModeEnabled;
         private bool debug = false;
@@ -62,6 +63,11 @@ namespace OceanyaClient
         private bool isLoadingDreddOverlaySelection;
         private bool isDreddFeatureEnabled;
         private const string DreddNoneOverlayName = "none";
+        private const double ConnectionInfoBarHeight = 18;
+        private const double MainWindowBodyHeight = 628;
+        private const double MainWindowDreddBodyHeight = 658;
+        private const double MainWindowHeight = MainWindowBodyHeight + ConnectionInfoBarHeight;
+        private const double MainWindowDreddHeight = MainWindowDreddBodyHeight + ConnectionInfoBarHeight;
         private static readonly Key[] KonamiCodeSequence = new[]
         {
             Key.Up,
@@ -199,6 +205,7 @@ namespace OceanyaClient
 
                 if (client == null)
                 {
+                    CustomConsole.Warning("IC send ignored because no GM client is selected.", category: CustomConsole.LogCategory.IC);
                     return;
                 }
 
@@ -251,11 +258,17 @@ namespace OceanyaClient
                 AOClient? networkClient = GetTargetClientForNetwork(client);
                 if (networkClient == null)
                 {
+                    CustomConsole.Warning(
+                        $"IC send ignored for \"{client.clientName}\" because no network client is available.",
+                        category: CustomConsole.LogCategory.IC);
                     return;
                 }
 
                 if (useSingleInternalClient)
                 {
+                    CustomConsole.Debug(
+                        $"Applying profile before IC send. profile=\"{client.clientName}\" profileCharacter=\"{client.currentINI?.Name ?? "(null)"}\" profileEmote=\"{client.currentEmote?.DisplayID ?? "(null)"}\" networkIniPuppet=\"{networkClient.iniPuppetName}\" networkIniPuppetId={networkClient.iniPuppetID}",
+                        CustomConsole.LogCategory.IC);
                     ApplyProfileToSingleInternalClient(client);
                 }
 
@@ -274,9 +287,20 @@ namespace OceanyaClient
                 }
 
                 networkClient.OnICMessageReceived -= OnICMessageReceivedHandler;
-                // Subscribe to the event
                 networkClient.OnICMessageReceived += OnICMessageReceivedHandler;
-                await networkClient.SendICMessage(sendMessage);
+                CustomConsole.Info(
+                    $"IC send requested. profile=\"{client.clientName}\" network=\"{networkClient.clientName}\" connected={networkClient.IsTransportConnected} iniPuppet=\"{networkClient.iniPuppetName}\" iniPuppetId={networkClient.iniPuppetID} character=\"{networkClient.currentINI?.Name ?? "(null)"}\" emote=\"{networkClient.currentEmote?.DisplayID ?? "(null)"}\" messageLength={sendMessage.Length}",
+                    CustomConsole.LogCategory.IC);
+                try
+                {
+                    await networkClient.SendICMessage(sendMessage);
+                }
+                catch (Exception ex)
+                {
+                    CustomConsole.Error("IC send failed before packet write completed.", ex, CustomConsole.LogCategory.IC);
+                    networkClient.OnICMessageReceived -= OnICMessageReceivedHandler;
+                    throw;
+                }
             };
 
             ICMessageSettingsControl.OnResetMessageEffects += () =>
@@ -312,6 +336,7 @@ namespace OceanyaClient
 
             btnDebug.Visibility = debug ? Visibility.Visible : Visibility.Collapsed;
             RefreshAreaNavigatorForCurrentClient();
+            UpdateConnectionInfoBar();
         }
 
         /// <inheritdoc/>
@@ -323,6 +348,7 @@ namespace OceanyaClient
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
             HookHostWindowClosing();
+            ApplySavedMainWindowState();
             if (hasRaisedFinishedLoading)
             {
                 return;
@@ -358,6 +384,60 @@ namespace OceanyaClient
                 viewportWindow?.Close();
                 callwordAudioNotifier.Dispose();
             };
+        }
+
+        private void ApplySavedMainWindowState()
+        {
+            if (hasAppliedMainWindowState)
+            {
+                return;
+            }
+
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this);
+            VisualizerWindowState? state = SaveFile.Data.GMMainWindowState;
+            if (hostWindow == null || state == null)
+            {
+                return;
+            }
+
+            hasAppliedMainWindowState = true;
+            if (state.Left.HasValue
+                && state.Top.HasValue
+                && IsFinite(state.Left.Value)
+                && IsFinite(state.Top.Value))
+            {
+                hostWindow.WindowStartupLocation = WindowStartupLocation.Manual;
+                Rect virtualBounds = new Rect(
+                    SystemParameters.VirtualScreenLeft,
+                    SystemParameters.VirtualScreenTop,
+                    SystemParameters.VirtualScreenWidth,
+                    SystemParameters.VirtualScreenHeight);
+                double width = Math.Max(hostWindow.MinWidth, hostWindow.Width);
+                double height = Math.Max(hostWindow.MinHeight, hostWindow.Height);
+                hostWindow.Left = Clamp(state.Left.Value, virtualBounds.Left, virtualBounds.Right - width);
+                hostWindow.Top = Clamp(state.Top.Value, virtualBounds.Top, virtualBounds.Bottom - height);
+            }
+
+            hostWindow.LocationChanged += (_, _) => CaptureMainWindowState();
+        }
+
+        private void CaptureMainWindowState()
+        {
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this);
+            if (hostWindow == null || hostWindow.WindowState != WindowState.Normal)
+            {
+                return;
+            }
+
+            SaveFile.Data.GMMainWindowState = new VisualizerWindowState
+            {
+                Width = Math.Max(510, hostWindow.Width),
+                Height = Math.Max(MainWindowDreddHeight, hostWindow.Height),
+                Left = hostWindow.Left,
+                Top = hostWindow.Top,
+                IsMaximized = false
+            };
+            SaveFile.Save();
         }
         private void RenameClient(AOClient bot)
         {
@@ -1570,6 +1650,7 @@ namespace OceanyaClient
                 lstAreas.ItemsSource = null;
                 btnAreaNavigator.IsEnabled = false;
                 btnGoToArea.IsEnabled = false;
+                UpdateConnectionInfoBar();
                 return;
             }
 
@@ -1589,6 +1670,27 @@ namespace OceanyaClient
             }
 
             lstAreas.ItemsSource = areaItems;
+            UpdateConnectionInfoBar();
+        }
+
+        private void UpdateConnectionInfoBar()
+        {
+            AOClient? networkClient = currentClient == null ? null : GetTargetClientForNetwork(currentClient);
+            string server = SaveFile.Data.SelectedServerName?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(server))
+            {
+                server = Globals.GetSelectedServerEndpoint();
+            }
+
+            if (string.IsNullOrWhiteSpace(server))
+            {
+                server = "Disconnected";
+            }
+
+            string area = networkClient == null || string.IsNullOrWhiteSpace(networkClient.CurrentArea)
+                ? "Unknown"
+                : networkClient.CurrentArea;
+            txtSelectedConnectionInfo.Text = $"{server} - {area}";
         }
 
         private AreaNavigatorListItem CreateAreaNavigatorListItem(AreaInfo areaInfo)
@@ -1706,9 +1808,9 @@ namespace OceanyaClient
         {
             isDreddFeatureEnabled = SaveFile.Data.AdvancedFeatures.IsEnabled(AdvancedFeatureIds.DreddBackgroundOverlayOverride);
             DreddStickyOverlayCheckBox.IsChecked = SaveFile.Data.DreddBackgroundOverlayOverride.StickyOverlay;
-            Height = isDreddFeatureEnabled ? 658 : 628;
-            imgScienceBlur.Height = isDreddFeatureEnabled ? 658 : 628;
-            imgScienceBlur_darken.Height = isDreddFeatureEnabled ? 658 : 628;
+            Height = isDreddFeatureEnabled ? MainWindowDreddHeight : MainWindowHeight;
+            imgScienceBlur.Height = isDreddFeatureEnabled ? MainWindowDreddBodyHeight : MainWindowBodyHeight;
+            imgScienceBlur_darken.Height = isDreddFeatureEnabled ? MainWindowDreddBodyHeight : MainWindowBodyHeight;
 
             RefreshDreddOverlayForCurrentContext(promptForUnknownOverlay: false);
             UpdateDreddFeatureVisibility();
@@ -2504,11 +2606,17 @@ namespace OceanyaClient
                             {
                                 return;
                             }
+                            CustomConsole.Info(
+                                $"Manual INI puppet selection requested. profile=\"{bot.clientName}\" network=\"{targetNetworkClient.clientName}\" requested=\"{newClientName.Trim()}\" currentPuppet=\"{targetNetworkClient.iniPuppetName}\" currentPuppetId={targetNetworkClient.iniPuppetID}",
+                                CustomConsole.LogCategory.IC);
                             await targetNetworkClient.SelectIniPuppet(newClientName, false);
                             if (useSingleInternalClient)
                             {
                                 SyncSingleClientStatusToProfile(bot);
                             }
+                            CustomConsole.Info(
+                                $"Manual INI puppet selection applied. profile=\"{bot.clientName}\" network=\"{targetNetworkClient.clientName}\" puppet=\"{targetNetworkClient.iniPuppetName}\" puppetId={targetNetworkClient.iniPuppetID}",
+                                CustomConsole.LogCategory.IC);
                         }
                         catch(Exception e)
                         {
@@ -2531,6 +2639,16 @@ namespace OceanyaClient
                 contextMenu.Items.Add(reconnectMenuItem);
                 AttachAiContextMenuItems(contextMenu, bot);
 
+                contextMenu.Items.Add(new Separator());
+                MenuItem disconnectMenuItem = new MenuItem { Header = "Disconnect" };
+                disconnectMenuItem.Click += async (sender, args) =>
+                {
+                    CustomConsole.Info(
+                        $"Disconnect requested from client context menu. profile=\"{bot.clientName}\"",
+                        CustomConsole.LogCategory.System);
+                    await RemoveClientAsync(bot);
+                };
+                contextMenu.Items.Add(disconnectMenuItem);
 
                 toggleBtn.ContextMenu = contextMenu;
                 #endregion
@@ -2842,7 +2960,6 @@ namespace OceanyaClient
             viewportWindow.LocationChanged += ViewportWindow_LocationChanged;
             viewportWindow.Closing += (sender, eventArgs) =>
             {
-                CaptureViewportWindowState();
                 if (isMainWindowClosing)
                 {
                     return;
@@ -3162,6 +3279,21 @@ namespace OceanyaClient
             return GetViewportWindowHeightFromContentHeight(AO2ViewportAssetResolver.ViewportToolHeight);
         }
 
+        private static bool IsFinite(double value)
+        {
+            return !double.IsNaN(value) && !double.IsInfinity(value);
+        }
+
+        private static double Clamp(double value, double minimum, double maximum)
+        {
+            if (maximum < minimum)
+            {
+                return minimum;
+            }
+
+            return Math.Max(minimum, Math.Min(maximum, value));
+        }
+
         private (double ScaleX, double ScaleY) GetViewportDpiScale()
         {
             if (viewportWindow == null)
@@ -3213,8 +3345,15 @@ namespace OceanyaClient
 
         private async void btnRemoveClient_Click(object sender, RoutedEventArgs e)
         {
-            var clientToRemove = currentClient;
-            if (clientToRemove == null) return;
+            await RemoveClientAsync(currentClient);
+        }
+
+        private async Task RemoveClientAsync(AOClient? clientToRemove)
+        {
+            if (clientToRemove == null)
+            {
+                return;
+            }
 
             if (!useSingleInternalClient)
             {
@@ -3258,7 +3397,10 @@ namespace OceanyaClient
             }
             else
             {
-                SelectClient(clients.Values.First());
+                if (ReferenceEquals(currentClient, clientToRemove))
+                {
+                    SelectClient(clients.Values.First());
+                }
             }
         }
 

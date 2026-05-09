@@ -261,6 +261,9 @@ namespace AOBot_Testing.Agents
                     IncludeSlide = SupportsServerFeature("CUSTOM_BLIPS")
                 };
                 string command = ICMessage.GetCommand(msg, serializationOptions);
+                CustomConsole.Info(
+                    $"Outgoing IC packet metadata: character=\"{msg.Character}\" iniPuppet=\"{iniPuppetName}\" iniPuppetId={iniPuppetID} emote=\"{msg.Emote}\" showname=\"{msg.ShowName}\" connected={IsTransportConnected}",
+                    Common.CustomConsole.LogCategory.IC);
                 CustomConsole.Info("Outgoing IC packet: " + command, Common.CustomConsole.LogCategory.Network);
 
                 /// If the message is queued, add it to the list of pending messages.

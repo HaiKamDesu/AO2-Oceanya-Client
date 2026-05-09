@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:OceanyaClient"
         xmlns:components="clr-namespace:OceanyaClient.Components"
-        Height="628" Width="510"
+        Height="646" Width="510"
         Background="Transparent">
 
     <!-- 
@@ -98,9 +98,31 @@
     <!-- Outer border for the "rounded corners + black outline" look -->
     <Border BorderBrush="#222222" BorderThickness="1" CornerRadius="5">
         <Grid Margin="0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="18"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <Border x:Name="ConnectionInfoBar"
+                    Grid.Row="0"
+                    Background="#FF050505"
+                    BorderBrush="#FF252525"
+                    BorderThickness="0,0,0,1">
+                <TextBlock x:Name="txtSelectedConnectionInfo"
+                           AutomationProperties.AutomationId="Main.ConnectionInfo"
+                           Text="Disconnected - Unknown"
+                           Foreground="#FFE8E8E8"
+                           FontFamily="Consolas"
+                           FontSize="11"
+                           VerticalAlignment="Center"
+                           HorizontalAlignment="Left"
+                           TextTrimming="CharacterEllipsis"
+                           Margin="8,0"/>
+            </Border>
 
             <!-- Optional body background treatment. -->
                 <Rectangle x:Name="imgScienceBlur" 
+                       Grid.Row="1"
                        HorizontalAlignment="Center" Width="527" Height="670" 
                        VerticalAlignment="Top" Margin="0">
                 <Rectangle.Fill>
@@ -109,10 +131,12 @@
             </Rectangle>
 
             <Rectangle x:Name="imgScienceBlur_darken"
+                       Grid.Row="1"
                        HorizontalAlignment="Center" Width="527" Height="670" 
                        VerticalAlignment="Top" Margin="0" Fill="#7F000000"/>
 
                 <Rectangle HorizontalAlignment="Center" Width="369" Height="276"
+                       Grid.Row="1"
                        VerticalAlignment="Top" Margin="0,-21,0,0">
                 <Rectangle.Fill>
                     <ImageBrush ImageSource="pack://application:,,,/OceanyaClient;component/Resources/Logo_O.png" Stretch="Uniform" Opacity="0.1"/>
@@ -120,7 +144,7 @@
             </Rectangle>
 
             <!-- Main body content only; shared window chrome comes from GenericOceanyaWindow. -->
-            <Canvas x:Name="MainCanvas" Margin="0" Background="#FF585858">
+            <Canvas x:Name="MainCanvas" Grid.Row="1" Margin="0" Background="#FF585858">
                 <!-- Entire original body content lives here. -->
 
 
