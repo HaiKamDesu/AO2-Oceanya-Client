@@ -257,12 +257,14 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
             <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
                 <TextBlock Text="Sound" Style="{StaticResource LabelText}"/>
                 <TextBlock Style="{StaticResource HelpGlyph}" ToolTip="Custom SFX for this trigger. Default uses AO2's word_call/modcall notification sound."/>
             </StackPanel>
-            <Grid Grid.Row="1">
+            <Grid Grid.Row="1" Margin="0,0,0,10">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
@@ -284,6 +286,19 @@
                 <Button Grid.Column="2" Content="..." Width="40" Style="{StaticResource ModernButton}" Margin="0,0,8,0" Click="BrowseButton_Click" ToolTip="Pick an AO2-compatible audio file."/>
                 <Button Grid.Column="3" Content="Default" Style="{StaticResource ModernButton}" Click="UseDefaultButton_Click" ToolTip="Clear custom sound and use AO2 default notification SFX."/>
             </Grid>
+            <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,6">
+                <TextBlock Text="Volume" Style="{StaticResource LabelText}"/>
+                <TextBlock Style="{StaticResource HelpGlyph}" ToolTip="Playback volume for this callword sound. 100% keeps normal volume, 50% halves it, 0% mutes it."/>
+                <TextBox x:Name="VolumeValueTextBox"
+                         Style="{StaticResource DarkTextBox}"
+                         Width="76"
+                         Margin="12,0,0,0"
+                         VerticalAlignment="Center"
+                         TextChanged="VolumeValueTextBox_TextChanged"
+                         LostFocus="VolumeValueTextBox_LostFocus"
+                         ToolTip="Exact volume percent. The slider is limited to 0-200, but this field accepts any positive number."/>
+            </StackPanel>
+            <Slider Grid.Row="3" x:Name="VolumeSlider" Minimum="0" Maximum="200" ValueChanged="VolumeSlider_ValueChanged"/>
         </Grid>
 
         <StackPanel Grid.Row="10" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">

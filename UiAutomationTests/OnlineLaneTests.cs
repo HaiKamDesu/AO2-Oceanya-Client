@@ -155,9 +155,9 @@ public sealed class OnlineLaneTests
     private void AddClientViaDialog(Window mainWindow, string clientName)
     {
         app!.WaitForDescendantById(mainWindow, "Main.AddClient").AsButton().Invoke();
-        Window inputDialog = app.WaitForReadyWindow("InputDialog.Ok");
-        SetText(inputDialog, "InputDialog.Input", clientName);
-        app.WaitForDescendantById(inputDialog, "InputDialog.Ok").AsButton().Invoke();
+        Window selectorWindow = app.WaitForReadyWindow("CharacterSelector.Cancel");
+        SetText(selectorWindow, "CharacterSelector.ClientName", clientName);
+        app.WaitForDescendantById(selectorWindow, "CharacterSelector.FirstSelectableCard")?.Click();
 
         // Connect() takes ~2 s; WaitForReadyWindow has a 30 s ceiling.
         app.WaitForReadyWindow("Main.AddClient");

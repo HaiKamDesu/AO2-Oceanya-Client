@@ -328,9 +328,9 @@ internal static class GmPacketUiDriver
     public static void AddClient(FlaUiSmokeApp app, Window mainWindow, string clientName)
     {
         app.WaitForDescendantById(mainWindow, "Main.AddClient").AsButton().Invoke();
-        Window inputDialog = app.WaitForReadyWindow("InputDialog.Ok");
-        SetText(inputDialog, "InputDialog.Input", clientName);
-        app.WaitForDescendantById(inputDialog, "InputDialog.Ok").AsButton().Invoke();
+        Window selectorWindow = app.WaitForReadyWindow("CharacterSelector.Cancel");
+        SetText(selectorWindow, "CharacterSelector.ClientName", clientName);
+        app.WaitForDescendantById(selectorWindow, "CharacterSelector.FirstSelectableCard")?.Click();
         app.WaitForReadyWindow("Main.AddClient");
     }
 

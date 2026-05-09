@@ -1,7 +1,9 @@
 ﻿using AOBot_Testing.Structures;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -106,6 +108,13 @@ namespace AOBot_Testing.Agents
         public Action<string>? OnCurrentAreaChanged;
         public Action<IReadOnlyList<string>>? OnAvailableAreasUpdated;
         public Action<IReadOnlyList<AreaInfo>>? OnAvailableAreaInfosUpdated;
+
+        /// <summary>
+        /// Optional provider for character selection frequency hints.
+        /// When set, <see cref="SelectFirstAvailableINIPuppet"/> prefers the most-used characters first.
+        /// Injected by the host application to avoid a direct dependency on save-file infrastructure.
+        /// </summary>
+        public Func<IReadOnlyDictionary<string, int>>? FrequencyHintsProvider { get; set; }
 
         public string CurrentArea
         {
@@ -620,7 +629,7 @@ namespace AOBot_Testing.Agents
         }
 
         #region Connection Related Methods
-        public async Task Connect(int betweenHandshakeAndSetArea = 0, int betweenSetAreas = 0, int betweenAreasAndIniPuppet = 1000, int finalDelay = 1000)
+        public async Task Connect(int betweenHandshakeAndSetArea = 0, int betweenSetAreas = 0, int betweenAreasAndIniPuppet = 1000, int finalDelay = 1000, bool autoSelectCharacter = true)
         {
             aliveTime.Reset();
             dead = false;
@@ -651,8 +660,11 @@ namespace AOBot_Testing.Agents
 
                 await Task.Delay(betweenAreasAndIniPuppet);
 
-                await SelectFirstAvailableINIPuppet();
-                CustomConsole.Info("===========================");
+                if (autoSelectCharacter)
+                {
+                    await SelectFirstAvailableINIPuppet();
+                    CustomConsole.Info("===========================");
+                }
 
                 _ = Task.Run(() => ListenForMessages());
                 _ = Task.Run(() => KeepAlive());
@@ -1470,25 +1482,45 @@ namespace AOBot_Testing.Agents
                 return;
             }
 
+            // Build name→index map for quick lookup
+            var nameToIndex = new Dictionary<string, int>(serverCharacterList.Count, StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < serverCharacterList.Count; i++)
+            {
+                nameToIndex[serverCharacterList.ElementAt(i).Key] = i;
+            }
+
+            // Candidate order: frequently used chars first (by count desc), then remaining server order.
+            // FrequencyHintsProvider is injected by the host application (e.g. MainWindow sets it).
+            IReadOnlyDictionary<string, int> frequencyHints = FrequencyHintsProvider?.Invoke()
+                ?? new Dictionary<string, int>();
+
+            var frequentIndices = frequencyHints
+                .OrderByDescending(kvp => kvp.Value)
+                .Select(kvp => nameToIndex.TryGetValue(kvp.Key, out int idx) ? idx : -1)
+                .Where(idx => idx >= 0)
+                .ToList();
+
+            var allIndices = frequentIndices
+                .Concat(Enumerable.Range(0, serverCharacterList.Count).Except(frequentIndices));
+
             if (!string.IsNullOrEmpty(lastCharsCheck) && lastCharsCheck.StartsWith("CharsCheck#"))
             {
                 var parts = lastCharsCheck.Substring(11).TrimEnd('#', '%').Split('#');
                 int maxIndex = Math.Min(parts.Length, serverCharacterList.Count);
-                for (int i = 0; i < maxIndex; i++)
+
+                foreach (int i in allIndices)
                 {
-                    if (parts[i] == "0")
+                    if (i >= maxIndex || parts[i] != "0")
                     {
-                        // Select the first available character
-                        var characterName = serverCharacterList.ElementAt(i).Key;
+                        continue;
+                    }
 
-                        var ini = CharacterFolder.FullList.FirstOrDefault(c => c.Name == characterName);
-
-                        //if the ini is null, it means you dont have it in your pc, meaning keep looking for an available one you DO have.
-                        if (ini != null)
-                        {
-                            await SelectIniPuppet(i, iniswapToSelected);
-                            return;
-                        }
+                    var characterName = serverCharacterList.ElementAt(i).Key;
+                    var ini = CharacterFolder.FullList.FirstOrDefault(c => c.Name == characterName);
+                    if (ini != null)
+                    {
+                        await SelectIniPuppet(i, iniswapToSelected);
+                        return;
                     }
                 }
             }
@@ -1496,8 +1528,13 @@ namespace AOBot_Testing.Agents
             {
                 // Some servers do not send CharsCheck in the same stage as before.
                 // Fallback to first server-listed character present locally.
-                for (int i = 0; i < serverCharacterList.Count; i++)
+                foreach (int i in allIndices)
                 {
+                    if (i >= serverCharacterList.Count)
+                    {
+                        continue;
+                    }
+
                     var characterName = serverCharacterList.ElementAt(i).Key;
                     var ini = CharacterFolder.FullList.FirstOrDefault(c => c.Name == characterName);
                     if (ini != null)

@@ -70,7 +70,7 @@ namespace OceanyaClient
                 currentPath = path;
             }
 
-            player.Volume = (float)AudioSettings.SfxVolume;
+            player.Volume = (float)(AudioSettings.SfxVolume * rule.VolumePercent / 100.0);
             _ = player.PlayBlip();
         }
 

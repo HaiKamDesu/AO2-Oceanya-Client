@@ -2425,17 +2425,85 @@ namespace OceanyaClient
                 });
             };
 
+            singleInternalClient.FrequencyHintsProvider = () => SaveFile.Data.FrequentlyUsedIniPuppets;
             InitializeCommonClientEvents(singleInternalClient, singleInternalClient);
-            await singleInternalClient.Connect();
+            await singleInternalClient.Connect(autoSelectCharacter: false);
             await BootstrapAreaNavigatorAsync(singleInternalClient);
             RefreshViewportAttachment();
         }
-        private void AddClient(string clientName)
+        private void AddClient(string? clientName = null)
         {
             _ = AddClientAsync(clientName);
         }
 
-        private static async Task ConnectClientAsync(AOClient bot)
+        /// <summary>
+        /// Shows the character selector for <paramref name="bot"/>.
+        /// Returns (true, selectedClientName) if the user confirmed, (false, null) if cancelled.
+        /// Pass <paramref name="defaultClientName"/> to show the embedded client-name field (add-client flow).
+        /// </summary>
+        private (bool confirmed, string? selectedClientName) ShowCharacterSelectorForClient(
+            AOClient bot, string? defaultClientName = null)
+        {
+            AOClient? networkClient = GetTargetClientForNetwork(bot);
+            if (networkClient == null)
+            {
+                return (false, null);
+            }
+
+            CharacterSelectorWindow selector = new CharacterSelectorWindow(
+                networkClient.ServerCharacterAvailability,
+                SaveFile.Data.FrequentlyUsedIniPuppets,
+                networkClient.iniPuppetName,
+                defaultClientName)
+            {
+                Owner = HostWindow ?? Application.Current?.MainWindow
+            };
+
+            if (selector.ShowDialog() != true || string.IsNullOrWhiteSpace(selector.SelectedCharacterName))
+            {
+                return (false, null);
+            }
+
+            string charName = selector.SelectedCharacterName;
+            _ = ApplyCharacterSelectionAsync(bot, charName);
+            return (true, selector.SelectedClientName);
+        }
+
+        private async Task ApplyCharacterSelectionAsync(AOClient bot, string charName)
+        {
+            try
+            {
+                AOClient? networkClient = GetTargetClientForNetwork(bot);
+                if (networkClient == null)
+                {
+                    return;
+                }
+
+                await networkClient.SelectIniPuppet(charName, true);
+
+                if (useSingleInternalClient && !ReferenceEquals(networkClient, bot))
+                {
+                    if (networkClient.currentINI != null)
+                    {
+                        bot.SetCharacter(networkClient.currentINI);
+                    }
+                    bot.iniPuppetID = networkClient.iniPuppetID;
+                }
+
+                if (!SaveFile.Data.FrequentlyUsedIniPuppets.ContainsKey(charName))
+                {
+                    SaveFile.Data.FrequentlyUsedIniPuppets[charName] = 0;
+                }
+                SaveFile.Data.FrequentlyUsedIniPuppets[charName]++;
+                SaveFile.Save();
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Error($"Character selection failed for \"{charName}\"", ex);
+            }
+        }
+
+        private static async Task ConnectClientAsync(AOClient bot, bool autoSelectCharacter = true)
         {
             if (testConnectClientAsyncOverride != null)
             {
@@ -2443,7 +2511,7 @@ namespace OceanyaClient
                 return;
             }
 
-            await bot.Connect();
+            await bot.Connect(autoSelectCharacter: autoSelectCharacter);
         }
 
         private void ShowMainWindowMessage(string message, string title, MessageBoxButton buttons, MessageBoxImage image)
@@ -2490,27 +2558,32 @@ namespace OceanyaClient
                 RecordAiMessageForClient(bot, bot, chatLogType, characterName, showName, message, iniPuppetId, isFromServer);
             };
         }
-        private async Task AddClientAsync(string clientName)
+        private async Task AddClientAsync(string? clientName = null)
         {
-            IsEnabled = false;  
-            Window? waitOwner = HostWindow ?? Application.Current?.MainWindow;
-            if (waitOwner == null)
+            IsEnabled = false;
+            try
             {
-                return;
-            }
+            Window? waitOwner = HostWindow ?? Application.Current?.MainWindow;
+            if (waitOwner == null) return;
 
             await WaitForm.ShowFormAsync("Connecting client...", waitOwner);
 
             try
             {
+                string defaultClientName = !string.IsNullOrWhiteSpace(clientName)
+                    ? clientName
+                    : $"Client{clients.Count + 1}";
+
                 AOClient bot = new AOClient(Globals.GetSelectedServerEndpoint());
-                bot.clientName = clientName;
+                bot.clientName = defaultClientName;
                 HookClientForDreddOverlay(bot);
                 if (aiModeEnabled)
                 {
                     EnsureAiController(bot);
                     aiOriginResponseVisibility[bot] = true;
                 }
+
+                bool isNewInternalConnection = !useSingleInternalClient || singleInternalClient == null;
 
                 if (useSingleInternalClient)
                 {
@@ -2553,9 +2626,10 @@ namespace OceanyaClient
                     }
                 }
 
-                bot.SetICShowname(clientName);
-                bot.OOCShowname = clientName;
+                bot.SetICShowname(bot.clientName);
+                bot.OOCShowname = bot.clientName;
                 bot.switchPosWhenChangingINI = chkPosOnIniSwap.IsChecked == true;
+                bot.FrequencyHintsProvider = () => SaveFile.Data.FrequentlyUsedIniPuppets;
 
                 ToggleButton toggleBtn = new ToggleButton
                 {
@@ -2592,37 +2666,9 @@ namespace OceanyaClient
                 contextMenu.Items.Add(iniPuppetChange);
 
                 MenuItem manualIniPuppetChange = new MenuItem { Header = "Select INIPuppet (Manual)" };
-                manualIniPuppetChange.Click += async (sender, args) =>
+                manualIniPuppetChange.Click += (sender, args) =>
                 {
-                    // Show an input dialog to the user
-                    string newClientName = ShowInputDialog("Enter INIPuppet name:");
-
-                    if (!string.IsNullOrWhiteSpace(newClientName))
-                    {
-                        try
-                        {
-                            AOClient? targetNetworkClient = GetTargetClientForNetwork(bot);
-                            if (targetNetworkClient == null)
-                            {
-                                return;
-                            }
-                            CustomConsole.Info(
-                                $"Manual INI puppet selection requested. profile=\"{bot.clientName}\" network=\"{targetNetworkClient.clientName}\" requested=\"{newClientName.Trim()}\" currentPuppet=\"{targetNetworkClient.iniPuppetName}\" currentPuppetId={targetNetworkClient.iniPuppetID}",
-                                CustomConsole.LogCategory.IC);
-                            await targetNetworkClient.SelectIniPuppet(newClientName, false);
-                            if (useSingleInternalClient)
-                            {
-                                SyncSingleClientStatusToProfile(bot);
-                            }
-                            CustomConsole.Info(
-                                $"Manual INI puppet selection applied. profile=\"{bot.clientName}\" network=\"{targetNetworkClient.clientName}\" puppet=\"{targetNetworkClient.iniPuppetName}\" puppetId={targetNetworkClient.iniPuppetID}",
-                                CustomConsole.LogCategory.IC);
-                        }
-                        catch(Exception e)
-                        {
-                            OceanyaMessageBox.Show(e.Message, "INIPuppet Selection Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                        }
-                    }
+                    ShowCharacterSelectorForClient(bot);
                 };
                 contextMenu.Items.Add(manualIniPuppetChange);
 
@@ -2750,8 +2796,46 @@ namespace OceanyaClient
                 if (!useSingleInternalClient)
                 {
                     InitializeCommonClientEvents(bot, bot);
-                    await ConnectClientAsync(bot);
+                    await ConnectClientAsync(bot, autoSelectCharacter: false);
                     await BootstrapAreaNavigatorAsync(bot);
+                }
+
+                WaitForm.CloseForm();
+                if (isNewInternalConnection)
+                {
+                    var (confirmed, selectedClientName) = ShowCharacterSelectorForClient(bot, defaultClientName);
+                    if (!confirmed)
+                    {
+                        // User cancelled — tear down whatever connection was just established
+                        if (useSingleInternalClient)
+                        {
+                            if (singleInternalClient != null)
+                            {
+                                await singleInternalClient.Disconnect();
+                                singleInternalClient = null;
+                            }
+                            boundSingleClientProfile = null;
+                        }
+                        else
+                        {
+                            await bot.Disconnect();
+                        }
+                        ClearAiClientState(bot);
+                        if (aiControllers.Remove(bot, out AOClientAgentController? controller))
+                        {
+                            controller.Dispose();
+                        }
+                        return;
+                    }
+
+                    // Apply name the user typed in the selector (falls back to default if empty)
+                    if (!string.IsNullOrWhiteSpace(selectedClientName))
+                    {
+                        bot.clientName = selectedClientName;
+                        bot.SetICShowname(bot.clientName);
+                        bot.OOCShowname = bot.clientName;
+                        AutomationProperties.SetName(toggleBtn, bot.clientName);
+                    }
                 }
 
                 bot.OnDisconnect += () =>
@@ -2834,7 +2918,11 @@ namespace OceanyaClient
                 WaitForm.CloseForm();
             }
 
-            IsEnabled = true;
+            } // end outer try
+            finally
+            {
+                IsEnabled = true;
+            }
         }
 
         private void SelectClient(AOClient client)
@@ -2874,13 +2962,7 @@ namespace OceanyaClient
 
         private void btnAddClient_Click(object sender, RoutedEventArgs e)
         {
-            // Show an input dialog to the user
-            string newClientName = ShowInputDialog("Enter client name:");
-
-            if (!string.IsNullOrWhiteSpace(newClientName))
-            {
-                AddClient(newClientName);
-            }
+            AddClient();
         }
 
         private void btnViewport_Click(object sender, RoutedEventArgs e)

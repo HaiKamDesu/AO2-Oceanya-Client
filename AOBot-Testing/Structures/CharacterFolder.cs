@@ -555,6 +555,7 @@ namespace AOBot_Testing.Structures
         public string NeedsShowName { get; set; } = string.Empty;
         public string Gender { get; set; } = string.Empty;
         public string Side { get; set; } = string.Empty;
+        public string Category { get; set; } = string.Empty;
         public string Blips { get; set; } = string.Empty;
         public string EffectsFolder { get; set; } = string.Empty;
         public string Realization { get; set; } = string.Empty;
@@ -581,6 +582,7 @@ namespace AOBot_Testing.Structures
             NeedsShowName = document.GetLatestValueOrDefault("Options", "needs_showname");
             Gender = document.GetLatestValueOrDefault("Options", "gender");
             Side = document.GetLatestValueOrDefault("Options", "side");
+            Category = document.GetLatestValueOrDefault("Options", "category");
             Blips = document.GetLatestValueOrDefault("Options", "blips");
             EffectsFolder = document.GetLatestValueOrDefault("Options", "effects");
             Realization = document.GetLatestValueOrDefault("Options", "realization");

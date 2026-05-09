@@ -247,6 +247,7 @@ namespace OceanyaClient
         public string CharacterName { get; set; } = string.Empty;
         public string EmoteName { get; set; } = string.Empty;
         public string SoundPath { get; set; } = string.Empty;
+        public int VolumePercent { get; set; } = 100;
         public bool WholeWord { get; set; }
         public bool IsEnabled { get; set; } = true;
 
@@ -255,14 +256,15 @@ namespace OceanyaClient
             string soundText = string.IsNullOrWhiteSpace(SoundPath) ? "AO2 default notification" : Path.GetFileName(SoundPath);
             string match = string.IsNullOrWhiteSpace(Match) ? Word : Match;
             string wordModeText = WholeWord ? " as a whole word" : string.Empty;
+            string volumeText = VolumePercent != 100 ? $" ({VolumePercent}%)" : string.Empty;
             return TriggerType switch
             {
                 CallwordTriggerType.Ao2Callword => $"AO2 callword \"{match}\"{wordModeText}",
-                CallwordTriggerType.MessageStartsWith => $"Play {soundText} when a message starts with \"{match}\"{wordModeText}",
-                CallwordTriggerType.CharacterSpeaks => $"Play {soundText} when character \"{CharacterName}\" speaks",
-                CallwordTriggerType.PlayerShownameSpeaks => $"Play {soundText} when showname \"{match}\" speaks",
-                CallwordTriggerType.CharacterEmoteUsed => $"Play {soundText} when character \"{CharacterName}\" uses emote \"{EmoteName}\"",
-                _ => $"Play {soundText} when a message contains \"{match}\"{wordModeText}"
+                CallwordTriggerType.MessageStartsWith => $"Play {soundText}{volumeText} when a message starts with \"{match}\"{wordModeText}",
+                CallwordTriggerType.CharacterSpeaks => $"Play {soundText}{volumeText} when character \"{CharacterName}\" speaks",
+                CallwordTriggerType.PlayerShownameSpeaks => $"Play {soundText}{volumeText} when showname \"{match}\" speaks",
+                CallwordTriggerType.CharacterEmoteUsed => $"Play {soundText}{volumeText} when character \"{CharacterName}\" uses emote \"{EmoteName}\"",
+                _ => $"Play {soundText}{volumeText} when a message contains \"{match}\"{wordModeText}"
             };
         }
     }
@@ -473,6 +475,11 @@ namespace OceanyaClient
             new List<string> { "System", "Network", "IC", "OOC", "Viewport" };
         public List<CallwordRule> CallwordRules { get; set; } = new List<CallwordRule>();
         public List<ExtraAudioRule> ExtraAudioRules { get; set; } = new List<ExtraAudioRule>();
+        public Dictionary<string, int> FrequentlyUsedIniPuppets { get; set; } =
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        public double CharacterSelectorWindowWidth { get; set; } = 760;
+        public double CharacterSelectorWindowHeight { get; set; } = 640;
+        public double CharacterSelectorIconScale { get; set; } = 1.0;
         public double CharacterCreatorEmoteTileWidth { get; set; } = 420;
         public double CharacterCreatorEmoteTileHeight { get; set; } = 430;
         public double CharacterCreatorCuttingPreviewHeight { get; set; } = 170;

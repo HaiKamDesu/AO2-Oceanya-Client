@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Windows;
@@ -22,6 +23,8 @@ namespace OceanyaClient
         private readonly List<CharacterSelectorOption> characters;
         private readonly IReadOnlyList<TriggerTypeOption> triggerTypeOptions;
         private bool suppressRefresh;
+        private int currentVolumePercent = 100;
+        private bool suppressVolumeTextEvents;
 
         public CallwordRuleEditorWindow(CallwordRule? source)
         {
@@ -56,6 +59,7 @@ namespace OceanyaClient
             SoundPathTextBox.Text = string.IsNullOrWhiteSpace(rule?.SoundPath)
                 ? ResolveDefaultNotificationPath() ?? string.Empty
                 : rule.SoundPath;
+            SetVolumePercent(rule?.VolumePercent ?? 100, updateSlider: true, updateText: true);
             suppressRefresh = false;
             RefreshEditorForTriggerType();
         }
@@ -140,7 +144,7 @@ namespace OceanyaClient
                 return;
             }
 
-            previewPlayer.Volume = (float)AudioSettings.SfxVolume;
+            previewPlayer.Volume = (float)(AudioSettings.SfxVolume * currentVolumePercent / 100.0);
             PreviewButton.DurationMs = Math.Max(160, previewPlayer.GetLoadedDurationMs());
             PreviewButton.IsPlaying = true;
             _ = previewPlayer.PlayBlip();
@@ -175,6 +179,7 @@ namespace OceanyaClient
                 CharacterName = UsesCharacter(triggerType) ? characterName : string.Empty,
                 EmoteName = triggerType == CallwordTriggerType.CharacterEmoteUsed ? emoteName : string.Empty,
                 SoundPath = UsesCustomSound(triggerType) ? SoundPathTextBox.Text?.Trim() ?? string.Empty : string.Empty,
+                VolumePercent = UsesCustomSound(triggerType) ? currentVolumePercent : 100,
                 WholeWord = SupportsWholeWord(triggerType) && WholeWordCheckBox.IsChecked == true,
                 IsEnabled = true
             };
@@ -304,6 +309,67 @@ namespace OceanyaClient
         {
             previewPlayer.Stop();
             PreviewButton.IsPlaying = false;
+        }
+
+        private void RefreshVolumeText()
+        {
+            if (VolumeValueTextBox != null)
+            {
+                suppressVolumeTextEvents = true;
+                VolumeValueTextBox.Text = currentVolumePercent.ToString(CultureInfo.InvariantCulture) + "%";
+                suppressVolumeTextEvents = false;
+            }
+        }
+
+        private void SetVolumePercent(int value, bool updateSlider, bool updateText)
+        {
+            currentVolumePercent = Math.Max(0, value);
+            if (updateSlider && VolumeSlider != null)
+            {
+                VolumeSlider.Value = Math.Clamp(currentVolumePercent, 0, 200);
+            }
+
+            if (updateText)
+            {
+                RefreshVolumeText();
+            }
+        }
+
+        private static bool TryParsePositivePercent(string? text, out int value)
+        {
+            string normalized = (text ?? string.Empty).Trim().TrimEnd('%').Trim();
+            if (int.TryParse(normalized, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed)
+                && parsed >= 0)
+            {
+                value = parsed;
+                return true;
+            }
+
+            value = 0;
+            return false;
+        }
+
+        private void VolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            SetVolumePercent((int)e.NewValue, updateSlider: false, updateText: true);
+        }
+
+        private void VolumeValueTextBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (suppressVolumeTextEvents)
+            {
+                return;
+            }
+
+            if (TryParsePositivePercent(VolumeValueTextBox.Text, out int parsed))
+            {
+                SetVolumePercent(parsed, updateSlider: true, updateText: false);
+            }
+        }
+
+        private void VolumeValueTextBox_LostFocus(object sender, RoutedEventArgs e)
+        {
+            RefreshVolumeText();
         }
 
         private static bool UsesTextMatch(CallwordTriggerType triggerType)
