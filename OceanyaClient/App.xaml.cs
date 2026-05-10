@@ -105,14 +105,20 @@ public partial class App : Application
             return;
         }
 
+        StartupTimingLogger.Log("app_startup_begin");
+
         TryStartBackgroundHivemindAgent();
 
-        if (!OceanyaTestMode.Current.DisableFakeLoading)
+        bool skipFakeLoading = OceanyaTestMode.Current.DisableFakeLoading || SaveFile.Data.SkipLoadingScreen;
+        if (!skipFakeLoading)
         {
+            StartupTimingLogger.Log("fake_loading_begin");
             await FakeLoadingAsync();
+            StartupTimingLogger.Log("fake_loading_end");
         }
 
         // After loading finishes, show your main window
+        StartupTimingLogger.Log("initial_config_window_shown");
         InitialConfigurationWindow mainWindow = new InitialConfigurationWindow();
         mainWindow.Show();
         mainWindow.Activate();

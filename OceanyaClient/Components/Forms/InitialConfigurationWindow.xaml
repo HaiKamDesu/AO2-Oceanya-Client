@@ -280,6 +280,14 @@
                           Style="{StaticResource ModernCheckBox}"
                           Margin="0,10,0,0"/>
 
+                <CheckBox x:Name="SkipLoadingScreenCheckBox"
+                          AutomationProperties.AutomationId="InitialConfig.SkipLoadingScreen"
+                          Content="Skip intro loading screen"
+                          Style="{StaticResource ModernCheckBox}"
+                          Margin="0,4,0,0"
+                          Checked="SkipLoadingScreenCheckBox_CheckedChanged"
+                          Unchecked="SkipLoadingScreenCheckBox_CheckedChanged"/>
+
                 <StackPanel x:Name="MultiClientSingleClientPanel">
                     <CheckBox x:Name="UseSingleClientCheckBox"
                               AutomationProperties.AutomationId="InitialConfig.UseSingleInternalClient"

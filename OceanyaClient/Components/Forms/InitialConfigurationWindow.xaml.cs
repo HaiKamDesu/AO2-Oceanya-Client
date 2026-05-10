@@ -22,8 +22,8 @@ namespace OceanyaClient
     /// </summary>
     public partial class InitialConfigurationWindow : OceanyaWindowContentControl
     {
-        private const double MultiClientWindowHeight = 358;
-        private const double CharacterViewerWindowHeight = 286;
+        private const double MultiClientWindowHeight = 384;
+        private const double CharacterViewerWindowHeight = 312;
         private static Func<string, string, MessageBoxButton, MessageBoxImage, MessageBoxResult>? testMessageBoxOverride = null;
         private static Func<Window, Task>? testRefreshCharactersAndBackgroundsAsyncOverride = null;
         private static Func<Window, TargetedAssetRefreshPlan, Task>? testRefreshTargetedAssetsAsyncOverride = null;
@@ -46,6 +46,12 @@ namespace OceanyaClient
 
         /// <inheritdoc/>
         public override bool IsUserResizeEnabled => false;
+
+        private void SkipLoadingScreenCheckBox_CheckedChanged(object sender, RoutedEventArgs e)
+        {
+            SaveFile.Data.SkipLoadingScreen = SkipLoadingScreenCheckBox.IsChecked == true;
+            SaveFile.Save();
+        }
 
         private void BrowseButton_Click(object sender, RoutedEventArgs e)
         {
@@ -77,8 +83,6 @@ namespace OceanyaClient
             bool launchWaitFormShown = false;
             bool launchWaitFormClosed = true;
             string launchTitle = "Opening " + selectedFunctionality.DisplayName + "...";
-            TargetedAssetRefreshPlan deferredTargetedRefreshPlan = new TargetedAssetRefreshPlan();
-            bool shouldStartDeferredTargetedRefresh = false;
 
             async Task EnsureLaunchWaitFormAsync(string subtitle)
             {
@@ -138,6 +142,7 @@ namespace OceanyaClient
 
             try
             {
+                StartupTimingLogger.MarkLaunchClick();
                 await EnsureLaunchWaitFormAsync("Checking startup requirements...");
 
                 if (selectedFunctionality.RequiresServerEndpoint)
@@ -168,57 +173,45 @@ namespace OceanyaClient
                     }
                 }
 
-                (string forcedRefreshReason, TargetedAssetRefreshPlan trackedChangePlan) preflightResult = await Task.Run(() =>
+                string forcedRefreshReason = await Task.Run(() =>
                 {
+                    WaitForm.SetSubtitle("Loading configuration...");
                     Globals.UpdateConfigINI(configIniPath);
                     if (selectedFunctionality.RequiresServerEndpoint)
                     {
                         Globals.SetSelectedServerEndpoint(selectedServerEndpoint);
                     }
 
-                    string computedForcedRefreshReason = string.Empty;
-                    TargetedAssetRefreshPlan computedTrackedChangePlan = new TargetedAssetRefreshPlan();
-                    if (!refreshRequested)
+                    if (refreshRequested)
                     {
-                        computedForcedRefreshReason =
-                            ClientAssetRefreshService.GetRefreshRequirementReasonForCurrentEnvironment();
+                        return string.Empty;
                     }
 
+                    WaitForm.SetSubtitle("Verifying asset cache...");
+                    string computedForcedRefreshReason =
+                        ClientAssetRefreshService.GetRefreshRequirementReasonForCurrentEnvironment();
+
                     if (string.IsNullOrWhiteSpace(computedForcedRefreshReason)
-                        && !refreshRequested
                         && string.Equals(
                             selectedFunctionality.Id,
                             StartupFunctionalityIds.CharacterDatabaseViewer,
                             StringComparison.OrdinalIgnoreCase)
                         && CharacterFolder.FullList.Count == 0)
                     {
-                        computedForcedRefreshReason =
-                            "The character database viewer does not currently have a loaded character/background index.";
+                        return "The character database viewer does not currently have a loaded character/background index.";
                     }
 
-                    if (!refreshRequested && string.IsNullOrWhiteSpace(computedForcedRefreshReason))
-                    {
-                        computedTrackedChangePlan =
-                            ClientAssetRefreshService.GetTrackedChangePlanForCurrentEnvironment();
-                    }
-
-                    return (computedForcedRefreshReason, computedTrackedChangePlan);
+                    StartupTimingLogger.Log("preflight_check_done",
+                        string.IsNullOrWhiteSpace(computedForcedRefreshReason) ? "ok" : "forced_refresh");
+                    return computedForcedRefreshReason;
                 });
 
-                string forcedRefreshReason = preflightResult.forcedRefreshReason;
-                TargetedAssetRefreshPlan trackedChangePlan = preflightResult.trackedChangePlan;
-
                 bool shouldRefreshAssets = refreshRequested || !string.IsNullOrWhiteSpace(forcedRefreshReason);
-                bool shouldRunTargetedRefresh = !refreshRequested
-                    && string.IsNullOrWhiteSpace(forcedRefreshReason)
-                    && trackedChangePlan.HasAnyWork;
 
                 if (OceanyaTestMode.Current.SkipAssetRefreshPrompts)
                 {
                     shouldRefreshAssets = false;
-                    shouldRunTargetedRefresh = false;
                     forcedRefreshReason = string.Empty;
-                    trackedChangePlan = new TargetedAssetRefreshPlan();
                 }
 
                 if (!refreshRequested && !string.IsNullOrWhiteSpace(forcedRefreshReason))
@@ -236,20 +229,6 @@ namespace OceanyaClient
                     }
 
                     shouldRefreshAssets = true;
-                }
-                else if (shouldRunTargetedRefresh)
-                {
-                    await CloseLaunchWaitFormAsync();
-
-                    MessageBoxResult refreshDecision = ShowMessageBox(
-                        BuildTrackedRefreshPrompt(),
-                        "Refresh Changed Assets",
-                        MessageBoxButton.YesNo,
-                        MessageBoxImage.Question);
-                    if (refreshDecision != MessageBoxResult.Yes)
-                    {
-                        return;
-                    }
                 }
 
                 SaveConfiguration(
@@ -271,14 +250,9 @@ namespace OceanyaClient
                     await RefreshCharactersAndBackgroundsAsync(refreshOwner);
                     RefreshInfoCheckBox.IsChecked = false;
                 }
-                else if (shouldRunTargetedRefresh)
-                {
-                    deferredTargetedRefreshPlan = trackedChangePlan;
-                    shouldStartDeferredTargetedRefresh = true;
-                    RefreshInfoCheckBox.IsChecked = false;
-                }
 
                 await EnsureLaunchWaitFormAsync("Creating window...");
+                StartupTimingLogger.Log("main_window_creating");
 
                 // Yield once so the wait form can paint before the heavy startup window is constructed.
                 await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Background);
@@ -297,13 +271,32 @@ namespace OceanyaClient
 
             async Task HandleStartupFunctionalityReadyAsync()
             {
+                StartupTimingLogger.Log("finished_loading");
+                StartupTimingLogger.WriteLog();
                 await CloseLaunchWaitFormAsync();
                 TryPlayStartupFunctionalityJingle();
-                if (shouldStartDeferredTargetedRefresh)
+                // Detect and refresh only changed assets in the background — this scan is
+                // deferred off the launch critical path so startup feels instant.
+                _ = Task.Run(async () =>
                 {
-                    shouldStartDeferredTargetedRefresh = false;
-                    _ = ClientAssetRefreshService.RefreshTargetedAssetsInBackgroundAsync(deferredTargetedRefreshPlan);
-                }
+                    try
+                    {
+                        StartupTimingLogger.Log("background_tracked_check_begin");
+                        TargetedAssetRefreshPlan plan =
+                            ClientAssetRefreshService.GetTrackedChangePlanForCurrentEnvironment();
+                        StartupTimingLogger.Log("background_tracked_check_end",
+                            plan.HasAnyWork ? "changes_found" : "no_changes");
+                        StartupTimingLogger.WriteLog();
+                        if (plan.HasAnyWork)
+                        {
+                            await ClientAssetRefreshService.RefreshTargetedAssetsInBackgroundAsync(plan);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        CustomConsole.Warning("Background asset change check failed.", ex);
+                    }
+                });
             }
 
             async Task HandleStartupFunctionalityClosedAsync()
@@ -481,6 +474,7 @@ namespace OceanyaClient
             {
                 ConfigINIPathTextBox.Text = SaveFile.Data.ConfigIniPath;
                 UseSingleClientCheckBox.IsChecked = SaveFile.Data.UseSingleInternalClient;
+                SkipLoadingScreenCheckBox.IsChecked = SaveFile.Data.SkipLoadingScreen;
                 CleanupLegacyCustomServerData();
                 BindStartupFunctionalitySelection();
                 ApplyTestStartupOverrides();
@@ -586,6 +580,7 @@ namespace OceanyaClient
                 SaveFile.Data.ConfigIniPath = configIniPath;
                 SaveFile.Data.StartupFunctionalityId = startupFunctionalityId;
                 SaveFile.Data.UseSingleInternalClient = useSingleInternalClient;
+                SaveFile.Data.SkipLoadingScreen = SkipLoadingScreenCheckBox.IsChecked == true;
                 SaveFile.Data.SelectedServerEndpoint = selectedServerEndpoint;
                 SaveFile.Data.SelectedServerName = selectedServerName?.Trim() ?? string.Empty;
                 SaveFile.Save();
@@ -797,11 +792,6 @@ namespace OceanyaClient
                 : char.ToLowerInvariant(trimmedReason[0]) + trimmedReason[1..];
             return "A full asset refresh is required because " + normalizedReason
                 + ". This may take a long time. Do you want to continue?";
-        }
-
-        private static string BuildTrackedRefreshPrompt()
-        {
-            return "Asset files changed since the last refresh. Oceanya can refresh only the affected items. Do you want to continue?";
         }
 
         private static MessageBoxResult ShowMessageBox(

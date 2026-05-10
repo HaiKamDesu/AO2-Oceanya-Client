@@ -57,6 +57,11 @@ Use this file as the first stop before broad repository searches. It should poin
 - Main code: `OceanyaClient/Features/FileHivemind/*`, `OceanyaHivemindAgent/Program.cs`, `Common/SaveFile.cs`
 - Notes: Background agent lifecycle, saved connection state, and parent/child shutdown signaling live here.
 
+## Client Setup Optimization (Startup Speed)
+- Doc: `Documentation/ClientSetupOptimization.md`
+- Main code: `OceanyaClient/App.xaml.cs`, `OceanyaClient/Components/Forms/InitialConfigurationWindow.xaml(.cs)`, `OceanyaClient/ClientAssetRefreshService.cs`, `OceanyaClient/StartupTimingLogger.cs`, `Common/SaveFile.cs`
+- Notes: Phase 1 removed the fake loading screen (optional via checkbox) and deferred the asset-change file scan off the launch critical path. A timing log at `%AppData%\OceanyaClient\startup_timing.log` records per-phase milliseconds every session. See doc for remaining Phase 2+ bottlenecks (parallel client connections, XAML lazy-load, directory-mtime fast filter).
+
 ## UI Automation Tests (Smoke + Online)
 - Doc: `UiAutomationTests/README.md`
 - Main code: `UiAutomationTests/FirstWaveSmokeTests.cs`, `UiAutomationTests/OnlineLaneTests.cs`, `UiAutomationTests/FlaUiSmokeApp.cs`, `UiAutomationTests/SmokeFixturePaths.cs`, `UiAutomationTests/OnlineFixturePaths.cs`

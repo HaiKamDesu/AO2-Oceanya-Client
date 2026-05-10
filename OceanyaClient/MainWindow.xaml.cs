@@ -434,6 +434,7 @@ namespace OceanyaClient
             }
 
             hasRaisedFinishedLoading = true;
+            StartupTimingLogger.Log("main_window_loaded");
             MarkAutomationReady();
             if (SaveFile.Data.GMViewportWindowState?.IsVisible == true)
             {
@@ -480,7 +481,14 @@ namespace OceanyaClient
                 callwordAudioNotifier.Dispose();
                 await DisconnectAllClientsForShutdownAsync();
                 IsEnabled = true;
-                hostWindow.Close();
+                try
+                {
+                    hostWindow.Close();
+                }
+                catch (InvalidOperationException)
+                {
+                    // Window was already closed or being destroyed during async cleanup.
+                }
             };
         }
 
@@ -1816,28 +1824,72 @@ namespace OceanyaClient
                 : networkClient.CurrentArea;
             AreaInfo? areaInfo = FindCurrentAreaInfo(networkClient);
             int users = areaInfo?.Players ?? -1;
-            string usersText = users >= 0 ? users.ToString() : "-";
             string caseManager = NormalizeAreaMetric(areaInfo?.CaseManager, "FREE");
-            string status = NormalizeAreaMetric(areaInfo?.Status, "Unknown");
-            string lockState = NormalizeAreaMetric(areaInfo?.LockState, "Unknown");
-            string metaText = string.Equals(caseManager, "FREE", StringComparison.OrdinalIgnoreCase)
-                ? status
-                : caseManager;
-            if (!string.Equals(lockState, "Unknown", StringComparison.OrdinalIgnoreCase)
-                && !string.Equals(lockState, "OPEN", StringComparison.OrdinalIgnoreCase)
-                && !string.Equals(lockState, "FREE", StringComparison.OrdinalIgnoreCase))
-            {
-                metaText += " / " + lockState;
-            }
+            string status = NormalizeAreaMetric(areaInfo?.Status, "IDLE");
+            string lockState = NormalizeAreaMetric(areaInfo?.LockState, "FREE");
 
             txtSelectedServerInfo.Text = server;
             txtSelectedAreaInfo.Text = area;
-            txtSelectedAreaUsersInfo.Text = usersText;
-            txtSelectedAreaMetaInfo.Text = metaText;
+            txtSelectedAreaUsersInfo.Text = users >= 0 ? users.ToString() : "-";
             txtSelectedServerInfo.ToolTip = server;
             txtSelectedAreaInfo.ToolTip = area;
             txtSelectedAreaUsersInfo.ToolTip = users >= 0 ? $"{users} users" : "Unknown users";
-            txtSelectedAreaMetaInfo.ToolTip = $"Status: {status}; CM: {caseManager}; Lock: {lockState}";
+
+            // STATUS chip — hidden when IDLE (the boring default state)
+            bool showStatus = !string.Equals(status, "IDLE", StringComparison.OrdinalIgnoreCase);
+            if (showStatus)
+            {
+                txtSelectedAreaStatusInfo.Text = status;
+                StatusChip.Background = GetStatusChipBrush(status);
+                StatusChip.Visibility = Visibility.Visible;
+                txtSelectedAreaStatusInfo.ToolTip = $"Area status: {status}";
+            }
+            else
+            {
+                StatusChip.Visibility = Visibility.Collapsed;
+            }
+
+            // LOCK chip — hidden when FREE (normal unlocked state)
+            bool showLock = !string.Equals(lockState, "FREE", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(lockState, "OPEN", StringComparison.OrdinalIgnoreCase);
+            if (showLock)
+            {
+                txtSelectedAreaLockInfo.Text = lockState;
+                LockChip.Visibility = Visibility.Visible;
+                txtSelectedAreaLockInfo.ToolTip = $"Lock: {lockState}";
+            }
+            else
+            {
+                LockChip.Visibility = Visibility.Collapsed;
+            }
+
+            // CM chip — hidden when FREE (no active case manager)
+            bool showCm = !string.Equals(caseManager, "FREE", StringComparison.OrdinalIgnoreCase);
+            if (showCm)
+            {
+                txtSelectedAreaMetaInfo.Text = caseManager;
+                CmChip.Visibility = Visibility.Visible;
+                txtSelectedAreaMetaInfo.ToolTip = $"Case manager: {caseManager}";
+            }
+            else
+            {
+                CmChip.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private static Brush GetStatusChipBrush(string status)
+        {
+            if (string.Equals(status, "LOOKING-FOR-PLAYERS", StringComparison.OrdinalIgnoreCase))
+                return new SolidColorBrush(Color.FromRgb(0x12, 0x23, 0x18));
+            if (string.Equals(status, "CASING", StringComparison.OrdinalIgnoreCase))
+                return new SolidColorBrush(Color.FromRgb(0x1E, 0x1A, 0x0E));
+            if (string.Equals(status, "RECESS", StringComparison.OrdinalIgnoreCase))
+                return new SolidColorBrush(Color.FromRgb(0x18, 0x18, 0x2A));
+            if (string.Equals(status, "RP", StringComparison.OrdinalIgnoreCase))
+                return new SolidColorBrush(Color.FromRgb(0x22, 0x14, 0x28));
+            if (string.Equals(status, "GAMING", StringComparison.OrdinalIgnoreCase))
+                return new SolidColorBrush(Color.FromRgb(0x10, 0x24, 0x24));
+            return new SolidColorBrush(Color.FromRgb(0x18, 0x15, 0x20));
         }
 
         private AreaNavigatorListItem CreateAreaNavigatorListItem(AreaInfo areaInfo)
@@ -1995,6 +2047,16 @@ namespace OceanyaClient
                 ? ConnectionInfoBar.ActualHeight
                 : ConnectionInfoBarHeight;
             return GetMainWindowBodyHeight(includeDreddFeatureRow) + topBarHeight;
+        }
+
+        private void ConnectionInfoBar_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            if (!e.HeightChanged)
+            {
+                return;
+            }
+
+            Height = GetMainWindowTargetHeight(isDreddFeatureEnabled);
         }
 
         private double GetMainWindowBodyHeight(bool includeDreddFeatureRow)
@@ -2665,13 +2727,13 @@ namespace OceanyaClient
         /// Returns (true, selectedClientName) if the user confirmed, (false, null) if cancelled.
         /// Pass <paramref name="defaultClientName"/> to show the embedded client-name field (add-client flow).
         /// </summary>
-        private (bool confirmed, string? selectedClientName) ShowCharacterSelectorForClient(
+        private async Task<(bool confirmed, string? selectedClientName)> ShowCharacterSelectorForClientAsync(
             AOClient bot,
             string? defaultClientName = null,
             IReadOnlyCollection<string>? additionalUnavailableCharacters = null,
             bool preserveLocalCharacter = false)
         {
-            ClientCharacterSelectionResult result = ShowCharacterSelectorForClientSelection(
+            ClientCharacterSelectionResult result = await ShowCharacterSelectorForClientSelectionAsync(
                 bot,
                 defaultClientName,
                 additionalUnavailableCharacters);
@@ -2684,15 +2746,27 @@ namespace OceanyaClient
             return (true, result.SelectedClientName);
         }
 
-        private ClientCharacterSelectionResult ShowCharacterSelectorForClientSelection(
+        private async Task<ClientCharacterSelectionResult> ShowCharacterSelectorForClientSelectionAsync(
             AOClient bot,
             string? defaultClientName = null,
-            IReadOnlyCollection<string>? additionalUnavailableCharacters = null)
+            IReadOnlyCollection<string>? additionalUnavailableCharacters = null,
+            bool skipWaitForm = false)
         {
             AOClient? networkClient = GetTargetClientForNetwork(bot);
             if (networkClient == null)
             {
                 return ClientCharacterSelectionResult.Cancelled;
+            }
+
+            Window? owner = HostWindow ?? Application.Current?.MainWindow;
+            bool waitFormShown = false;
+            if (!skipWaitForm && owner != null && !OceanyaTestMode.Current.DisableWaitForms)
+            {
+                await WaitForm.ShowFormAsync("Loading characters...", owner);
+                waitFormShown = true;
+                WaitForm.SetSubtitle("Building character list...");
+                // Yield so the WaitForm renders before the UI thread is blocked by BuildSections().
+                await Task.Yield();
             }
 
             CharacterSelectorWindow selector = new CharacterSelectorWindow(
@@ -2703,6 +2777,11 @@ namespace OceanyaClient
             {
                 Owner = HostWindow ?? Application.Current?.MainWindow
             };
+
+            if (waitFormShown)
+            {
+                await WaitForm.CloseFormAsync();
+            }
 
             if (selector.ShowDialog() != true || string.IsNullOrWhiteSpace(selector.SelectedCharacterName))
             {
@@ -2989,6 +3068,7 @@ namespace OceanyaClient
                 return;
             }
 
+            StartupTimingLogger.Log("snapshot_restore_begin", $"clients={snapshot.Clients.Count}");
             isRestoringSnapshot = true;
             suppressSnapshotCapture = true;
             IsEnabled = false;
@@ -3067,6 +3147,8 @@ namespace OceanyaClient
             }
             finally
             {
+                StartupTimingLogger.Log("snapshot_restore_complete", $"clients={clients.Count}");
+                StartupTimingLogger.WriteLog();
                 IsEnabled = true;
                 suppressSnapshotCapture = false;
                 isRestoringSnapshot = false;
@@ -3630,9 +3712,49 @@ namespace OceanyaClient
                 contextMenu.Items.Add(iniPuppetChange);
 
                 MenuItem manualIniPuppetChange = new MenuItem { Header = "Select INIPuppet (Manual)" };
-                manualIniPuppetChange.Click += (sender, args) =>
+                manualIniPuppetChange.Click += async (sender, args) =>
                 {
-                    ShowCharacterSelectorForClient(bot, preserveLocalCharacter: true);
+                    Window? owner = HostWindow ?? Application.Current?.MainWindow;
+                    bool waitFormShown = false;
+                    try
+                    {
+                        if (owner != null && !OceanyaTestMode.Current.DisableWaitForms)
+                        {
+                            await WaitForm.ShowFormAsync("Refreshing character list...", owner);
+                            waitFormShown = true;
+                        }
+
+                        AOClient? networkClient = GetTargetClientForNetwork(bot);
+                        if (networkClient != null)
+                        {
+                            WaitForm.SetSubtitle("Fetching from server...");
+                            try
+                            {
+                                await networkClient.RequestFreshCharacterListAsync();
+                            }
+                            catch (Exception ex)
+                            {
+                                CustomConsole.Warning("Failed to refresh character list from server.", ex);
+                            }
+                        }
+
+                        WaitForm.SetSubtitle("Building character list...");
+                        await Task.Yield();
+
+                        ClientCharacterSelectionResult result =
+                            await ShowCharacterSelectorForClientSelectionAsync(bot, skipWaitForm: true);
+                        if (result.Confirmed && !string.IsNullOrWhiteSpace(result.SelectedCharacterName))
+                        {
+                            _ = ApplyCharacterSelectionAsync(bot, result.SelectedCharacterName, preserveLocalCharacter: true);
+                        }
+                    }
+                    finally
+                    {
+                        if (waitFormShown)
+                        {
+                            await WaitForm.CloseFormAsync();
+                        }
+                    }
                 };
                 contextMenu.Items.Add(manualIniPuppetChange);
 
@@ -3788,7 +3910,7 @@ namespace OceanyaClient
                         waitFormOpen = false;
                     }
 
-                    ClientCharacterSelectionResult selection = ShowCharacterSelectorForClientSelection(bot, defaultClientName);
+                    ClientCharacterSelectionResult selection = await ShowCharacterSelectorForClientSelectionAsync(bot, defaultClientName);
                     if (!selection.Confirmed || string.IsNullOrWhiteSpace(selection.SelectedCharacterName))
                     {
                         // User cancelled — tear down whatever connection was just established
@@ -4222,7 +4344,9 @@ namespace OceanyaClient
                 return null;
             }
 
-            return message => IsViewportMessageForProfile(profileClient, message);
+            return message =>
+                IsViewportMessageForProfile(profileClient, message) ||
+                clientOrder.All(c => !IsViewportMessageForProfile(c, message));
         }
 
         private Func<string, bool>? CreateViewportActionFilter(AOClient profileClient)
@@ -4232,11 +4356,17 @@ namespace OceanyaClient
                 return null;
             }
 
-            return showName => string.IsNullOrWhiteSpace(profileClient.ICShowname)
-                || string.Equals(
-                    showName?.Trim(),
-                    profileClient.ICShowname.Trim(),
-                    StringComparison.OrdinalIgnoreCase);
+            return showName =>
+            {
+                if (string.IsNullOrWhiteSpace(profileClient.ICShowname))
+                    return true;
+                if (string.Equals(showName?.Trim(), profileClient.ICShowname.Trim(), StringComparison.OrdinalIgnoreCase))
+                    return true;
+                // Pass through if no profile claims this showname — it's from another real player.
+                return clientOrder.All(c =>
+                    string.IsNullOrWhiteSpace(c.ICShowname) ||
+                    !string.Equals(showName?.Trim(), c.ICShowname?.Trim(), StringComparison.OrdinalIgnoreCase));
+            };
         }
 
         private bool IsViewportMessageForProfile(AOClient profileClient, ICMessage message)

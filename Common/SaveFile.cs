@@ -431,6 +431,7 @@ namespace OceanyaClient
         public string ConfigIniPath { get; set; } = "";
         public string StartupFunctionalityId { get; set; } = "gm_multi_client";
         public bool UseSingleInternalClient { get; set; } = true;
+        public bool SkipLoadingScreen { get; set; } = false;
         public string SelectedServerEndpoint { get; set; } = "";
         public string SelectedServerName { get; set; } = "";
         // Legacy list kept for migration from endpoint-only storage.

@@ -518,6 +518,7 @@ namespace AOBot_Testing.Agents
                     serverCharacterList[character] = true;
                 }
                 CustomConsole.Info("Server Character List updated.");
+                Volatile.Read(ref _characterListRefreshTcs)?.TrySetResult(true);
             }
             else if (message.StartsWith("FL#"))
             {
@@ -1765,6 +1766,35 @@ namespace AOBot_Testing.Agents
                     ICShowname = CurrentINI?.configINI.ShowName ?? characterName;
                 }
                 CustomConsole.Info($"Selected INI Puppet: \"{characterName}\" (Server Index: {serverCharID})");
+            }
+        }
+
+        private TaskCompletionSource<bool>? _characterListRefreshTcs;
+
+        /// <summary>
+        /// Sends <c>RC#%</c> to ask the server to re-send its character list.
+        /// Awaits the <c>SC#</c> response via the normal <see cref="ListenForMessages"/> loop
+        /// (no concurrent transport reads) so <see cref="ServerCharacterAvailability"/> is
+        /// up to date when this returns.
+        /// </summary>
+        public async Task RequestFreshCharacterListAsync(int timeoutMs = 5000)
+        {
+            var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Volatile.Write(ref _characterListRefreshTcs, tcs);
+            try
+            {
+                await SendPacket("RC#%");
+                using CancellationTokenSource cts = new CancellationTokenSource(timeoutMs);
+                cts.Token.Register(() => tcs.TrySetCanceled(), useSynchronizationContext: false);
+                await tcs.Task.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                CustomConsole.Warning("Character list refresh from server timed out.");
+            }
+            finally
+            {
+                Volatile.Write(ref _characterListRefreshTcs, null);
             }
         }
 
