@@ -12,6 +12,8 @@ The GM multi-client saves its client profile set in `SaveFile.Data.GMMultiClient
   - stores and normalizes `GmMultiClientSnapshot` and `GmMultiClientSnapshotClient`.
 - `OceanyaClient/Components/ICMessageSettings.xaml.cs`
   - raises `OnClientStateChanged` when selected client message state changes.
+- `AOBot-Testing/Agents/AOClient.cs`
+  - parses `FA`, `SM`, and `ARUP` area packets. If a server does not send an explicit current-area packet on initial connect, the client treats the first area in the area list as the server default, matching tsuserver3/tsuserverCC startup behavior.
 - `OceanyaClient/Components/Forms/CharacterSelectorWindow.xaml.cs`
   - remains the shared INI puppet picker; restore passes an adjusted availability map where other snapshot puppets are treated as taken.
 - `OceanyaClient/Components/Forms/OceanyaMessageBox.xaml(.cs)`
@@ -40,11 +42,19 @@ Direct multi-client mode connects each restored profile separately and selects i
 
 Single-internal-client mode restores all profiles while keeping one live internal connection. Only the first accepted restored profile must resolve to an available server puppet because that is the one connection being opened. Later profiles are restored as local profiles without requiring their saved puppets to be currently available, so switching from a previously separate-client snapshot into single-internal mode does not force unnecessary conflict prompts for every saved client. Each profile still keeps a separate planned puppet name so local iniswaps do not erase the server puppet plan, and selecting profiles does not overwrite their OOC name or server-puppet plan from the current single internal connection.
 
+Restore conflict prompts name the planned server INI puppet, not the local render character. Legacy snapshots that accidentally saved the local render character in the INI puppet field are recovered from the saved server puppet ID when the server list order still allows it. The dialog distinguishes taken server slots from server-missing puppets so the user can tell whether `Franziska` is occupied or absent from the current server's character list.
+
 Manual INI puppet changes from the client context menu are server-puppet changes only. The selector highlights the currently used INI puppet even when the server reports it as occupied by this client, and confirming a different puppet reapplies the profile's existing local render character/emote/showname/position afterward so local iniswaps are preserved.
 
 When the main window closes, it cancels the close once, closes owned viewport/audio state, and asks every live AO2 connection to close cleanly before allowing the host window to close. This uses the same websocket close path as AO2's `CloseCodeGoingAway` behavior and marks the client as intentionally closed so the reconnect loop does not fight application shutdown.
 
 Connection handshakes that time out while waiting for `ID` are retried once after closing the websocket and waiting briefly. Connect calls that do not auto-select a character skip AOClient's old post-area/INI wait delays, which keeps snapshot restore responsive while still opening direct-mode clients sequentially. Snapshot restore uses one shared progress wait form instead of opening and closing one wait form per profile.
+
+## Main Window Status And Clipboard
+
+The top connection strip is fed by the selected profile's live network client. It shows server, current area, user count, and CM/status/lock details from `ARUP` when the server supports that data. It also parses tsuserver `/getarea` OOC output so the area header, not the people-count line, becomes `CurrentArea`. Opening the area navigator sends `RM#%` first so the server can return a fresh `FA`/`ARUP` view before the list is shown.
+
+Main-window text fields handle Ctrl+X/C/V through `ClipboardUtilities` instead of relying on WPF's single-attempt clipboard commands. This is a local robustness layer for Windows clipboard contention (`CLIPBRD_E_CANT_OPEN`), but the default path does not sleep/retry on the UI thread. If another process owns the global clipboard, the operation fails fast instead of freezing the app.
 
 ## Startup Wait Optimizations
 

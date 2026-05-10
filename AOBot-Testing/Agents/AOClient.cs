@@ -599,7 +599,7 @@ namespace AOBot_Testing.Agents
                     List<Player> players = AO2Parser.ParseGetArea(messageText);
                     currentAreaPlayers.Clear();
                     currentAreaPlayers.AddRange(players);
-                    Match areaMatch = Regex.Match(messageText, @"people in this area:\s*(.+?)\s*===", RegexOptions.IgnoreCase);
+                    Match areaMatch = Regex.Match(messageText, @"(?:^|\r?\n)===\s*(.+?)\s*===", RegexOptions.IgnoreCase);
                     if (areaMatch.Success)
                     {
                         string parsedArea = areaMatch.Groups[1].Value.Trim();
@@ -611,6 +611,7 @@ namespace AOBot_Testing.Agents
                             }
 
                             SetCurrentArea(parsedArea);
+                            ApplyAreaInfoFromGetAreaMessage(parsedArea, messageText);
                         }
                     }
                 }
@@ -1138,6 +1139,10 @@ namespace AOBot_Testing.Agents
 
             OnAvailableAreasUpdated?.Invoke(availableAreas.AsReadOnly());
             OnAvailableAreaInfosUpdated?.Invoke(availableAreaInfos.AsReadOnly());
+            if (string.IsNullOrWhiteSpace(currentArea) && availableAreas.Count > 0)
+            {
+                SetCurrentArea(availableAreas[0]);
+            }
         }
 
         private void ParseAreaListFromFa(string message)
@@ -1170,7 +1175,7 @@ namespace AOBot_Testing.Agents
         private void ParseAreaUpdate(string message)
         {
             string[] content = message.Substring(5).TrimEnd('#', '%')
-                .Split('#', StringSplitOptions.RemoveEmptyEntries);
+                .Split('#');
 
             if (content.Length == 0)
             {
@@ -1203,16 +1208,63 @@ namespace AOBot_Testing.Agents
                 }
                 else if (updateType == 1)
                 {
-                    targetArea.Status = value;
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        targetArea.Status = value;
+                    }
                 }
                 else if (updateType == 2)
                 {
-                    targetArea.CaseManager = value;
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        targetArea.CaseManager = value;
+                    }
                 }
                 else if (updateType == 3)
                 {
-                    targetArea.LockState = value;
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        targetArea.LockState = value;
+                    }
                 }
+            }
+
+            OnAvailableAreaInfosUpdated?.Invoke(availableAreaInfos.AsReadOnly());
+        }
+
+        private void ApplyAreaInfoFromGetAreaMessage(string areaName, string messageText)
+        {
+            AreaInfo? targetArea = availableAreaInfos.FirstOrDefault(area =>
+                string.Equals(area.Name, areaName, StringComparison.OrdinalIgnoreCase));
+            if (targetArea == null)
+            {
+                return;
+            }
+
+            Match areaHeader = Regex.Match(
+                messageText,
+                @"\[[^\]]*\]:\s*\[(?<players>\d+)\s+Users?\]\[(?<status>[^\]]*)\](?:\[(?<lock>[^\]]*)\])?",
+                RegexOptions.IgnoreCase);
+            if (!areaHeader.Success)
+            {
+                return;
+            }
+
+            if (int.TryParse(areaHeader.Groups["players"].Value, out int players))
+            {
+                targetArea.Players = players;
+            }
+
+            string status = areaHeader.Groups["status"].Value.Trim();
+            if (!string.IsNullOrWhiteSpace(status))
+            {
+                targetArea.Status = status;
+            }
+
+            string lockState = areaHeader.Groups["lock"].Value.Trim();
+            if (!string.IsNullOrWhiteSpace(lockState))
+            {
+                targetArea.LockState = lockState;
             }
 
             OnAvailableAreaInfosUpdated?.Invoke(availableAreaInfos.AsReadOnly());

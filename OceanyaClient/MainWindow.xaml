@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:OceanyaClient"
         xmlns:components="clr-namespace:OceanyaClient.Components"
-        Height="646" Width="510"
+        Height="652" Width="510"
         Background="Transparent">
 
     <!-- 
@@ -99,25 +99,79 @@
     <Border BorderBrush="#222222" BorderThickness="1" CornerRadius="5">
         <Grid Margin="0">
             <Grid.RowDefinitions>
-                <RowDefinition Height="18"/>
+                <RowDefinition Height="24"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
             <Border x:Name="ConnectionInfoBar"
                     Grid.Row="0"
-                    Background="#FF050505"
+                    Background="#FF090B0E"
                     BorderBrush="#FF252525"
                     BorderThickness="0,0,0,1">
-                <TextBlock x:Name="txtSelectedConnectionInfo"
-                           AutomationProperties.AutomationId="Main.ConnectionInfo"
-                           Text="Disconnected - Unknown"
-                           Foreground="#FFE8E8E8"
-                           FontFamily="Consolas"
-                           FontSize="11"
-                           VerticalAlignment="Center"
-                           HorizontalAlignment="Left"
-                           TextTrimming="CharacterEllipsis"
-                           Margin="8,0"/>
+                <Grid Margin="5,1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="1.15*"/>
+                        <ColumnDefinition Width="1.1*"/>
+                        <ColumnDefinition Width="0.55*"/>
+                        <ColumnDefinition Width="0.95*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0" Margin="0,0,4,0" CornerRadius="3" Background="#FF171B21" BorderBrush="#FF2D3744" BorderThickness="1">
+                        <DockPanel LastChildFill="True" Margin="5,0">
+                            <TextBlock Text="SERVER" DockPanel.Dock="Left" Foreground="#FF7FA8D8" FontSize="8" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                            <TextBlock x:Name="txtSelectedServerInfo"
+                                       AutomationProperties.AutomationId="Main.ConnectionInfo.Server"
+                                       Text="Disconnected"
+                                       Foreground="#FFE8E8E8"
+                                       FontFamily="Consolas"
+                                       FontSize="10"
+                                       VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis"/>
+                        </DockPanel>
+                    </Border>
+
+                    <Border Grid.Column="1" Margin="0,0,4,0" CornerRadius="3" Background="#FF151D18" BorderBrush="#FF284332" BorderThickness="1">
+                        <DockPanel LastChildFill="True" Margin="5,0">
+                            <TextBlock Text="AREA" DockPanel.Dock="Left" Foreground="#FF89C796" FontSize="8" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                            <TextBlock x:Name="txtSelectedAreaInfo"
+                                       AutomationProperties.AutomationId="Main.ConnectionInfo.Area"
+                                       Text="Unknown"
+                                       Foreground="#FFE8E8E8"
+                                       FontFamily="Consolas"
+                                       FontSize="10"
+                                       VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis"/>
+                        </DockPanel>
+                    </Border>
+
+                    <Border Grid.Column="2" Margin="0,0,4,0" CornerRadius="3" Background="#FF211B13" BorderBrush="#FF4B3B20" BorderThickness="1">
+                        <DockPanel LastChildFill="True" Margin="5,0">
+                            <TextBlock Text="USERS" DockPanel.Dock="Left" Foreground="#FFD9B56D" FontSize="8" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                            <TextBlock x:Name="txtSelectedAreaUsersInfo"
+                                       AutomationProperties.AutomationId="Main.ConnectionInfo.Users"
+                                       Text="-"
+                                       Foreground="#FFF0E7D2"
+                                       FontFamily="Consolas"
+                                       FontSize="10"
+                                       VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis"/>
+                        </DockPanel>
+                    </Border>
+
+                    <Border Grid.Column="3" CornerRadius="3" Background="#FF1C1720" BorderBrush="#FF3C3148" BorderThickness="1">
+                        <DockPanel LastChildFill="True" Margin="5,0">
+                            <TextBlock Text="CM" DockPanel.Dock="Left" Foreground="#FFC0A1D8" FontSize="8" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                            <TextBlock x:Name="txtSelectedAreaMetaInfo"
+                                       AutomationProperties.AutomationId="Main.ConnectionInfo.Meta"
+                                       Text="-"
+                                       Foreground="#FFE8E8E8"
+                                       FontFamily="Consolas"
+                                       FontSize="10"
+                                       VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis"/>
+                        </DockPanel>
+                    </Border>
+                </Grid>
             </Border>
 
             <!-- Optional body background treatment. -->

@@ -9,9 +9,9 @@ namespace OceanyaClient
     {
         private const int ClipboardCantOpenHResult = unchecked((int)0x800401D0);
 
-        public static bool TrySetText(string text, int retries = 8, int delayMs = 25)
+        public static bool TrySetText(string text, int retries = 0, int delayMs = 0)
         {
-            if (string.IsNullOrWhiteSpace(text))
+            if (string.IsNullOrEmpty(text))
             {
                 return false;
             }
@@ -20,7 +20,7 @@ namespace OceanyaClient
             {
                 try
                 {
-                    Clipboard.SetText(text);
+                    Clipboard.SetDataObject(text, false);
                     return true;
                 }
                 catch (COMException ex) when (ex.HResult == ClipboardCantOpenHResult)
@@ -30,7 +30,46 @@ namespace OceanyaClient
                         return false;
                     }
 
-                    Thread.Sleep(delayMs);
+                    if (delayMs > 0)
+                    {
+                        Thread.Sleep(delayMs);
+                    }
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+
+            return false;
+        }
+
+        public static bool TryGetText(out string text, int retries = 0, int delayMs = 0)
+        {
+            text = string.Empty;
+            for (int attempt = 0; attempt <= retries; attempt++)
+            {
+                try
+                {
+                    if (!Clipboard.ContainsText())
+                    {
+                        return false;
+                    }
+
+                    text = Clipboard.GetText();
+                    return true;
+                }
+                catch (COMException ex) when (ex.HResult == ClipboardCantOpenHResult)
+                {
+                    if (attempt >= retries)
+                    {
+                        return false;
+                    }
+
+                    if (delayMs > 0)
+                    {
+                        Thread.Sleep(delayMs);
+                    }
                 }
                 catch
                 {

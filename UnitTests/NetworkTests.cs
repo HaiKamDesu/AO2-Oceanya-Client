@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
@@ -91,6 +92,62 @@ public class NetworkTests
         {
             Assert.That(client.curPos, Is.EqualTo(string.Empty));
             Assert.That(side, Is.EqualTo(string.Empty));
+        });
+    }
+
+    [Test]
+    public async Task HandleMessage_FaListInfersDefaultCurrentArea_WhenServerSendsNoExplicitArea()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+
+        string? currentArea = null;
+        client.OnCurrentAreaChanged += area => currentArea = area;
+
+        await client.HandleMessage("FA#Lobby#Courtroom#Basement#%");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(client.CurrentArea, Is.EqualTo("Lobby"));
+            Assert.That(currentArea, Is.EqualTo("Lobby"));
+        });
+    }
+
+    [Test]
+    public async Task HandleMessage_GetAreaOocUsesAreaHeader_NotPlayerCount()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+        await client.HandleMessage("FA#Lobby#Courtroom#%");
+
+        await client.HandleMessage(
+            "CT#Server#People in this area: 2\n=== Courtroom ===\n[court]: [2 Users][CASING][LOCKED]\n[CM] [5] Franziska#1#%");
+
+        AreaInfo courtroom = client.AvailableAreaInfos.Single(area => area.Name == "Courtroom");
+        Assert.Multiple(() =>
+        {
+            Assert.That(client.CurrentArea, Is.EqualTo("Courtroom"));
+            Assert.That(courtroom.Players, Is.EqualTo(2));
+            Assert.That(courtroom.Status, Is.EqualTo("CASING"));
+            Assert.That(courtroom.LockState, Is.EqualTo("LOCKED"));
+        });
+    }
+
+    [Test]
+    public async Task HandleMessage_AreaUpdatePreservesEmptySlots()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+        await client.HandleMessage("FA#Lobby#Courtroom#Basement#%");
+
+        await client.HandleMessage("ARUP#0#3##7#%");
+        await client.HandleMessage("ARUP#2#FREE##Franziska#%");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(client.AvailableAreaInfos[0].Players, Is.EqualTo(3));
+            Assert.That(client.AvailableAreaInfos[1].Players, Is.EqualTo(0));
+            Assert.That(client.AvailableAreaInfos[2].Players, Is.EqualTo(7));
+            Assert.That(client.AvailableAreaInfos[0].CaseManager, Is.EqualTo("FREE"));
+            Assert.That(client.AvailableAreaInfos[1].CaseManager, Is.EqualTo("Unknown"));
+            Assert.That(client.AvailableAreaInfos[2].CaseManager, Is.EqualTo("Franziska"));
         });
     }
 

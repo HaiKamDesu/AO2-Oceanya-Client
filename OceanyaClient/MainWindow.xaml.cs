@@ -70,11 +70,10 @@ namespace OceanyaClient
         private bool isLoadingDreddOverlaySelection;
         private bool isDreddFeatureEnabled;
         private const string DreddNoneOverlayName = "none";
-        private const double ConnectionInfoBarHeight = 18;
+        private const double ConnectionInfoBarHeight = 24;
         private const double MainWindowBodyHeight = 628;
-        private const double MainWindowDreddBodyHeight = 658;
+        private const double DreddFeatureRowHeight = 30;
         private const double MainWindowHeight = MainWindowBodyHeight + ConnectionInfoBarHeight;
-        private const double MainWindowDreddHeight = MainWindowDreddBodyHeight + ConnectionInfoBarHeight;
         private static readonly Key[] KonamiCodeSequence = new[]
         {
             Key.Up,
@@ -111,6 +110,15 @@ namespace OceanyaClient
         {
             Delete,
             SelectIniPuppet
+        }
+
+        private enum SnapshotPuppetConflictReason
+        {
+            MissingPuppet,
+            NotOnServer,
+            Taken,
+            MissingLocal,
+            ReservedBySnapshot
         }
 
         private sealed class DreddOverlaySelectionItem
@@ -544,7 +552,7 @@ namespace OceanyaClient
             SaveFile.Data.GMMainWindowState = new VisualizerWindowState
             {
                 Width = Math.Max(510, hostWindow.Width),
-                Height = Math.Max(MainWindowDreddHeight, hostWindow.Height),
+                Height = Math.Max(GetMainWindowTargetHeight(isDreddFeatureEnabled), hostWindow.Height),
                 Left = hostWindow.Left,
                 Top = hostWindow.Top,
                 IsMaximized = false
@@ -1804,7 +1812,30 @@ namespace OceanyaClient
             string area = networkClient == null || string.IsNullOrWhiteSpace(networkClient.CurrentArea)
                 ? "Unknown"
                 : networkClient.CurrentArea;
-            txtSelectedConnectionInfo.Text = $"{server} - {area}";
+            AreaInfo? areaInfo = FindCurrentAreaInfo(networkClient);
+            int users = areaInfo?.Players ?? -1;
+            string usersText = users >= 0 ? users.ToString() : "-";
+            string caseManager = NormalizeAreaMetric(areaInfo?.CaseManager, "FREE");
+            string status = NormalizeAreaMetric(areaInfo?.Status, "Unknown");
+            string lockState = NormalizeAreaMetric(areaInfo?.LockState, "Unknown");
+            string metaText = string.Equals(caseManager, "FREE", StringComparison.OrdinalIgnoreCase)
+                ? status
+                : caseManager;
+            if (!string.Equals(lockState, "Unknown", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(lockState, "OPEN", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(lockState, "FREE", StringComparison.OrdinalIgnoreCase))
+            {
+                metaText += " / " + lockState;
+            }
+
+            txtSelectedServerInfo.Text = server;
+            txtSelectedAreaInfo.Text = area;
+            txtSelectedAreaUsersInfo.Text = usersText;
+            txtSelectedAreaMetaInfo.Text = metaText;
+            txtSelectedServerInfo.ToolTip = server;
+            txtSelectedAreaInfo.ToolTip = area;
+            txtSelectedAreaUsersInfo.ToolTip = users >= 0 ? $"{users} users" : "Unknown users";
+            txtSelectedAreaMetaInfo.ToolTip = $"Status: {status}; CM: {caseManager}; Lock: {lockState}";
         }
 
         private AreaNavigatorListItem CreateAreaNavigatorListItem(AreaInfo areaInfo)
@@ -1922,9 +1953,9 @@ namespace OceanyaClient
         {
             isDreddFeatureEnabled = SaveFile.Data.AdvancedFeatures.IsEnabled(AdvancedFeatureIds.DreddBackgroundOverlayOverride);
             DreddStickyOverlayCheckBox.IsChecked = SaveFile.Data.DreddBackgroundOverlayOverride.StickyOverlay;
-            Height = isDreddFeatureEnabled ? MainWindowDreddHeight : MainWindowHeight;
-            imgScienceBlur.Height = isDreddFeatureEnabled ? MainWindowDreddBodyHeight : MainWindowBodyHeight;
-            imgScienceBlur_darken.Height = isDreddFeatureEnabled ? MainWindowDreddBodyHeight : MainWindowBodyHeight;
+            Height = GetMainWindowTargetHeight(isDreddFeatureEnabled);
+            imgScienceBlur.Height = GetMainWindowBodyHeight(isDreddFeatureEnabled);
+            imgScienceBlur_darken.Height = GetMainWindowBodyHeight(isDreddFeatureEnabled);
 
             RefreshDreddOverlayForCurrentContext(promptForUnknownOverlay: false);
             UpdateDreddFeatureVisibility();
@@ -1942,7 +1973,7 @@ namespace OceanyaClient
             DreddOverlayConfigButton.Visibility = visibility;
             DreddViewChangesButton.Visibility = visibility;
 
-            double verticalOffset = enabled ? 30 : 0;
+            double verticalOffset = enabled ? GetDreddFeatureRowHeight() : 0;
             Canvas.SetTop(BottomStatusBar, 603 + verticalOffset);
             Canvas.SetTop(chkSticky, 607 + verticalOffset);
             Canvas.SetTop(btnRefreshCharacters, 603 + verticalOffset);
@@ -1954,6 +1985,24 @@ namespace OceanyaClient
             Canvas.SetTop(btnSettings, 603 + verticalOffset);
 
             UpdateDreddFeatureEnabledState();
+        }
+
+        private double GetMainWindowTargetHeight(bool includeDreddFeatureRow)
+        {
+            double topBarHeight = ConnectionInfoBar.ActualHeight > 0
+                ? ConnectionInfoBar.ActualHeight
+                : ConnectionInfoBarHeight;
+            return GetMainWindowBodyHeight(includeDreddFeatureRow) + topBarHeight;
+        }
+
+        private double GetMainWindowBodyHeight(bool includeDreddFeatureRow)
+        {
+            return MainWindowBodyHeight + (includeDreddFeatureRow ? GetDreddFeatureRowHeight() : 0);
+        }
+
+        private double GetDreddFeatureRowHeight()
+        {
+            return FeatureRowBackground.Height > 0 ? FeatureRowBackground.Height : DreddFeatureRowHeight;
         }
 
         private void UpdateDreddFeatureEnabledState()
@@ -2359,7 +2408,7 @@ namespace OceanyaClient
             }
 
             return string.IsNullOrWhiteSpace(profileClient.iniPuppetName)
-                ? profileClient.currentINI?.Name ?? string.Empty
+                ? string.Empty
                 : profileClient.iniPuppetName.Trim();
         }
 
@@ -2871,6 +2920,22 @@ namespace OceanyaClient
             };
         }
 
+        private static string NormalizeAreaMetric(string? value, string fallback)
+        {
+            return string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+        }
+
+        private static AreaInfo? FindCurrentAreaInfo(AOClient? networkClient)
+        {
+            if (networkClient == null || string.IsNullOrWhiteSpace(networkClient.CurrentArea))
+            {
+                return null;
+            }
+
+            return networkClient.AvailableAreaInfos.FirstOrDefault(areaInfo =>
+                string.Equals(areaInfo.Name, networkClient.CurrentArea, StringComparison.OrdinalIgnoreCase));
+        }
+
         private void CaptureGmMultiClientSnapshot()
         {
             if (suppressSnapshotCapture || isRestoringSnapshot)
@@ -3080,7 +3145,8 @@ namespace OceanyaClient
             for (int i = 0; i < states.Count; i++)
             {
                 GmMultiClientSnapshotClient state = states[i];
-                string requestedPuppet = state.IniPuppetName?.Trim() ?? string.Empty;
+                string requestedPuppet = ResolveSnapshotRequestedPuppet(state, serverAvailability);
+                state.IniPuppetName = requestedPuppet;
                 HashSet<string> unavailablePuppets = BuildReservedSnapshotPuppets(states, i + 1, acceptedPuppets);
 
                 if (CanUseSnapshotPuppet(requestedPuppet, serverAvailability, unavailablePuppets))
@@ -3090,7 +3156,9 @@ namespace OceanyaClient
                     continue;
                 }
 
-                SnapshotConflictDecision decision = ShowSnapshotConflictDialog(state, requestedPuppet);
+                SnapshotPuppetConflictReason conflictReason =
+                    GetSnapshotPuppetConflictReason(requestedPuppet, serverAvailability, unavailablePuppets);
+                SnapshotConflictDecision decision = ShowSnapshotConflictDialog(state, requestedPuppet, conflictReason);
                 if (decision == SnapshotConflictDecision.Delete)
                 {
                     continue;
@@ -3134,7 +3202,8 @@ namespace OceanyaClient
                     continue;
                 }
 
-                string requestedPuppet = state.IniPuppetName?.Trim() ?? string.Empty;
+                string requestedPuppet = ResolveSnapshotRequestedPuppet(state, serverAvailability);
+                state.IniPuppetName = requestedPuppet;
                 if (CanUseSnapshotPuppet(requestedPuppet, serverAvailability, new HashSet<string>(StringComparer.OrdinalIgnoreCase)))
                 {
                     resolved.Add(state);
@@ -3142,7 +3211,11 @@ namespace OceanyaClient
                     continue;
                 }
 
-                SnapshotConflictDecision decision = ShowSnapshotConflictDialog(state, requestedPuppet);
+                SnapshotPuppetConflictReason conflictReason = GetSnapshotPuppetConflictReason(
+                    requestedPuppet,
+                    serverAvailability,
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                SnapshotConflictDecision decision = ShowSnapshotConflictDialog(state, requestedPuppet, conflictReason);
                 if (decision == SnapshotConflictDecision.Delete)
                 {
                     continue;
@@ -3190,6 +3263,26 @@ namespace OceanyaClient
             }
 
             return reservedPuppets;
+        }
+
+        private static string ResolveSnapshotRequestedPuppet(
+            GmMultiClientSnapshotClient state,
+            IReadOnlyDictionary<string, bool> serverAvailability)
+        {
+            string savedPuppet = state.IniPuppetName?.Trim() ?? string.Empty;
+            string localCharacter = state.LocalCharacterName?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(savedPuppet)
+                && !string.Equals(savedPuppet, localCharacter, StringComparison.OrdinalIgnoreCase))
+            {
+                return savedPuppet;
+            }
+
+            if (state.IniPuppetId >= 0 && state.IniPuppetId < serverAvailability.Count)
+            {
+                return serverAvailability.Keys.ElementAt(state.IniPuppetId).Trim();
+            }
+
+            return savedPuppet;
         }
 
         private async Task SelectInitialSnapshotPuppetForSingleInternalClientAsync(GmMultiClientSnapshotClient firstState)
@@ -3243,19 +3336,50 @@ namespace OceanyaClient
                     string.Equals(character.Name, requestedPuppet, StringComparison.OrdinalIgnoreCase));
         }
 
+        private static SnapshotPuppetConflictReason GetSnapshotPuppetConflictReason(
+            string requestedPuppet,
+            IReadOnlyDictionary<string, bool> serverAvailability,
+            IReadOnlySet<string> reservedPuppets)
+        {
+            if (string.IsNullOrWhiteSpace(requestedPuppet))
+            {
+                return SnapshotPuppetConflictReason.MissingPuppet;
+            }
+
+            if (!serverAvailability.TryGetValue(requestedPuppet, out bool isAvailable))
+            {
+                return SnapshotPuppetConflictReason.NotOnServer;
+            }
+
+            if (!isAvailable)
+            {
+                return SnapshotPuppetConflictReason.Taken;
+            }
+
+            if (reservedPuppets.Contains(requestedPuppet))
+            {
+                return SnapshotPuppetConflictReason.ReservedBySnapshot;
+            }
+
+            bool hasMatchingLocalFolder = CharacterFolder.FullList.Any(character =>
+                string.Equals(character.Name, requestedPuppet, StringComparison.OrdinalIgnoreCase));
+            return hasMatchingLocalFolder
+                ? SnapshotPuppetConflictReason.Taken
+                : SnapshotPuppetConflictReason.MissingLocal;
+        }
+
         private SnapshotConflictDecision ShowSnapshotConflictDialog(
             GmMultiClientSnapshotClient state,
-            string requestedPuppet)
+            string requestedPuppet,
+            SnapshotPuppetConflictReason conflictReason)
         {
             Window? owner = HostWindow ?? Application.Current?.MainWindow;
             string clientName = string.IsNullOrWhiteSpace(state.ClientName) ? "Client" : state.ClientName.Trim();
-            string requestedPuppetDescription = string.IsNullOrWhiteSpace(requestedPuppet)
-                ? "no INIPuppet"
-                : requestedPuppet.Trim();
+            string message = BuildSnapshotConflictMessage(clientName, requestedPuppet, conflictReason);
             MessageBoxResult result = OceanyaMessageBox.Show(
                 owner,
-                $"{clientName} was using {requestedPuppetDescription} as inipuppet but it is currently taken, do you want to change it or delete the client?",
-                "Snapshot INIPuppet Taken",
+                message,
+                "Snapshot INIPuppet Conflict",
                 new[]
                 {
                     new OceanyaMessageBoxButtonOption("Select INIPuppet", MessageBoxResult.Yes, isDefault: true),
@@ -3265,6 +3389,27 @@ namespace OceanyaClient
             return result == MessageBoxResult.Yes
                 ? SnapshotConflictDecision.SelectIniPuppet
                 : SnapshotConflictDecision.Delete;
+        }
+
+        private static string BuildSnapshotConflictMessage(
+            string clientName,
+            string requestedPuppet,
+            SnapshotPuppetConflictReason conflictReason)
+        {
+            string puppet = string.IsNullOrWhiteSpace(requestedPuppet) ? "an INIPuppet" : requestedPuppet.Trim();
+            return conflictReason switch
+            {
+                SnapshotPuppetConflictReason.MissingPuppet =>
+                    $"{clientName} did not have a saved INIPuppet. Select one or delete the client?",
+                SnapshotPuppetConflictReason.NotOnServer =>
+                    $"{clientName} was using {puppet} as INIPuppet, but this server does not have it. Select a different INIPuppet or delete the client?",
+                SnapshotPuppetConflictReason.MissingLocal =>
+                    $"{clientName} was using {puppet} as INIPuppet, but the matching local character folder is missing. Select a different INIPuppet or delete the client?",
+                SnapshotPuppetConflictReason.ReservedBySnapshot =>
+                    $"{clientName} was using {puppet} as INIPuppet, but another restored client already reserved it. Select a different INIPuppet or delete the client?",
+                _ =>
+                    $"{clientName} was using {puppet} as INIPuppet, but it is currently taken. Select a different INIPuppet or delete the client?"
+            };
         }
 
         private AOClient? FindRestoredSelectedClient(
@@ -4868,8 +5013,22 @@ namespace OceanyaClient
             AudioPlayer.PlayEmbeddedSound("Resources/BellDing.mp3", AudioSettings.ScaleEmbeddedSfxVolume(0.25f));
         }
 
-        private void btnAreaNavigator_Click(object sender, RoutedEventArgs e)
+        private async void btnAreaNavigator_Click(object sender, RoutedEventArgs e)
         {
+            RefreshAreaNavigatorForCurrentClient();
+            AOClient? networkClient = currentClient == null ? null : GetTargetClientForNetwork(currentClient);
+            if (networkClient != null && networkClient.IsTransportConnected)
+            {
+                try
+                {
+                    await networkClient.RequestAreaList();
+                }
+                catch (Exception ex)
+                {
+                    CustomConsole.Warning("Failed to refresh area list before opening navigator.", ex);
+                }
+            }
+
             RefreshAreaNavigatorForCurrentClient();
             AreaNavigatorPopup.IsOpen = true;
         }
@@ -4949,6 +5108,12 @@ namespace OceanyaClient
             // If the Control modifier is pressed but AltGr is active, skip processing.
             if ((Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control && !isAltGrActive)
             {
+                if (TryHandleTextBoxClipboardShortcut(e))
+                {
+                    base.OnPreviewKeyDown(e);
+                    return;
+                }
+
                 int index = -1;
 
                 // Check if the pressed key is a digit on the main keyboard.
@@ -5007,6 +5172,60 @@ namespace OceanyaClient
             }
 
             base.OnPreviewKeyDown(e);
+        }
+
+        private static bool TryHandleTextBoxClipboardShortcut(KeyEventArgs e)
+        {
+            if (Keyboard.FocusedElement is not TextBox textBox || textBox.IsReadOnly)
+            {
+                return false;
+            }
+
+            Key key = e.Key == Key.System ? e.SystemKey : e.Key;
+            if (key == Key.X)
+            {
+                string selection = textBox.SelectedText ?? string.Empty;
+                if (selection.Length == 0)
+                {
+                    return false;
+                }
+
+                e.Handled = true;
+                if (ClipboardUtilities.TrySetText(selection))
+                {
+                    textBox.SelectedText = string.Empty;
+                }
+
+                return true;
+            }
+
+            if (key == Key.C)
+            {
+                string selection = textBox.SelectedText ?? string.Empty;
+                if (selection.Length == 0)
+                {
+                    return false;
+                }
+
+                e.Handled = true;
+                ClipboardUtilities.TrySetText(selection);
+                return true;
+            }
+
+            if (key == Key.V)
+            {
+                e.Handled = true;
+                if (ClipboardUtilities.TryGetText(out string text))
+                {
+                    int caretIndex = textBox.SelectionStart;
+                    textBox.SelectedText = text;
+                    textBox.CaretIndex = caretIndex + text.Length;
+                }
+
+                return true;
+            }
+
+            return false;
         }
 
         private void HandleKonamiCode(KeyEventArgs e)
