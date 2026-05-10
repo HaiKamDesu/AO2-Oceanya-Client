@@ -205,8 +205,8 @@ namespace OceanyaClient
 
     public class ViewportWindowState
     {
-        public double Width { get; set; } = 258;
-        public double Height { get; set; } = 328;
+        public double Width { get; set; } = 256;
+        public double Height { get; set; } = 296;
         public double? Left { get; set; }
         public double? Top { get; set; }
         public bool IsVisible { get; set; }
@@ -1750,8 +1750,8 @@ namespace OceanyaClient
 
         private static void ClampViewportWindowState(ViewportWindowState state)
         {
-            state.Width = Math.Clamp(state.Width, 258, 6000);
-            state.Height = Math.Clamp(state.Height, 328, 7000);
+            state.Width = Math.Clamp(state.Width, 256, 6000);
+            state.Height = Math.Clamp(state.Height, 296, 7000);
             if (state.Left.HasValue && (double.IsInfinity(state.Left.Value) || double.IsNaN(state.Left.Value)))
             {
                 state.Left = null;

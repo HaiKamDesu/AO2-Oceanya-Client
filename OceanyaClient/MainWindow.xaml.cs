@@ -48,6 +48,7 @@ namespace OceanyaClient
         private HwndSource? viewportWindowSource;
         private Window? settingsWindow;
         private AO2ViewportWindowContent? viewportContent;
+        private bool isRestoringViewportWindow;
         private bool isMainWindowClosing;
         private bool hasHookedHostWindowClosing;
         private bool cleanCloseInProgress;
@@ -473,6 +474,7 @@ namespace OceanyaClient
                 cleanCloseInProgress = true;
                 IsEnabled = false;
                 isMainWindowClosing = true;
+                CaptureViewportWindowState();
                 viewportContent?.AttachClient(null, null);
                 viewportWindow?.Close();
                 callwordAudioNotifier.Dispose();
@@ -4000,6 +4002,7 @@ namespace OceanyaClient
         {
             if (viewportWindow?.IsVisible == true)
             {
+                CaptureViewportWindowState();
                 SaveFile.Data.GMViewportWindowState ??= new ViewportWindowState();
                 SaveFile.Data.GMViewportWindowState.IsVisible = false;
                 SaveFile.Save();
@@ -4027,9 +4030,16 @@ namespace OceanyaClient
 
                 viewportWindow.Activate();
                 RefreshViewportAttachment();
-                SaveFile.Data.GMViewportWindowState ??= new ViewportWindowState();
-                SaveFile.Data.GMViewportWindowState.IsVisible = true;
-                SaveFile.Save();
+                Dispatcher.BeginInvoke(
+                    new Action(() =>
+                    {
+                        NormalizeVisibleViewportWindowSize(preferWidth: false);
+                        CaptureViewportWindowState();
+                        SaveFile.Data.GMViewportWindowState ??= new ViewportWindowState();
+                        SaveFile.Data.GMViewportWindowState.IsVisible = true;
+                        SaveFile.Save();
+                    }),
+                    System.Windows.Threading.DispatcherPriority.Loaded);
                 return;
             }
 
@@ -4037,11 +4047,11 @@ namespace OceanyaClient
 
             Window owner = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
             ViewportWindowState savedState = SaveFile.Data.GMViewportWindowState ?? new ViewportWindowState();
-            double defaultWidth = GetViewportWindowWidthFromContentWidth(AO2ViewportAssetResolver.ViewportWidth);
-            double defaultHeight = GetViewportWindowHeightFromContentHeight(AO2ViewportAssetResolver.ViewportToolHeight);
-            double initialWidth = Math.Max(defaultWidth, savedState.Width);
-            double initialHeight = Math.Max(defaultHeight, savedState.Height);
-            (initialWidth, initialHeight) = NormalizeViewportWindowSize(initialWidth, initialHeight, preferWidth: true);
+            (double initialWidth, double initialHeight, double? restoredLeft, double? restoredTop) =
+                ResolveViewportWindowRestoreState(savedState);
+            (double restoreContentWidth, double restoreContentHeight) = ResolveViewportContentRestoreSize(savedState);
+            viewportContent!.SetCurrentValue(FrameworkElement.WidthProperty, restoreContentWidth);
+            viewportContent.SetCurrentValue(FrameworkElement.HeightProperty, restoreContentHeight);
 
             viewportWindow = OceanyaWindowManager.CreateWindow(
                 viewportContent!,
@@ -4052,24 +4062,25 @@ namespace OceanyaClient
                     HeaderText = "Viewport",
                     Width = initialWidth,
                     Height = initialHeight,
-                    MinWidth = defaultWidth,
-                    MinHeight = defaultHeight,
+                    MinWidth = GetViewportMinimumWindowWidth(),
+                    MinHeight = GetViewportMinimumWindowHeight(),
                     ShowInTaskbar = false,
                     IsUserResizeEnabled = true,
                     IsUserMoveEnabled = true,
                     IsCloseButtonVisible = true,
-                    WindowStartupLocation = savedState.Left.HasValue && savedState.Top.HasValue
+                    WindowStartupLocation = restoredLeft.HasValue && restoredTop.HasValue
                         ? WindowStartupLocation.Manual
                         : WindowStartupLocation.CenterOwner
                 });
 
-            if (savedState.Left.HasValue && savedState.Top.HasValue)
+            if (restoredLeft.HasValue && restoredTop.HasValue)
             {
-                viewportWindow.Left = savedState.Left.Value;
-                viewportWindow.Top = savedState.Top.Value;
+                viewportWindow.Left = restoredLeft.Value;
+                viewportWindow.Top = restoredTop.Value;
             }
 
             viewportWindow.SourceInitialized += ViewportWindow_SourceInitialized;
+            viewportWindow.SizeChanged += ViewportWindow_SizeChanged;
             viewportWindow.LocationChanged += ViewportWindow_LocationChanged;
             viewportWindow.Closing += (sender, eventArgs) =>
             {
@@ -4079,6 +4090,7 @@ namespace OceanyaClient
                 }
 
                 eventArgs.Cancel = true;
+                CaptureViewportWindowState();
                 SaveFile.Data.GMViewportWindowState ??= new ViewportWindowState();
                 SaveFile.Data.GMViewportWindowState.IsVisible = false;
                 SaveFile.Save();
@@ -4087,18 +4099,26 @@ namespace OceanyaClient
             viewportWindow.Closed += (_, _) =>
             {
                 viewportWindow.SourceInitialized -= ViewportWindow_SourceInitialized;
+                viewportWindow.SizeChanged -= ViewportWindow_SizeChanged;
                 viewportWindow.LocationChanged -= ViewportWindow_LocationChanged;
                 viewportWindowSource?.RemoveHook(ViewportWindow_WndProc);
                 viewportWindowSource = null;
                 viewportWindow = null;
             };
+            isRestoringViewportWindow = true;
             viewportWindow.Show();
             viewportWindow.Activate();
-            NormalizeVisibleViewportWindowSize(preferWidth: true);
-            CaptureViewportWindowState();
-            SaveFile.Data.GMViewportWindowState ??= new ViewportWindowState();
-            SaveFile.Data.GMViewportWindowState.IsVisible = true;
-            SaveFile.Save();
+            Dispatcher.BeginInvoke(
+                new Action(() =>
+                {
+                    NormalizeVisibleViewportWindowSize(preferWidth: false);
+                    isRestoringViewportWindow = false;
+                    CaptureViewportWindowState();
+                    SaveFile.Data.GMViewportWindowState ??= new ViewportWindowState();
+                    SaveFile.Data.GMViewportWindowState.IsVisible = true;
+                    SaveFile.Save();
+                }),
+                System.Windows.Threading.DispatcherPriority.Loaded);
         }
 
         private void OpenSettingsWindow()
@@ -4234,6 +4254,11 @@ namespace OceanyaClient
 
             viewportWindowSource = HwndSource.FromHwnd(new WindowInteropHelper(viewportWindow).Handle);
             viewportWindowSource?.AddHook(ViewportWindow_WndProc);
+        }
+
+        private void ViewportWindow_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            CaptureViewportWindowState();
         }
 
         private void ViewportWindow_LocationChanged(object? sender, EventArgs e)
@@ -4405,22 +4430,100 @@ namespace OceanyaClient
                 GetViewportWindowHeightFromContentHeight(heightDrivenContentHeight));
         }
 
+        internal static (double Width, double Height, double? Left, double? Top) ResolveViewportWindowRestoreState(
+            ViewportWindowState? savedState)
+        {
+            (double contentWidth, double contentHeight) = ResolveViewportContentRestoreSize(savedState);
+            double? left = savedState?.Left.HasValue == true && IsFinite(savedState.Left.Value)
+                ? savedState.Left.Value
+                : null;
+            double? top = savedState?.Top.HasValue == true && IsFinite(savedState.Top.Value)
+                ? savedState.Top.Value
+                : null;
+
+            return (
+                GetViewportWindowWidthFromContentWidth(contentWidth),
+                GetViewportWindowHeightFromContentHeight(contentHeight),
+                left,
+                top);
+        }
+
+        internal static (double Width, double Height) ResolveViewportContentRestoreSize(ViewportWindowState? savedState)
+        {
+            if (savedState == null)
+            {
+                return (AO2ViewportAssetResolver.ViewportWidth, AO2ViewportAssetResolver.ViewportToolHeight);
+            }
+
+            double contentWidth = IsFinite(savedState.Width) && savedState.Width > 0
+                ? savedState.Width
+                : AO2ViewportAssetResolver.ViewportWidth;
+            double contentHeight = IsFinite(savedState.Height) && savedState.Height > 0
+                ? savedState.Height
+                : AO2ViewportAssetResolver.ViewportToolHeight;
+
+            double legacyOuterContentWidth = savedState.Width - GetViewportWindowHorizontalOffset();
+            double legacyOuterContentHeight = savedState.Height - GetViewportWindowVerticalOffset();
+            if (IsViewportContentAspectRatio(legacyOuterContentWidth, legacyOuterContentHeight))
+            {
+                contentWidth = legacyOuterContentWidth;
+                contentHeight = legacyOuterContentHeight;
+            }
+
+            return NormalizeViewportContentSize(contentWidth, contentHeight);
+        }
+
         private void CaptureViewportWindowState()
         {
-            if (viewportWindow == null || viewportWindow.WindowState != WindowState.Normal)
+            if (viewportWindow == null || viewportWindow.WindowState != WindowState.Normal || isRestoringViewportWindow)
             {
                 return;
             }
 
+            double contentWidth = viewportContent != null && IsFinite(viewportContent.Width) && viewportContent.Width > 0
+                ? viewportContent.Width
+                : viewportWindow.Width - GetViewportWindowHorizontalOffset();
+            double contentHeight = viewportContent != null && IsFinite(viewportContent.Height) && viewportContent.Height > 0
+                ? viewportContent.Height
+                : viewportWindow.Height - GetViewportWindowVerticalOffset();
+            (double width, double height) = NormalizeViewportContentSize(contentWidth, contentHeight);
+            double? left = IsFinite(viewportWindow.Left) ? viewportWindow.Left : null;
+            double? top = IsFinite(viewportWindow.Top) ? viewportWindow.Top : null;
+
             SaveFile.Data.GMViewportWindowState = new ViewportWindowState
             {
-                Width = Math.Max(GetViewportMinimumWindowWidth(), viewportWindow.Width),
-                Height = Math.Max(GetViewportMinimumWindowHeight(), viewportWindow.Height),
-                Left = viewportWindow.Left,
-                Top = viewportWindow.Top,
+                Width = width,
+                Height = height,
+                Left = left,
+                Top = top,
                 IsVisible = viewportWindow.IsVisible
             };
             SaveFile.Save();
+        }
+
+        private static (double Width, double Height) NormalizeViewportContentSize(double width, double height)
+        {
+            double contentWidth = IsFinite(width) && width > 0 ? width : AO2ViewportAssetResolver.ViewportWidth;
+            double contentHeight = IsFinite(height) && height > 0 ? height : AO2ViewportAssetResolver.ViewportToolHeight;
+            contentWidth = Math.Max(AO2ViewportAssetResolver.ViewportWidth, contentWidth);
+            contentHeight = Math.Max(AO2ViewportAssetResolver.ViewportToolHeight, contentHeight);
+
+            if (IsViewportContentAspectRatio(contentWidth, contentHeight))
+            {
+                return (contentWidth, contentHeight);
+            }
+
+            double widthDrivenHeight = contentWidth / ViewportContentAspectRatio;
+            return (contentWidth, Math.Max(AO2ViewportAssetResolver.ViewportToolHeight, widthDrivenHeight));
+        }
+
+        private static bool IsViewportContentAspectRatio(double width, double height)
+        {
+            return IsFinite(width)
+                && IsFinite(height)
+                && width > 0
+                && height > 0
+                && Math.Abs((width / height) - ViewportContentAspectRatio) < 0.01;
         }
 
         private static double GetViewportWindowWidthFromContentWidth(double contentWidth)

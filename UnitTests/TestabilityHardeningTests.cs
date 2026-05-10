@@ -289,6 +289,75 @@ namespace UnitTests
         }
 
         [Test]
+        public void MainWindow_ResolveViewportWindowRestoreState_RestoresSavedContentBoundsAsOuterWindow()
+        {
+            ViewportWindowState state = new ViewportWindowState
+            {
+                Width = 758,
+                Height = 876.875,
+                Left = 123,
+                Top = 456
+            };
+
+            (double width, double height, double? left, double? top) =
+                MainWindow.ResolveViewportWindowRestoreState(state);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(width, Is.EqualTo(760).Within(0.001));
+                Assert.That(height, Is.EqualTo(908.875).Within(0.001));
+                Assert.That(left, Is.EqualTo(123).Within(0.001));
+                Assert.That(top, Is.EqualTo(456).Within(0.001));
+            });
+        }
+
+        [Test]
+        public void MainWindow_ResolveViewportWindowRestoreState_ConvertsCurrentOuterBoundsSave()
+        {
+            ViewportWindowState state = new ViewportWindowState
+            {
+                Width = 760,
+                Height = 908.875,
+                Left = 5000,
+                Top = -500
+            };
+
+            (double width, double height, double? left, double? top) =
+                MainWindow.ResolveViewportWindowRestoreState(state);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(width, Is.EqualTo(760).Within(0.001));
+                Assert.That(height, Is.EqualTo(908.875).Within(0.001));
+                Assert.That(left, Is.EqualTo(5000).Within(0.001));
+                Assert.That(top, Is.EqualTo(-500).Within(0.001));
+            });
+        }
+
+        [Test]
+        public void MainWindow_ResolveViewportWindowRestoreState_RejectsInvalidBoundsOnly()
+        {
+            ViewportWindowState state = new ViewportWindowState
+            {
+                Width = double.NaN,
+                Height = double.PositiveInfinity,
+                Left = double.NegativeInfinity,
+                Top = double.NaN
+            };
+
+            (double width, double height, double? left, double? top) =
+                MainWindow.ResolveViewportWindowRestoreState(state);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(width, Is.EqualTo(258).Within(0.001));
+                Assert.That(height, Is.EqualTo(328).Within(0.001));
+                Assert.That(left, Is.Null);
+                Assert.That(top, Is.Null);
+            });
+        }
+
+        [Test]
         public void Globals_ReloadServerIpsForTests_UsesProvidedServerJson()
         {
             string serverJsonPath = Path.Combine(tempRoot, "server.json");
