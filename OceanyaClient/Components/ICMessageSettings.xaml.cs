@@ -42,6 +42,7 @@ namespace OceanyaClient.Components
         public Action? OnRefreshAllAssetsRequested;
         public Action? OnRefreshAllCharactersRequested;
         public Action<string>? OnOpenInCharacterEditorRequested;
+        public Action? OnClientStateChanged;
 
         public ICMessageSettings()
         {
@@ -101,6 +102,7 @@ namespace OceanyaClient.Components
             txtICMessage.Focus();
             if (curClient == null) return;
             curClient.curSFX = sfx;
+            OnClientStateChanged?.Invoke();
         }
 
         public void ReinitializeSettings()
@@ -222,6 +224,7 @@ namespace OceanyaClient.Components
             {
                 curClient.effect = parsedEffect;
                 txtICMessage.Focus();
+                OnClientStateChanged?.Invoke();
             }
             else
             {
@@ -238,6 +241,7 @@ namespace OceanyaClient.Components
             {
                 curClient.textColor = parsedColor;
                 txtICMessage.Focus();
+                OnClientStateChanged?.Invoke();
             }
             else
             {
@@ -252,6 +256,7 @@ namespace OceanyaClient.Components
 
             txtICMessage.Focus();
             curClient.SetPos(newPos, true);
+            OnClientStateChanged?.Invoke();
         }
 
         private void EmoteDropdown_OnConfirm(object? sender, string emoteDisplayID)
@@ -276,6 +281,7 @@ namespace OceanyaClient.Components
 
                 curClient.SetCharacter(ini);
                 SetINI(ini);
+                OnClientStateChanged?.Invoke();
             }
             else
             {
@@ -679,6 +685,7 @@ namespace OceanyaClient.Components
             chkPreanim.IsChecked = emote.Modifier == ICMessage.EmoteModifiers.PlayPreanimation
                 || emote.Modifier == ICMessage.EmoteModifiers.PlayPreanimationAndObjection;
             txtICMessage.Focus();
+            OnClientStateChanged?.Invoke();
         }
         private void EmoteToggleBtn_Unchecked(object sender, RoutedEventArgs e)
         {
@@ -726,6 +733,7 @@ namespace OceanyaClient.Components
             txtICShowname_Placeholder.Visibility = string.IsNullOrWhiteSpace(txtICShowname.Text) ? Visibility.Visible : Visibility.Collapsed;
 
             curClient?.SetICShowname(txtICShowname.Text.Trim());
+            OnClientStateChanged?.Invoke();
         }
 
         private void txtICMessage_TextChanged(object sender, TextChangedEventArgs e)
@@ -741,6 +749,7 @@ namespace OceanyaClient.Components
                 if (curClient == null) return;
                 curClient.PreanimEnabled = checkBox.IsChecked == true;
                 txtICMessage.Focus();
+                OnClientStateChanged?.Invoke();
             }
         }
 
@@ -751,6 +760,7 @@ namespace OceanyaClient.Components
                 if (curClient == null) return;
                 curClient.flip = checkBox.IsChecked == true;
                 txtICMessage.Focus();
+                OnClientStateChanged?.Invoke();
             }
         }
 
@@ -761,6 +771,7 @@ namespace OceanyaClient.Components
                 if (curClient == null) return;
                 curClient.Additive = checkBox.IsChecked == true;
                 txtICMessage.Focus();
+                OnClientStateChanged?.Invoke();
             }
         }
 
@@ -771,6 +782,7 @@ namespace OceanyaClient.Components
                 if (curClient == null) return;
                 curClient.Immediate = checkBox.IsChecked == true;
                 txtICMessage.Focus();
+                OnClientStateChanged?.Invoke();
             }
         }
 
@@ -782,6 +794,7 @@ namespace OceanyaClient.Components
                 EffectDropdown.SelectedText = ICMessage.Effects.Realization.ToString();
                 if (curClient != null) curClient.effect = ICMessage.Effects.Realization;
                 txtICMessage.Focus();
+                OnClientStateChanged?.Invoke();
             }
         }
 
@@ -797,6 +810,7 @@ namespace OceanyaClient.Components
                     curClient.effect = parsedEffect;
 
                 txtICMessage.Focus();
+                OnClientStateChanged?.Invoke();
             }
         }
 
@@ -808,6 +822,7 @@ namespace OceanyaClient.Components
                 if (curClient == null) return;
                 curClient.screenshake = true;
                 txtICMessage.Focus();
+                OnClientStateChanged?.Invoke();
             }
         }
 
@@ -819,6 +834,7 @@ namespace OceanyaClient.Components
                 if (curClient == null) return;
                 curClient.screenshake = false;
                 txtICMessage.Focus();
+                OnClientStateChanged?.Invoke();
             }
         }
     }

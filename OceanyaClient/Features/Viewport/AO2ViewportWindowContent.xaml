@@ -13,7 +13,9 @@
                  HorizontalAlignment="Center"
                  VerticalAlignment="Center"
                  SnapsToDevicePixels="True">
-            <viewport:AO2ViewportControl x:Name="ViewportControl"/>
+            <Grid x:Name="ViewportHost"
+                  Width="256"
+                  Height="296"/>
         </Viewbox>
     </Grid>
 </local:OceanyaWindowContentControl>

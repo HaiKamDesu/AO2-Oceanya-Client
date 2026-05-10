@@ -11,7 +11,12 @@ Use this file as the first stop before broad repository searches. It should poin
 - Doc: `Documentation/AO2Viewport.md`
 - Main code: `OceanyaClient/Features/Viewport/*`, `OceanyaClient/MainWindow.xaml`, `OceanyaClient/MainWindow.xaml.cs`
 - AO2 reference: `AO2-Client/src/courtroom.cpp`, `AO2-Client/src/courtroom.h`, `AO2-Client/src/animationlayer.*`
-- Notes: GM multi-client `V` button opens an owned 256x192 AO2 render surface for background, character, desk, effect, and chatbox layers.
+- Notes: GM multi-client `V` button opens an owned 256x192 AO2 render surface for background, character, desk, effect, and chatbox layers. Each GM profile owns its own hidden/live viewport state; selecting a profile only changes which state is shown.
+
+## GM Multi-Client Snapshot Restore
+- Doc: `Documentation/GmMultiClientSnapshotRestore.md`
+- Main code: `OceanyaClient/MainWindow.xaml.cs`, `OceanyaClient/Components/ICMessageSettings.xaml.cs`, `OceanyaClient/Components/Forms/CharacterSelectorWindow.xaml.cs`, `OceanyaClient/Components/Forms/OceanyaMessageBox.xaml.cs`, `Common/SaveFile.cs`
+- Notes: Saves GM client profiles, selected client, INI puppets, local render character/emote, shownames, OOC names, position/effect/message properties, and restores the profile set after launching against a new server. Restore resolves occupied INI puppets before creating clients, treats other snapshot puppets as reserved choices, uses shared custom-button message boxes for conflicts, and preserves the local iniswap character when the server puppet must change.
 
 ## Debug Console And Logging
 - Doc: `Documentation/DebugConsoleAndLogging.md`

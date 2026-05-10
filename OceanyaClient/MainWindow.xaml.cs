@@ -34,6 +34,7 @@ namespace OceanyaClient
         public event Action? FinishedLoading;
 
         private readonly Dictionary<ToggleButton, AOClient> clients = new Dictionary<ToggleButton, AOClient>();
+        private readonly Dictionary<AOClient, string> profileIniPuppetNames = new Dictionary<AOClient, string>();
         private readonly Dictionary<AOClient, AOClientAgentController> aiControllers = new Dictionary<AOClient, AOClientAgentController>();
         private readonly Dictionary<AOClient, List<PendingAiOriginResponse>> pendingAiOriginResponses = new Dictionary<AOClient, List<PendingAiOriginResponse>>();
         private readonly Dictionary<AOClient, bool> aiOriginResponseVisibility = new Dictionary<AOClient, bool>();
@@ -49,6 +50,10 @@ namespace OceanyaClient
         private bool isMainWindowClosing;
         private bool hasHookedHostWindowClosing;
         private bool hasAppliedMainWindowState;
+        private bool hasAttemptedSnapshotRestore;
+        private bool isRestoringSnapshot;
+        private bool suppressSnapshotCapture;
+        private bool suppressOocShownameTextChanged;
         private readonly bool useSingleInternalClient = SaveFile.Data.UseSingleInternalClient;
         private readonly bool aiModeEnabled;
         private bool debug = false;
@@ -99,6 +104,12 @@ namespace OceanyaClient
         private const int WmszBottom = 6;
         private const int WmszBottomLeft = 7;
         private const int WmszBottomRight = 8;
+
+        private enum SnapshotConflictDecision
+        {
+            Delete,
+            SelectIniPuppet
+        }
 
         private sealed class DreddOverlaySelectionItem
         {
@@ -152,16 +163,21 @@ namespace OceanyaClient
                     return;
                 }
 
+                if (currentClient != null)
+                {
+                    currentClient.OOCShowname = showName;
+                }
+
                 if (useSingleInternalClient)
                 {
                     if (currentClient != null)
                     {
-                        currentClient.OOCShowname = showName;
                         ApplyProfileToSingleInternalClient(currentClient);
                     }
                 }
 
                 await networkClient.SendOOCMessage(showName, message);
+                CaptureGmMultiClientSnapshot();
             };
 
             ICMessageSettingsControl.OnSendICMessage += async (message) =>
@@ -269,6 +285,7 @@ namespace OceanyaClient
                     CustomConsole.Debug(
                         $"Applying profile before IC send. profile=\"{client.clientName}\" profileCharacter=\"{client.currentINI?.Name ?? "(null)"}\" profileEmote=\"{client.currentEmote?.DisplayID ?? "(null)"}\" networkIniPuppet=\"{networkClient.iniPuppetName}\" networkIniPuppetId={networkClient.iniPuppetID}",
                         CustomConsole.LogCategory.IC);
+                    await EnsureSingleInternalClientProfileSelectionAsync(client);
                     ApplyProfileToSingleInternalClient(client);
                 }
 
@@ -294,6 +311,7 @@ namespace OceanyaClient
                 try
                 {
                     await networkClient.SendICMessage(sendMessage);
+                    CaptureGmMultiClientSnapshot();
                 }
                 catch (Exception ex)
                 {
@@ -326,8 +344,10 @@ namespace OceanyaClient
             {
                 await OpenCharacterInEditorAsync(characterDirectory);
             };
+            ICMessageSettingsControl.OnClientStateChanged += CaptureGmMultiClientSnapshot;
 
             OOCLogControl.txtOOCShowname.Text = SaveFile.Data.OOCName;
+            OOCLogControl.txtOOCShowname.TextChanged += (_, _) => HandleOocShownameTextChanged();
             chkPosOnIniSwap.IsChecked = SaveFile.Data.SwitchPosOnIniSwap;
             chkSticky.IsChecked = SaveFile.Data.StickyEffect;
             chkInvertLog.IsChecked = SaveFile.Data.InvertICLog;
@@ -345,6 +365,30 @@ namespace OceanyaClient
         /// <inheritdoc/>
         public override bool IsUserResizeEnabled => false;
 
+        private void HandleOocShownameTextChanged()
+        {
+            if (suppressOocShownameTextChanged || currentClient == null)
+            {
+                return;
+            }
+
+            currentClient.OOCShowname = OOCLogControl.txtOOCShowname.Text?.Trim() ?? string.Empty;
+            CaptureGmMultiClientSnapshot();
+        }
+
+        private void SetOocShownameTextForCurrentClient(string? showname)
+        {
+            suppressOocShownameTextChanged = true;
+            try
+            {
+                OOCLogControl.txtOOCShowname.Text = showname ?? string.Empty;
+            }
+            finally
+            {
+                suppressOocShownameTextChanged = false;
+            }
+        }
+
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
             HookHostWindowClosing();
@@ -360,6 +404,13 @@ namespace OceanyaClient
             {
                 Dispatcher.BeginInvoke(new Action(OpenViewportWindow));
             }
+
+            if (!hasAttemptedSnapshotRestore)
+            {
+                hasAttemptedSnapshotRestore = true;
+                _ = RestoreGmMultiClientSnapshotAsync();
+            }
+
             FinishedLoading?.Invoke();
         }
 
@@ -453,6 +504,8 @@ namespace OceanyaClient
                 {
                     OOCLogControl.UpdateStreamLabel(bot);
                 }
+
+                CaptureGmMultiClientSnapshot();
             }
         }
         private void UpdateClientTooltip(AOClient bot)
@@ -1408,7 +1461,7 @@ namespace OceanyaClient
                 {
                     ICMessageSettingsControl.SetClient(profileClient);
                     OOCLogControl.SetCurrentClient(profileClient);
-                    OOCLogControl.txtOOCShowname.Text = profileClient.OOCShowname;
+                    SetOocShownameTextForCurrentClient(profileClient.OOCShowname);
                     RefreshAreaNavigatorForCurrentClient();
                     RefreshDreddOverlayForCurrentContext(promptForUnknownOverlay: false);
                     UpdateDreddFeatureEnabledState();
@@ -2207,6 +2260,60 @@ namespace OceanyaClient
             }
         }
 
+        private async Task EnsureSingleInternalClientProfileSelectionAsync(AOClient profileClient)
+        {
+            if (!useSingleInternalClient || singleInternalClient == null || profileClient == null)
+            {
+                return;
+            }
+
+            string desiredIniPuppet = GetProfileIniPuppetName(profileClient);
+            if (string.IsNullOrWhiteSpace(desiredIniPuppet)
+                || string.Equals(singleInternalClient.iniPuppetName, desiredIniPuppet, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            try
+            {
+                await singleInternalClient.SelectIniPuppet(desiredIniPuppet, false);
+                profileClient.iniPuppetID = singleInternalClient.iniPuppetID;
+                SetProfileIniPuppetName(profileClient, desiredIniPuppet);
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Warning(
+                    $"Could not select snapshot INIPuppet \"{desiredIniPuppet}\" for \"{profileClient.clientName}\".",
+                    ex,
+                    CustomConsole.LogCategory.IC);
+            }
+        }
+
+        private string GetProfileIniPuppetName(AOClient profileClient)
+        {
+            if (profileIniPuppetNames.TryGetValue(profileClient, out string? savedName)
+                && !string.IsNullOrWhiteSpace(savedName))
+            {
+                return savedName.Trim();
+            }
+
+            return string.IsNullOrWhiteSpace(profileClient.iniPuppetName)
+                ? profileClient.currentINI?.Name ?? string.Empty
+                : profileClient.iniPuppetName.Trim();
+        }
+
+        private void SetProfileIniPuppetName(AOClient profileClient, string? iniPuppetName)
+        {
+            string normalized = iniPuppetName?.Trim() ?? string.Empty;
+            if (normalized.Length == 0)
+            {
+                profileIniPuppetNames.Remove(profileClient);
+                return;
+            }
+
+            profileIniPuppetNames[profileClient] = normalized;
+        }
+
         private void SyncSingleClientStatusToProfile(AOClient profileClient)
         {
             if (!useSingleInternalClient || singleInternalClient == null || profileClient == null)
@@ -2401,7 +2508,7 @@ namespace OceanyaClient
                 Dispatcher.Invoke(() =>
                 {
                     AOClient? targetClient = GetSingleModeLogTarget(singleInternalClient, singleInternalClient);
-                    if (targetClient == null)
+                    if (targetClient == null || ReferenceEquals(targetClient, singleInternalClient))
                     {
                         return;
                     }
@@ -2416,7 +2523,7 @@ namespace OceanyaClient
                 Dispatcher.Invoke(() =>
                 {
                     AOClient? targetClient = GetSingleModeLogTarget(singleInternalClient, singleInternalClient);
-                    if (targetClient == null)
+                    if (targetClient == null || ReferenceEquals(targetClient, singleInternalClient))
                     {
                         return;
                     }
@@ -2427,7 +2534,7 @@ namespace OceanyaClient
 
             singleInternalClient.FrequencyHintsProvider = () => SaveFile.Data.FrequentlyUsedIniPuppets;
             InitializeCommonClientEvents(singleInternalClient, singleInternalClient);
-            await singleInternalClient.Connect(autoSelectCharacter: false);
+            await ConnectClientAsync(singleInternalClient, autoSelectCharacter: false);
             await BootstrapAreaNavigatorAsync(singleInternalClient);
             RefreshViewportAttachment();
         }
@@ -2436,13 +2543,20 @@ namespace OceanyaClient
             _ = AddClientAsync(clientName);
         }
 
+        private Task AddClientAsync(string? clientName = null)
+        {
+            return AddClientInternalAsync(clientName, null, suppressInitialCharacterPrompt: false);
+        }
+
         /// <summary>
         /// Shows the character selector for <paramref name="bot"/>.
         /// Returns (true, selectedClientName) if the user confirmed, (false, null) if cancelled.
         /// Pass <paramref name="defaultClientName"/> to show the embedded client-name field (add-client flow).
         /// </summary>
         private (bool confirmed, string? selectedClientName) ShowCharacterSelectorForClient(
-            AOClient bot, string? defaultClientName = null)
+            AOClient bot,
+            string? defaultClientName = null,
+            IReadOnlyCollection<string>? additionalUnavailableCharacters = null)
         {
             AOClient? networkClient = GetTargetClientForNetwork(bot);
             if (networkClient == null)
@@ -2451,7 +2565,7 @@ namespace OceanyaClient
             }
 
             CharacterSelectorWindow selector = new CharacterSelectorWindow(
-                networkClient.ServerCharacterAvailability,
+                BuildCharacterSelectorAvailability(networkClient.ServerCharacterAvailability, additionalUnavailableCharacters),
                 SaveFile.Data.FrequentlyUsedIniPuppets,
                 networkClient.iniPuppetName,
                 defaultClientName)
@@ -2469,6 +2583,33 @@ namespace OceanyaClient
             return (true, selector.SelectedClientName);
         }
 
+        private static IReadOnlyDictionary<string, bool> BuildCharacterSelectorAvailability(
+            IReadOnlyDictionary<string, bool> baseAvailability,
+            IReadOnlyCollection<string>? additionalUnavailableCharacters)
+        {
+            Dictionary<string, bool> availability = new Dictionary<string, bool>(
+                baseAvailability,
+                StringComparer.OrdinalIgnoreCase);
+
+            if (additionalUnavailableCharacters == null)
+            {
+                return availability;
+            }
+
+            foreach (string characterName in additionalUnavailableCharacters)
+            {
+                string normalized = characterName?.Trim() ?? string.Empty;
+                if (normalized.Length == 0 || !availability.ContainsKey(normalized))
+                {
+                    continue;
+                }
+
+                availability[normalized] = false;
+            }
+
+            return availability;
+        }
+
         private async Task ApplyCharacterSelectionAsync(AOClient bot, string charName)
         {
             try
@@ -2480,6 +2621,7 @@ namespace OceanyaClient
                 }
 
                 await networkClient.SelectIniPuppet(charName, true);
+                SetProfileIniPuppetName(bot, charName);
 
                 if (useSingleInternalClient && !ReferenceEquals(networkClient, bot))
                 {
@@ -2496,6 +2638,7 @@ namespace OceanyaClient
                 }
                 SaveFile.Data.FrequentlyUsedIniPuppets[charName]++;
                 SaveFile.Save();
+                CaptureGmMultiClientSnapshot();
             }
             catch (Exception ex)
             {
@@ -2511,7 +2654,449 @@ namespace OceanyaClient
                 return;
             }
 
-            await bot.Connect(autoSelectCharacter: autoSelectCharacter);
+            try
+            {
+                await bot.Connect(
+                    betweenAreasAndIniPuppet: autoSelectCharacter ? 1000 : 0,
+                    finalDelay: 0,
+                    autoSelectCharacter: autoSelectCharacter);
+            }
+            catch (TimeoutException ex) when (IsHandshakeTimeout(ex))
+            {
+                CustomConsole.Warning(
+                    $"Retrying client connection after handshake timeout for \"{bot.clientName}\".",
+                    category: CustomConsole.LogCategory.System);
+                await bot.DisconnectWebsocket();
+                await Task.Delay(750);
+                await bot.Connect(
+                    betweenAreasAndIniPuppet: autoSelectCharacter ? 1000 : 0,
+                    finalDelay: 0,
+                    autoSelectCharacter: autoSelectCharacter);
+            }
+        }
+
+        private static bool IsHandshakeTimeout(Exception ex)
+        {
+            return ex.Message.IndexOf("Timed out waiting for handshake packet", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private void ApplySnapshotStateToClient(AOClient client, GmMultiClientSnapshotClient state)
+        {
+            client.clientName = string.IsNullOrWhiteSpace(state.ClientName)
+                ? $"Client{clients.Count + 1}"
+                : state.ClientName.Trim();
+            SetProfileIniPuppetName(client, state.IniPuppetName);
+
+            string localCharacterName = !string.IsNullOrWhiteSpace(state.LocalCharacterName)
+                ? state.LocalCharacterName
+                : state.IniPuppetName;
+            if (!string.IsNullOrWhiteSpace(localCharacterName))
+            {
+                client.SetCharacter(localCharacterName);
+            }
+
+            if (!string.IsNullOrWhiteSpace(state.EmoteDisplayId))
+            {
+                client.SetEmote(state.EmoteDisplayId);
+            }
+
+            client.SetICShowname(state.ICShowname);
+            client.OOCShowname = string.IsNullOrWhiteSpace(state.OOCShowname)
+                ? client.clientName
+                : state.OOCShowname;
+            client.iniPuppetID = state.IniPuppetId;
+            client.curBG = state.Background;
+            client.curSFX = state.Sfx;
+            client.deskMod = Enum.IsDefined(typeof(ICMessage.DeskMods), state.DeskMod)
+                ? (ICMessage.DeskMods)state.DeskMod
+                : client.deskMod;
+            client.emoteMod = Enum.IsDefined(typeof(ICMessage.EmoteModifiers), state.EmoteMod)
+                ? (ICMessage.EmoteModifiers)state.EmoteMod
+                : client.emoteMod;
+            client.shoutModifiers = Enum.IsDefined(typeof(ICMessage.ShoutModifiers), state.ShoutModifier)
+                ? (ICMessage.ShoutModifiers)state.ShoutModifier
+                : ICMessage.ShoutModifiers.Nothing;
+            client.flip = state.Flip;
+            client.effect = Enum.IsDefined(typeof(ICMessage.Effects), state.Effect)
+                ? (ICMessage.Effects)state.Effect
+                : ICMessage.Effects.None;
+            client.screenshake = state.Screenshake;
+            client.textColor = Enum.IsDefined(typeof(ICMessage.TextColors), state.TextColor)
+                ? (ICMessage.TextColors)state.TextColor
+                : ICMessage.TextColors.White;
+            client.PreanimEnabled = state.PreanimEnabled;
+            client.Immediate = state.Immediate;
+            client.Additive = state.Additive;
+            client.SelfOffset = (state.SelfOffsetHorizontal, state.SelfOffsetVertical);
+            client.switchPosWhenChangingINI = state.SwitchPosWhenChangingIni;
+
+            if (!string.IsNullOrWhiteSpace(state.Position))
+            {
+                client.SetPos(state.Position, false);
+            }
+        }
+
+        private GmMultiClientSnapshotClient CreateSnapshotState(AOClient client)
+        {
+            return new GmMultiClientSnapshotClient
+            {
+                ClientName = client.clientName?.Trim() ?? string.Empty,
+                IniPuppetName = GetProfileIniPuppetName(client),
+                IniPuppetId = client.iniPuppetID,
+                LocalCharacterName = client.currentINI?.Name ?? string.Empty,
+                EmoteDisplayId = client.currentEmote?.DisplayID ?? string.Empty,
+                ICShowname = client.ICShowname?.Trim() ?? string.Empty,
+                OOCShowname = client.OOCShowname?.Trim() ?? string.Empty,
+                Position = client.curPos?.Trim() ?? string.Empty,
+                Background = client.curBG?.Trim() ?? string.Empty,
+                Sfx = client.curSFX?.Trim() ?? string.Empty,
+                DeskMod = (int)client.deskMod,
+                EmoteMod = (int)client.emoteMod,
+                ShoutModifier = (int)client.shoutModifiers,
+                Flip = client.flip,
+                Effect = (int)client.effect,
+                Screenshake = client.screenshake,
+                TextColor = (int)client.textColor,
+                PreanimEnabled = client.PreanimEnabled,
+                Immediate = client.Immediate,
+                Additive = client.Additive,
+                SelfOffsetHorizontal = client.SelfOffset.Horizontal,
+                SelfOffsetVertical = client.SelfOffset.Vertical,
+                SwitchPosWhenChangingIni = client.switchPosWhenChangingINI
+            };
+        }
+
+        private void CaptureGmMultiClientSnapshot()
+        {
+            if (suppressSnapshotCapture || isRestoringSnapshot)
+            {
+                return;
+            }
+
+            List<AOClient> clientList = clients.Values.ToList();
+            int selectedIndex = currentClient == null ? -1 : clientList.IndexOf(currentClient);
+            SaveFile.Data.GMMultiClientSnapshot = new GmMultiClientSnapshot
+            {
+                Clients = clientList.Select(CreateSnapshotState).ToList(),
+                SelectedClientIndex = selectedIndex,
+                SelectedClientName = currentClient?.clientName?.Trim() ?? string.Empty,
+                UseSingleInternalClient = useSingleInternalClient
+            };
+            SaveFile.Save();
+        }
+
+        private async Task RestoreGmMultiClientSnapshotAsync()
+        {
+            GmMultiClientSnapshot? snapshot = SaveFile.Data.GMMultiClientSnapshot;
+            if (snapshot?.Clients == null || snapshot.Clients.Count == 0 || clients.Count > 0)
+            {
+                return;
+            }
+
+            isRestoringSnapshot = true;
+            suppressSnapshotCapture = true;
+            IsEnabled = false;
+            try
+            {
+                List<GmMultiClientSnapshotClient> statesToRestore = snapshot.Clients
+                    .Where(state => state != null)
+                    .ToList();
+                if (statesToRestore.Count == 0)
+                {
+                    return;
+                }
+
+                List<GmMultiClientSnapshotClient> resolvedStates;
+                if (useSingleInternalClient)
+                {
+                    if (OceanyaTestMode.Current.IsEnabled)
+                    {
+                        EnsureSingleInternalClientConnectedForTests();
+                    }
+                    else
+                    {
+                        await EnsureSingleInternalClientConnectedAsync();
+                    }
+
+                    if (singleInternalClient == null)
+                    {
+                        return;
+                    }
+
+                    resolvedStates = ResolveSnapshotCharacterConflictsForSingleInternalClient(
+                        statesToRestore,
+                        singleInternalClient.ServerCharacterAvailability);
+                    if (resolvedStates.Count == 0)
+                    {
+                        return;
+                    }
+
+                    await SelectInitialSnapshotPuppetForSingleInternalClientAsync(resolvedStates[0]);
+                }
+                else
+                {
+                    AOClient availabilityClient = new AOClient(Globals.GetSelectedServerEndpoint());
+                    availabilityClient.FrequencyHintsProvider = () => SaveFile.Data.FrequentlyUsedIniPuppets;
+                    await ConnectClientAsync(availabilityClient, autoSelectCharacter: false);
+                    resolvedStates = ResolveSnapshotCharacterConflicts(
+                        statesToRestore,
+                        availabilityClient.ServerCharacterAvailability);
+                    await availabilityClient.Disconnect();
+                }
+
+                foreach (GmMultiClientSnapshotClient state in resolvedStates)
+                {
+                    await AddClientInternalAsync(state.ClientName, state, suppressInitialCharacterPrompt: true);
+                }
+
+                AOClient? preferredClient = FindRestoredSelectedClient(snapshot, resolvedStates);
+                if (preferredClient != null)
+                {
+                    SelectClient(preferredClient);
+                }
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Error("Failed to restore GM multi-client snapshot.", ex, CustomConsole.LogCategory.System);
+                ShowMainWindowMessage(
+                    $"Could not restore the previous GM client snapshot: {ex.Message}",
+                    "Snapshot Restore Failed",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+            finally
+            {
+                IsEnabled = true;
+                suppressSnapshotCapture = false;
+                isRestoringSnapshot = false;
+                CaptureGmMultiClientSnapshot();
+            }
+        }
+
+        private List<GmMultiClientSnapshotClient> ResolveSnapshotCharacterConflicts(
+            List<GmMultiClientSnapshotClient> states,
+            IReadOnlyDictionary<string, bool> serverAvailability)
+        {
+            List<GmMultiClientSnapshotClient> resolved = new List<GmMultiClientSnapshotClient>();
+            HashSet<string> acceptedPuppets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            for (int i = 0; i < states.Count; i++)
+            {
+                GmMultiClientSnapshotClient state = states[i];
+                string requestedPuppet = state.IniPuppetName?.Trim() ?? string.Empty;
+                HashSet<string> unavailablePuppets = BuildReservedSnapshotPuppets(states, i + 1, acceptedPuppets);
+
+                if (CanUseSnapshotPuppet(requestedPuppet, serverAvailability, unavailablePuppets))
+                {
+                    resolved.Add(state);
+                    acceptedPuppets.Add(requestedPuppet);
+                    continue;
+                }
+
+                SnapshotConflictDecision decision = ShowSnapshotConflictDialog(state, requestedPuppet);
+                if (decision == SnapshotConflictDecision.Delete)
+                {
+                    continue;
+                }
+
+                string? selectedName = ShowCharacterSelectorForAvailability(
+                    serverAvailability,
+                    requestedPuppet,
+                    unavailablePuppets);
+                if (string.IsNullOrWhiteSpace(selectedName))
+                {
+                    continue;
+                }
+
+                if (!SaveFile.Data.FrequentlyUsedIniPuppets.ContainsKey(selectedName))
+                {
+                    SaveFile.Data.FrequentlyUsedIniPuppets[selectedName] = 0;
+                }
+
+                SaveFile.Data.FrequentlyUsedIniPuppets[selectedName]++;
+                state.IniPuppetName = selectedName;
+                resolved.Add(state);
+                acceptedPuppets.Add(selectedName);
+            }
+
+            return resolved;
+        }
+
+        private List<GmMultiClientSnapshotClient> ResolveSnapshotCharacterConflictsForSingleInternalClient(
+            List<GmMultiClientSnapshotClient> states,
+            IReadOnlyDictionary<string, bool> serverAvailability)
+        {
+            List<GmMultiClientSnapshotClient> resolved = new List<GmMultiClientSnapshotClient>();
+            bool hasSelectedNetworkPuppet = false;
+
+            foreach (GmMultiClientSnapshotClient state in states)
+            {
+                if (hasSelectedNetworkPuppet)
+                {
+                    resolved.Add(state);
+                    continue;
+                }
+
+                string requestedPuppet = state.IniPuppetName?.Trim() ?? string.Empty;
+                if (CanUseSnapshotPuppet(requestedPuppet, serverAvailability, new HashSet<string>(StringComparer.OrdinalIgnoreCase)))
+                {
+                    resolved.Add(state);
+                    hasSelectedNetworkPuppet = true;
+                    continue;
+                }
+
+                SnapshotConflictDecision decision = ShowSnapshotConflictDialog(state, requestedPuppet);
+                if (decision == SnapshotConflictDecision.Delete)
+                {
+                    continue;
+                }
+
+                string? selectedName = ShowCharacterSelectorForAvailability(
+                    serverAvailability,
+                    requestedPuppet,
+                    Array.Empty<string>());
+                if (string.IsNullOrWhiteSpace(selectedName))
+                {
+                    continue;
+                }
+
+                if (!SaveFile.Data.FrequentlyUsedIniPuppets.ContainsKey(selectedName))
+                {
+                    SaveFile.Data.FrequentlyUsedIniPuppets[selectedName] = 0;
+                }
+
+                SaveFile.Data.FrequentlyUsedIniPuppets[selectedName]++;
+                state.IniPuppetName = selectedName;
+                resolved.Add(state);
+                hasSelectedNetworkPuppet = true;
+            }
+
+            return resolved;
+        }
+
+        private static HashSet<string> BuildReservedSnapshotPuppets(
+            IReadOnlyList<GmMultiClientSnapshotClient> states,
+            int startIndex,
+            IEnumerable<string> alreadyAcceptedPuppets)
+        {
+            HashSet<string> reservedPuppets = new HashSet<string>(
+                alreadyAcceptedPuppets.Where(name => !string.IsNullOrWhiteSpace(name)),
+                StringComparer.OrdinalIgnoreCase);
+
+            for (int i = startIndex; i < states.Count; i++)
+            {
+                string plannedPuppet = states[i].IniPuppetName?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(plannedPuppet))
+                {
+                    reservedPuppets.Add(plannedPuppet);
+                }
+            }
+
+            return reservedPuppets;
+        }
+
+        private async Task SelectInitialSnapshotPuppetForSingleInternalClientAsync(GmMultiClientSnapshotClient firstState)
+        {
+            if (singleInternalClient == null)
+            {
+                return;
+            }
+
+            string requestedPuppet = firstState.IniPuppetName?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(requestedPuppet))
+            {
+                return;
+            }
+
+            await singleInternalClient.SelectIniPuppet(requestedPuppet, false);
+            firstState.IniPuppetId = singleInternalClient.iniPuppetID;
+        }
+
+        private string? ShowCharacterSelectorForAvailability(
+            IReadOnlyDictionary<string, bool> serverAvailability,
+            string currentSelectedCharName,
+            IReadOnlyCollection<string> additionalUnavailableCharacters)
+        {
+            CharacterSelectorWindow selector = new CharacterSelectorWindow(
+                BuildCharacterSelectorAvailability(serverAvailability, additionalUnavailableCharacters),
+                SaveFile.Data.FrequentlyUsedIniPuppets,
+                currentSelectedCharName)
+            {
+                Owner = HostWindow ?? Application.Current?.MainWindow
+            };
+
+            if (selector.ShowDialog() != true || string.IsNullOrWhiteSpace(selector.SelectedCharacterName))
+            {
+                return null;
+            }
+
+            return selector.SelectedCharacterName.Trim();
+        }
+
+        private static bool CanUseSnapshotPuppet(
+            string requestedPuppet,
+            IReadOnlyDictionary<string, bool> serverAvailability,
+            IReadOnlySet<string> reservedPuppets)
+        {
+            return !string.IsNullOrWhiteSpace(requestedPuppet)
+                && serverAvailability.TryGetValue(requestedPuppet, out bool isAvailable)
+                && isAvailable
+                && !reservedPuppets.Contains(requestedPuppet)
+                && CharacterFolder.FullList.Any(character =>
+                    string.Equals(character.Name, requestedPuppet, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private SnapshotConflictDecision ShowSnapshotConflictDialog(
+            GmMultiClientSnapshotClient state,
+            string requestedPuppet)
+        {
+            Window? owner = HostWindow ?? Application.Current?.MainWindow;
+            string clientName = string.IsNullOrWhiteSpace(state.ClientName) ? "Client" : state.ClientName.Trim();
+            string requestedPuppetDescription = string.IsNullOrWhiteSpace(requestedPuppet)
+                ? "no INIPuppet"
+                : requestedPuppet.Trim();
+            MessageBoxResult result = OceanyaMessageBox.Show(
+                owner,
+                $"{clientName} was using {requestedPuppetDescription} as inipuppet but it is currently taken, do you want to change it or delete the client?",
+                "Snapshot INIPuppet Taken",
+                new[]
+                {
+                    new OceanyaMessageBoxButtonOption("Select INIPuppet", MessageBoxResult.Yes, isDefault: true),
+                    new OceanyaMessageBoxButtonOption("Delete Client", MessageBoxResult.No, isCancel: true)
+                },
+                MessageBoxImage.Question);
+            return result == MessageBoxResult.Yes
+                ? SnapshotConflictDecision.SelectIniPuppet
+                : SnapshotConflictDecision.Delete;
+        }
+
+        private AOClient? FindRestoredSelectedClient(
+            GmMultiClientSnapshot snapshot,
+            IReadOnlyList<GmMultiClientSnapshotClient> restoredStates)
+        {
+            if (clients.Count == 0)
+            {
+                return null;
+            }
+
+            if (!string.IsNullOrWhiteSpace(snapshot.SelectedClientName))
+            {
+                AOClient? byName = clients.Values.FirstOrDefault(client =>
+                    string.Equals(client.clientName, snapshot.SelectedClientName, StringComparison.OrdinalIgnoreCase));
+                if (byName != null)
+                {
+                    return byName;
+                }
+            }
+
+            if (snapshot.SelectedClientIndex >= 0 && snapshot.SelectedClientIndex < restoredStates.Count)
+            {
+                string clientName = restoredStates[snapshot.SelectedClientIndex].ClientName;
+                return clients.Values.FirstOrDefault(client =>
+                    string.Equals(client.clientName, clientName, StringComparison.OrdinalIgnoreCase));
+            }
+
+            return clients.Values.FirstOrDefault();
         }
 
         private void ShowMainWindowMessage(string message, string title, MessageBoxButton buttons, MessageBoxImage image)
@@ -2558,7 +3143,10 @@ namespace OceanyaClient
                 RecordAiMessageForClient(bot, bot, chatLogType, characterName, showName, message, iniPuppetId, isFromServer);
             };
         }
-        private async Task AddClientAsync(string? clientName = null)
+        private async Task AddClientInternalAsync(
+            string? clientName = null,
+            GmMultiClientSnapshotClient? restoredState = null,
+            bool suppressInitialCharacterPrompt = false)
         {
             IsEnabled = false;
             try
@@ -2570,7 +3158,9 @@ namespace OceanyaClient
 
             try
             {
-                string defaultClientName = !string.IsNullOrWhiteSpace(clientName)
+                string defaultClientName = !string.IsNullOrWhiteSpace(restoredState?.ClientName)
+                    ? restoredState.ClientName
+                    : !string.IsNullOrWhiteSpace(clientName)
                     ? clientName
                     : $"Client{clients.Count + 1}";
 
@@ -2630,6 +3220,10 @@ namespace OceanyaClient
                 bot.OOCShowname = bot.clientName;
                 bot.switchPosWhenChangingINI = chkPosOnIniSwap.IsChecked == true;
                 bot.FrequencyHintsProvider = () => SaveFile.Data.FrequentlyUsedIniPuppets;
+                if (restoredState != null)
+                {
+                    ApplySnapshotStateToClient(bot, restoredState);
+                }
 
                 ToggleButton toggleBtn = new ToggleButton
                 {
@@ -2657,6 +3251,7 @@ namespace OceanyaClient
                         return;
                     }
                     await targetNetworkClient.SelectFirstAvailableINIPuppet(false);
+                    SetProfileIniPuppetName(bot, targetNetworkClient.iniPuppetName);
 
                     if (useSingleInternalClient)
                     {
@@ -2798,10 +3393,14 @@ namespace OceanyaClient
                     InitializeCommonClientEvents(bot, bot);
                     await ConnectClientAsync(bot, autoSelectCharacter: false);
                     await BootstrapAreaNavigatorAsync(bot);
+                    if (restoredState != null && !string.IsNullOrWhiteSpace(restoredState.IniPuppetName))
+                    {
+                        await bot.SelectIniPuppet(restoredState.IniPuppetName, false);
+                    }
                 }
 
                 WaitForm.CloseForm();
-                if (isNewInternalConnection)
+                if (isNewInternalConnection && !suppressInitialCharacterPrompt)
                 {
                     var (confirmed, selectedClientName) = ShowCharacterSelectorForClient(bot, defaultClientName);
                     if (!confirmed)
@@ -2837,6 +3436,10 @@ namespace OceanyaClient
                         AutomationProperties.SetName(toggleBtn, bot.clientName);
                     }
                 }
+                else if (restoredState != null)
+                {
+                    AutomationProperties.SetName(toggleBtn, bot.clientName);
+                }
 
                 bot.OnDisconnect += () =>
                 {
@@ -2849,6 +3452,8 @@ namespace OceanyaClient
                     {
                         var button = clients.FirstOrDefault(x => x.Value == bot).Key;
                         areaListBootstrapCompletedClients.Remove(bot);
+                        viewportContent?.RemoveClient(bot);
+                        profileIniPuppetNames.Remove(bot);
                         ClearAiClientState(bot);
                         if (aiControllers.Remove(bot, out AOClientAgentController? controller))
                         {
@@ -2872,11 +3477,12 @@ namespace OceanyaClient
             OOCLogControl.UpdateStreamLabel(null);
                             currentClient = null;
                             RefreshAreaNavigatorForCurrentClient();
-                            RefreshDreddOverlayForCurrentContext(promptForUnknownOverlay: false);
-                            UpdateDreddFeatureEnabledState();
-                        }
-                        else
-                        {
+                        RefreshDreddOverlayForCurrentContext(promptForUnknownOverlay: false);
+                        UpdateDreddFeatureEnabledState();
+                        CaptureGmMultiClientSnapshot();
+                    }
+                    else
+                    {
                             var newClient = clients.Values.FirstOrDefault();
                             if (newClient != null)
                             {
@@ -2900,6 +3506,7 @@ namespace OceanyaClient
 
                 toggleBtn.IsChecked = true;
                 UpdateClientTooltip(bot);
+                CaptureGmMultiClientSnapshot();
 
                 if (clients.Count == 1)
                 {
@@ -2940,13 +3547,12 @@ namespace OceanyaClient
             if (useSingleInternalClient)
             {
                 ApplyProfileToSingleInternalClient(client);
-                SyncSingleClientStatusToProfile(client);
             }
 
             currentClient = client;
             ICMessageSettingsControl.SetClient(currentClient);
             OOCLogControl.SetCurrentClient(currentClient);
-            OOCLogControl.txtOOCShowname.Text = currentClient.OOCShowname;
+            SetOocShownameTextForCurrentClient(currentClient.OOCShowname);
             ICLogControl.SetCurrentClient(currentClient);
             RefreshViewportAttachment();
             RefreshAreaNavigatorForCurrentClient();
@@ -3124,13 +3730,74 @@ namespace OceanyaClient
         private void RefreshViewportAttachment()
         {
             EnsureViewportContent();
-            AOClient? incomingMessageClient = GetTargetClientForNetwork(currentClient) ?? currentClient;
-            viewportContent?.AttachClient(currentClient, incomingMessageClient);
+            if (viewportContent == null)
+            {
+                return;
+            }
+
+            foreach (AOClient client in clients.Values)
+            {
+                AOClient? incomingMessageClient = GetTargetClientForNetwork(client) ?? client;
+                viewportContent.EnsureClient(
+                    client,
+                    incomingMessageClient,
+                    CreateViewportMessageFilter(client),
+                    CreateViewportActionFilter(client));
+            }
+
+            AOClient? currentIncomingMessageClient = GetTargetClientForNetwork(currentClient) ?? currentClient;
+            viewportContent.AttachClient(
+                currentClient,
+                currentIncomingMessageClient,
+                currentClient == null ? null : CreateViewportMessageFilter(currentClient),
+                currentClient == null ? null : CreateViewportActionFilter(currentClient));
         }
 
         private void EnsureViewportContent()
         {
             viewportContent ??= new AO2ViewportWindowContent();
+        }
+
+        private Func<ICMessage, bool>? CreateViewportMessageFilter(AOClient profileClient)
+        {
+            if (!useSingleInternalClient)
+            {
+                return null;
+            }
+
+            return message => IsViewportMessageForProfile(profileClient, message);
+        }
+
+        private Func<string, bool>? CreateViewportActionFilter(AOClient profileClient)
+        {
+            if (!useSingleInternalClient)
+            {
+                return null;
+            }
+
+            return showName => string.IsNullOrWhiteSpace(profileClient.ICShowname)
+                || string.Equals(
+                    showName?.Trim(),
+                    profileClient.ICShowname.Trim(),
+                    StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool IsViewportMessageForProfile(AOClient profileClient, ICMessage message)
+        {
+            if (message.CharId >= 0 && profileClient.iniPuppetID >= 0 && message.CharId == profileClient.iniPuppetID)
+            {
+                return true;
+            }
+
+            bool sameCharacter = string.Equals(
+                message.Character?.Trim(),
+                profileClient.currentINI?.Name?.Trim(),
+                StringComparison.OrdinalIgnoreCase);
+            bool sameShowname = string.Equals(
+                message.ShowName?.Trim(),
+                profileClient.ICShowname?.Trim(),
+                StringComparison.OrdinalIgnoreCase);
+            return sameCharacter && sameShowname;
         }
 
         private void ViewportWindow_SourceInitialized(object? sender, EventArgs e)
@@ -3439,6 +4106,7 @@ namespace OceanyaClient
 
             if (!useSingleInternalClient)
             {
+                viewportContent?.RemoveClient(clientToRemove);
                 await clientToRemove.Disconnect();
                 return;
             }
@@ -3447,6 +4115,8 @@ namespace OceanyaClient
             if (button != null)
             {
                 ClearAiClientState(clientToRemove);
+                viewportContent?.RemoveClient(clientToRemove);
+                profileIniPuppetNames.Remove(clientToRemove);
                 if (aiControllers.Remove(clientToRemove, out AOClientAgentController? controller))
                 {
                     controller.Dispose();
@@ -3476,12 +4146,17 @@ namespace OceanyaClient
                 RefreshAreaNavigatorForCurrentClient();
                 RefreshDreddOverlayForCurrentContext(promptForUnknownOverlay: false);
                 UpdateDreddFeatureEnabledState();
+                CaptureGmMultiClientSnapshot();
             }
             else
             {
                 if (ReferenceEquals(currentClient, clientToRemove))
                 {
                     SelectClient(clients.Values.First());
+                }
+                else
+                {
+                    CaptureGmMultiClientSnapshot();
                 }
             }
         }
@@ -3505,6 +4180,7 @@ namespace OceanyaClient
             }
 
             SelectClient(clients[clickedButton]);
+            CaptureGmMultiClientSnapshot();
         }
         private void ClientToggleButton_Unchecked(object sender, RoutedEventArgs e)
         {

@@ -466,6 +466,7 @@ namespace OceanyaClient
             Width = 510,
             Height = 676
         };
+        public GmMultiClientSnapshot GMMultiClientSnapshot { get; set; } = new GmMultiClientSnapshot();
         public string GMViewportChatBackgroundColor { get; set; } = string.Empty;
         public double CharacterCreatorPreviewVolume { get; set; } = 1.0;
         public double AudioMusicVolume { get; set; } = 0.5;
@@ -502,6 +503,41 @@ namespace OceanyaClient
         public List<CharacterCreatorButtonEffectPreset> CharacterCreatorButtonEffectPresets { get; set; } =
             new List<CharacterCreatorButtonEffectPreset>();
         public CharacterCreatorLastBulkButtonIconConfig? CharacterCreatorLastBulkButtonIconConfig { get; set; }
+    }
+
+    public class GmMultiClientSnapshot
+    {
+        public List<GmMultiClientSnapshotClient> Clients { get; set; } = new List<GmMultiClientSnapshotClient>();
+        public int SelectedClientIndex { get; set; } = -1;
+        public string SelectedClientName { get; set; } = string.Empty;
+        public bool UseSingleInternalClient { get; set; }
+    }
+
+    public class GmMultiClientSnapshotClient
+    {
+        public string ClientName { get; set; } = string.Empty;
+        public string IniPuppetName { get; set; } = string.Empty;
+        public int IniPuppetId { get; set; } = -1;
+        public string LocalCharacterName { get; set; } = string.Empty;
+        public string EmoteDisplayId { get; set; } = string.Empty;
+        public string ICShowname { get; set; } = string.Empty;
+        public string OOCShowname { get; set; } = string.Empty;
+        public string Position { get; set; } = string.Empty;
+        public string Background { get; set; } = string.Empty;
+        public string Sfx { get; set; } = string.Empty;
+        public int DeskMod { get; set; }
+        public int EmoteMod { get; set; }
+        public int ShoutModifier { get; set; }
+        public bool Flip { get; set; }
+        public int Effect { get; set; }
+        public bool Screenshake { get; set; }
+        public int TextColor { get; set; }
+        public bool PreanimEnabled { get; set; }
+        public bool Immediate { get; set; }
+        public bool Additive { get; set; }
+        public int SelfOffsetHorizontal { get; set; }
+        public int SelfOffsetVertical { get; set; }
+        public bool SwitchPosWhenChangingIni { get; set; }
     }
 
     public static class SaveFile
@@ -696,6 +732,7 @@ namespace OceanyaClient
                 Width = 510,
                 Height = 676
             };
+            data.GMMultiClientSnapshot = NormalizeGmMultiClientSnapshot(data.GMMultiClientSnapshot);
             data.GMViewportChatBackgroundColor = NormalizeOptionalColor(data.GMViewportChatBackgroundColor);
             ClampWindowState(data.FolderVisualizerWindowState);
             ClampWindowState(data.EmoteVisualizerWindowState);
@@ -967,6 +1004,51 @@ namespace OceanyaClient
                 .Where(rule => !string.IsNullOrWhiteSpace(rule.Match)
                     || (rule.Kind == ExtraAudioRuleKind.Blip && rule.Target == ExtraAudioRuleTarget.Any))
                 .ToList();
+        }
+
+        private static GmMultiClientSnapshot NormalizeGmMultiClientSnapshot(GmMultiClientSnapshot? snapshot)
+        {
+            snapshot ??= new GmMultiClientSnapshot();
+            snapshot.Clients = (snapshot.Clients ?? new List<GmMultiClientSnapshotClient>())
+                .Where(client => client != null)
+                .Select(client => new GmMultiClientSnapshotClient
+                {
+                    ClientName = client.ClientName?.Trim() ?? string.Empty,
+                    IniPuppetName = client.IniPuppetName?.Trim() ?? string.Empty,
+                    IniPuppetId = client.IniPuppetId,
+                    LocalCharacterName = client.LocalCharacterName?.Trim() ?? string.Empty,
+                    EmoteDisplayId = client.EmoteDisplayId?.Trim() ?? string.Empty,
+                    ICShowname = client.ICShowname?.Trim() ?? string.Empty,
+                    OOCShowname = client.OOCShowname?.Trim() ?? string.Empty,
+                    Position = client.Position?.Trim() ?? string.Empty,
+                    Background = client.Background?.Trim() ?? string.Empty,
+                    Sfx = client.Sfx?.Trim() ?? string.Empty,
+                    DeskMod = client.DeskMod,
+                    EmoteMod = client.EmoteMod,
+                    ShoutModifier = client.ShoutModifier,
+                    Flip = client.Flip,
+                    Effect = client.Effect,
+                    Screenshake = client.Screenshake,
+                    TextColor = client.TextColor,
+                    PreanimEnabled = client.PreanimEnabled,
+                    Immediate = client.Immediate,
+                    Additive = client.Additive,
+                    SelfOffsetHorizontal = client.SelfOffsetHorizontal,
+                    SelfOffsetVertical = client.SelfOffsetVertical,
+                    SwitchPosWhenChangingIni = client.SwitchPosWhenChangingIni
+                })
+                .Where(client => !string.IsNullOrWhiteSpace(client.ClientName)
+                    || !string.IsNullOrWhiteSpace(client.IniPuppetName)
+                    || !string.IsNullOrWhiteSpace(client.LocalCharacterName))
+                .ToList();
+
+            if (snapshot.SelectedClientIndex < -1 || snapshot.SelectedClientIndex >= snapshot.Clients.Count)
+            {
+                snapshot.SelectedClientIndex = snapshot.Clients.Count > 0 ? 0 : -1;
+            }
+
+            snapshot.SelectedClientName = snapshot.SelectedClientName?.Trim() ?? string.Empty;
+            return snapshot;
         }
 
         private static bool IsValidCallwordRule(CallwordRule rule)

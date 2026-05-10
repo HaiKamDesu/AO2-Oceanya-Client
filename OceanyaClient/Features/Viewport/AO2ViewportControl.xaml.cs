@@ -23,6 +23,8 @@ namespace OceanyaClient.Features.Viewport
     {
         private AOClient? sceneClient;
         private AOClient? messageSourceClient;
+        private Func<ICMessage, bool>? messageFilter;
+        private Func<string, bool>? actionFilter;
         private DispatcherTimer? pendingMessageTimer;
         private DispatcherTimer? chatTextTimer;
         private DispatcherTimer? screenShakeTimer;
@@ -282,7 +284,22 @@ namespace OceanyaClient.Features.Viewport
         /// </summary>
         public void AttachClient(AOClient? client, AOClient? incomingMessageClient)
         {
-            if (ReferenceEquals(sceneClient, client) && ReferenceEquals(messageSourceClient, incomingMessageClient))
+            AttachClient(client, incomingMessageClient, null, null);
+        }
+
+        /// <summary>
+        /// Attaches this viewport to a GM profile while listening through optional incoming-message filters.
+        /// </summary>
+        public void AttachClient(
+            AOClient? client,
+            AOClient? incomingMessageClient,
+            Func<ICMessage, bool>? messageFilter,
+            Func<string, bool>? actionFilter)
+        {
+            if (ReferenceEquals(sceneClient, client)
+                && ReferenceEquals(messageSourceClient, incomingMessageClient)
+                && ReferenceEquals(this.messageFilter, messageFilter)
+                && ReferenceEquals(this.actionFilter, actionFilter))
             {
                 return;
             }
@@ -292,6 +309,8 @@ namespace OceanyaClient.Features.Viewport
             DetachClientEvents();
             sceneClient = client;
             messageSourceClient = incomingMessageClient ?? client;
+            this.messageFilter = messageFilter;
+            this.actionFilter = actionFilter;
             AttachClientEvents();
             if (sceneClient == null && messageSourceClient == null)
             {
@@ -335,6 +354,11 @@ namespace OceanyaClient.Features.Viewport
 
         private void OnICMessageReceived(ICMessage message)
         {
+            if (messageFilter != null && !messageFilter(message))
+            {
+                return;
+            }
+
             Dispatcher.Invoke(() => RenderMessage(message));
         }
 
@@ -355,6 +379,11 @@ namespace OceanyaClient.Features.Viewport
 
         private void OnIcActionReceived(string showName, string action, bool isSentFromSelf, ICMessage.TextColors textColor)
         {
+            if (actionFilter != null && !actionFilter(showName))
+            {
+                return;
+            }
+
             Dispatcher.Invoke(() =>
             {
                 if (!IsVisible)
