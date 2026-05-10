@@ -4023,23 +4023,8 @@ namespace OceanyaClient
             EnsureViewportContent();
             if (viewportWindow != null)
             {
-                if (!viewportWindow.IsVisible)
-                {
-                    viewportWindow.Show();
-                }
-
-                viewportWindow.Activate();
                 RefreshViewportAttachment();
-                Dispatcher.BeginInvoke(
-                    new Action(() =>
-                    {
-                        NormalizeVisibleViewportWindowSize(preferWidth: false);
-                        CaptureViewportWindowState();
-                        SaveFile.Data.GMViewportWindowState ??= new ViewportWindowState();
-                        SaveFile.Data.GMViewportWindowState.IsVisible = true;
-                        SaveFile.Save();
-                    }),
-                    System.Windows.Threading.DispatcherPriority.Loaded);
+                ShowViewportWindowAfterRestore();
                 return;
             }
 
@@ -4105,18 +4090,45 @@ namespace OceanyaClient
                 viewportWindowSource = null;
                 viewportWindow = null;
             };
+            ShowViewportWindowAfterRestore();
+        }
+
+        private void ShowViewportWindowAfterRestore()
+        {
+            if (viewportWindow == null)
+            {
+                return;
+            }
+
             isRestoringViewportWindow = true;
-            viewportWindow.Show();
+            viewportWindow.Opacity = 0;
+            if (!viewportWindow.IsVisible)
+            {
+                viewportWindow.Show();
+            }
+
             viewportWindow.Activate();
             Dispatcher.BeginInvoke(
                 new Action(() =>
                 {
-                    NormalizeVisibleViewportWindowSize(preferWidth: false);
-                    isRestoringViewportWindow = false;
-                    CaptureViewportWindowState();
-                    SaveFile.Data.GMViewportWindowState ??= new ViewportWindowState();
-                    SaveFile.Data.GMViewportWindowState.IsVisible = true;
-                    SaveFile.Save();
+                    try
+                    {
+                        NormalizeVisibleViewportWindowSize(preferWidth: false);
+                        isRestoringViewportWindow = false;
+                        CaptureViewportWindowState();
+                        SaveFile.Data.GMViewportWindowState ??= new ViewportWindowState();
+                        SaveFile.Data.GMViewportWindowState.IsVisible = true;
+                        SaveFile.Save();
+                    }
+                    finally
+                    {
+                        isRestoringViewportWindow = false;
+                        if (viewportWindow != null)
+                        {
+                            viewportWindow.Opacity = 1;
+                            viewportWindow.Activate();
+                        }
+                    }
                 }),
                 System.Windows.Threading.DispatcherPriority.Loaded);
         }
