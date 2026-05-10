@@ -437,6 +437,26 @@ namespace AOBot_Testing.Agents
                 OnSideChange?.Invoke(newPos);
             }
         }
+
+        public async Task SetServerPositionAsync(string newPos)
+        {
+            string normalizedPos = newPos?.Trim() ?? string.Empty;
+            SetPos(normalizedPos);
+
+            if (!IsTransportConnected)
+            {
+                return;
+            }
+
+            string showname = string.IsNullOrWhiteSpace(OOCShowname)
+                ? clientName
+                : OOCShowname;
+            string command = string.IsNullOrWhiteSpace(normalizedPos)
+                ? "/pos"
+                : "/pos " + normalizedPos;
+            await SendOOCMessage(showname, command);
+        }
+
         public void SetICShowname(string newShowname)
         {
             ICShowname = newShowname;
@@ -605,10 +625,7 @@ namespace AOBot_Testing.Agents
                 var fields = message.Split("#");
                 var newPos = fields[1];
 
-                if (!string.IsNullOrEmpty(newPos))
-                {
-                    SetPos(newPos);
-                }
+                SetPos(newPos);
             }
             else if (message.StartsWith("BN#"))
             {
@@ -1469,6 +1486,13 @@ namespace AOBot_Testing.Agents
             }
 
             serverFeatures.Clear();
+        }
+
+        public async Task CloseForShutdownAsync()
+        {
+            dead = true;
+            aliveTime.Stop();
+            await DisconnectWebsocket();
         }
         #endregion
 

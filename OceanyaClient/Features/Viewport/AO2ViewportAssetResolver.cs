@@ -987,7 +987,7 @@ namespace OceanyaClient.Features.Viewport
         /// <summary>
         /// Loads a bitmap or first animation frame into a WPF image source.
         /// </summary>
-        public static ImageSource? LoadImage(string? path)
+        public static ImageSource? LoadImage(string? path, int decodePixelWidth = 0)
         {
             if (string.IsNullOrWhiteSpace(path))
             {
@@ -999,7 +999,7 @@ namespace OceanyaClient.Features.Viewport
                 return null;
             }
 
-            return Ao2AnimationPreview.LoadStaticPreviewImage(path, decodePixelWidth: 0, fallback: null);
+            return Ao2AnimationPreview.LoadStaticPreviewImage(path, decodePixelWidth: decodePixelWidth, fallback: null);
         }
 
         private static Background? ResolveBackground(string? backgroundName)

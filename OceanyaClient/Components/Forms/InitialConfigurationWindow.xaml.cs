@@ -77,6 +77,8 @@ namespace OceanyaClient
             bool launchWaitFormShown = false;
             bool launchWaitFormClosed = true;
             string launchTitle = "Opening " + selectedFunctionality.DisplayName + "...";
+            TargetedAssetRefreshPlan deferredTargetedRefreshPlan = new TargetedAssetRefreshPlan();
+            bool shouldStartDeferredTargetedRefresh = false;
 
             async Task EnsureLaunchWaitFormAsync(string subtitle)
             {
@@ -140,7 +142,8 @@ namespace OceanyaClient
 
                 if (selectedFunctionality.RequiresServerEndpoint)
                 {
-                    if (!OceanyaTestMode.Current.SkipServerValidation)
+                    if (!OceanyaTestMode.Current.SkipServerValidation
+                        && !ShouldDeferLaunchServerProbe(selectedFunctionality, selectedServerEndpoint))
                     {
                         ServerEndpointDefinition validatedServer = await ValidateSelectedServerForLaunchAsync(
                             selectedServer,
@@ -270,14 +273,8 @@ namespace OceanyaClient
                 }
                 else if (shouldRunTargetedRefresh)
                 {
-                    Window? refreshOwner = HostWindow ?? Application.Current?.MainWindow;
-                    if (refreshOwner == null)
-                    {
-                        return;
-                    }
-
-                    await CloseLaunchWaitFormAsync();
-                    await RefreshTargetedAssetsAsync(refreshOwner, trackedChangePlan);
+                    deferredTargetedRefreshPlan = trackedChangePlan;
+                    shouldStartDeferredTargetedRefresh = true;
                     RefreshInfoCheckBox.IsChecked = false;
                 }
 
@@ -302,6 +299,11 @@ namespace OceanyaClient
             {
                 await CloseLaunchWaitFormAsync();
                 TryPlayStartupFunctionalityJingle();
+                if (shouldStartDeferredTargetedRefresh)
+                {
+                    shouldStartDeferredTargetedRefresh = false;
+                    _ = ClientAssetRefreshService.RefreshTargetedAssetsInBackgroundAsync(deferredTargetedRefreshPlan);
+                }
             }
 
             async Task HandleStartupFunctionalityClosedAsync()
@@ -405,6 +407,30 @@ namespace OceanyaClient
                     : ServerPingStatus.Offline;
 
             return validationTarget;
+        }
+
+        private static bool ShouldDeferLaunchServerProbe(
+            StartupFunctionalityOption selectedFunctionality,
+            string selectedServerEndpoint)
+        {
+            if (!selectedFunctionality.RequiresServerEndpoint)
+            {
+                return false;
+            }
+
+            if (!IsValidServerEndpoint(selectedServerEndpoint))
+            {
+                return false;
+            }
+
+            return string.Equals(
+                    selectedFunctionality.Id,
+                    StartupFunctionalityIds.GmMultiClient,
+                    StringComparison.OrdinalIgnoreCase)
+                || string.Equals(
+                    selectedFunctionality.Id,
+                    StartupFunctionalityIds.Ao2AiBot,
+                    StringComparison.OrdinalIgnoreCase);
         }
 
         private void SelectServerButton_Click(object sender, RoutedEventArgs e)

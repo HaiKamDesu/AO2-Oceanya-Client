@@ -88,6 +88,29 @@ namespace OceanyaClient
         }
 
         /// <summary>
+        /// Refreshes only the supplied asset scope without blocking the launching window.
+        /// </summary>
+        internal static Task RefreshTargetedAssetsInBackgroundAsync(TargetedAssetRefreshPlan plan)
+        {
+            if (plan == null || !plan.HasAnyWork)
+            {
+                return Task.CompletedTask;
+            }
+
+            return Task.Run(() =>
+            {
+                try
+                {
+                    RefreshAssets(plan, progress: null);
+                }
+                catch (Exception ex)
+                {
+                    CustomConsole.Error("Background targeted asset refresh failed.", ex, CustomConsole.LogCategory.System);
+                }
+            });
+        }
+
+        /// <summary>
         /// Refreshes only the assets affected by the supplied local sync changes.
         /// </summary>
         public static void RefreshChangedAssets(

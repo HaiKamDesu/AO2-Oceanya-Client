@@ -232,7 +232,7 @@ namespace AOBot_Testing.Agents
                 if (clientWebSocket.State == WebSocketState.Open || clientWebSocket.State == WebSocketState.CloseReceived)
                 {
                     await clientWebSocket.CloseAsync(
-                        WebSocketCloseStatus.NormalClosure,
+                        WebSocketCloseStatus.EndpointUnavailable,
                         "Disconnecting",
                         cancellationToken);
                 }

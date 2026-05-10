@@ -920,7 +920,13 @@ namespace OceanyaClient.Features.Viewport
                 return null;
             }
 
-            if (Ao2AnimationPreview.TryCreateAnimationPlayer(path, loop, out IAnimationPlayer? player, usePreviewLimits: false)
+            int targetMaxDimension = GetViewportTargetMaxDimension(image);
+            if (Ao2AnimationPreview.TryCreateAnimationPlayer(
+                    path,
+                    loop,
+                    out IAnimationPlayer? player,
+                    usePreviewLimits: false,
+                    maxDimensionOverride: targetMaxDimension)
                 && player != null)
             {
                 animationPlayers[image] = player;
@@ -936,7 +942,7 @@ namespace OceanyaClient.Features.Viewport
                 return player;
             }
 
-            ImageSource? source = AO2ViewportAssetResolver.LoadImage(path);
+            ImageSource? source = AO2ViewportAssetResolver.LoadImage(path, GetViewportTargetDecodeWidth(image));
             image.Source = source;
             image.Visibility = source != null ? Visibility.Visible : Visibility.Collapsed;
             return null;
@@ -948,7 +954,9 @@ namespace OceanyaClient.Features.Viewport
             bool visible,
             Stretch stretch)
         {
-            ImageSource? source = AO2ViewportAssetResolver.LoadImage(placement.ImagePath);
+            ImageSource? source = AO2ViewportAssetResolver.LoadImage(
+                placement.ImagePath,
+                Math.Max(1, (int)Math.Ceiling(placement.Width)));
             image.Source = source;
             image.Width = placement.Width;
             image.Height = placement.Height;
@@ -999,6 +1007,36 @@ namespace OceanyaClient.Features.Viewport
             }
 
             return player;
+        }
+
+        private static int GetViewportTargetDecodeWidth(Image image)
+        {
+            double width = image.Width;
+            if (double.IsNaN(width) || width <= 0)
+            {
+                width = image.ActualWidth;
+            }
+
+            return Math.Max(1, (int)Math.Ceiling(width));
+        }
+
+        private static int GetViewportTargetMaxDimension(Image image)
+        {
+            double width = image.Width;
+            double height = image.Height;
+            if (double.IsNaN(width) || width <= 0)
+            {
+                width = image.ActualWidth;
+            }
+
+            if (double.IsNaN(height) || height <= 0)
+            {
+                height = image.ActualHeight;
+            }
+
+            int targetWidth = Math.Max(1, (int)Math.Ceiling(width));
+            int targetHeight = Math.Max(1, (int)Math.Ceiling(height));
+            return Math.Max(targetWidth, targetHeight);
         }
 
         private static void ApplyOffset(Image image, (int Horizontal, int Vertical) offset)

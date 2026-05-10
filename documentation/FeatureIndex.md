@@ -16,7 +16,7 @@ Use this file as the first stop before broad repository searches. It should poin
 ## GM Multi-Client Snapshot Restore
 - Doc: `Documentation/GmMultiClientSnapshotRestore.md`
 - Main code: `OceanyaClient/MainWindow.xaml.cs`, `OceanyaClient/Components/ICMessageSettings.xaml.cs`, `OceanyaClient/Components/Forms/CharacterSelectorWindow.xaml.cs`, `OceanyaClient/Components/Forms/OceanyaMessageBox.xaml.cs`, `Common/SaveFile.cs`
-- Notes: Saves GM client profiles, selected client, INI puppets, local render character/emote, shownames, OOC names, position/effect/message properties, and restores the profile set after launching against a new server. Restore resolves occupied INI puppets before creating clients, treats other snapshot puppets as reserved choices, uses shared custom-button message boxes for conflicts, and preserves the local iniswap character when the server puppet must change.
+- Notes: Saves GM client profiles, selected client, INI puppets, local render character/emote, shownames, OOC names, position/effect/message properties, and restores the profile set after launching against a new server. Restore resolves occupied INI puppets before creating clients, treats other snapshot puppets as reserved choices, uses shared custom-button message boxes for conflicts, preserves the local iniswap character when the server puppet must change, and documents startup wait reductions around server probes, targeted asset refresh, and direct snapshot restore.
 
 ## Debug Console And Logging
 - Doc: `Documentation/DebugConsoleAndLogging.md`

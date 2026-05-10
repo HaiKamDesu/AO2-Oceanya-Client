@@ -77,6 +77,24 @@ public class NetworkTests
     }
 
     [Test]
+    public async Task HandleMessage_AcceptsEmptyServerPositionPacket()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+
+        string? side = null;
+        client.OnSideChange += newPos => side = newPos;
+
+        await client.HandleMessage("SP#wit#%");
+        await client.HandleMessage("SP##%");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(client.curPos, Is.EqualTo(string.Empty));
+            Assert.That(side, Is.EqualTo(string.Empty));
+        });
+    }
+
+    [Test]
     public async Task HandleMessage_ParsesOocPacketAndDecodesSymbols()
     {
         var client = new AOClient("ws://localhost:10001/");

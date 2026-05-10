@@ -29,6 +29,8 @@ namespace OceanyaClient
         private static readonly Color HoverBorder   = Color.FromRgb(0x88, 0x88, 0x88);
         private static readonly Color SelectedBg    = Color.FromRgb(0x1A, 0x32, 0x4A);
         private static readonly Color SelectedBorder = Color.FromRgb(0x5A, 0x9A, 0xD8);
+        private static readonly Color CurrentBg = Color.FromRgb(0x2F, 0x2A, 0x12);
+        private static readonly Color CurrentBorder = Color.FromRgb(0xD8, 0xB4, 0x5A);
 
         // Taken (server slot occupied) — dark red
         private static readonly Color TakenBg     = Color.FromRgb(0x3D, 0x0F, 0x0F);
@@ -174,7 +176,8 @@ namespace OceanyaClient
                     {
                         if (string.Equals(entry.Name, selectedCharacterName, StringComparison.OrdinalIgnoreCase))
                         {
-                            if (entry.IsAvailable && entry.IsLocal)
+                            if ((entry.IsAvailable || string.Equals(entry.Name, selectedCharacterName, StringComparison.OrdinalIgnoreCase))
+                                && entry.IsLocal)
                                 ApplySelection(card, entry.Name);
                             found = true;
                             break;
@@ -221,10 +224,12 @@ namespace OceanyaClient
 
             bool isTaken    = !entry.IsAvailable;
             bool isNotLocal = !entry.IsLocal;
-            bool isSelectable = !isTaken && !isNotLocal;
+            bool isCurrent = !string.IsNullOrWhiteSpace(selectedCharacterName)
+                && string.Equals(entry.Name, selectedCharacterName, StringComparison.OrdinalIgnoreCase);
+            bool isSelectable = (!isTaken || isCurrent) && !isNotLocal;
 
-            Color bgColor     = isNotLocal ? NotLocalBg     : isTaken ? TakenBg     : NormalBg;
-            Color borderColor = isNotLocal ? NotLocalBorder : isTaken ? TakenBorder : NormalBorder;
+            Color bgColor = isCurrent ? CurrentBg : isNotLocal ? NotLocalBg : isTaken ? TakenBg : NormalBg;
+            Color borderColor = isCurrent ? CurrentBorder : isNotLocal ? NotLocalBorder : isTaken ? TakenBorder : NormalBorder;
 
             Border card = new Border
             {
@@ -270,7 +275,7 @@ namespace OceanyaClient
 
             TextBlock nameLabel = new TextBlock
             {
-                Text = entry.Name,
+                Text = isCurrent ? entry.Name + "\nCurrent" : entry.Name,
                 Foreground = new SolidColorBrush(isNotLocal
                     ? Color.FromRgb(0x77, 0x77, 0x77)
                     : Color.FromRgb(0xDC, 0xDC, 0xDC)),
@@ -309,7 +314,7 @@ namespace OceanyaClient
                 card.MouseLeave += (_, _) =>
                 {
                     if (!IsCardSelected(card))
-                        card.BorderBrush = new SolidColorBrush(NormalBorder);
+                        card.BorderBrush = new SolidColorBrush(isCurrent ? CurrentBorder : NormalBorder);
                 };
             }
 

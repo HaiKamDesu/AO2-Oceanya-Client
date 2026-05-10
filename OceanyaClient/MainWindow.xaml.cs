@@ -34,6 +34,7 @@ namespace OceanyaClient
         public event Action? FinishedLoading;
 
         private readonly Dictionary<ToggleButton, AOClient> clients = new Dictionary<ToggleButton, AOClient>();
+        private readonly List<AOClient> clientOrder = new List<AOClient>();
         private readonly Dictionary<AOClient, string> profileIniPuppetNames = new Dictionary<AOClient, string>();
         private readonly Dictionary<AOClient, AOClientAgentController> aiControllers = new Dictionary<AOClient, AOClientAgentController>();
         private readonly Dictionary<AOClient, List<PendingAiOriginResponse>> pendingAiOriginResponses = new Dictionary<AOClient, List<PendingAiOriginResponse>>();
@@ -49,6 +50,7 @@ namespace OceanyaClient
         private AO2ViewportWindowContent? viewportContent;
         private bool isMainWindowClosing;
         private bool hasHookedHostWindowClosing;
+        private bool cleanCloseInProgress;
         private bool hasAppliedMainWindowState;
         private bool hasAttemptedSnapshotRestore;
         private bool isRestoringSnapshot;
@@ -344,6 +346,30 @@ namespace OceanyaClient
             {
                 await OpenCharacterInEditorAsync(characterDirectory);
             };
+            ICMessageSettingsControl.OnPositionConfirmed += async (profileClient, position) =>
+            {
+                AOClient? networkClient = GetTargetClientForNetwork(profileClient);
+                if (networkClient == null)
+                {
+                    return;
+                }
+
+                try
+                {
+                    await networkClient.SetServerPositionAsync(position);
+                    if (useSingleInternalClient && !ReferenceEquals(networkClient, profileClient))
+                    {
+                        profileClient.SetPos(networkClient.curPos, true);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    CustomConsole.Error(
+                        $"Failed to set server position \"{position}\".",
+                        ex,
+                        CustomConsole.LogCategory.Network);
+                }
+            };
             ICMessageSettingsControl.OnClientStateChanged += CaptureGmMultiClientSnapshot;
 
             OOCLogControl.txtOOCShowname.Text = SaveFile.Data.OOCName;
@@ -428,13 +454,48 @@ namespace OceanyaClient
             }
 
             hasHookedHostWindowClosing = true;
-            hostWindow.Closing += (_, _) =>
+            hostWindow.Closing += async (_, e) =>
             {
+                if (cleanCloseInProgress)
+                {
+                    return;
+                }
+
+                e.Cancel = true;
+                cleanCloseInProgress = true;
+                IsEnabled = false;
                 isMainWindowClosing = true;
                 viewportContent?.AttachClient(null, null);
                 viewportWindow?.Close();
                 callwordAudioNotifier.Dispose();
+                await DisconnectAllClientsForShutdownAsync();
+                IsEnabled = true;
+                hostWindow.Close();
             };
+        }
+
+        private async Task DisconnectAllClientsForShutdownAsync()
+        {
+            List<AOClient> clientsToDisconnect = clientOrder
+                .Where(client => clients.Values.Contains(client))
+                .Concat(singleInternalClient != null ? new[] { singleInternalClient } : Array.Empty<AOClient>())
+                .Distinct()
+                .ToList();
+
+            foreach (AOClient client in clientsToDisconnect)
+            {
+                try
+                {
+                    await client.CloseForShutdownAsync();
+                }
+                catch (Exception ex)
+                {
+                    CustomConsole.Error(
+                        $"Failed to cleanly disconnect client \"{client.clientName}\".",
+                        ex,
+                        CustomConsole.LogCategory.Network);
+                }
+            }
         }
 
         private void ApplySavedMainWindowState()
@@ -2556,12 +2617,31 @@ namespace OceanyaClient
         private (bool confirmed, string? selectedClientName) ShowCharacterSelectorForClient(
             AOClient bot,
             string? defaultClientName = null,
+            IReadOnlyCollection<string>? additionalUnavailableCharacters = null,
+            bool preserveLocalCharacter = false)
+        {
+            ClientCharacterSelectionResult result = ShowCharacterSelectorForClientSelection(
+                bot,
+                defaultClientName,
+                additionalUnavailableCharacters);
+            if (!result.Confirmed || string.IsNullOrWhiteSpace(result.SelectedCharacterName))
+            {
+                return (false, null);
+            }
+
+            _ = ApplyCharacterSelectionAsync(bot, result.SelectedCharacterName, preserveLocalCharacter);
+            return (true, result.SelectedClientName);
+        }
+
+        private ClientCharacterSelectionResult ShowCharacterSelectorForClientSelection(
+            AOClient bot,
+            string? defaultClientName = null,
             IReadOnlyCollection<string>? additionalUnavailableCharacters = null)
         {
             AOClient? networkClient = GetTargetClientForNetwork(bot);
             if (networkClient == null)
             {
-                return (false, null);
+                return ClientCharacterSelectionResult.Cancelled;
             }
 
             CharacterSelectorWindow selector = new CharacterSelectorWindow(
@@ -2575,12 +2655,11 @@ namespace OceanyaClient
 
             if (selector.ShowDialog() != true || string.IsNullOrWhiteSpace(selector.SelectedCharacterName))
             {
-                return (false, null);
+                return ClientCharacterSelectionResult.Cancelled;
             }
 
             string charName = selector.SelectedCharacterName;
-            _ = ApplyCharacterSelectionAsync(bot, charName);
-            return (true, selector.SelectedClientName);
+            return new ClientCharacterSelectionResult(true, charName, selector.SelectedClientName);
         }
 
         private static IReadOnlyDictionary<string, bool> BuildCharacterSelectorAvailability(
@@ -2610,7 +2689,12 @@ namespace OceanyaClient
             return availability;
         }
 
-        private async Task ApplyCharacterSelectionAsync(AOClient bot, string charName)
+        private Task ApplyCharacterSelectionAsync(AOClient bot, string charName)
+        {
+            return ApplyCharacterSelectionAsync(bot, charName, preserveLocalCharacter: false);
+        }
+
+        private async Task ApplyCharacterSelectionAsync(AOClient bot, string charName, bool preserveLocalCharacter)
         {
             try
             {
@@ -2620,16 +2704,37 @@ namespace OceanyaClient
                     return;
                 }
 
-                await networkClient.SelectIniPuppet(charName, true);
+                CharacterFolder? previousCharacter = bot.currentINI;
+                Emote? previousEmote = bot.currentEmote;
+                string previousICShowname = bot.ICShowname;
+                string previousPosition = bot.curPos;
+
+                await networkClient.SelectIniPuppet(charName, !preserveLocalCharacter);
                 SetProfileIniPuppetName(bot, charName);
 
                 if (useSingleInternalClient && !ReferenceEquals(networkClient, bot))
                 {
-                    if (networkClient.currentINI != null)
+                    if (!preserveLocalCharacter && networkClient.currentINI != null)
                     {
                         bot.SetCharacter(networkClient.currentINI);
                     }
                     bot.iniPuppetID = networkClient.iniPuppetID;
+                }
+
+                if (preserveLocalCharacter)
+                {
+                    bot.SetCharacter(previousCharacter);
+                    if (previousEmote != null)
+                    {
+                        bot.SetEmote(previousEmote.DisplayID);
+                    }
+
+                    bot.SetICShowname(previousICShowname);
+                    bot.SetPos(previousPosition);
+                    if (ReferenceEquals(bot, currentClient))
+                    {
+                        ICMessageSettingsControl.SetClient(bot);
+                    }
                 }
 
                 if (!SaveFile.Data.FrequentlyUsedIniPuppets.ContainsKey(charName))
@@ -2773,7 +2878,9 @@ namespace OceanyaClient
                 return;
             }
 
-            List<AOClient> clientList = clients.Values.ToList();
+            List<AOClient> clientList = clientOrder
+                .Where(client => clients.Values.Contains(client))
+                .ToList();
             int selectedIndex = currentClient == null ? -1 : clientList.IndexOf(currentClient);
             SaveFile.Data.GMMultiClientSnapshot = new GmMultiClientSnapshot
             {
@@ -2783,6 +2890,28 @@ namespace OceanyaClient
                 UseSingleInternalClient = useSingleInternalClient
             };
             SaveFile.Save();
+        }
+
+        private void MoveClient(AOClient client, int offset)
+        {
+            ToggleButton? button = clients.FirstOrDefault(pair => ReferenceEquals(pair.Value, client)).Key;
+            if (button == null || !EmoteGrid.MoveElement(button, offset))
+            {
+                return;
+            }
+
+            int index = clientOrder.FindIndex(existing => ReferenceEquals(existing, client));
+            int targetIndex = index + offset;
+            if (index < 0 || targetIndex < 0 || targetIndex >= clientOrder.Count)
+            {
+                return;
+            }
+
+            clientOrder.RemoveAt(index);
+            clientOrder.Insert(targetIndex, client);
+
+            SelectClient(client);
+            CaptureGmMultiClientSnapshot();
         }
 
         private async Task RestoreGmMultiClientSnapshotAsync()
@@ -2835,19 +2964,24 @@ namespace OceanyaClient
                 }
                 else
                 {
-                    AOClient availabilityClient = new AOClient(Globals.GetSelectedServerEndpoint());
-                    availabilityClient.FrequencyHintsProvider = () => SaveFile.Data.FrequentlyUsedIniPuppets;
-                    await ConnectClientAsync(availabilityClient, autoSelectCharacter: false);
+                    AOClient firstConnectedClient = new AOClient(Globals.GetSelectedServerEndpoint());
+                    firstConnectedClient.FrequencyHintsProvider = () => SaveFile.Data.FrequentlyUsedIniPuppets;
+                    await ConnectClientAsync(firstConnectedClient, autoSelectCharacter: false);
                     resolvedStates = ResolveSnapshotCharacterConflicts(
                         statesToRestore,
-                        availabilityClient.ServerCharacterAvailability);
-                    await availabilityClient.Disconnect();
+                        firstConnectedClient.ServerCharacterAvailability);
+                    if (resolvedStates.Count == 0)
+                    {
+                        await firstConnectedClient.Disconnect();
+                        return;
+                    }
+
+                    statesToRestore = resolvedStates;
+                    await RestoreResolvedDirectSnapshotClientsAsync(snapshot, statesToRestore, firstConnectedClient);
+                    return;
                 }
 
-                foreach (GmMultiClientSnapshotClient state in resolvedStates)
-                {
-                    await AddClientInternalAsync(state.ClientName, state, suppressInitialCharacterPrompt: true);
-                }
+                await RestoreResolvedSnapshotClientsAsync(resolvedStates);
 
                 AOClient? preferredClient = FindRestoredSelectedClient(snapshot, resolvedStates);
                 if (preferredClient != null)
@@ -2870,6 +3004,69 @@ namespace OceanyaClient
                 suppressSnapshotCapture = false;
                 isRestoringSnapshot = false;
                 CaptureGmMultiClientSnapshot();
+            }
+        }
+
+        private async Task RestoreResolvedDirectSnapshotClientsAsync(
+            GmMultiClientSnapshot snapshot,
+            List<GmMultiClientSnapshotClient> resolvedStates,
+            AOClient firstConnectedClient)
+        {
+            try
+            {
+                await RestoreResolvedSnapshotClientsAsync(resolvedStates, firstConnectedClient);
+
+                AOClient? preferredClient = FindRestoredSelectedClient(snapshot, resolvedStates);
+                if (preferredClient != null)
+                {
+                    SelectClient(preferredClient);
+                }
+            }
+            finally
+            {
+                if (!clients.Values.Contains(firstConnectedClient))
+                {
+                    await firstConnectedClient.Disconnect();
+                }
+            }
+        }
+
+        private async Task RestoreResolvedSnapshotClientsAsync(
+            IReadOnlyList<GmMultiClientSnapshotClient> resolvedStates,
+            AOClient? firstConnectedClient = null)
+        {
+            Window? restoreWaitOwner = HostWindow ?? Application.Current?.MainWindow;
+            bool restoreWaitShown = false;
+            if (restoreWaitOwner != null && !OceanyaTestMode.Current.DisableWaitForms)
+            {
+                await WaitForm.ShowFormAsync("Restoring saved clients...", restoreWaitOwner);
+                restoreWaitShown = true;
+            }
+
+            try
+            {
+                for (int i = 0; i < resolvedStates.Count; i++)
+                {
+                    GmMultiClientSnapshotClient state = resolvedStates[i];
+                    if (restoreWaitShown)
+                    {
+                        WaitForm.SetSubtitle($"Connecting {i + 1}/{resolvedStates.Count}: {state.ClientName}");
+                    }
+
+                    await AddClientInternalAsync(
+                        state.ClientName,
+                        state,
+                        suppressInitialCharacterPrompt: true,
+                        showWaitForm: false,
+                        preconnectedClient: i == 0 ? firstConnectedClient : null);
+                }
+            }
+            finally
+            {
+                if (restoreWaitShown)
+                {
+                    await WaitForm.CloseFormAsync();
+                }
             }
         }
 
@@ -3081,8 +3278,9 @@ namespace OceanyaClient
 
             if (!string.IsNullOrWhiteSpace(snapshot.SelectedClientName))
             {
-                AOClient? byName = clients.Values.FirstOrDefault(client =>
-                    string.Equals(client.clientName, snapshot.SelectedClientName, StringComparison.OrdinalIgnoreCase));
+                AOClient? byName = clientOrder.FirstOrDefault(client =>
+                    clients.Values.Contains(client)
+                    && string.Equals(client.clientName, snapshot.SelectedClientName, StringComparison.OrdinalIgnoreCase));
                 if (byName != null)
                 {
                     return byName;
@@ -3092,11 +3290,12 @@ namespace OceanyaClient
             if (snapshot.SelectedClientIndex >= 0 && snapshot.SelectedClientIndex < restoredStates.Count)
             {
                 string clientName = restoredStates[snapshot.SelectedClientIndex].ClientName;
-                return clients.Values.FirstOrDefault(client =>
-                    string.Equals(client.clientName, clientName, StringComparison.OrdinalIgnoreCase));
+                return clientOrder.FirstOrDefault(client =>
+                    clients.Values.Contains(client)
+                    && string.Equals(client.clientName, clientName, StringComparison.OrdinalIgnoreCase));
             }
 
-            return clients.Values.FirstOrDefault();
+            return clientOrder.FirstOrDefault(client => clients.Values.Contains(client));
         }
 
         private void ShowMainWindowMessage(string message, string title, MessageBoxButton buttons, MessageBoxImage image)
@@ -3146,15 +3345,22 @@ namespace OceanyaClient
         private async Task AddClientInternalAsync(
             string? clientName = null,
             GmMultiClientSnapshotClient? restoredState = null,
-            bool suppressInitialCharacterPrompt = false)
+            bool suppressInitialCharacterPrompt = false,
+            bool showWaitForm = true,
+            AOClient? preconnectedClient = null)
         {
             IsEnabled = false;
+            bool waitFormOpen = false;
             try
             {
             Window? waitOwner = HostWindow ?? Application.Current?.MainWindow;
             if (waitOwner == null) return;
 
-            await WaitForm.ShowFormAsync("Connecting client...", waitOwner);
+            if (showWaitForm)
+            {
+                await WaitForm.ShowFormAsync("Connecting client...", waitOwner);
+                waitFormOpen = true;
+            }
 
             try
             {
@@ -3164,7 +3370,7 @@ namespace OceanyaClient
                     ? clientName
                     : $"Client{clients.Count + 1}";
 
-                AOClient bot = new AOClient(Globals.GetSelectedServerEndpoint());
+                AOClient bot = preconnectedClient ?? new AOClient(Globals.GetSelectedServerEndpoint());
                 bot.clientName = defaultClientName;
                 HookClientForDreddOverlay(bot);
                 if (aiModeEnabled)
@@ -3250,12 +3456,28 @@ namespace OceanyaClient
                     {
                         return;
                     }
+                    CharacterFolder? previousCharacter = bot.currentINI;
+                    Emote? previousEmote = bot.currentEmote;
+                    string previousICShowname = bot.ICShowname;
+                    string previousPosition = bot.curPos;
+
                     await targetNetworkClient.SelectFirstAvailableINIPuppet(false);
                     SetProfileIniPuppetName(bot, targetNetworkClient.iniPuppetName);
+                    bot.SetCharacter(previousCharacter);
+                    if (previousEmote != null)
+                    {
+                        bot.SetEmote(previousEmote.DisplayID);
+                    }
+                    bot.SetICShowname(previousICShowname);
+                    bot.SetPos(previousPosition);
 
                     if (useSingleInternalClient)
                     {
                         SyncSingleClientStatusToProfile(bot);
+                    }
+                    if (ReferenceEquals(bot, currentClient))
+                    {
+                        ICMessageSettingsControl.SetClient(bot);
                     }
                 };
                 contextMenu.Items.Add(iniPuppetChange);
@@ -3263,9 +3485,18 @@ namespace OceanyaClient
                 MenuItem manualIniPuppetChange = new MenuItem { Header = "Select INIPuppet (Manual)" };
                 manualIniPuppetChange.Click += (sender, args) =>
                 {
-                    ShowCharacterSelectorForClient(bot);
+                    ShowCharacterSelectorForClient(bot, preserveLocalCharacter: true);
                 };
                 contextMenu.Items.Add(manualIniPuppetChange);
+
+                contextMenu.Items.Add(new Separator());
+                MenuItem moveUpMenuItem = new MenuItem { Header = "Move UP" };
+                moveUpMenuItem.Click += (sender, args) => MoveClient(bot, -1);
+                contextMenu.Items.Add(moveUpMenuItem);
+
+                MenuItem moveDownMenuItem = new MenuItem { Header = "Move DOWN" };
+                moveDownMenuItem.Click += (sender, args) => MoveClient(bot, 1);
+                contextMenu.Items.Add(moveDownMenuItem);
 
                 MenuItem reconnectMenuItem = new MenuItem { Header = "Reconnect" };
                 reconnectMenuItem.Click += async (sender, args) =>
@@ -3391,7 +3622,10 @@ namespace OceanyaClient
                 if (!useSingleInternalClient)
                 {
                     InitializeCommonClientEvents(bot, bot);
-                    await ConnectClientAsync(bot, autoSelectCharacter: false);
+                    if (preconnectedClient == null)
+                    {
+                        await ConnectClientAsync(bot, autoSelectCharacter: false);
+                    }
                     await BootstrapAreaNavigatorAsync(bot);
                     if (restoredState != null && !string.IsNullOrWhiteSpace(restoredState.IniPuppetName))
                     {
@@ -3399,11 +3633,16 @@ namespace OceanyaClient
                     }
                 }
 
-                WaitForm.CloseForm();
                 if (isNewInternalConnection && !suppressInitialCharacterPrompt)
                 {
-                    var (confirmed, selectedClientName) = ShowCharacterSelectorForClient(bot, defaultClientName);
-                    if (!confirmed)
+                    if (showWaitForm && waitFormOpen)
+                    {
+                        await WaitForm.CloseFormAsync();
+                        waitFormOpen = false;
+                    }
+
+                    ClientCharacterSelectionResult selection = ShowCharacterSelectorForClientSelection(bot, defaultClientName);
+                    if (!selection.Confirmed || string.IsNullOrWhiteSpace(selection.SelectedCharacterName))
                     {
                         // User cancelled — tear down whatever connection was just established
                         if (useSingleInternalClient)
@@ -3427,10 +3666,19 @@ namespace OceanyaClient
                         return;
                     }
 
-                    // Apply name the user typed in the selector (falls back to default if empty)
-                    if (!string.IsNullOrWhiteSpace(selectedClientName))
+                    if (showWaitForm)
                     {
-                        bot.clientName = selectedClientName;
+                        await WaitForm.ShowFormAsync("Loading client UI...", waitOwner);
+                        waitFormOpen = true;
+                        WaitForm.SetSubtitle("Applying character selection...");
+                    }
+
+                    await ApplyCharacterSelectionAsync(bot, selection.SelectedCharacterName);
+
+                    // Apply name the user typed in the selector (falls back to default if empty)
+                    if (!string.IsNullOrWhiteSpace(selection.SelectedClientName))
+                    {
+                        bot.clientName = selection.SelectedClientName;
                         bot.SetICShowname(bot.clientName);
                         bot.OOCShowname = bot.clientName;
                         AutomationProperties.SetName(toggleBtn, bot.clientName);
@@ -3461,6 +3709,7 @@ namespace OceanyaClient
                         }
 
                         clients.Remove(button);
+                        clientOrder.Remove(bot);
                         EmoteGrid.DeleteElement(button);
 
                         OceanyaMessageBox.Show($"Client {bot.clientName} has disconnected.", "Client Disconnected", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -3483,7 +3732,7 @@ namespace OceanyaClient
                     }
                     else
                     {
-                            var newClient = clients.Values.FirstOrDefault();
+                            var newClient = clientOrder.FirstOrDefault(client => clients.Values.Contains(client));
                             if (newClient != null)
                             {
                                 SelectClient(newClient);
@@ -3501,12 +3750,19 @@ namespace OceanyaClient
                 toggleBtn.IsTabStop = false;
 
                 clients.Add(toggleBtn, bot);
+                clientOrder.Add(bot);
 
                 EmoteGrid.AddElement(toggleBtn);
 
                 toggleBtn.IsChecked = true;
                 UpdateClientTooltip(bot);
                 CaptureGmMultiClientSnapshot();
+
+                if (showWaitForm && waitFormOpen)
+                {
+                    WaitForm.SetSubtitle("Finishing client UI...");
+                    await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.ContextIdle);
+                }
 
                 if (clients.Count == 1)
                 {
@@ -3517,12 +3773,20 @@ namespace OceanyaClient
             }
             catch (Exception ex)
             {
-                WaitForm.CloseForm();
+                if (showWaitForm && waitFormOpen)
+                {
+                    await WaitForm.CloseFormAsync();
+                    waitFormOpen = false;
+                }
                 ShowMainWindowMessage($"Error connecting client: {ex.Message}", "Connection Failed", MessageBoxButton.OK, MessageBoxImage.Error);
             }
             finally
             {
-                WaitForm.CloseForm();
+                if (showWaitForm && waitFormOpen)
+                {
+                    await WaitForm.CloseFormAsync();
+                    waitFormOpen = false;
+                }
             }
 
             } // end outer try
@@ -3530,6 +3794,22 @@ namespace OceanyaClient
             {
                 IsEnabled = true;
             }
+        }
+
+        private readonly struct ClientCharacterSelectionResult
+        {
+            public static readonly ClientCharacterSelectionResult Cancelled = new ClientCharacterSelectionResult(false, null, null);
+
+            public ClientCharacterSelectionResult(bool confirmed, string? selectedCharacterName, string? selectedClientName)
+            {
+                Confirmed = confirmed;
+                SelectedCharacterName = selectedCharacterName;
+                SelectedClientName = selectedClientName;
+            }
+
+            public bool Confirmed { get; }
+            public string? SelectedCharacterName { get; }
+            public string? SelectedClientName { get; }
         }
 
         private void SelectClient(AOClient client)
@@ -3719,7 +3999,7 @@ namespace OceanyaClient
             chkSticky.IsChecked = SaveFile.Data.StickyEffect;
             chkPosOnIniSwap.IsChecked = SaveFile.Data.SwitchPosOnIniSwap;
             chkInvertLog.IsChecked = SaveFile.Data.InvertICLog;
-            foreach (AOClient client in clients.Values)
+            foreach (AOClient client in clientOrder.Where(client => clients.Values.Contains(client)))
             {
                 client.switchPosWhenChangingINI = SaveFile.Data.SwitchPosOnIniSwap;
             }
@@ -3735,7 +4015,7 @@ namespace OceanyaClient
                 return;
             }
 
-            foreach (AOClient client in clients.Values)
+            foreach (AOClient client in clientOrder.Where(client => clients.Values.Contains(client)))
             {
                 AOClient? incomingMessageClient = GetTargetClientForNetwork(client) ?? client;
                 viewportContent.EnsureClient(
@@ -4122,6 +4402,7 @@ namespace OceanyaClient
                     controller.Dispose();
                 }
                 clients.Remove(button);
+                clientOrder.Remove(clientToRemove);
                 EmoteGrid.DeleteElement(button);
             }
 
@@ -4152,7 +4433,8 @@ namespace OceanyaClient
             {
                 if (ReferenceEquals(currentClient, clientToRemove))
                 {
-                    SelectClient(clients.Values.First());
+                    AOClient nextClient = clientOrder.First(client => clients.Values.Contains(client));
+                    SelectClient(nextClient);
                 }
                 else
                 {
@@ -4391,7 +4673,8 @@ namespace OceanyaClient
 
         private void RebindClientsToRefreshedCharacters()
         {
-            List<AOClient> clientsToRebind = clients.Values
+            List<AOClient> clientsToRebind = clientOrder
+                .Where(client => clients.Values.Contains(client))
                 .Concat(singleInternalClient != null ? new[] { singleInternalClient } : Array.Empty<AOClient>())
                 .Distinct()
                 .ToList();
@@ -4690,7 +4973,9 @@ namespace OceanyaClient
                 // If a valid digit was pressed and a corresponding client exists, process the selection.
                 if (index >= 0 && index < clients.Count)
                 {
-                    AOClient client = clients.Values.ElementAt(index);
+                    AOClient client = clientOrder
+                        .Where(existing => clients.Values.Contains(existing))
+                        .ElementAt(index);
                     SelectClient(client);
                     e.Handled = true;
                 }

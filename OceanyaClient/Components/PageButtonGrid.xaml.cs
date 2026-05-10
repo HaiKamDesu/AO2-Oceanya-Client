@@ -62,6 +62,28 @@ namespace OceanyaClient.Components
                 throw new Exception("Element not found in grid.");
             }
         }
+
+        public bool MoveElement(UIElement element, int offset)
+        {
+            int index = elements.IndexOf(element);
+            if (index < 0)
+            {
+                return false;
+            }
+
+            int targetIndex = index + offset;
+            if (targetIndex < 0 || targetIndex >= elements.Count)
+            {
+                return false;
+            }
+
+            elements.RemoveAt(index);
+            elements.Insert(targetIndex, element);
+            currentPage = targetIndex / (rows * columns);
+            UpdateGridContent();
+            return true;
+        }
+
         public void SetNavigationButtonColors(Brush background, Brush foreground)
         {
             UpButton.Background = background;

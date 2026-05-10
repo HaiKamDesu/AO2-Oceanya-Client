@@ -42,6 +42,7 @@ namespace OceanyaClient.Components
         public Action? OnRefreshAllAssetsRequested;
         public Action? OnRefreshAllCharactersRequested;
         public Action<string>? OnOpenInCharacterEditorRequested;
+        public Action<AOClient, string>? OnPositionConfirmed;
         public Action? OnClientStateChanged;
 
         public ICMessageSettings()
@@ -256,6 +257,7 @@ namespace OceanyaClient.Components
 
             txtICMessage.Focus();
             curClient.SetPos(newPos, true);
+            OnPositionConfirmed?.Invoke(curClient, newPos);
             OnClientStateChanged?.Invoke();
         }
 
@@ -358,17 +360,32 @@ namespace OceanyaClient.Components
                 if(bg != null)
                 {
                     var allPos = bg.GetPossiblePositions();
+                    string defaultPos = client.currentINI?.configINI.Side?.Trim() ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(defaultPos))
+                    {
+                        string defaultImage = allPos.TryGetValue(defaultPos, out string? imagePath)
+                            ? imagePath
+                            : string.Empty;
+                        PositionDropdown.Add(defaultPos, defaultImage);
+                    }
+
                     foreach (var pos in allPos)
                     {
+                        if (string.Equals(pos.Key, defaultPos, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
                         PositionDropdown.Add(pos.Key, pos.Value);
                     }
+
                     if (allPos.ContainsKey(client.curPos))
                     {
                         PositionDropdown.SelectedText = client.curPos;
                     }
-                    else if (client.currentINI != null && allPos.ContainsKey(client.currentINI.configINI.Side))
+                    else if (!string.IsNullOrWhiteSpace(defaultPos))
                     {
-                        PositionDropdown.SelectedText = client.currentINI.configINI.Side;
+                        PositionDropdown.SelectedText = defaultPos;
                     }
                     else
                     {

@@ -39,11 +39,15 @@ namespace OceanyaClient
         private const int StaticPreviewCacheEntryLimit = 256;
         internal const int MaxAnimatedPreviewDimension = 360;
         private const int MaxAnimatedPreviewFrames = 180;
+        private const int AnimationFrameCacheEntryLimit = 48;
 
         private static readonly ImageSource FallbackImage = LoadEmbeddedFallback();
         private static readonly object StaticPreviewCacheLock = new object();
         private static readonly Dictionary<(string path, int width, int maxDim), WeakReference<ImageSource>> StaticPreviewCache =
             new Dictionary<(string path, int width, int maxDim), WeakReference<ImageSource>>();
+        private static readonly object AnimationFrameCacheLock = new object();
+        private static readonly Dictionary<(string path, DateTime lastWriteUtc, int maxDim), CachedDecodedAnimation> AnimationFrameCache =
+            new Dictionary<(string path, DateTime lastWriteUtc, int maxDim), CachedDecodedAnimation>();
         private static readonly ConcurrentDictionary<string, bool> ApngDetectionCache =
             new ConcurrentDictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
 
@@ -232,7 +236,8 @@ namespace OceanyaClient
             string? sourcePath,
             bool loop,
             out IAnimationPlayer? player,
-            bool usePreviewLimits = true)
+            bool usePreviewLimits = true,
+            int? maxDimensionOverride = null)
         {
             player = null;
             string? resolvedPath = ResolveAo2ImagePath(sourcePath);
@@ -250,7 +255,9 @@ namespace OceanyaClient
 
             // APNG and WebP use the frame-decoder path.
             // GIF uses the legacy gif-specific player first for reliability.
-            int maxDimension = MaxAnimatedPreviewDimension;
+            int maxDimension = maxDimensionOverride.HasValue
+                ? Math.Max(1, maxDimensionOverride.Value)
+                : MaxAnimatedPreviewDimension;
             if (extension == ".webp" || isApng)
             {
                 if (BitmapFrameAnimationPlayer.TryCreate(resolvedPath, loop, out BitmapFrameAnimationPlayer? bitmapPlayer, maxDimension)
@@ -269,7 +276,7 @@ namespace OceanyaClient
                 {
                     player = usePreviewLimits
                         ? new GifAnimationPlayer(resolvedPath, loop)
-                        : GifAnimationPlayer.CreateFullFidelity(resolvedPath, loop);
+                        : GifAnimationPlayer.CreateFullFidelity(resolvedPath, loop, maxDimension);
                     return true;
                 }
                 catch
@@ -462,6 +469,13 @@ namespace OceanyaClient
 
             try
             {
+                DateTime lastWriteUtc = File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue;
+                var cacheKey = (path, lastWriteUtc, Math.Max(1, maxDimension));
+                if (TryGetCachedAnimationFrames(cacheKey, out frames, out frameDurations))
+                {
+                    return true;
+                }
+
                 string extension = Path.GetExtension(path).ToLowerInvariant();
 
                 // APNG files are decoded by the dedicated ApngFrameDecoder
@@ -472,6 +486,7 @@ namespace OceanyaClient
                 {
                     frames = apngFrames;
                     frameDurations = apngDurations;
+                    CacheAnimationFrames(cacheKey, frames, frameDurations);
                     return true;
                 }
 
@@ -484,6 +499,7 @@ namespace OceanyaClient
                 {
                     frames = magickFrames;
                     frameDurations = magickDurations;
+                    CacheAnimationFrames(cacheKey, frames, frameDurations);
                     return true;
                 }
 
@@ -554,12 +570,66 @@ namespace OceanyaClient
 
                 frames = decodedFrames;
                 frameDurations = decodedDurations;
+                CacheAnimationFrames(cacheKey, frames, frameDurations);
                 return true;
             }
             catch
             {
                 return false;
             }
+        }
+
+        private static bool TryGetCachedAnimationFrames(
+            (string path, DateTime lastWriteUtc, int maxDim) key,
+            out List<BitmapSource>? frames,
+            out List<TimeSpan>? frameDurations)
+        {
+            frames = null;
+            frameDurations = null;
+            lock (AnimationFrameCacheLock)
+            {
+                if (!AnimationFrameCache.TryGetValue(key, out CachedDecodedAnimation? cached))
+                {
+                    return false;
+                }
+
+                frames = cached.Frames.ToList();
+                frameDurations = cached.FrameDurations.ToList();
+                return frames.Count > 1 && frames.Count == frameDurations.Count;
+            }
+        }
+
+        private static void CacheAnimationFrames(
+            (string path, DateTime lastWriteUtc, int maxDim) key,
+            IReadOnlyList<BitmapSource> frames,
+            IReadOnlyList<TimeSpan> frameDurations)
+        {
+            if (frames.Count <= 1 || frames.Count != frameDurations.Count)
+            {
+                return;
+            }
+
+            lock (AnimationFrameCacheLock)
+            {
+                if (AnimationFrameCache.Count >= AnimationFrameCacheEntryLimit)
+                {
+                    AnimationFrameCache.Remove(AnimationFrameCache.Keys.First());
+                }
+
+                AnimationFrameCache[key] = new CachedDecodedAnimation(frames.ToList(), frameDurations.ToList());
+            }
+        }
+
+        private sealed class CachedDecodedAnimation
+        {
+            public CachedDecodedAnimation(List<BitmapSource> frames, List<TimeSpan> frameDurations)
+            {
+                Frames = frames;
+                FrameDurations = frameDurations;
+            }
+
+            public List<BitmapSource> Frames { get; }
+            public List<TimeSpan> FrameDurations { get; }
         }
 
         /// <summary>Returns true when the path is an APNG file (by extension or content).</summary>
@@ -1455,9 +1525,9 @@ namespace OceanyaClient
             StartPlayback();
         }
 
-        public static GifAnimationPlayer CreateFullFidelity(string gifPath, bool loop)
+        public static GifAnimationPlayer CreateFullFidelity(string gifPath, bool loop, int maxDimension = 0)
         {
-            return new GifAnimationPlayer(gifPath, loop, maxDimension: 0, maxFrames: 0);
+            return new GifAnimationPlayer(gifPath, loop, maxDimension: maxDimension, maxFrames: 0);
         }
 
         public void SetLoop(bool shouldLoop)
