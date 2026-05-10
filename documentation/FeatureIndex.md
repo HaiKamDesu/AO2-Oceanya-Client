@@ -18,6 +18,12 @@ Use this file as the first stop before broad repository searches. It should poin
 - Main code: `OceanyaClient/MainWindow.xaml.cs`, `OceanyaClient/Components/ICMessageSettings.xaml.cs`, `OceanyaClient/Components/Forms/CharacterSelectorWindow.xaml.cs`, `OceanyaClient/Components/Forms/OceanyaMessageBox.xaml.cs`, `Common/SaveFile.cs`
 - Notes: Saves GM client profiles, selected client, INI puppets, local render character/emote, shownames, OOC names, position/effect/message properties, and restores the profile set after launching against a new server. Restore resolves occupied INI puppets before creating clients, treats other snapshot puppets as reserved choices, uses shared custom-button message boxes for conflicts, preserves the local iniswap character when the server puppet must change, and documents startup wait reductions around server probes, targeted asset refresh, and direct snapshot restore.
 
+## GM Multi-Client Area Navigator
+- Doc: `Documentation/AreaNavigator.md`
+- Main code: `OceanyaClient/MainWindow.xaml`, `OceanyaClient/MainWindow.xaml.cs`, `AOBot-Testing/Agents/AOClient.cs`, `AOBot-Testing/Structures/AreaInfo.cs`
+- AO2/server reference: `AO2-Client/src/courtroom.cpp`, `AO2-Client/src/packet_distribution.cpp`, `tsuserver3/server/area_manager.py`, `tsuserver3/server/client_manager.py`, `tsuserverCC/server/area_manager.py`, `tsuserverCC/server/client_manager.py`
+- Notes: `FA`/`SM` define visible area rows; `ARUP` updates player counts/status/CM/lock by current row index. `RM` refreshes `FA` without a fresh ARUP snapshot, so the AO client preserves known row state by area name and treats new area counts as unknown until ARUP, `/getarea`, or `=== Areas ===` OOC data arrives.
+
 ## Debug Console And Logging
 - Doc: `Documentation/DebugConsoleAndLogging.md`
 - Main code: `Common/CustomConsole.cs`, `OceanyaClient/Components/Forms/DebugConsoleWindow.xaml(.cs)`

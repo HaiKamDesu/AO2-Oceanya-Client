@@ -143,11 +143,72 @@ public class NetworkTests
         Assert.Multiple(() =>
         {
             Assert.That(client.AvailableAreaInfos[0].Players, Is.EqualTo(3));
-            Assert.That(client.AvailableAreaInfos[1].Players, Is.EqualTo(0));
+            Assert.That(client.AvailableAreaInfos[1].Players, Is.EqualTo(-1));
             Assert.That(client.AvailableAreaInfos[2].Players, Is.EqualTo(7));
             Assert.That(client.AvailableAreaInfos[0].CaseManager, Is.EqualTo("FREE"));
             Assert.That(client.AvailableAreaInfos[1].CaseManager, Is.EqualTo("Unknown"));
             Assert.That(client.AvailableAreaInfos[2].CaseManager, Is.EqualTo("Franziska"));
+        });
+    }
+
+    [Test]
+    public async Task HandleMessage_FaRefreshPreservesKnownAreaStatusByName()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+        await client.HandleMessage("FA#Lobby#Courtroom#Basement#%");
+        await client.HandleMessage("ARUP#0#4#2#7#%");
+        await client.HandleMessage("ARUP#1#FREE#CASING#RP#%");
+        await client.HandleMessage("ARUP#2#FREE#Franziska#FREE#%");
+        await client.HandleMessage("ARUP#3#OPEN#LOCKED#OPEN#%");
+
+        await client.HandleMessage("FA#Courtroom#Lobby#New Area#%");
+
+        AreaInfo courtroom = client.AvailableAreaInfos[0];
+        AreaInfo lobby = client.AvailableAreaInfos[1];
+        AreaInfo newArea = client.AvailableAreaInfos[2];
+        Assert.Multiple(() =>
+        {
+            Assert.That(courtroom.Name, Is.EqualTo("Courtroom"));
+            Assert.That(courtroom.Players, Is.EqualTo(2));
+            Assert.That(courtroom.Status, Is.EqualTo("CASING"));
+            Assert.That(courtroom.CaseManager, Is.EqualTo("Franziska"));
+            Assert.That(courtroom.LockState, Is.EqualTo("LOCKED"));
+
+            Assert.That(lobby.Name, Is.EqualTo("Lobby"));
+            Assert.That(lobby.Players, Is.EqualTo(4));
+            Assert.That(lobby.Status, Is.EqualTo("FREE"));
+
+            Assert.That(newArea.Name, Is.EqualTo("New Area"));
+            Assert.That(newArea.Players, Is.EqualTo(-1));
+            Assert.That(newArea.Status, Is.EqualTo("Unknown"));
+        });
+    }
+
+    [Test]
+    public async Task HandleMessage_ServerAreaListOocUpdatesAreaInfos()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+        await client.HandleMessage("FA#Lobby#Courtroom#%");
+
+        await client.HandleMessage(
+            "CT#Server#=== Areas ===\r\n" +
+            "Area l: Lobby (users: 4) [FREE][FREE]\r\n" +
+            "Area c: Courtroom (users: 2) [CASING][CMs: Franziska][LOCKED] [*]#1#%");
+
+        AreaInfo lobby = client.AvailableAreaInfos.Single(area => area.Name == "Lobby");
+        AreaInfo courtroom = client.AvailableAreaInfos.Single(area => area.Name == "Courtroom");
+        Assert.Multiple(() =>
+        {
+            Assert.That(client.CurrentArea, Is.EqualTo("Courtroom"));
+            Assert.That(lobby.Players, Is.EqualTo(4));
+            Assert.That(lobby.Status, Is.EqualTo("FREE"));
+            Assert.That(lobby.CaseManager, Is.EqualTo("FREE"));
+            Assert.That(lobby.LockState, Is.EqualTo("OPEN"));
+
+            Assert.That(courtroom.Players, Is.EqualTo(2));
+            Assert.That(courtroom.Status, Is.EqualTo("CASING"));
+            Assert.That(courtroom.CaseManager, Is.EqualTo("Franziska"));
+            Assert.That(courtroom.LockState, Is.EqualTo("LOCKED"));
         });
     }
 

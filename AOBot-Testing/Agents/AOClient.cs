@@ -615,6 +615,10 @@ namespace AOBot_Testing.Agents
                         }
                     }
                 }
+                else if (fromServer && messageText.Contains("=== Areas ===", StringComparison.OrdinalIgnoreCase))
+                {
+                    ApplyAreaInfosFromAreaListMessage(messageText);
+                }
 
                 // Handle OOC message
                 //you cant get the char id from an ooc message, so just send -1
@@ -1122,6 +1126,11 @@ namespace AOBot_Testing.Agents
 
         private void ReplaceAvailableAreas(IEnumerable<string> areas)
         {
+            Dictionary<string, AreaInfo> previousAreaInfos = availableAreaInfos
+                .Where(areaInfo => !string.IsNullOrWhiteSpace(areaInfo.Name))
+                .GroupBy(areaInfo => areaInfo.Name.Trim(), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+
             availableAreas.Clear();
             availableAreaInfos.Clear();
 
@@ -1134,7 +1143,15 @@ namespace AOBot_Testing.Agents
 
                 string areaName = area.Trim();
                 availableAreas.Add(areaName);
-                availableAreaInfos.Add(new AreaInfo(areaName, 0, "Unknown", "Unknown", "Unknown"));
+                if (previousAreaInfos.TryGetValue(areaName, out AreaInfo? previousAreaInfo))
+                {
+                    previousAreaInfo.Name = areaName;
+                    availableAreaInfos.Add(previousAreaInfo);
+                }
+                else
+                {
+                    availableAreaInfos.Add(new AreaInfo(areaName, -1, "Unknown", "Unknown", "Unknown"));
+                }
             }
 
             OnAvailableAreasUpdated?.Invoke(availableAreas.AsReadOnly());
@@ -1232,14 +1249,71 @@ namespace AOBot_Testing.Agents
             OnAvailableAreaInfosUpdated?.Invoke(availableAreaInfos.AsReadOnly());
         }
 
+        private void ApplyAreaInfosFromAreaListMessage(string messageText)
+        {
+            string[] lines = messageText.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
+            bool updated = false;
+
+            foreach (string line in lines)
+            {
+                Match areaLine = Regex.Match(
+                    line,
+                    @"^Area\s+[^:]+:\s*(?<name>.+?)\s*\(users:\s*(?<players>\d+)\)\s*\[(?<status>[^\]]*)\]\[(?<cm>[^\]]*)\](?<lock>\[[^\]]+\])?(?<current>\s+\[\*\])?\s*$",
+                    RegexOptions.IgnoreCase);
+                if (!areaLine.Success)
+                {
+                    continue;
+                }
+
+                string areaName = areaLine.Groups["name"].Value.Trim();
+                if (string.IsNullOrWhiteSpace(areaName))
+                {
+                    continue;
+                }
+
+                AreaInfo targetArea = EnsureAreaInfo(areaName);
+                if (int.TryParse(areaLine.Groups["players"].Value, out int players))
+                {
+                    targetArea.Players = players;
+                }
+
+                string status = areaLine.Groups["status"].Value.Trim();
+                if (!string.IsNullOrWhiteSpace(status))
+                {
+                    targetArea.Status = status;
+                }
+
+                string caseManager = areaLine.Groups["cm"].Value.Trim();
+                if (caseManager.StartsWith("CMs:", StringComparison.OrdinalIgnoreCase))
+                {
+                    caseManager = caseManager.Substring(4).Trim();
+                }
+
+                if (!string.IsNullOrWhiteSpace(caseManager))
+                {
+                    targetArea.CaseManager = caseManager;
+                }
+
+                string lockState = areaLine.Groups["lock"].Value.Trim().Trim('[', ']');
+                targetArea.LockState = string.IsNullOrWhiteSpace(lockState) ? "OPEN" : lockState;
+                updated = true;
+
+                if (areaLine.Groups["current"].Success)
+                {
+                    SetCurrentArea(areaName);
+                }
+            }
+
+            if (updated)
+            {
+                OnAvailableAreasUpdated?.Invoke(availableAreas.AsReadOnly());
+                OnAvailableAreaInfosUpdated?.Invoke(availableAreaInfos.AsReadOnly());
+            }
+        }
+
         private void ApplyAreaInfoFromGetAreaMessage(string areaName, string messageText)
         {
-            AreaInfo? targetArea = availableAreaInfos.FirstOrDefault(area =>
-                string.Equals(area.Name, areaName, StringComparison.OrdinalIgnoreCase));
-            if (targetArea == null)
-            {
-                return;
-            }
+            AreaInfo targetArea = EnsureAreaInfo(areaName);
 
             Match areaHeader = Regex.Match(
                 messageText,
@@ -1268,6 +1342,21 @@ namespace AOBot_Testing.Agents
             }
 
             OnAvailableAreaInfosUpdated?.Invoke(availableAreaInfos.AsReadOnly());
+        }
+
+        private AreaInfo EnsureAreaInfo(string areaName)
+        {
+            AreaInfo? targetArea = availableAreaInfos.FirstOrDefault(area =>
+                string.Equals(area.Name, areaName, StringComparison.OrdinalIgnoreCase));
+            if (targetArea != null)
+            {
+                return targetArea;
+            }
+
+            availableAreas.Add(areaName);
+            targetArea = new AreaInfo(areaName, -1, "Unknown", "Unknown", "Unknown");
+            availableAreaInfos.Add(targetArea);
+            return targetArea;
         }
 
         private bool ShouldIgnoreAreaDowngrade(string parsedArea)
