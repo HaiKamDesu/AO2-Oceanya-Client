@@ -205,6 +205,28 @@
             <Setter Property="Margin" Value="0,10,0,5"/>
         </Style>
 
+        <Style x:Key="HelpBadgeStyle" TargetType="Button">
+            <Setter Property="Height" Value="18"/>
+            <Setter Property="Margin" Value="0,10,6,5"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#FFBDBDBD"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="FontWeight" Value="Normal"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Storyboard x:Key="FadeIn">
             <DoubleAnimation Storyboard.TargetProperty="Opacity" From="0" To="1" Duration="0:0:0.3"/>
         </Storyboard>
@@ -220,7 +242,11 @@
     </local:OceanyaWindowContentControl.Triggers>
 
     <StackPanel Margin="10,0,10,10">
-                <TextBlock Text="CONFIG.INI PATH" Style="{StaticResource LabelText}"/>
+                <DockPanel LastChildFill="False">
+                    <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                            ToolTip="Choose the base AO2 config.ini for the install you want Oceanya to use. This tells the app where your characters, backgrounds, music, and AO assets live."/>
+                    <TextBlock Text="CONFIG.INI PATH" Style="{StaticResource LabelText}"/>
+                </DockPanel>
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
@@ -241,7 +267,11 @@
                             Click="BrowseButton_Click"/>
                 </Grid>
 
-                <TextBlock Text="FUNCTIONALITY" Style="{StaticResource LabelText}"/>
+                <DockPanel LastChildFill="False">
+                    <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                            ToolTip="Choose what Oceanya opens after launch. GM Multi-Client opens the main controller; offline tools open their specific editor or viewer without joining a server."/>
+                    <TextBlock Text="FUNCTIONALITY" Style="{StaticResource LabelText}"/>
+                </DockPanel>
                 <ComboBox x:Name="StartupFunctionalityComboBox"
                           AutomationProperties.AutomationId="InitialConfig.StartupFunctionality"
                           Style="{StaticResource DarkComboBoxStyle}"
@@ -250,7 +280,11 @@
                           SelectedValuePath="Id"/>
 
                 <StackPanel x:Name="MultiClientServerSettingsPanel">
-                    <TextBlock Text="SERVER ENDPOINT" Style="{StaticResource LabelText}"/>
+                    <DockPanel LastChildFill="False">
+                        <Button Content="(?)" Style="{StaticResource HelpBadgeStyle}"
+                                ToolTip="Choose the AO server Oceanya should connect to for online modes. The selected endpoint is saved and reused next time."/>
+                        <TextBlock Text="SERVER ENDPOINT" Style="{StaticResource LabelText}"/>
+                    </DockPanel>
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
@@ -278,13 +312,15 @@
                           AutomationProperties.AutomationId="InitialConfig.RefreshAssets"
                           Content="Refresh character and background info"
                           Style="{StaticResource ModernCheckBox}"
-                          Margin="0,10,0,0"/>
+                          Margin="0,10,0,0"
+                          ToolTip="Rebuild Oceanya's local character/background index before launch. Use this after adding, removing, or renaming AO asset folders."/>
 
                 <CheckBox x:Name="SkipLoadingScreenCheckBox"
                           AutomationProperties.AutomationId="InitialConfig.SkipLoadingScreen"
                           Content="Skip intro loading screen"
                           Style="{StaticResource ModernCheckBox}"
                           Margin="0,4,0,0"
+                          ToolTip="Skip the intro/loading screen and open the selected tool directly after startup checks finish."
                           Checked="SkipLoadingScreenCheckBox_CheckedChanged"
                           Unchecked="SkipLoadingScreenCheckBox_CheckedChanged"/>
 
@@ -294,7 +330,8 @@
                               Content="Use only one internal client"
                               Style="{StaticResource ModernCheckBox}"
                               IsChecked="True"
-                              Margin="0,8,0,0"/>
+                              Margin="0,8,0,0"
+                              ToolTip="GM Multi-Client will reuse one real server connection while swapping the active profile before sending actions. This is lighter on the server than connecting every profile separately."/>
                 </StackPanel>
 
                 <Button x:Name="OkButton"

@@ -9,6 +9,11 @@ known area list, including ARUP player counts, status, case manager, and lock st
 - `OceanyaClient/MainWindow.xaml.cs`: renders `AOClient.AvailableAreaInfos` and sends area-switch requests.
 - `AOBot-Testing/Agents/AOClient.cs`: parses `SM`, `FA`, `ARUP`, and `/getarea`-style OOC responses.
 - `AOBot-Testing/Structures/AreaInfo.cs`: row model for area name, player count, status, CM, and lock state.
+- `Common/SaveFile.cs`: persists the navigator popup width and height.
+
+## UI Behavior
+- The popup uses the same dark surface styling as the main client controls.
+- The bottom-right resize handle saves the chosen width and height across sessions.
 
 ## Packet Flow
 - `SM` can contain area names before music entries during initial AO2 handshake.

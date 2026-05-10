@@ -185,6 +185,40 @@ public class NetworkTests
     }
 
     [Test]
+    public async Task HandleMessage_SmSplitsAreasAndMusicLikeAo2Client()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+
+        await client.HandleMessage("SM#Lobby#Courtroom#Investigation#pwr/trial.mp3#calm.ogg#Drama#cornered.opus#%");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(client.AvailableAreas, Is.EqualTo(new[] { "Lobby", "Courtroom" }));
+            Assert.That(client.AvailableMusic, Is.EqualTo(new[] { "Investigation", "pwr/trial.mp3", "calm.ogg", "Drama", "cornered.opus" }));
+        });
+    }
+
+    [Test]
+    public async Task HandleMessage_FmRefreshesMusicList()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+
+        await client.HandleMessage("FM#Investigation#pwr/trial.mp3#Drama#cornered.opus#%");
+
+        Assert.That(client.AvailableMusic, Is.EqualTo(new[] { "Investigation", "pwr/trial.mp3", "Drama", "cornered.opus" }));
+    }
+
+    [Test]
+    public async Task HandleMessage_AssStoresServerAssetUrl()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+
+        await client.HandleMessage("ASS#https://assets.example.test/base/#%");
+
+        Assert.That(client.ServerAssetUrl, Is.EqualTo("https://assets.example.test/base/"));
+    }
+
+    [Test]
     public async Task HandleMessage_ServerAreaListOocUpdatesAreaInfos()
     {
         AOClient client = new AOClient("ws://localhost:10001/");

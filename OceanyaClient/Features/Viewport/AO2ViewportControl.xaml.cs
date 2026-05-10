@@ -74,6 +74,14 @@ namespace OceanyaClient.Features.Viewport
             Unloaded += (_, _) => audioManager.Dispose();
         }
 
+        /// <summary>
+        /// Applies current saved volume settings to all active audio players.
+        /// </summary>
+        internal void RefreshVolumes()
+        {
+            audioManager.RefreshVolumes();
+        }
+
         private void InitializeChatBackgroundMenu()
         {
             ContextMenu menu = new ContextMenu();
@@ -335,6 +343,7 @@ namespace OceanyaClient.Features.Viewport
             {
                 messageSourceClient.OnICMessageReceived += OnICMessageReceived;
                 messageSourceClient.OnIcActionReceived += OnIcActionReceived;
+                messageSourceClient.OnMusicChanged += OnMusicChanged;
             }
         }
 
@@ -349,6 +358,7 @@ namespace OceanyaClient.Features.Viewport
             {
                 messageSourceClient.OnICMessageReceived -= OnICMessageReceived;
                 messageSourceClient.OnIcActionReceived -= OnIcActionReceived;
+                messageSourceClient.OnMusicChanged -= OnMusicChanged;
             }
         }
 
@@ -379,6 +389,15 @@ namespace OceanyaClient.Features.Viewport
 
         private void OnIcActionReceived(string showName, string action, bool isSentFromSelf, ICMessage.TextColors textColor)
         {
+        }
+
+        private void OnMusicChanged(string showName, string? songPath, bool loop, int channel, int effectFlags)
+        {
+            if (channel != 0)
+            {
+                return;
+            }
+
             if (actionFilter != null && !actionFilter(showName))
             {
                 return;
@@ -391,20 +410,13 @@ namespace OceanyaClient.Features.Viewport
                     return;
                 }
 
-                string normalized = (action ?? string.Empty).Trim();
-                const string musicPrefix = "has played a song ";
-                const string stopMusic = "has stopped the music.";
-
-                if (normalized.StartsWith(musicPrefix, StringComparison.OrdinalIgnoreCase))
+                if (string.IsNullOrWhiteSpace(songPath))
                 {
-                    audioManager.PlayMusic(normalized.Substring(musicPrefix.Length));
+                    audioManager.StopMusic(effectFlags);
                     return;
                 }
 
-                if (string.Equals(normalized, stopMusic, StringComparison.OrdinalIgnoreCase))
-                {
-                    audioManager.StopMusic();
-                }
+                audioManager.PlayMusic(songPath, loop, effectFlags);
             });
         }
 
@@ -413,7 +425,7 @@ namespace OceanyaClient.Features.Viewport
             Dispatcher.Invoke(() =>
             {
                 StopScreenShake();
-                audioManager.StopAll();
+                audioManager.StopSfxAndBlips();
                 RenderBackgroundOnly();
             });
         }
@@ -428,7 +440,7 @@ namespace OceanyaClient.Features.Viewport
 
             StopChatTextTimer();
             StopScreenShake();
-            audioManager.StopAll();
+            audioManager.StopSfxAndBlips();
             FlashOverlay.BeginAnimation(OpacityProperty, null);
             FlashOverlay.Visibility = Visibility.Collapsed;
             AO2ViewportAssetResolver.ViewportDisplayOptions displayOptions =
@@ -799,7 +811,7 @@ namespace OceanyaClient.Features.Viewport
             FlashOverlay.Visibility = Visibility.Collapsed;
             FlashOverlay.Opacity = 0;
             StopAllAnimations();
-            audioManager.StopAll();
+            audioManager.StopSfxAndBlips();
             ChatPreview.PreviewText = string.Empty;
             ChatPreview.Visibility = Visibility.Collapsed;
             additivePreviousText = string.Empty;
@@ -920,13 +932,12 @@ namespace OceanyaClient.Features.Viewport
                 return null;
             }
 
-            int targetMaxDimension = GetViewportTargetMaxDimension(image);
             if (Ao2AnimationPreview.TryCreateAnimationPlayer(
                     path,
                     loop,
                     out IAnimationPlayer? player,
                     usePreviewLimits: false,
-                    maxDimensionOverride: targetMaxDimension)
+                    maxDimensionOverride: null)
                 && player != null)
             {
                 animationPlayers[image] = player;
@@ -942,7 +953,7 @@ namespace OceanyaClient.Features.Viewport
                 return player;
             }
 
-            ImageSource? source = AO2ViewportAssetResolver.LoadImage(path, GetViewportTargetDecodeWidth(image));
+            ImageSource? source = AO2ViewportAssetResolver.LoadImage(path, decodePixelWidth: 0);
             image.Source = source;
             image.Visibility = source != null ? Visibility.Visible : Visibility.Collapsed;
             return null;
@@ -954,9 +965,7 @@ namespace OceanyaClient.Features.Viewport
             bool visible,
             Stretch stretch)
         {
-            ImageSource? source = AO2ViewportAssetResolver.LoadImage(
-                placement.ImagePath,
-                Math.Max(1, (int)Math.Ceiling(placement.Width)));
+            ImageSource? source = AO2ViewportAssetResolver.LoadImage(placement.ImagePath, decodePixelWidth: 0);
             image.Source = source;
             image.Width = placement.Width;
             image.Height = placement.Height;
@@ -1007,36 +1016,6 @@ namespace OceanyaClient.Features.Viewport
             }
 
             return player;
-        }
-
-        private static int GetViewportTargetDecodeWidth(Image image)
-        {
-            double width = image.Width;
-            if (double.IsNaN(width) || width <= 0)
-            {
-                width = image.ActualWidth;
-            }
-
-            return Math.Max(1, (int)Math.Ceiling(width));
-        }
-
-        private static int GetViewportTargetMaxDimension(Image image)
-        {
-            double width = image.Width;
-            double height = image.Height;
-            if (double.IsNaN(width) || width <= 0)
-            {
-                width = image.ActualWidth;
-            }
-
-            if (double.IsNaN(height) || height <= 0)
-            {
-                height = image.ActualHeight;
-            }
-
-            int targetWidth = Math.Max(1, (int)Math.Ceiling(width));
-            int targetHeight = Math.Max(1, (int)Math.Ceiling(height));
-            return Math.Max(targetWidth, targetHeight);
         }
 
         private static void ApplyOffset(Image image, (int Horizontal, int Vertical) offset)

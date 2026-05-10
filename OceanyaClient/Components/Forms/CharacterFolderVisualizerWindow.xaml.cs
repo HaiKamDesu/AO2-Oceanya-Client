@@ -62,8 +62,10 @@ namespace OceanyaClient
         private readonly HashSet<string> progressiveLoadedItemKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly DispatcherTimer progressiveLoadReprioritizeTimer;
         private ScrollViewer? folderListScrollViewer;
+        private CancellationTokenSource? initialLoadCancellation;
 
         private bool hasLoaded;
+        private bool isClosed;
         private bool hasRaisedFinishedLoading;
         private bool applyingSavedWindowState;
         private bool suppressViewSelectionChanged;
@@ -275,7 +277,23 @@ namespace OceanyaClient
             }
 
             hasLoaded = true;
-            await LoadCharacterItemsAsync(showWaitForm: !suppressInitialLoadWaitForm);
+            initialLoadCancellation = new CancellationTokenSource();
+            try
+            {
+                await LoadCharacterItemsAsync(
+                    showWaitForm: !suppressInitialLoadWaitForm,
+                    cancellationToken: initialLoadCancellation.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            if (isClosed)
+            {
+                return;
+            }
+
             EnsureFolderListScrollViewerHooked();
 
             if (!hasRaisedFinishedLoading)
@@ -705,8 +723,12 @@ namespace OceanyaClient
             }
         }
 
-        private async Task LoadCharacterItemsAsync(bool forceRebuild = false, bool showWaitForm = true)
+        private async Task LoadCharacterItemsAsync(
+            bool forceRebuild = false,
+            bool showWaitForm = true,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             List<CharacterFolder> characters = CharacterFolder.FullList;
             string signature = BuildCharacterSignature(characters);
 
@@ -719,6 +741,7 @@ namespace OceanyaClient
 
                 try
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     WaitForm.SetSubtitle("Loading indexed data from disk cache...");
                     allItems.Clear();
                     lock (progressiveLoadKeyLock)
@@ -734,8 +757,10 @@ namespace OceanyaClient
 
                     WaitForm.SetSubtitle("Rendering selected view...");
                     await Dispatcher.Yield(DispatcherPriority.Background);
+                    cancellationToken.ThrowIfCancellationRequested();
                     ApplySelectedViewPreset();
                     await Dispatcher.Yield(DispatcherPriority.Background);
+                    cancellationToken.ThrowIfCancellationRequested();
                     StartProgressiveImageLoading();
                 }
                 finally
@@ -756,8 +781,11 @@ namespace OceanyaClient
 
             try
             {
-                List<FolderVisualizerItem> projected = await Task.Run(() => BuildCharacterItems(characters));
+                List<FolderVisualizerItem> projected = await Task.Run(
+                    () => BuildCharacterItems(characters, cancellationToken),
+                    cancellationToken);
 
+                cancellationToken.ThrowIfCancellationRequested();
                 SaveProjectedItemsToDisk(signature, projected);
 
                 allItems.Clear();
@@ -773,8 +801,10 @@ namespace OceanyaClient
                 RefreshSelectedFolderTagPanel();
                 WaitForm.SetSubtitle("Rendering selected view...");
                 await Dispatcher.Yield(DispatcherPriority.Background);
+                cancellationToken.ThrowIfCancellationRequested();
                 ApplySelectedViewPreset();
                 await Dispatcher.Yield(DispatcherPriority.Background);
+                cancellationToken.ThrowIfCancellationRequested();
                 StartProgressiveImageLoading();
             }
             finally
@@ -818,7 +848,9 @@ namespace OceanyaClient
             return Convert.ToHexString(signatureBytes).ToLowerInvariant();
         }
 
-        private List<FolderVisualizerItem> BuildCharacterItems(List<CharacterFolder> sourceCharacters)
+        private List<FolderVisualizerItem> BuildCharacterItems(
+            List<CharacterFolder> sourceCharacters,
+            CancellationToken cancellationToken = default)
         {
             List<CharacterFolder> sortedCharacters = sourceCharacters
                 .OrderBy(folder => folder.Name, StringComparer.OrdinalIgnoreCase)
@@ -829,6 +861,7 @@ namespace OceanyaClient
 
             for (int i = 0; i < total; i++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 CharacterFolder characterFolder = sortedCharacters[i];
 
                 if (i % 24 == 0)
@@ -3452,6 +3485,10 @@ namespace OceanyaClient
 
         private void Window_Closed(object? sender, EventArgs e)
         {
+            isClosed = true;
+            initialLoadCancellation?.Cancel();
+            initialLoadCancellation?.Dispose();
+            initialLoadCancellation = null;
             progressiveImageLoadCancellation?.Cancel();
             progressiveImageLoadCancellation?.Dispose();
             progressiveImageLoadCancellation = null;

@@ -84,6 +84,44 @@
                 </Trigger>
             </Style.Triggers>
         </Style>
+
+        <Style x:Key="CompactIconButtonStyle" TargetType="{x:Type Button}" BasedOn="{StaticResource ModernButton}">
+            <Setter Property="Width" Value="24"/>
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Background" Value="#FF181C20"/>
+            <Setter Property="BorderBrush" Value="#FF3E5362"/>
+        </Style>
+
+        <Style x:Key="PopupCommandButtonStyle" TargetType="{x:Type Button}" BasedOn="{StaticResource ModernButton}">
+            <Setter Property="Height" Value="26"/>
+            <Setter Property="Padding" Value="10,2"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Background" Value="#FF20262B"/>
+            <Setter Property="BorderBrush" Value="#FF4A5963"/>
+        </Style>
+
+        <Style x:Key="DarkPopupListBoxItemStyle" TargetType="{x:Type ListBoxItem}">
+            <Setter Property="Foreground" Value="#FFE8E8E8"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#222F4553"/>
+                </Trigger>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="#334D6A7A"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="DarkPopupCheckBoxStyle" TargetType="{x:Type CheckBox}">
+            <Setter Property="Foreground" Value="#FFE6E6E6"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
     </local:OceanyaWindowContentControl.Resources>
 
     <!-- Optional fade-in trigger (remove if not desired) -->
@@ -499,7 +537,7 @@
                         AutomationProperties.AutomationId="Main.OpenCharacterFolderVisualizer"
                         AutomationProperties.Name="Open Character Folder Visualizer"
                         BorderBrush="{x:Null}" Foreground="{x:Null}" Padding="0"
-                        Canvas.Left="458" Canvas.Top="603"
+                        Canvas.Left="377" Canvas.Top="603"
                         Click="btnCharacterFolderVisualizer_Click"
                         ToolTip="Character Folder Visualizer">
                     <Button.Style>
@@ -588,14 +626,22 @@
                 <Button x:Name="btnAreaNavigator"
                         AutomationProperties.AutomationId="Main.AreaNavigator.Open"
                         AutomationProperties.Name="Area Navigator"
-                        Width="24"
-                        Height="24"
                         Canvas.Left="431"
                         Canvas.Top="603"
                         Content="A"
-                        FontWeight="Bold"
+                        Style="{StaticResource CompactIconButtonStyle}"
                         Click="btnAreaNavigator_Click"
                         ToolTip="Area Navigator"/>
+
+                <Button x:Name="btnMusicList"
+                        AutomationProperties.AutomationId="Main.MusicList.Open"
+                        AutomationProperties.Name="Music List"
+                        Canvas.Left="458"
+                        Canvas.Top="603"
+                        Content="M"
+                        Style="{StaticResource CompactIconButtonStyle}"
+                        Click="btnMusicList_Click"
+                        ToolTip="Music List"/>
 
                 <Button x:Name="btnViewport"
                         AutomationProperties.AutomationId="Main.Viewport.Open"
@@ -616,20 +662,37 @@
                        StaysOpen="False"
                        AllowsTransparency="True">
                     <Border Background="#FF202020"
-                            BorderBrush="#FF575757"
+                            BorderBrush="#FF3E5362"
                             BorderThickness="1"
-                            Padding="8">
-                        <StackPanel Width="260">
+                            CornerRadius="4"
+                            Padding="10">
+                        <Grid x:Name="AreaNavigatorPopupSurface"
+                              MinWidth="220"
+                              MinHeight="220"
+                              Width="282"
+                              Height="296">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Grid Grid.RowSpan="4" Background="#E6111418"/>
                             <TextBlock Text="Area Navigator" Foreground="White" FontWeight="Bold" Margin="0,0,0,4"/>
                             <TextBlock x:Name="txtCurrentArea"
+                                       Grid.Row="1"
                                        AutomationProperties.AutomationId="Main.AreaNavigator.CurrentArea"
                                        Text="Current: Unknown"
-                                       Foreground="White"
+                                       Foreground="#FFD5E6F0"
                                        Margin="0,0,0,6"/>
                             <ListBox x:Name="lstAreas"
+                                     Grid.Row="2"
                                      AutomationProperties.AutomationId="Main.AreaNavigator.List"
-                                     Height="210"
                                      Margin="0,0,0,6"
+                                     Background="#FF11161A"
+                                     BorderBrush="#FF2F434E"
+                                     Foreground="#FFE8E8E8"
+                                     ItemContainerStyle="{StaticResource DarkPopupListBoxItemStyle}"
                                      MouseDoubleClick="lstAreas_MouseDoubleClick">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
@@ -657,13 +720,203 @@
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
                             </ListBox>
-                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
                                 <Button x:Name="btnGoToArea"
                                         AutomationProperties.AutomationId="Main.AreaNavigator.Go"
                                         Content="Go"
+                                        Style="{StaticResource PopupCommandButtonStyle}"
                                         Click="btnGoToArea_Click"/>
                             </StackPanel>
-                        </StackPanel>
+                            <Thumb Grid.RowSpan="4"
+                                   Width="5"
+                                   HorizontalAlignment="Right"
+                                   Cursor="SizeWE"
+                                   Background="Transparent"
+                                   Opacity="0"
+                                   Margin="0,-10,-10,-10"
+                                   DragDelta="AreaNavigatorRightResizeThumb_DragDelta"
+                                   DragCompleted="PopupResizeThumb_DragCompleted"/>
+                            <Thumb Grid.RowSpan="4"
+                                   Height="5"
+                                   VerticalAlignment="Top"
+                                   Cursor="SizeNS"
+                                   Background="Transparent"
+                                   Opacity="0"
+                                   Margin="-10,-10,-10,0"
+                                   DragDelta="AreaNavigatorTopResizeThumb_DragDelta"
+                                   DragCompleted="PopupResizeThumb_DragCompleted"/>
+                            <Thumb Grid.RowSpan="4"
+                                   Width="14"
+                                   Height="14"
+                                   HorizontalAlignment="Right"
+                                   VerticalAlignment="Top"
+                                   Cursor="SizeNESW"
+                                   Background="Transparent"
+                                   Opacity="0"
+                                   Margin="0,-10,-10,0"
+                                   DragDelta="AreaNavigatorTopRightResizeThumb_DragDelta"
+                                   DragCompleted="PopupResizeThumb_DragCompleted"/>
+                        </Grid>
+                    </Border>
+                </Popup>
+
+                <Popup x:Name="MusicListPopup"
+                       AutomationProperties.AutomationId="Main.MusicList.Popup"
+                       PlacementTarget="{Binding ElementName=btnMusicList}"
+                       Placement="Top"
+                       StaysOpen="False"
+                       AllowsTransparency="True">
+                    <Border Background="#FF202020"
+                            BorderBrush="#FF3E5362"
+                            BorderThickness="1"
+                            CornerRadius="4"
+                            Padding="10">
+                        <Grid x:Name="MusicListPopupSurface"
+                              MinWidth="260"
+                              MinHeight="300"
+                              Width="320"
+                              Height="420">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Grid Grid.RowSpan="5" Background="#E6111418"/>
+                                <DockPanel Margin="0,0,0,6">
+                                    <TextBlock Text="Music List" Foreground="White" FontWeight="Bold" VerticalAlignment="Center"/>
+                                    <Button x:Name="btnRefreshMusicList"
+                                            AutomationProperties.AutomationId="Main.MusicList.Refresh"
+                                            Content="Refresh"
+                                            DockPanel.Dock="Right"
+                                            HorizontalAlignment="Right"
+                                            Style="{StaticResource PopupCommandButtonStyle}"
+                                            Click="btnRefreshMusicList_Click"/>
+                                </DockPanel>
+                                <TextBox x:Name="txtMusicSearch"
+                                         Grid.Row="1"
+                                         AutomationProperties.AutomationId="Main.MusicList.Search"
+                                         Height="26"
+                                         Margin="0,0,0,6"
+                                         Padding="7,3"
+                                         Background="#FF1C2227"
+                                         BorderBrush="#FF3E5362"
+                                         Foreground="#FFE8E8E8"
+                                         TextChanged="txtMusicSearch_TextChanged"/>
+                                <TreeView x:Name="treeMusic"
+                                         Grid.Row="2"
+                                         AutomationProperties.AutomationId="Main.MusicList.List"
+                                         Margin="0,0,0,8"
+                                         Background="#FF11161A"
+                                         BorderBrush="#FF2F434E"
+                                         Foreground="#FFE8E8E8"
+                                         MouseDoubleClick="treeMusic_MouseDoubleClick">
+                                    <TreeView.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="Stop Current Song" Click="MusicStopMenuItem_Click"/>
+                                            <MenuItem Header="Play Random Song" Click="MusicRandomMenuItem_Click"/>
+                                            <Separator/>
+                                            <MenuItem Header="Expand All Categories" Click="MusicExpandAllMenuItem_Click"/>
+                                            <MenuItem Header="Collapse All Categories" Click="MusicCollapseAllMenuItem_Click"/>
+                                            <Separator/>
+                                            <MenuItem x:Name="menuMusicShowAssetPaths" Header="Show Asset Paths" IsCheckable="True" IsChecked="False" Click="MusicShowAssetPathsMenuItem_Click"/>
+                                            <Separator/>
+                                            <MenuItem x:Name="menuMusicFadeOut" Header="Fade Out Previous" IsCheckable="True" IsChecked="True" Click="MusicFlagMenuItem_Click"/>
+                                            <MenuItem x:Name="menuMusicFadeIn" Header="Fade In" IsCheckable="True" Click="MusicFlagMenuItem_Click"/>
+                                            <MenuItem x:Name="menuMusicSync" Header="Synchronize" IsCheckable="True" Click="MusicFlagMenuItem_Click"/>
+                                        </ContextMenu>
+                                    </TreeView.ContextMenu>
+                                    <TreeView.ItemContainerStyle>
+                                        <Style TargetType="{x:Type TreeViewItem}">
+                                            <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
+                                            <Setter Property="Foreground" Value="#FFE8E8E8"/>
+                                            <EventSetter Event="Expanded" Handler="MusicTreeItemExpansionChanged"/>
+                                            <EventSetter Event="Collapsed" Handler="MusicTreeItemExpansionChanged"/>
+                                        </Style>
+                                    </TreeView.ItemContainerStyle>
+                                    <TreeView.ItemTemplate>
+                                        <HierarchicalDataTemplate ItemsSource="{Binding Children}">
+                                            <Border Margin="0,0,0,2" Padding="{Binding Padding}" Background="{Binding RowBackground}">
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding DisplayName}"
+                                                               Foreground="{Binding TitleBrush}"
+                                                               FontWeight="{Binding FontWeight}"
+                                                               TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Text="{Binding AssetPath}"
+                                                               Foreground="#FF8E9CA4"
+                                                               FontSize="10"
+                                                               Visibility="{Binding AssetPathVisibility}"
+                                                               TextTrimming="CharacterEllipsis"/>
+                                                </StackPanel>
+                                            </Border>
+                                        </HierarchicalDataTemplate>
+                                    </TreeView.ItemTemplate>
+                                </TreeView>
+                                <Border Grid.Row="3" Background="#FF0F1418" BorderBrush="#FF2D3C44" BorderThickness="1" CornerRadius="4" Padding="8">
+                                    <StackPanel>
+                                        <TextBlock Text="Currently Playing" Foreground="#FF9BC7DF" FontSize="10" FontWeight="Bold"/>
+                                        <TextBlock x:Name="txtCurrentMusicTitle"
+                                                   AutomationProperties.AutomationId="Main.MusicList.CurrentTitle"
+                                                   Text="None"
+                                                   Foreground="#FFF2F2F2"
+                                                   FontWeight="SemiBold"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock x:Name="txtCurrentMusicPath"
+                                                   AutomationProperties.AutomationId="Main.MusicList.CurrentPath"
+                                                   Text="No active music packet."
+                                                   Foreground="#FF89949B"
+                                                    FontSize="10"
+                                                   Visibility="Collapsed"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock x:Name="txtCurrentMusicPlaylist"
+                                                   AutomationProperties.AutomationId="Main.MusicList.CurrentPlaylist"
+                                                   Text="Playlist: Not provided by server"
+                                                   Foreground="#FFB4C2C9"
+                                                   FontSize="10"
+                                                   Margin="0,2,0,6"
+                                                   Visibility="Collapsed"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                            <Button x:Name="btnStopMusic"
+                                                    AutomationProperties.AutomationId="Main.MusicList.Stop"
+                                                    Content="Stop"
+                                                    Width="82"
+                                                    Style="{StaticResource PopupCommandButtonStyle}"
+                                                    Click="btnStopMusic_Click"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                                <Thumb Grid.RowSpan="5"
+                                       Width="5"
+                                       HorizontalAlignment="Right"
+                                       Cursor="SizeWE"
+                                       Background="Transparent"
+                                       Opacity="0"
+                                       Margin="0,-10,-10,-10"
+                                       DragDelta="MusicListRightResizeThumb_DragDelta"
+                                       DragCompleted="PopupResizeThumb_DragCompleted"/>
+                                <Thumb Grid.RowSpan="5"
+                                       Height="5"
+                                       VerticalAlignment="Top"
+                                       Cursor="SizeNS"
+                                       Background="Transparent"
+                                       Opacity="0"
+                                       Margin="-10,-10,-10,0"
+                                       DragDelta="MusicListTopResizeThumb_DragDelta"
+                                       DragCompleted="PopupResizeThumb_DragCompleted"/>
+                                <Thumb Grid.RowSpan="5"
+                                       Width="14"
+                                       Height="14"
+                                       HorizontalAlignment="Right"
+                                       VerticalAlignment="Top"
+                                       Cursor="SizeNESW"
+                                       Background="Transparent"
+                                       Opacity="0"
+                                       Margin="0,-10,-10,0"
+                                       DragDelta="MusicListTopRightResizeThumb_DragDelta"
+                                       DragCompleted="PopupResizeThumb_DragCompleted"/>
+                        </Grid>
                     </Border>
                 </Popup>
                 <Button x:Name="THEDINGBUTTON" Height="12" Width="12" 

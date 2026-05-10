@@ -473,6 +473,21 @@ namespace OceanyaClient
         public double AudioMusicVolume { get; set; } = 0.5;
         public double AudioSfxVolume { get; set; } = 1.0;
         public double AudioBlipVolume { get; set; } = 0.5;
+
+        /// <summary>Fade out previous track when playing new music (default on, matches AO2 default).</summary>
+        public bool MusicEffectFadeOut { get; set; } = true;
+
+        /// <summary>Fade in new track from silence when playing music.</summary>
+        public bool MusicEffectFadeIn { get; set; } = false;
+
+        /// <summary>Seek new track to match the old track's playback position when switching songs.</summary>
+        public bool MusicEffectSyncPos { get; set; } = false;
+        public double AreaNavigatorPopupWidth { get; set; } = 282;
+        public double AreaNavigatorPopupHeight { get; set; } = 296;
+        public double MusicListPopupWidth { get; set; } = 320;
+        public double MusicListPopupHeight { get; set; } = 420;
+        public bool MusicListShowAssetPaths { get; set; } = false;
+        public List<string> MusicListCollapsedCategoryKeys { get; set; } = new List<string>();
         public List<string> EnabledLogCategories { get; set; } =
             new List<string> { "System", "Network", "IC", "OOC", "Viewport" };
         public List<CallwordRule> CallwordRules { get; set; } = new List<CallwordRule>();
@@ -772,6 +787,11 @@ namespace OceanyaClient
             data.AudioMusicVolume = Math.Clamp(data.AudioMusicVolume, 0.0, 1.0);
             data.AudioSfxVolume = Math.Clamp(data.AudioSfxVolume, 0.0, 1.0);
             data.AudioBlipVolume = Math.Clamp(data.AudioBlipVolume, 0.0, 1.0);
+            data.AreaNavigatorPopupWidth = Math.Clamp(data.AreaNavigatorPopupWidth <= 0 ? 282 : data.AreaNavigatorPopupWidth, 220, 900);
+            data.AreaNavigatorPopupHeight = Math.Clamp(data.AreaNavigatorPopupHeight <= 0 ? 296 : data.AreaNavigatorPopupHeight, 220, 900);
+            data.MusicListPopupWidth = Math.Clamp(data.MusicListPopupWidth <= 0 ? 320 : data.MusicListPopupWidth, 260, 1000);
+            data.MusicListPopupHeight = Math.Clamp(data.MusicListPopupHeight <= 0 ? 420 : data.MusicListPopupHeight, 300, 1000);
+            data.MusicListCollapsedCategoryKeys = NormalizeTagList(data.MusicListCollapsedCategoryKeys);
             data.CallwordRules = NormalizeCallwordRules(data.CallwordRules);
             data.ExtraAudioRules = NormalizeExtraAudioRules(data.ExtraAudioRules);
             data.CharacterCreatorEmoteTileWidth = Math.Clamp(data.CharacterCreatorEmoteTileWidth, 320, 760);

@@ -22,7 +22,13 @@ Use this file as the first stop before broad repository searches. It should poin
 - Doc: `Documentation/AreaNavigator.md`
 - Main code: `OceanyaClient/MainWindow.xaml`, `OceanyaClient/MainWindow.xaml.cs`, `AOBot-Testing/Agents/AOClient.cs`, `AOBot-Testing/Structures/AreaInfo.cs`
 - AO2/server reference: `AO2-Client/src/courtroom.cpp`, `AO2-Client/src/packet_distribution.cpp`, `tsuserver3/server/area_manager.py`, `tsuserver3/server/client_manager.py`, `tsuserverCC/server/area_manager.py`, `tsuserverCC/server/client_manager.py`
-- Notes: `FA`/`SM` define visible area rows; `ARUP` updates player counts/status/CM/lock by current row index. `RM` refreshes `FA` without a fresh ARUP snapshot, so the AO client preserves known row state by area name and treats new area counts as unknown until ARUP, `/getarea`, or `=== Areas ===` OOC data arrives.
+- Notes: `FA`/`SM` define visible area rows; `ARUP` updates player counts/status/CM/lock by current row index. `RM` refreshes `FA` without a fresh ARUP snapshot, so the AO client preserves known row state by area name and treats new area counts as unknown until ARUP, `/getarea`, or `=== Areas ===` OOC data arrives. The popup is dark themed and its dimensions persist across sessions.
+
+## GM Multi-Client Music List
+- Doc: `Documentation/MusicList.md`
+- Main code: `OceanyaClient/MainWindow.xaml`, `OceanyaClient/MainWindow.xaml.cs`, `AOBot-Testing/Agents/AOClient.cs`
+- AO2/server reference: `AO2-Client/src/courtroom.cpp`, `AO2-Client/src/packet_distribution.cpp`, `AO2-Client/src/aomusicplayer.cpp`, `tsuserver3/server/network/aoprotocol.py`, `tsuserverCC/server/network/aoprotocol.py`
+- Notes: `SM` carries areas followed by music; the first file-like entry marks the split and the preceding non-file entry is the first music category. `FM` refreshes music only. `MC` supports play/stop plus AO2 effect flags, but no network seek/timeline command. The popup persists dimensions, renders `SERVER LIST` plus async-scanned `LOCAL FILES`, remembers collapsed categories, colors local found/missing tracks green/red, and can show full local asset paths.
 
 ## Debug Console And Logging
 - Doc: `Documentation/DebugConsoleAndLogging.md`

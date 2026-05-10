@@ -292,6 +292,16 @@
                                 <TextBlock Grid.Column="2" x:Name="UnfocusedVolumeValueText" Style="{StaticResource LabelText}" HorizontalAlignment="Right"/>
                             </Grid>
 
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                <TextBlock Text="Music Transition Effects" Foreground="White" FontWeight="SemiBold"/>
+                                <TextBlock Style="{StaticResource HelpGlyph}" ToolTip="Effect flags included in outgoing MC# packets when you play music. Matches the right-click music list options in AO2. Not saved to config.ini."/>
+                            </StackPanel>
+                            <WrapPanel Margin="0,0,0,16">
+                                <CheckBox x:Name="MusicFadeOutCheckBox" Content="Fade out previous" Foreground="White" Margin="0,0,18,6" ToolTip="Fade out the previous track over 4 seconds when playing new music. On by default (matches AO2 default)."/>
+                                <CheckBox x:Name="MusicFadeInCheckBox" Content="Fade in new" Foreground="White" Margin="0,0,18,6" ToolTip="Start the new track from silence and fade it in over 1 second."/>
+                                <CheckBox x:Name="MusicSyncPosCheckBox" Content="Synchronize position" Foreground="White" Margin="0,0,0,6" ToolTip="Seek the new track to match the current track's playback position. (Not yet implemented — reserved for future use.)"/>
+                            </WrapPanel>
+
                             <StackPanel Orientation="Horizontal" Margin="0,2,0,8">
                                 <TextBlock Text="Extra Audio Rules" Foreground="White" FontWeight="SemiBold"/>
                                 <TextBlock Style="{StaticResource HelpGlyph}" ToolTip="Optional overrides for specific blips, characters, or shownames. Use Add/Edit so values come from known dropdowns."/>

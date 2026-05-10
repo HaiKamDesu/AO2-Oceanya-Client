@@ -1,4 +1,5 @@
 using System;
+using ManagedBass;
 using OceanyaClient;
 
 namespace OceanyaClient.Features.Viewport
@@ -8,18 +9,23 @@ namespace OceanyaClient.Features.Viewport
     /// </summary>
     internal sealed class AO2ViewportAudioManager : IDisposable
     {
-        private readonly AO2BlipPreviewPlayer musicPlayer = new AO2BlipPreviewPlayer();
+        private const int FadeOutDurationMs = 4000;
+        private const int FadeInDurationMs = 1000;
+
+        private readonly AO2BlipPreviewPlayer musicPlayer = new AO2BlipPreviewPlayer(streamCount: 1);
         private readonly AO2BlipPreviewPlayer sfxPlayer = new AO2BlipPreviewPlayer();
         private readonly AO2BlipPreviewPlayer effectSfxPlayer = new AO2BlipPreviewPlayer();
         private readonly AO2BlipPreviewPlayer shoutSfxPlayer = new AO2BlipPreviewPlayer();
         private readonly AO2BlipPreviewPlayer blipPlayer = new AO2BlipPreviewPlayer();
         private string currentMusicPath = string.Empty;
+        private bool currentMusicLoop = true;
         private string currentSfxPath = string.Empty;
         private string currentEffectSfxPath = string.Empty;
         private string currentShoutSfxPath = string.Empty;
         private string currentBlipPath = string.Empty;
         private string currentBlipCharacterName = string.Empty;
         private string currentBlipShowname = string.Empty;
+        private int fadingMusicStream;
         private bool disposed;
 
         /// <summary>
@@ -35,11 +41,25 @@ namespace OceanyaClient.Features.Viewport
         }
 
         /// <summary>
-        /// Stops any active viewport audio.
+        /// Stops all active viewport audio including music, cancelling any in-progress fade.
         /// </summary>
         public void StopAll()
         {
             musicPlayer.Stop();
+            StopAndFreeFadingMusicStream();
+            currentMusicPath = string.Empty;
+            currentMusicLoop = true;
+            sfxPlayer.Stop();
+            effectSfxPlayer.Stop();
+            shoutSfxPlayer.Stop();
+            blipPlayer.Stop();
+        }
+
+        /// <summary>
+        /// Stops SFX, effect, shout, and blip players but leaves music playing.
+        /// </summary>
+        public void StopSfxAndBlips()
+        {
             sfxPlayer.Stop();
             effectSfxPlayer.Stop();
             shoutSfxPlayer.Stop();
@@ -181,37 +201,99 @@ namespace OceanyaClient.Features.Viewport
         }
 
         /// <summary>
-        /// Plays an AO2-style music token.
+        /// Plays an AO2-style music token, applying the effect flags from the MC# packet.
+        /// effectFlags bits: FADE_IN=1, FADE_OUT=2, SYNC_POS=4 (SYNC_POS not yet implemented).
         /// </summary>
-        public void PlayMusic(string? token)
+        public void PlayMusic(string? token, bool loop = true, int effectFlags = 0)
         {
             string? path = AO2ViewportAudioResolver.ResolveMusicPath(token);
+            bool fadeOut = (effectFlags & 2) != 0;
+            bool fadeIn = (effectFlags & 1) != 0;
+
+            bool pathChanged = !string.Equals(currentMusicPath, path ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            bool loopChanged = currentMusicLoop != loop;
+
+            if (pathChanged || loopChanged)
+            {
+                // Free any previously fading stream that has already stopped naturally.
+                CleanupFadingMusicStreamIfStopped();
+
+                if (fadeOut)
+                {
+                    // Detach current stream and let it fade out independently.
+                    // BASS slides the volume to 0 then stops the channel automatically.
+                    StopAndFreeFadingMusicStream();
+                    int oldStream = musicPlayer.TakeFirstActiveStream();
+                    if (oldStream != 0)
+                    {
+                        _ = Bass.ChannelSlideAttribute(oldStream, ChannelAttribute.Volume, -1f, FadeOutDurationMs);
+                        fadingMusicStream = oldStream;
+                    }
+                }
+                else
+                {
+                    musicPlayer.Stop();
+                    StopAndFreeFadingMusicStream();
+                }
+
+                currentMusicPath = string.Empty;
+                currentMusicLoop = loop;
+            }
+
             if (string.IsNullOrWhiteSpace(path))
             {
                 return;
             }
 
-            if (!string.Equals(currentMusicPath, path, StringComparison.OrdinalIgnoreCase))
+            if (pathChanged || loopChanged)
             {
-                musicPlayer.Stop();
-                currentMusicPath = path;
-                if (!musicPlayer.TrySetBlip(path))
+                if (!musicPlayer.TrySetBlip(path, loop: loop))
                 {
                     return;
                 }
+
+                currentMusicPath = path;
             }
 
-            musicPlayer.Volume = (float)AudioSettings.ResolveMusicVolume(token);
-            _ = musicPlayer.PlayBlip();
+            float targetVolume = (float)AudioSettings.ResolveMusicVolume(token);
+            if (fadeIn)
+            {
+                musicPlayer.FadeInPlay(targetVolume, FadeInDurationMs);
+            }
+            else
+            {
+                musicPlayer.Volume = targetVolume;
+                _ = musicPlayer.PlayBlip();
+            }
         }
 
         /// <summary>
-        /// Stops music playback only.
+        /// Stops music playback, optionally fading out over 4 seconds.
+        /// effectFlags bits: FADE_OUT=2.
         /// </summary>
-        public void StopMusic()
+        public void StopMusic(int effectFlags = 0)
         {
-            musicPlayer.Stop();
+            bool fadeOut = (effectFlags & 2) != 0;
+            CleanupFadingMusicStreamIfStopped();
+
+            if (fadeOut)
+            {
+                StopAndFreeFadingMusicStream();
+                int oldStream = musicPlayer.TakeFirstActiveStream();
+                if (oldStream != 0)
+                {
+                    _ = Bass.ChannelSlideAttribute(oldStream, ChannelAttribute.Volume, -1f, FadeOutDurationMs);
+                    fadingMusicStream = oldStream;
+                }
+            }
+            else
+            {
+                musicPlayer.Stop();
+                StopAndFreeFadingMusicStream();
+            }
+
             currentMusicPath = string.Empty;
+            currentMusicLoop = true;
         }
 
         /// <inheritdoc/>
@@ -229,6 +311,32 @@ namespace OceanyaClient.Features.Viewport
             effectSfxPlayer.Dispose();
             shoutSfxPlayer.Dispose();
             blipPlayer.Dispose();
+        }
+
+        private void CleanupFadingMusicStreamIfStopped()
+        {
+            if (fadingMusicStream == 0)
+            {
+                return;
+            }
+
+            if (Bass.ChannelIsActive(fadingMusicStream) == PlaybackState.Stopped)
+            {
+                Bass.StreamFree(fadingMusicStream);
+                fadingMusicStream = 0;
+            }
+        }
+
+        private void StopAndFreeFadingMusicStream()
+        {
+            if (fadingMusicStream == 0)
+            {
+                return;
+            }
+
+            Bass.ChannelStop(fadingMusicStream);
+            Bass.StreamFree(fadingMusicStream);
+            fadingMusicStream = 0;
         }
     }
 }

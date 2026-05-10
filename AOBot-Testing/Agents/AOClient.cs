@@ -48,8 +48,10 @@ namespace AOBot_Testing.Agents
         private string currentArea = string.Empty;
         private readonly List<string> availableAreas = new List<string>();
         private readonly List<AreaInfo> availableAreaInfos = new List<AreaInfo>();
+        private readonly List<string> availableMusic = new List<string>();
         private readonly List<Player> currentAreaPlayers = new List<Player>();
         private readonly List<string> currentEvidenceNames = new List<string>();
+        private string serverAssetUrl = string.Empty;
         public CharacterFolder? currentINI;
         public Emote? currentEmote;
 
@@ -107,6 +109,13 @@ namespace AOBot_Testing.Agents
         public Action? OnDisconnect;
         public Action<string>? OnCurrentAreaChanged;
         public Action<IReadOnlyList<string>>? OnAvailableAreasUpdated;
+        public Action<IReadOnlyList<string>>? OnAvailableMusicUpdated;
+
+        /// <summary>
+        /// Raised when an MC# packet is received.
+        /// Parameters: displayName, songPath (null = stop), loopEnabled, channel, effectFlags (FADE_IN=1, FADE_OUT=2, SYNC_POS=4).
+        /// </summary>
+        public Action<string, string?, bool, int, int>? OnMusicChanged;
         public Action<IReadOnlyList<AreaInfo>>? OnAvailableAreaInfosUpdated;
 
         /// <summary>
@@ -140,6 +149,14 @@ namespace AOBot_Testing.Agents
             }
         }
 
+        public IReadOnlyList<string> AvailableMusic
+        {
+            get
+            {
+                return availableMusic.AsReadOnly();
+            }
+        }
+
         public IReadOnlyList<Player> CurrentAreaPlayers
         {
             get
@@ -163,6 +180,8 @@ namespace AOBot_Testing.Agents
                 return serverFeatures.ToList().AsReadOnly();
             }
         }
+
+        public string ServerAssetUrl => serverAssetUrl;
 
         public bool IsTransportConnected => transport != null && transport.IsConnected;
 
@@ -404,6 +423,47 @@ namespace AOBot_Testing.Agents
             SetCurrentArea(currentAreaName);
         }
 
+        /// <summary>
+        /// Sends an AO2 music change packet for the selected INI puppet.
+        /// </summary>
+        /// <param name="musicToken">Song or server-recognized category token.</param>
+        /// <param name="effectFlags">AO2 music flags: FADE_IN=1, FADE_OUT=2, SYNC_POS=4.</param>
+        public async Task PlayMusic(string musicToken, int effectFlags = 2)
+        {
+            if (!IsTransportConnected)
+            {
+                CustomConsole.Error("Server connection is not active. Cannot change music.");
+                return;
+            }
+
+            string token = Globals.ReplaceSymbolsForText(musicToken?.Trim() ?? string.Empty);
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                return;
+            }
+
+            string showName = SupportsServerFeature("CCCC_IC_SUPPORT") || SupportsServerFeature("EFFECTS")
+                ? Globals.ReplaceSymbolsForText(ResolveShowNameForPacket())
+                : string.Empty;
+
+            string packet = SupportsServerFeature("EFFECTS")
+                ? $"MC#{token}#{iniPuppetID}#{showName}#{effectFlags}#%"
+                : string.IsNullOrWhiteSpace(showName)
+                    ? $"MC#{token}#{iniPuppetID}#%"
+                    : $"MC#{token}#{iniPuppetID}#{showName}#%";
+
+            await SendPacket(packet);
+        }
+
+        /// <summary>
+        /// Sends the AO2 stop-music packet.
+        /// </summary>
+        /// <param name="effectFlags">AO2 music flags. FADE_OUT=2 is the normal AO2 default.</param>
+        public async Task StopMusic(int effectFlags = 2)
+        {
+            await PlayMusic("~stop.mp3", effectFlags);
+        }
+
         public void SetCharacter(string characterName)
         {
             CharacterFolder? newChar = CharacterFolder.FullList.FirstOrDefault(c => c.Name == characterName)
@@ -536,6 +596,14 @@ namespace AOBot_Testing.Agents
 
                 CustomConsole.Info("Server features: " + string.Join(", ", serverFeatures.OrderBy(feature => feature, StringComparer.OrdinalIgnoreCase)), Common.CustomConsole.LogCategory.System);
             }
+            else if (message.StartsWith("ASS#"))
+            {
+                string[] fields = message.Substring(4).TrimEnd('#', '%')
+                    .Split('#', StringSplitOptions.RemoveEmptyEntries);
+                serverAssetUrl = fields.Length > 0
+                    ? Globals.ReplaceTextForSymbols(fields[0]).Trim()
+                    : string.Empty;
+            }
             else if (message.StartsWith("MS#"))
             {
                 CustomConsole.Info("Incoming IC packet: " + message, Common.CustomConsole.LogCategory.Network);
@@ -577,6 +645,10 @@ namespace AOBot_Testing.Agents
             else if (message.StartsWith("FA#"))
             {
                 ParseAreaListFromFa(message);
+            }
+            else if (message.StartsWith("FM#"))
+            {
+                ParseMusicListFromFm(message);
             }
             else if (message.StartsWith("ARUP#"))
             {
@@ -661,6 +733,7 @@ namespace AOBot_Testing.Agents
             serverCharacterList.Clear();
             availableAreas.Clear();
             availableAreaInfos.Clear();
+            availableMusic.Clear();
 
             transport = AOClientTransportFactory.Create(serverUri);
             try
@@ -911,26 +984,50 @@ namespace AOBot_Testing.Agents
                 return;
             }
 
+            bool loopEnabled = fields.Length > 4 && fields[4].Trim() == "1";
+            int channel = 0;
+            if (fields.Length > 5 && int.TryParse(fields[5].Trim(), out int parsedChannel))
+            {
+                channel = parsedChannel;
+            }
+
+            int effectFlags = 0;
+            if (fields.Length > 6 && int.TryParse(fields[6].Trim(), out int parsedEffects))
+            {
+                effectFlags = parsedEffects;
+            }
+
+            // displayName is empty for server-initiated events (char_id = -1, e.g. area sync).
+            // Those still propagate to OnMusicChanged — we just skip the chat log entry.
             string displayName = ResolveDisplayNameForMusicPacket(characterId, fields.Length > 3
                 ? Globals.ReplaceTextForSymbols(fields[3]).Trim()
                 : string.Empty);
-            if (string.IsNullOrWhiteSpace(displayName))
-            {
-                return;
-            }
-
             bool isSentFromSelf = characterId == iniPuppetID;
-            if (string.Equals(song, "~stop.mp3", StringComparison.OrdinalIgnoreCase))
+
+            bool isStop = string.IsNullOrWhiteSpace(song)
+                || string.Equals(song, "~stop.mp3", StringComparison.OrdinalIgnoreCase);
+
+            if (isStop)
             {
-                OnIcActionReceived?.Invoke(displayName, "has stopped the music.", isSentFromSelf, ICMessage.TextColors.White);
+                if (!string.IsNullOrWhiteSpace(displayName))
+                {
+                    OnIcActionReceived?.Invoke(displayName, "has stopped the music.", isSentFromSelf, ICMessage.TextColors.White);
+                }
+
+                OnMusicChanged?.Invoke(displayName, null, false, channel, effectFlags);
                 return;
             }
 
-            string songName = Path.GetFileNameWithoutExtension(song);
-            if (!string.IsNullOrWhiteSpace(songName))
+            if (!string.IsNullOrWhiteSpace(displayName))
             {
-                OnIcActionReceived?.Invoke(displayName, "has played a song " + songName, isSentFromSelf, ICMessage.TextColors.White);
+                string songName = Path.GetFileNameWithoutExtension(song);
+                if (!string.IsNullOrWhiteSpace(songName))
+                {
+                    OnIcActionReceived?.Invoke(displayName, "has played a song " + songName, isSentFromSelf, ICMessage.TextColors.White);
+                }
             }
+
+            OnMusicChanged?.Invoke(displayName, song, loopEnabled, channel, effectFlags);
         }
 
         private string ResolveDisplayNameForMusicPacket(int characterId, string packetShowName)
@@ -1177,17 +1274,64 @@ namespace AOBot_Testing.Agents
                 .Split('#', StringSplitOptions.RemoveEmptyEntries);
 
             List<string> areas = new List<string>();
+            List<string> music = new List<string>();
+            bool musicStarted = false;
             foreach (string entry in content)
             {
-                if (LooksLikeMusicEntry(entry))
+                string decodedEntry = Globals.ReplaceTextForSymbols(entry).Trim();
+                if (musicStarted)
                 {
-                    break;
+                    music.Add(decodedEntry);
+                    continue;
                 }
 
-                areas.Add(entry);
+                if (LooksLikeMusicEntry(decodedEntry))
+                {
+                    musicStarted = true;
+                    if (areas.Count > 0)
+                    {
+                        string previousArea = areas[^1];
+                        areas.RemoveAt(areas.Count - 1);
+                        music.Add(previousArea);
+                    }
+
+                    music.Add(decodedEntry);
+                    continue;
+                }
+
+                areas.Add(decodedEntry);
             }
 
             ReplaceAvailableAreas(areas);
+            ReplaceAvailableMusic(music);
+        }
+
+        private void ParseMusicListFromFm(string message)
+        {
+            string[] content = message.Substring(3).TrimEnd('#', '%')
+                .Split('#', StringSplitOptions.RemoveEmptyEntries)
+                .Select(entry => Globals.ReplaceTextForSymbols(entry).Trim())
+                .Where(entry => !string.IsNullOrWhiteSpace(entry))
+                .ToArray();
+
+            ReplaceAvailableMusic(content);
+        }
+
+        private void ReplaceAvailableMusic(IEnumerable<string> music)
+        {
+            availableMusic.Clear();
+            foreach (string entry in music)
+            {
+                string trimmedEntry = entry.Trim();
+                if (string.IsNullOrWhiteSpace(trimmedEntry))
+                {
+                    continue;
+                }
+
+                availableMusic.Add(trimmedEntry);
+            }
+
+            OnAvailableMusicUpdated?.Invoke(availableMusic.AsReadOnly());
         }
 
         private void ParseAreaUpdate(string message)
@@ -1811,6 +1955,14 @@ namespace AOBot_Testing.Agents
         }
 
         public async Task RequestAreaList()
+        {
+            await SendPacket("RM#%");
+        }
+
+        /// <summary>
+        /// Requests the AO2 music list. Tsuserver forks refresh AO2 music through <c>RM</c>/<c>SM</c>, not AO1 <c>AM</c>.
+        /// </summary>
+        public async Task RequestMusicList()
         {
             await SendPacket("RM#%");
         }

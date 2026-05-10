@@ -107,6 +107,17 @@ namespace OceanyaClient.Features.Viewport
         }
 
         /// <summary>
+        /// Applies current saved volume settings to all active audio players in all hosted viewports.
+        /// </summary>
+        public void RefreshVolumes()
+        {
+            foreach (AO2ViewportControl control in profileControls.Values)
+            {
+                control.RefreshVolumes();
+            }
+        }
+
+        /// <summary>
         /// Removes a profile viewport and detaches it from AO2 events.
         /// </summary>
         public void RemoveClient(AOClient client)

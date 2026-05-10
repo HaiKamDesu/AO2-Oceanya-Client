@@ -21,8 +21,17 @@ namespace OceanyaClient
         private readonly ObservableCollection<ConfigEntry> configEntries = new ObservableCollection<ConfigEntry>();
         private readonly Dictionary<string, string> configValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private bool suppressControlEvents;
+        private double originalMusicVolume;
+        private double originalSfxVolume;
+        private double originalBlipVolume;
 
         public event Action? SettingsSaved;
+
+        /// <summary>
+        /// Fired whenever a volume slider changes, so the host can apply the new level in real time.
+        /// On cancel the host receives another firing after the originals are restored.
+        /// </summary>
+        public event Action? VolumeLiveChanged;
 
         /// <inheritdoc/>
         public override string HeaderText => "SETTINGS";
@@ -59,6 +68,14 @@ namespace OceanyaClient
             SfxVolumeSlider.Value = sfxPercent;
             BlipVolumeSlider.Value = blipPercent;
             UnfocusedVolumeSlider.Value = unfocusedPercent;
+
+            originalMusicVolume = SaveFile.Data.AudioMusicVolume;
+            originalSfxVolume = SaveFile.Data.AudioSfxVolume;
+            originalBlipVolume = SaveFile.Data.AudioBlipVolume;
+
+            MusicFadeOutCheckBox.IsChecked = SaveFile.Data.MusicEffectFadeOut;
+            MusicFadeInCheckBox.IsChecked = SaveFile.Data.MusicEffectFadeIn;
+            MusicSyncPosCheckBox.IsChecked = SaveFile.Data.MusicEffectSyncPos;
 
             StickyEffectsCheckBox.IsChecked = SaveFile.Data.StickyEffect;
             SwitchPosOnIniSwapCheckBox.IsChecked = SaveFile.Data.SwitchPosOnIniSwap;
@@ -135,6 +152,10 @@ namespace OceanyaClient
             }
 
             RefreshValueText();
+            SaveFile.Data.AudioMusicVolume = AudioSettings.PercentToScalar(MusicVolumeSlider.Value);
+            SaveFile.Data.AudioSfxVolume = AudioSettings.PercentToScalar(SfxVolumeSlider.Value);
+            SaveFile.Data.AudioBlipVolume = AudioSettings.PercentToScalar(BlipVolumeSlider.Value);
+            VolumeLiveChanged?.Invoke();
         }
 
         private void AddCallwordButton_Click(object sender, RoutedEventArgs e)
@@ -256,6 +277,9 @@ namespace OceanyaClient
             SaveFile.Data.AudioMusicVolume = AudioSettings.PercentToScalar(MusicVolumeSlider.Value);
             SaveFile.Data.AudioSfxVolume = AudioSettings.PercentToScalar(SfxVolumeSlider.Value);
             SaveFile.Data.AudioBlipVolume = AudioSettings.PercentToScalar(BlipVolumeSlider.Value);
+            SaveFile.Data.MusicEffectFadeOut = MusicFadeOutCheckBox.IsChecked == true;
+            SaveFile.Data.MusicEffectFadeIn = MusicFadeInCheckBox.IsChecked == true;
+            SaveFile.Data.MusicEffectSyncPos = MusicSyncPosCheckBox.IsChecked == true;
             SaveFile.Data.StickyEffect = StickyEffectsCheckBox.IsChecked == true;
             SaveFile.Data.SwitchPosOnIniSwap = SwitchPosOnIniSwapCheckBox.IsChecked == true;
             SaveFile.Data.InvertICLog = InvertIcLogsCheckBox.IsChecked == true;
@@ -296,6 +320,10 @@ namespace OceanyaClient
 
         private void CancelButton_Click(object sender, RoutedEventArgs e)
         {
+            SaveFile.Data.AudioMusicVolume = originalMusicVolume;
+            SaveFile.Data.AudioSfxVolume = originalSfxVolume;
+            SaveFile.Data.AudioBlipVolume = originalBlipVolume;
+            VolumeLiveChanged?.Invoke();
             DialogResult = false;
             Close();
         }

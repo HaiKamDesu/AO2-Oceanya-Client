@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.ObjectModel;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -11,6 +12,7 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Resources;
+using System.Windows.Threading;
 using AO2AIBot.Chat;
 using AO2AIBot.Clients;
 using AO2AIBot.Controller;
@@ -68,8 +70,22 @@ namespace OceanyaClient
         private readonly Brush areaRpBrush = new SolidColorBrush(Color.FromRgb(108, 69, 116));
         private readonly Brush areaGamingBrush = new SolidColorBrush(Color.FromRgb(58, 116, 116));
         private readonly Brush areaLockedBrush = new SolidColorBrush(Color.FromRgb(106, 54, 54));
+        private readonly Brush musicCategoryBrush = new SolidColorBrush(Color.FromRgb(28, 36, 42));
+        private readonly Brush musicFoundBrush = new SolidColorBrush(Color.FromRgb(24, 46, 31));
+        private readonly Brush musicMissingBrush = new SolidColorBrush(Color.FromRgb(54, 27, 30));
+        private readonly Brush musicCurrentBrush = new SolidColorBrush(Color.FromRgb(35, 55, 45));
+        private readonly AO2ViewportAudioManager mainMusicAudioManager = new AO2ViewportAudioManager();
+        private readonly Dictionary<string, string> resolvedMusicPathCache =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> displayMusicPathCache =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private IReadOnlyList<MusicAssetEntry>? localMusicAssetsCache;
+        private Task? localMusicAssetsScanTask;
         private bool isLoadingDreddOverlaySelection;
         private bool isDreddFeatureEnabled;
+        private int musicEffectFlags = 2;
+        private string currentMusicToken = string.Empty;
+        private string currentMusicPlaylist = string.Empty;
         private const string DreddNoneOverlayName = "none";
         private const double ConnectionInfoBarHeight = 24;
         private const double MainWindowBodyHeight = 628;
@@ -386,11 +402,13 @@ namespace OceanyaClient
             chkPosOnIniSwap.IsChecked = SaveFile.Data.SwitchPosOnIniSwap;
             chkSticky.IsChecked = SaveFile.Data.StickyEffect;
             chkInvertLog.IsChecked = SaveFile.Data.InvertICLog;
+            ApplySavedPopupSettings();
             ApplySavedClientSettingsToRuntime();
             InitializeDreddFeatureUi();
 
             btnDebug.Visibility = debug ? Visibility.Visible : Visibility.Collapsed;
             RefreshAreaNavigatorForCurrentClient();
+            RefreshMusicListForCurrentClient();
             UpdateConnectionInfoBar();
         }
 
@@ -479,6 +497,7 @@ namespace OceanyaClient
                 viewportContent?.AttachClient(null, null);
                 viewportWindow?.Close();
                 callwordAudioNotifier.Dispose();
+                mainMusicAudioManager.Dispose();
                 await DisconnectAllClientsForShutdownAsync();
                 IsEnabled = true;
                 try
@@ -1542,6 +1561,7 @@ namespace OceanyaClient
                     OOCLogControl.SetCurrentClient(profileClient);
                     SetOocShownameTextForCurrentClient(profileClient.OOCShowname);
                     RefreshAreaNavigatorForCurrentClient();
+                    RefreshMusicListForCurrentClient();
                     RefreshDreddOverlayForCurrentContext(promptForUnknownOverlay: false);
                     UpdateDreddFeatureEnabledState();
                 }
@@ -1805,6 +1825,371 @@ namespace OceanyaClient
             UpdateConnectionInfoBar();
         }
 
+        private void RefreshMusicListForCurrentClient()
+        {
+            AOClient? profileClient = currentClient;
+            AOClient? networkClient = profileClient == null ? null : GetTargetClientForNetwork(profileClient);
+
+            if (networkClient == null)
+            {
+                btnMusicList.IsEnabled = false;
+                treeMusic.ItemsSource = null;
+                btnStopMusic.IsEnabled = false;
+                btnRefreshMusicList.IsEnabled = false;
+                UpdateCurrentMusicDisplay(null);
+                return;
+            }
+
+            btnMusicList.IsEnabled = true;
+            btnStopMusic.IsEnabled = true;
+            btnRefreshMusicList.IsEnabled = true;
+            EnsureLocalMusicAssetsScanStarted();
+            string filter = txtMusicSearch?.Text?.Trim() ?? string.Empty;
+            treeMusic.ItemsSource = BuildMusicListItems(networkClient.AvailableMusic, filter);
+            UpdateCurrentMusicDisplay(networkClient);
+        }
+
+        private List<MusicListItem> BuildMusicListItems(IReadOnlyList<string> musicEntries, string filter)
+        {
+            List<MusicListItem> items = new List<MusicListItem>();
+            bool showAssetPaths = SaveFile.Data.MusicListShowAssetPaths;
+            HashSet<string> collapsedKeys = GetMusicCollapsedCategoryKeys();
+            MusicListItem serverRoot = CreateMusicCategoryItem("SERVER LIST", "server", collapsedKeys);
+            MusicListItem localRoot = CreateMusicCategoryItem("LOCAL FILES", "local", collapsedKeys);
+
+            BuildServerMusicItems(serverRoot, musicEntries, filter, showAssetPaths, collapsedKeys);
+            BuildLocalMusicItems(localRoot, filter, showAssetPaths, collapsedKeys);
+
+            if (ShouldIncludeMusicCategory(serverRoot, filter))
+            {
+                items.Add(serverRoot);
+            }
+
+            if (ShouldIncludeMusicCategory(localRoot, filter))
+            {
+                items.Add(localRoot);
+            }
+
+            return items;
+        }
+
+        private void BuildServerMusicItems(
+            MusicListItem serverRoot,
+            IReadOnlyList<string> musicEntries,
+            string filter,
+            bool showAssetPaths,
+            HashSet<string> collapsedKeys)
+        {
+            MusicListItem? currentCategory = null;
+
+            foreach (string entry in musicEntries)
+            {
+                string token = entry.Trim();
+                if (string.IsNullOrWhiteSpace(token)
+                    || string.Equals(token, "~stop.mp3", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(token.Trim('='), "stop", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                bool isSong = LooksLikeMusicEntry(token);
+                string displayName = isSong ? GetMusicDisplayName(token) : token;
+                string assetPath = isSong ? ResolveCachedMusicDisplayPath(token) : string.Empty;
+                bool matchesFilter = string.IsNullOrWhiteSpace(filter)
+                    || displayName.Contains(filter, StringComparison.OrdinalIgnoreCase)
+                    || token.Contains(filter, StringComparison.OrdinalIgnoreCase)
+                    || assetPath.Contains(filter, StringComparison.OrdinalIgnoreCase)
+                    || (currentCategory?.DisplayName.Contains(filter, StringComparison.OrdinalIgnoreCase) == true);
+
+                if (!string.IsNullOrWhiteSpace(filter)
+                    && !matchesFilter)
+                {
+                    if (!isSong)
+                    {
+                        currentCategory = CreateMusicCategoryItem(token, CreateMusicCategoryKey("server", token), collapsedKeys);
+                    }
+
+                    continue;
+                }
+
+                if (!isSong)
+                {
+                    currentCategory = CreateMusicCategoryItem(token, CreateMusicCategoryKey("server", token), collapsedKeys);
+                    serverRoot.Children.Add(currentCategory);
+                    continue;
+                }
+
+                bool isCurrent = isSong
+                    && string.Equals(token, currentMusicToken, StringComparison.OrdinalIgnoreCase);
+                bool localFileExists = !string.IsNullOrWhiteSpace(ResolveCachedMusicPath(token));
+                MusicListItem songItem = new MusicListItem
+                {
+                    DisplayName = displayName,
+                    Token = token,
+                    AssetPath = assetPath,
+                    Playlist = currentCategory?.DisplayName ?? string.Empty,
+                    IsCategory = false,
+                    IsPlayable = true,
+                    RowBackground = isCurrent ? musicCurrentBrush : localFileExists ? musicFoundBrush : musicMissingBrush,
+                    TitleBrush = isCurrent ? Brushes.LightGreen : Brushes.Gainsboro,
+                    FontWeight = isCurrent ? FontWeights.SemiBold : FontWeights.Normal,
+                    Padding = new Thickness(currentCategory == null ? 7 : 18, 4, 7, 4),
+                    AssetPathVisibility = showAssetPaths ? Visibility.Visible : Visibility.Collapsed,
+                };
+
+                if (currentCategory == null)
+                {
+                    serverRoot.Children.Add(songItem);
+                }
+                else
+                {
+                    if (!serverRoot.Children.Contains(currentCategory))
+                    {
+                        serverRoot.Children.Add(currentCategory);
+                    }
+
+                    currentCategory.Children.Add(songItem);
+                }
+            }
+        }
+
+        private void BuildLocalMusicItems(
+            MusicListItem localRoot,
+            string filter,
+            bool showAssetPaths,
+            HashSet<string> collapsedKeys)
+        {
+            foreach (MusicAssetEntry asset in localMusicAssetsCache ?? Array.Empty<MusicAssetEntry>())
+            {
+                string token = asset.Token;
+                string displayName = GetMusicDisplayName(token);
+                string assetPath = asset.FullPath;
+                if (!string.IsNullOrWhiteSpace(filter)
+                    && !displayName.Contains(filter, StringComparison.OrdinalIgnoreCase)
+                    && !token.Contains(filter, StringComparison.OrdinalIgnoreCase)
+                    && !assetPath.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                MusicListItem parent = EnsureLocalMusicCategory(localRoot, token, collapsedKeys);
+                bool isCurrent = string.Equals(token, currentMusicToken, StringComparison.OrdinalIgnoreCase);
+                parent.Children.Add(new MusicListItem
+                {
+                    DisplayName = displayName,
+                    Token = token,
+                    AssetPath = assetPath,
+                    Playlist = "LOCAL FILES",
+                    IsCategory = false,
+                    IsPlayable = true,
+                    RowBackground = isCurrent ? musicCurrentBrush : musicFoundBrush,
+                    TitleBrush = isCurrent ? Brushes.LightGreen : Brushes.Gainsboro,
+                    FontWeight = isCurrent ? FontWeights.SemiBold : FontWeights.Normal,
+                    Padding = new Thickness(18, 4, 7, 4),
+                    AssetPathVisibility = showAssetPaths ? Visibility.Visible : Visibility.Collapsed,
+                });
+            }
+        }
+
+        private MusicListItem EnsureLocalMusicCategory(
+            MusicListItem localRoot,
+            string token,
+            HashSet<string> collapsedKeys)
+        {
+            string directory = Path.GetDirectoryName(token.Replace('/', Path.DirectorySeparatorChar)) ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(directory))
+            {
+                return localRoot;
+            }
+
+            MusicListItem current = localRoot;
+            string key = "local";
+            foreach (string part in directory.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+            {
+                key = CreateMusicCategoryKey(key, part);
+                MusicListItem? child = current.Children.FirstOrDefault(item =>
+                    item.IsCategory && string.Equals(item.DisplayName, part, StringComparison.OrdinalIgnoreCase));
+                if (child == null)
+                {
+                    child = CreateMusicCategoryItem(part, key, collapsedKeys);
+                    child.Padding = new Thickness(current == localRoot ? 14 : 22, 5, 7, 5);
+                    current.Children.Add(child);
+                }
+
+                current = child;
+            }
+
+            return current;
+        }
+
+        private MusicListItem CreateMusicCategoryItem(
+            string name,
+            string categoryKey,
+            HashSet<string> collapsedKeys)
+        {
+            return new MusicListItem
+            {
+                DisplayName = name,
+                CategoryKey = categoryKey,
+                IsCategory = true,
+                IsPlayable = false,
+                IsExpanded = !collapsedKeys.Contains(categoryKey),
+                RowBackground = musicCategoryBrush,
+                TitleBrush = Brushes.White,
+                FontWeight = FontWeights.SemiBold,
+                Padding = new Thickness(7, 5, 7, 5),
+                AssetPathVisibility = Visibility.Collapsed
+            };
+        }
+
+        private bool ShouldIncludeMusicCategory(MusicListItem item, string filter)
+        {
+            return string.IsNullOrWhiteSpace(filter)
+                || item.Children.Count > 0
+                || item.DisplayName.Contains(filter, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void UpdateCurrentMusicDisplay(AOClient? networkClient)
+        {
+            if (networkClient == null || string.IsNullOrWhiteSpace(currentMusicToken))
+            {
+                txtCurrentMusicTitle.Text = "None";
+                txtCurrentMusicPath.Text = "No active music packet.";
+                txtCurrentMusicPath.Visibility = SaveFile.Data.MusicListShowAssetPaths ? Visibility.Visible : Visibility.Collapsed;
+                txtCurrentMusicPlaylist.Text = "Playlist: Not provided by server";
+                txtCurrentMusicPlaylist.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            txtCurrentMusicTitle.Text = GetMusicDisplayName(currentMusicToken);
+            txtCurrentMusicPath.Text = ResolveCachedMusicDisplayPath(currentMusicToken);
+            txtCurrentMusicPath.Visibility = SaveFile.Data.MusicListShowAssetPaths ? Visibility.Visible : Visibility.Collapsed;
+            string playlist = string.IsNullOrWhiteSpace(currentMusicPlaylist)
+                ? ResolveMusicPlaylist(networkClient.AvailableMusic, currentMusicToken)
+                : currentMusicPlaylist;
+            txtCurrentMusicPlaylist.Visibility = string.IsNullOrWhiteSpace(playlist) ? Visibility.Collapsed : Visibility.Visible;
+            txtCurrentMusicPlaylist.Text = string.IsNullOrWhiteSpace(playlist) ? string.Empty : "Playlist: " + playlist;
+        }
+
+        private static string ResolveMusicPlaylist(IReadOnlyList<string> musicEntries, string musicToken)
+        {
+            string currentCategory = string.Empty;
+            foreach (string entry in musicEntries)
+            {
+                string token = entry.Trim();
+                if (string.IsNullOrWhiteSpace(token))
+                {
+                    continue;
+                }
+
+                if (!LooksLikeMusicEntry(token))
+                {
+                    currentCategory = token;
+                    continue;
+                }
+
+                if (string.Equals(token, musicToken, StringComparison.OrdinalIgnoreCase))
+                {
+                    return currentCategory;
+                }
+            }
+
+            return string.Empty;
+        }
+
+        private static string GetMusicDisplayName(string token)
+        {
+            string fileName = Path.GetFileNameWithoutExtension(token);
+            return string.IsNullOrWhiteSpace(fileName) ? token : fileName;
+        }
+
+        private static bool LooksLikeMusicEntry(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return false;
+            }
+
+            return value.EndsWith(".wav", StringComparison.OrdinalIgnoreCase)
+                || value.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase)
+                || value.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase)
+                || value.EndsWith(".ogg", StringComparison.OrdinalIgnoreCase)
+                || value.EndsWith(".opus", StringComparison.OrdinalIgnoreCase)
+                || value.EndsWith(".flac", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string CreateMusicCategoryKey(string parentKey, string name)
+        {
+            string normalized = (name ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
+            return string.IsNullOrWhiteSpace(parentKey)
+                ? normalized
+                : parentKey.TrimEnd('/') + "/" + normalized;
+        }
+
+        private static HashSet<string> GetMusicCollapsedCategoryKeys()
+        {
+            return new HashSet<string>(
+                SaveFile.Data.MusicListCollapsedCategoryKeys ?? new List<string>(),
+                StringComparer.OrdinalIgnoreCase);
+        }
+
+        private string ResolveCachedMusicPath(string token)
+        {
+            if (resolvedMusicPathCache.TryGetValue(token, out string? cachedPath))
+            {
+                return cachedPath;
+            }
+
+            string resolvedPath = AO2ViewportAudioResolver.ResolveMusicPath(token) ?? string.Empty;
+            resolvedMusicPathCache[token] = resolvedPath;
+            return resolvedPath;
+        }
+
+        private string ResolveCachedMusicDisplayPath(string token)
+        {
+            if (displayMusicPathCache.TryGetValue(token, out string? cachedPath))
+            {
+                return cachedPath;
+            }
+
+            string displayPath = AO2ViewportAudioResolver.ResolveMusicDisplayPath(token);
+            displayMusicPathCache[token] = displayPath;
+            return displayPath;
+        }
+
+        private void ClearMusicPathCaches()
+        {
+            resolvedMusicPathCache.Clear();
+            displayMusicPathCache.Clear();
+        }
+
+        private void EnsureLocalMusicAssetsScanStarted()
+        {
+            if (localMusicAssetsCache != null || localMusicAssetsScanTask != null)
+            {
+                return;
+            }
+
+            localMusicAssetsScanTask = RefreshLocalMusicAssetsAndRefreshAsync();
+        }
+
+        private async Task RefreshLocalMusicAssetsAndRefreshAsync()
+        {
+            IReadOnlyList<MusicAssetEntry> assets = await Task.Run(AO2ViewportAudioResolver.EnumerateLocalMusicAssets);
+            await Dispatcher.InvokeAsync(() =>
+            {
+                localMusicAssetsCache = assets;
+                localMusicAssetsScanTask = null;
+                RefreshMusicListForCurrentClient();
+            }, DispatcherPriority.Background);
+        }
+
+        private void ResetLocalMusicAssetCache()
+        {
+            localMusicAssetsCache = null;
+            localMusicAssetsScanTask = null;
+        }
+
         private void UpdateConnectionInfoBar()
         {
             AOClient? networkClient = currentClient == null ? null : GetTargetClientForNetwork(currentClient);
@@ -2035,6 +2420,7 @@ namespace OceanyaClient
             Canvas.SetTop(btnDebug, 607 + verticalOffset);
             Canvas.SetTop(chkInvertLog, 607 + verticalOffset);
             Canvas.SetTop(btnAreaNavigator, 603 + verticalOffset);
+            Canvas.SetTop(btnMusicList, 603 + verticalOffset);
             Canvas.SetTop(btnViewport, 603 + verticalOffset);
             Canvas.SetTop(btnSettings, 603 + verticalOffset);
 
@@ -2613,6 +2999,41 @@ namespace OceanyaClient
                 Dispatcher.Invoke(() =>
                 {
                     RefreshAreaNavigatorForCurrentClient();
+                });
+            };
+
+            networkClient.OnAvailableMusicUpdated += (IReadOnlyList<string> _) =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    ClearMusicPathCaches();
+                    RefreshMusicListForCurrentClient();
+                });
+            };
+
+            networkClient.OnMusicChanged += (string _, string? songPath, bool loop, int channel, int effectFlags) =>
+            {
+                if (channel != 0)
+                {
+                    return;
+                }
+
+                Dispatcher.Invoke(() =>
+                {
+                    currentMusicToken = songPath?.Trim() ?? string.Empty;
+                    currentMusicPlaylist = string.IsNullOrWhiteSpace(currentMusicToken)
+                        ? string.Empty
+                        : ResolveMusicPlaylist(networkClient.AvailableMusic, currentMusicToken);
+                    if (string.IsNullOrWhiteSpace(currentMusicToken))
+                    {
+                        mainMusicAudioManager.StopMusic(effectFlags);
+                    }
+                    else if (viewportWindow == null || viewportWindow.Visibility != Visibility.Visible)
+                    {
+                        mainMusicAudioManager.PlayMusic(currentMusicToken, loop, effectFlags);
+                    }
+
+                    RefreshMusicListForCurrentClient();
                 });
             };
         }
@@ -4105,6 +4526,7 @@ namespace OceanyaClient
             ICLogControl.SetCurrentClient(currentClient);
             RefreshViewportAttachment();
             RefreshAreaNavigatorForCurrentClient();
+            RefreshMusicListForCurrentClient();
 
             if (isDreddFeatureEnabled && DreddStickyOverlayCheckBox.IsChecked == true)
             {
@@ -4265,6 +4687,12 @@ namespace OceanyaClient
 
             SettingsWindow settingsContent = new SettingsWindow();
             settingsContent.SettingsSaved += ApplySavedClientSettingsToRuntime;
+            Action liveVolumeRefresh = () =>
+            {
+                viewportContent?.RefreshVolumes();
+                mainMusicAudioManager.RefreshVolumes();
+            };
+            settingsContent.VolumeLiveChanged += liveVolumeRefresh;
             Window owner = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
             settingsWindow = OceanyaWindowManager.CreateWindow(
                 settingsContent,
@@ -4286,6 +4714,7 @@ namespace OceanyaClient
             settingsWindow.Closed += (_, _) =>
             {
                 settingsContent.SettingsSaved -= ApplySavedClientSettingsToRuntime;
+                settingsContent.VolumeLiveChanged -= liveVolumeRefresh;
                 settingsWindow = null;
             };
             settingsWindow.Show();
@@ -4304,6 +4733,8 @@ namespace OceanyaClient
             }
 
             ICLogControl.SetInvertOnClientLogs(SaveFile.Data.InvertICLog);
+            viewportContent?.RefreshVolumes();
+            mainMusicAudioManager.RefreshVolumes();
         }
 
         private void RefreshViewportAttachment()
@@ -4815,6 +5246,7 @@ namespace OceanyaClient
                 OOCLogControl.UpdateStreamLabel(null);
                 currentClient = null;
                 RefreshAreaNavigatorForCurrentClient();
+                RefreshMusicListForCurrentClient();
                 RefreshDreddOverlayForCurrentContext(promptForUnknownOverlay: false);
                 UpdateDreddFeatureEnabledState();
                 CaptureGmMultiClientSnapshot();
@@ -4914,11 +5346,12 @@ namespace OceanyaClient
             CharacterFolderVisualizerWindow visualizerWindow = new CharacterFolderVisualizerWindow(
                 OnAssetsRefreshedFromVisualizer,
                 CanSetVisualizerCharacter,
-                SetVisualizerCharacterInClient)
+                SetVisualizerCharacterInClient,
+                suppressInitialLoadWaitForm: false)
             {
                 Owner = HostWindow
             };
-            visualizerWindow.ShowDialog();
+            visualizerWindow.Show();
         }
 
         private bool CanSetVisualizerCharacter(FolderVisualizerItem item)
@@ -5278,6 +5711,306 @@ namespace OceanyaClient
             AreaNavigatorPopup.IsOpen = true;
         }
 
+        private void btnMusicList_Click(object sender, RoutedEventArgs e)
+        {
+            MusicListPopup.IsOpen = true;
+            _ = Dispatcher.BeginInvoke(new Action(RefreshMusicListForCurrentClient), DispatcherPriority.Background);
+            _ = RefreshMusicListFromServerAndRefreshAsync();
+        }
+
+        private async void btnRefreshMusicList_Click(object sender, RoutedEventArgs e)
+        {
+            ResetLocalMusicAssetCache();
+            EnsureLocalMusicAssetsScanStarted();
+            await RefreshMusicListFromServerAsync();
+            RefreshMusicListForCurrentClient();
+        }
+
+        private void txtMusicSearch_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            RefreshMusicListForCurrentClient();
+        }
+
+        private async Task RefreshMusicListFromServerAsync()
+        {
+            AOClient? networkClient = currentClient == null ? null : GetTargetClientForNetwork(currentClient);
+            if (networkClient == null || !networkClient.IsTransportConnected)
+            {
+                return;
+            }
+
+            try
+            {
+                await networkClient.RequestMusicList();
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Warning("Failed to refresh music list before opening selector.", ex);
+            }
+        }
+
+        private async Task RefreshMusicListFromServerAndRefreshAsync()
+        {
+            await RefreshMusicListFromServerAsync();
+            await Dispatcher.InvokeAsync(RefreshMusicListForCurrentClient, DispatcherPriority.Background);
+        }
+
+        private async void treeMusic_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            await PlaySelectedMusicAsync();
+        }
+
+        private async void btnStopMusic_Click(object sender, RoutedEventArgs e)
+        {
+            await StopMusicAsync();
+        }
+
+        private async void MusicStopMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            await StopMusicAsync();
+        }
+
+        private async void MusicRandomMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            AOClient? profileClient = currentClient;
+            AOClient? networkClient = profileClient == null ? null : GetTargetClientForNetwork(profileClient);
+            if (networkClient == null)
+            {
+                return;
+            }
+
+            List<MusicListItem> songs = FlattenMusicItems(
+                    BuildMusicListItems(networkClient.AvailableMusic, txtMusicSearch.Text?.Trim() ?? string.Empty))
+                .Where(item => item.IsPlayable)
+                .ToList();
+            if (songs.Count == 0)
+            {
+                return;
+            }
+
+            MusicListItem selectedSong = songs[Random.Shared.Next(songs.Count)];
+            await PlayMusicItemAsync(selectedSong);
+        }
+
+        private void MusicExpandAllMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            SetMusicCategoryExpansion(isExpanded: true);
+        }
+
+        private void MusicCollapseAllMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            SetMusicCategoryExpansion(isExpanded: false);
+        }
+
+        private void MusicShowAssetPathsMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            SaveFile.Data.MusicListShowAssetPaths = menuMusicShowAssetPaths.IsChecked;
+            SaveFile.Save();
+            RefreshMusicListForCurrentClient();
+        }
+
+        private void MusicTreeItemExpansionChanged(object sender, RoutedEventArgs e)
+        {
+            if (sender is not TreeViewItem treeViewItem
+                || treeViewItem.DataContext is not MusicListItem item
+                || !item.IsCategory
+                || string.IsNullOrWhiteSpace(item.CategoryKey))
+            {
+                return;
+            }
+
+            HashSet<string> collapsedKeys = GetMusicCollapsedCategoryKeys();
+            if (treeViewItem.IsExpanded)
+            {
+                collapsedKeys.Remove(item.CategoryKey);
+            }
+            else
+            {
+                collapsedKeys.Add(item.CategoryKey);
+            }
+
+            SaveFile.Data.MusicListCollapsedCategoryKeys = collapsedKeys
+                .OrderBy(key => key, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            SaveFile.Save();
+            e.Handled = true;
+        }
+
+        private void MusicFlagMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            musicEffectFlags = 0;
+            if (menuMusicFadeIn.IsChecked)
+            {
+                musicEffectFlags |= 1;
+            }
+
+            if (menuMusicFadeOut.IsChecked)
+            {
+                musicEffectFlags |= 2;
+            }
+
+            if (menuMusicSync.IsChecked)
+            {
+                musicEffectFlags |= 4;
+            }
+        }
+
+        private async Task PlaySelectedMusicAsync()
+        {
+            if (treeMusic.SelectedItem is MusicListItem selectedItem)
+            {
+                await PlayMusicItemAsync(selectedItem);
+            }
+        }
+
+        private async Task PlayMusicItemAsync(MusicListItem selectedItem)
+        {
+            if (selectedItem.IsCategory || string.IsNullOrWhiteSpace(selectedItem.Token))
+            {
+                return;
+            }
+
+            AOClient? profileClient = currentClient;
+            AOClient? networkClient = profileClient == null ? null : GetTargetClientForNetwork(profileClient);
+            if (networkClient == null)
+            {
+                return;
+            }
+
+            if (useSingleInternalClient && profileClient != null)
+            {
+                ApplyProfileToSingleInternalClient(profileClient);
+            }
+
+            await networkClient.PlayMusic(selectedItem.Token, musicEffectFlags);
+            currentMusicToken = selectedItem.Token;
+            currentMusicPlaylist = selectedItem.Playlist;
+            RefreshMusicListForCurrentClient();
+        }
+
+        private async Task StopMusicAsync()
+        {
+            AOClient? profileClient = currentClient;
+            AOClient? networkClient = profileClient == null ? null : GetTargetClientForNetwork(profileClient);
+            if (networkClient == null)
+            {
+                return;
+            }
+
+            if (useSingleInternalClient && profileClient != null)
+            {
+                ApplyProfileToSingleInternalClient(profileClient);
+            }
+
+            await networkClient.StopMusic(musicEffectFlags);
+            currentMusicToken = string.Empty;
+            currentMusicPlaylist = string.Empty;
+            mainMusicAudioManager.StopMusic(musicEffectFlags);
+            RefreshMusicListForCurrentClient();
+        }
+
+        private void ApplySavedPopupSettings()
+        {
+            AreaNavigatorPopupSurface.Width = SaveFile.Data.AreaNavigatorPopupWidth;
+            AreaNavigatorPopupSurface.Height = SaveFile.Data.AreaNavigatorPopupHeight;
+            MusicListPopupSurface.Width = SaveFile.Data.MusicListPopupWidth;
+            MusicListPopupSurface.Height = SaveFile.Data.MusicListPopupHeight;
+            menuMusicShowAssetPaths.IsChecked = SaveFile.Data.MusicListShowAssetPaths;
+        }
+
+        private void AreaNavigatorRightResizeThumb_DragDelta(object sender, DragDeltaEventArgs e)
+        {
+            ResizePopupSurface(AreaNavigatorPopupSurface, e.HorizontalChange, 0, 220, 220, 900, 900);
+        }
+
+        private void AreaNavigatorTopResizeThumb_DragDelta(object sender, DragDeltaEventArgs e)
+        {
+            ResizePopupSurface(AreaNavigatorPopupSurface, 0, -e.VerticalChange, 220, 220, 900, 900);
+        }
+
+        private void AreaNavigatorTopRightResizeThumb_DragDelta(object sender, DragDeltaEventArgs e)
+        {
+            ResizePopupSurface(AreaNavigatorPopupSurface, e.HorizontalChange, -e.VerticalChange, 220, 220, 900, 900);
+        }
+
+        private void MusicListRightResizeThumb_DragDelta(object sender, DragDeltaEventArgs e)
+        {
+            ResizePopupSurface(MusicListPopupSurface, e.HorizontalChange, 0, 260, 300, 1000, 1000);
+        }
+
+        private void MusicListTopResizeThumb_DragDelta(object sender, DragDeltaEventArgs e)
+        {
+            ResizePopupSurface(MusicListPopupSurface, 0, -e.VerticalChange, 260, 300, 1000, 1000);
+        }
+
+        private void MusicListTopRightResizeThumb_DragDelta(object sender, DragDeltaEventArgs e)
+        {
+            ResizePopupSurface(MusicListPopupSurface, e.HorizontalChange, -e.VerticalChange, 260, 300, 1000, 1000);
+        }
+
+        private void PopupResizeThumb_DragCompleted(object sender, DragCompletedEventArgs e)
+        {
+            SavePopupSurfaceSizes();
+        }
+
+        private void SavePopupSurfaceSizes()
+        {
+            SaveFile.Data.AreaNavigatorPopupWidth = AreaNavigatorPopupSurface.Width;
+            SaveFile.Data.AreaNavigatorPopupHeight = AreaNavigatorPopupSurface.Height;
+            SaveFile.Data.MusicListPopupWidth = MusicListPopupSurface.Width;
+            SaveFile.Data.MusicListPopupHeight = MusicListPopupSurface.Height;
+            SaveFile.Save();
+        }
+
+        private static void ResizePopupSurface(
+            FrameworkElement surface,
+            double horizontalChange,
+            double verticalChange,
+            double minWidth,
+            double minHeight,
+            double maxWidth,
+            double maxHeight)
+        {
+            double currentWidth = double.IsNaN(surface.Width) || surface.Width <= 0 ? surface.ActualWidth : surface.Width;
+            double currentHeight = double.IsNaN(surface.Height) || surface.Height <= 0 ? surface.ActualHeight : surface.Height;
+            surface.Width = Math.Clamp(currentWidth + horizontalChange, minWidth, maxWidth);
+            surface.Height = Math.Clamp(currentHeight + verticalChange, minHeight, maxHeight);
+        }
+
+        private static IEnumerable<MusicListItem> FlattenMusicItems(IEnumerable<MusicListItem> items)
+        {
+            foreach (MusicListItem item in items)
+            {
+                yield return item;
+                foreach (MusicListItem child in FlattenMusicItems(item.Children))
+                {
+                    yield return child;
+                }
+            }
+        }
+
+        private void SetMusicCategoryExpansion(bool isExpanded)
+        {
+            foreach (MusicListItem item in FlattenMusicItems(treeMusic.Items.OfType<MusicListItem>()))
+            {
+                if (item.IsCategory)
+                {
+                    item.IsExpanded = isExpanded;
+                }
+            }
+
+            SaveFile.Data.MusicListCollapsedCategoryKeys = isExpanded
+                ? new List<string>()
+                : FlattenMusicItems(treeMusic.Items.OfType<MusicListItem>())
+                    .Where(item => item.IsCategory && !string.IsNullOrWhiteSpace(item.CategoryKey))
+                    .Select(item => item.CategoryKey)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(key => key, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            SaveFile.Save();
+            treeMusic.Items.Refresh();
+        }
+
         private async void btnGoToArea_Click(object sender, RoutedEventArgs e)
         {
             await JoinSelectedAreaAsync();
@@ -5334,6 +6067,24 @@ namespace OceanyaClient
             public string StatusAndCmLine { get; set; } = string.Empty;
             public string PlayersAndLockLine { get; set; } = string.Empty;
             public Brush RowBackground { get; set; } = Brushes.Transparent;
+        }
+
+        private class MusicListItem
+        {
+            public string DisplayName { get; set; } = string.Empty;
+            public string Token { get; set; } = string.Empty;
+            public string AssetPath { get; set; } = string.Empty;
+            public string Playlist { get; set; } = string.Empty;
+            public string CategoryKey { get; set; } = string.Empty;
+            public bool IsCategory { get; set; }
+            public bool IsPlayable { get; set; }
+            public bool IsExpanded { get; set; } = true;
+            public ObservableCollection<MusicListItem> Children { get; } = new ObservableCollection<MusicListItem>();
+            public Brush RowBackground { get; set; } = Brushes.Transparent;
+            public Brush TitleBrush { get; set; } = Brushes.Gainsboro;
+            public FontWeight FontWeight { get; set; } = FontWeights.Normal;
+            public Thickness Padding { get; set; } = new Thickness(7, 4, 7, 4);
+            public Visibility AssetPathVisibility { get; set; } = Visibility.Collapsed;
         }
 
         protected override void OnPreviewKeyDown(KeyEventArgs e)

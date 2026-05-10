@@ -8,17 +8,17 @@ using AOBot_Testing.Structures;
 namespace OceanyaClient
 {
     /// <summary>
-    /// Minimal AO2-style blip player using BASS + BASS_OPUS with a 5-stream cycle.
+    /// Minimal AO2-style blip player using BASS + BASS_OPUS with a configurable stream cycle.
     /// </summary>
     public sealed class AO2BlipPreviewPlayer : IDisposable
     {
-        private const int StreamCount = 5;
         private static bool bassInitialized;
         private static bool bassUnavailable;
         private static bool bassOpusPluginLoaded;
         private static string bassPluginLoadError = string.Empty;
 
-        private readonly int[] streams = new int[StreamCount];
+        private readonly int streamCount;
+        private readonly int[] streams;
         private int cycleIndex;
         private bool disposed;
         private float volume = 1.0f;
@@ -35,12 +35,14 @@ namespace OceanyaClient
             }
         }
 
-        public AO2BlipPreviewPlayer()
+        public AO2BlipPreviewPlayer(int streamCount = 5)
         {
+            this.streamCount = Math.Max(1, streamCount);
+            streams = new int[this.streamCount];
             EnsureBassInitialized();
         }
 
-        public bool TrySetBlip(string fullPath)
+        public bool TrySetBlip(string fullPath, bool loop = false)
         {
             EnsureBassInitialized();
 
@@ -68,9 +70,15 @@ namespace OceanyaClient
                 return false;
             }
 
-            for (int i = 0; i < StreamCount; i++)
+            BassFlags flags = BassFlags.Unicode | BassFlags.AsyncFile;
+            if (loop)
             {
-                int streamHandle = Bass.CreateStream(fullPath, 0, 0, BassFlags.Unicode | BassFlags.AsyncFile);
+                flags |= BassFlags.Loop;
+            }
+
+            for (int i = 0; i < streamCount; i++)
+            {
+                int streamHandle = Bass.CreateStream(fullPath, 0, 0, flags);
                 streams[i] = streamHandle;
                 if (streamHandle != 0)
                 {
@@ -99,13 +107,13 @@ namespace OceanyaClient
 
             _ = Bass.ChannelSetDevice(stream, Bass.CurrentDevice);
             bool played = Bass.ChannelPlay(stream, false);
-            cycleIndex = (cycleIndex + 1) % StreamCount;
+            cycleIndex = (cycleIndex + 1) % streamCount;
             return played;
         }
 
         public void Stop()
         {
-            for (int i = 0; i < StreamCount; i++)
+            for (int i = 0; i < streamCount; i++)
             {
                 if (streams[i] == 0)
                 {
@@ -114,6 +122,60 @@ namespace OceanyaClient
 
                 _ = Bass.ChannelStop(streams[i]);
             }
+        }
+
+        /// <summary>
+        /// Detaches and returns the first active stream handle, removing it from this player's management.
+        /// The caller takes full ownership and must eventually free it via <c>Bass.StreamFree</c>.
+        /// Returns 0 if no stream is loaded.
+        /// </summary>
+        internal int TakeFirstActiveStream()
+        {
+            for (int i = 0; i < streamCount; i++)
+            {
+                if (streams[i] == 0)
+                {
+                    continue;
+                }
+
+                int handle = streams[i];
+                streams[i] = 0;
+                return handle;
+            }
+
+            return 0;
+        }
+
+        /// <summary>
+        /// Starts playback at volume 0 then slides to <paramref name="targetVolume"/> over
+        /// <paramref name="durationMs"/> milliseconds — equivalent to AO2's FADE_IN effect.
+        /// </summary>
+        internal void FadeInPlay(float targetVolume, int durationMs)
+        {
+            for (int i = 0; i < streamCount; i++)
+            {
+                if (streams[i] == 0)
+                {
+                    continue;
+                }
+
+                _ = Bass.ChannelSetAttribute(streams[i], ChannelAttribute.Volume, 0f);
+            }
+
+            volume = 0f;
+            _ = PlayBlip();
+
+            for (int i = 0; i < streamCount; i++)
+            {
+                if (streams[i] == 0)
+                {
+                    continue;
+                }
+
+                _ = Bass.ChannelSlideAttribute(streams[i], ChannelAttribute.Volume, targetVolume, durationMs);
+            }
+
+            volume = targetVolume;
         }
 
         public double GetLoadedDurationMs()
@@ -141,7 +203,7 @@ namespace OceanyaClient
 
         private void ApplyVolumeToStreams()
         {
-            for (int i = 0; i < StreamCount; i++)
+            for (int i = 0; i < streamCount; i++)
             {
                 if (streams[i] == 0)
                 {
@@ -309,7 +371,7 @@ namespace OceanyaClient
 
         private void FreeStreams()
         {
-            for (int i = 0; i < StreamCount; i++)
+            for (int i = 0; i < streamCount; i++)
             {
                 if (streams[i] == 0)
                 {

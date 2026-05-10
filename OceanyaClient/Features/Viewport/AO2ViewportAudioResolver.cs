@@ -21,6 +21,66 @@ namespace OceanyaClient.Features.Viewport
             return ResolveSoundPath("music", token);
         }
 
+        public static string ResolveMusicDisplayPath(string? token)
+        {
+            string normalized = token?.Trim().Replace('\\', '/') ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                return string.Empty;
+            }
+
+            string? resolved = ResolveMusicPath(normalized);
+            if (!string.IsNullOrWhiteSpace(resolved))
+            {
+                return resolved;
+            }
+
+            string baseFolder = (Globals.BaseFolders ?? new List<string>())
+                .FirstOrDefault(folder => !string.IsNullOrWhiteSpace(folder)) ?? string.Empty;
+            return string.IsNullOrWhiteSpace(baseFolder)
+                ? normalized
+                : Path.GetFullPath(Path.Combine(baseFolder, "sounds", "music", normalized.Replace('/', Path.DirectorySeparatorChar)));
+        }
+
+        public static IReadOnlyList<MusicAssetEntry> EnumerateLocalMusicAssets()
+        {
+            Dictionary<string, MusicAssetEntry> entries = new Dictionary<string, MusicAssetEntry>(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> supportedExtensions = new HashSet<string>(SuffixOrder, StringComparer.OrdinalIgnoreCase);
+
+            foreach (string baseFolder in Globals.BaseFolders ?? new List<string>())
+            {
+                if (string.IsNullOrWhiteSpace(baseFolder))
+                {
+                    continue;
+                }
+
+                string musicRoot = Path.Combine(baseFolder, "sounds", "music");
+                if (!Directory.Exists(musicRoot))
+                {
+                    continue;
+                }
+
+                foreach (string filePath in Directory.EnumerateFiles(musicRoot, "*.*", SearchOption.AllDirectories))
+                {
+                    string extension = Path.GetExtension(filePath);
+                    if (!supportedExtensions.Contains(extension))
+                    {
+                        continue;
+                    }
+
+                    string relativeToken = Path.GetRelativePath(musicRoot, filePath).Replace(Path.DirectorySeparatorChar, '/');
+                    if (!entries.ContainsKey(relativeToken))
+                    {
+                        entries[relativeToken] = new MusicAssetEntry(relativeToken, filePath);
+                    }
+                }
+            }
+
+            return entries.Values
+                .OrderBy(entry => entry.Token, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
         /// <summary>
         /// Resolves a local AO2-style SFX token.
         /// </summary>
@@ -332,4 +392,6 @@ namespace OceanyaClient.Features.Viewport
             return null;
         }
     }
+
+    internal sealed record MusicAssetEntry(string Token, string FullPath);
 }
