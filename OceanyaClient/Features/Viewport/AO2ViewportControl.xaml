@@ -22,6 +22,10 @@
             <Image x:Name="DeskImage" Width="256" Height="192" Stretch="Fill" Visibility="Collapsed" Panel.ZIndex="5"/>
             <Image x:Name="EffectImage" Width="256" Height="192" Stretch="Uniform" Visibility="Collapsed" Panel.ZIndex="8"/>
             <Image x:Name="ShoutOverlayImage" Width="256" Height="192" Stretch="Uniform" Visibility="Collapsed" Panel.ZIndex="9"/>
+            <Image x:Name="StickerImage" Width="256" Height="192" Stretch="Uniform" Visibility="Collapsed" Panel.ZIndex="6"/>
+            <Image x:Name="EvidenceImage" Width="48" Height="48" Stretch="Uniform" Visibility="Collapsed" Panel.ZIndex="9"/>
+            <Image x:Name="TestimonyImage" Width="256" Height="192" Stretch="Uniform" Visibility="Collapsed" Panel.ZIndex="11"/>
+            <Image x:Name="WtceImage" Width="256" Height="192" Stretch="Uniform" Visibility="Collapsed" Panel.ZIndex="12"/>
             <Border x:Name="FlashOverlay"
                     Width="256"
                     Height="192"
@@ -40,5 +44,15 @@
                                           UseNativeViewportLayout="True"
                                           Visibility="Collapsed"
                                           IsHitTestVisible="True"/>
+
+        <Canvas Grid.Row="1" Width="256" Height="104" IsHitTestVisible="False">
+            <Image x:Name="ChatArrowImage"
+                   Canvas.Left="196"
+                   Canvas.Top="76"
+                   Width="16"
+                   Height="16"
+                   Stretch="Uniform"
+                   Visibility="Collapsed"/>
+        </Canvas>
     </Grid>
 </UserControl>

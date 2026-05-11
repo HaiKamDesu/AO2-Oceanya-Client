@@ -39,7 +39,7 @@ namespace OceanyaClient
         private const int StaticPreviewCacheEntryLimit = 256;
         internal const int MaxAnimatedPreviewDimension = 360;
         private const int MaxAnimatedPreviewFrames = 180;
-        private const int AnimationFrameCacheEntryLimit = 48;
+        private const int AnimationFrameCacheEntryLimit = 96;
 
         private static readonly ImageSource FallbackImage = LoadEmbeddedFallback();
         private static readonly object StaticPreviewCacheLock = new object();
@@ -293,6 +293,27 @@ namespace OceanyaClient
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Returns true when the animation frame cache already holds decoded frames for the given path
+        /// and write time. A cache hit means <see cref="TryCreateAnimationPlayer"/> will return
+        /// immediately without blocking on disk I/O or decode work.
+        /// </summary>
+        public static bool IsAnimationCached(string path, DateTime lastWriteUtc, int maxDimension = MaxAnimatedPreviewDimension)
+        {
+            string extension = Path.GetExtension(path).ToLowerInvariant();
+            bool isApng = IsApngExtensionOrContent(extension, path);
+            if (extension != ".gif" && extension != ".webp" && !isApng)
+            {
+                return false;
+            }
+
+            var cacheKey = (path, lastWriteUtc, Math.Max(1, maxDimension));
+            lock (AnimationFrameCacheLock)
+            {
+                return AnimationFrameCache.ContainsKey(cacheKey);
+            }
         }
 
         public static bool TryLoadFirstFrame(string path, out ImageSource? initialFrame, out double estimatedDurationMs, int maxDimension = MaxAnimatedPreviewDimension)

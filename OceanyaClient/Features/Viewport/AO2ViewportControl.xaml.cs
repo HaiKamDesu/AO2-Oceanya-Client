@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -54,6 +56,10 @@ namespace OceanyaClient.Features.Viewport
         private readonly TranslateTransform characterShakeTransform = new TranslateTransform();
         private readonly TranslateTransform pairCharacterShakeTransform = new TranslateTransform();
         private readonly TranslateTransform chatShakeTransform = new TranslateTransform();
+        private readonly Dictionary<Image, CancellationTokenSource> pendingAsyncLoads = new Dictionary<Image, CancellationTokenSource>();
+        private string currentRenderPosition = string.Empty;
+        private bool testimonyVisible;
+        private IAnimationPlayer? chatArrowPlayer;
         private const int DefaultChatTextCrawlMilliseconds = 40;
         private const int DefaultBlipRate = 2;
         private const int ScreenShakeDurationMilliseconds = 300;
@@ -353,6 +359,7 @@ namespace OceanyaClient.Features.Viewport
                 messageSourceClient.OnICMessageReceived += OnICMessageReceived;
                 messageSourceClient.OnIcActionReceived += OnIcActionReceived;
                 messageSourceClient.OnMusicChanged += OnMusicChanged;
+                messageSourceClient.OnRtReceived += OnRtReceived;
             }
         }
 
@@ -368,6 +375,7 @@ namespace OceanyaClient.Features.Viewport
                 messageSourceClient.OnICMessageReceived -= OnICMessageReceived;
                 messageSourceClient.OnIcActionReceived -= OnIcActionReceived;
                 messageSourceClient.OnMusicChanged -= OnMusicChanged;
+                messageSourceClient.OnRtReceived -= OnRtReceived;
             }
         }
 
@@ -474,6 +482,16 @@ namespace OceanyaClient.Features.Viewport
             SetAnimatedImage(EffectImage, null, false);
             SetAnimatedImage(SpeedlinesImage, null, false);
             SetAnimatedImage(ShoutOverlayImage, null, false);
+            StopChatArrow();
+            testimonyVisible = false;
+            TestimonyImage.Source = null;
+            TestimonyImage.Visibility = Visibility.Collapsed;
+            HideWtceOverlay();
+            StopAnimation(StickerImage);
+            StickerImage.Visibility = Visibility.Collapsed;
+            StopAnimation(EvidenceImage);
+            EvidenceImage.Visibility = Visibility.Collapsed;
+            currentRenderPosition = string.Empty;
             ChatPreview.PreviewText = string.Empty;
             ChatPreview.Visibility = Visibility.Collapsed;
             additivePreviousText = string.Empty;
@@ -486,6 +504,7 @@ namespace OceanyaClient.Features.Viewport
         private void RenderMessage(ICMessage message)
         {
             messageSequence++;
+            StopChatArrow();
             chatRevealStartedForCurrentMessage = false;
             immediatePreAnimActive = false;
             StopPendingMessageTimer();
@@ -665,6 +684,8 @@ namespace OceanyaClient.Features.Viewport
                 CustomConsole.LogCategory.Viewport);
             RenderOptions.SetBitmapScalingMode(BackgroundImage, displayOptions.ScalingMode);
             RenderOptions.SetBitmapScalingMode(DeskImage, displayOptions.ScalingMode);
+            double bgOldLeft = Canvas.GetLeft(BackgroundImage);
+            double deskOldLeft = Canvas.GetLeft(DeskImage);
             SetPlacedAnimatedImage(BackgroundImage, backgroundPlacement, true, displayOptions.StretchMode);
 
             bool isPreAnimation = phase == ViewportPhase.PreAnimation;
@@ -787,6 +808,40 @@ namespace OceanyaClient.Features.Viewport
                 StopChatTextTimer();
                 currentChatBlipToken = string.Empty;
             }
+
+            // Track position for slide transitions
+            string newPosition = position ?? string.Empty;
+            bool positionChanged = !string.Equals(currentRenderPosition, newPosition, StringComparison.OrdinalIgnoreCase);
+            bool shouldSlide = message?.Slide == true && positionChanged && phase == ViewportPhase.Speaking;
+            currentRenderPosition = newPosition;
+            if (shouldSlide)
+            {
+                AnimateBackgroundSlide(bgOldLeft, deskOldLeft);
+            }
+
+            // Show character sticker for this message
+            if (phase == ViewportPhase.Speaking && character != null)
+            {
+                ShowSticker(message?.Character, AO2ViewportAssetResolver.ResolveCharacterChatToken(character));
+            }
+            else if (phase != ViewportPhase.Speaking)
+            {
+                StopAnimation(StickerImage);
+                StickerImage.Visibility = Visibility.Collapsed;
+            }
+
+            // Show evidence presentation overlay if packet has evidence
+            if (phase == ViewportPhase.Speaking && message != null
+                && int.TryParse((message.EvidenceID ?? string.Empty).Trim(), out int evidenceId)
+                && evidenceId > 0)
+            {
+                ShowEvidenceOverlay(evidenceId, position ?? string.Empty, message);
+            }
+            else if (phase == ViewportPhase.Speaking)
+            {
+                StopAnimation(EvidenceImage);
+                EvidenceImage.Visibility = Visibility.Collapsed;
+            }
         }
 
         private void ShowShoutOverlay(ICMessage message)
@@ -820,6 +875,15 @@ namespace OceanyaClient.Features.Viewport
             FlashOverlay.Visibility = Visibility.Collapsed;
             FlashOverlay.Opacity = 0;
             StopAllAnimations();
+            StopChatArrow();
+            HideTestimonyOverlay();
+            HideWtceOverlay();
+            StopAnimation(StickerImage);
+            StickerImage.Visibility = Visibility.Collapsed;
+            StopAnimation(EvidenceImage);
+            EvidenceImage.Visibility = Visibility.Collapsed;
+            CancelPendingLoad(BackgroundImage);
+            CancelPendingLoad(DeskImage);
             audioManager.StopSfxAndBlips();
             ChatPreview.PreviewText = string.Empty;
             ChatPreview.Visibility = Visibility.Collapsed;
@@ -926,6 +990,18 @@ namespace OceanyaClient.Features.Viewport
             transform.Y = 0;
         }
 
+        private void CancelPendingLoad(Image image)
+        {
+            if (!pendingAsyncLoads.TryGetValue(image, out CancellationTokenSource? cts))
+            {
+                return;
+            }
+
+            pendingAsyncLoads.Remove(image);
+            cts.Cancel();
+            cts.Dispose();
+        }
+
         private IAnimationPlayer? SetAnimatedImage(
             Image image,
             string? path,
@@ -999,6 +1075,7 @@ namespace OceanyaClient.Features.Viewport
             string path = placement.ImagePath ?? string.Empty;
             if (!visible || string.IsNullOrWhiteSpace(path))
             {
+                CancelPendingLoad(image);
                 placedImageStates.Remove(image);
                 return SetAnimatedImage(image, null, false);
             }
@@ -1017,14 +1094,98 @@ namespace OceanyaClient.Features.Viewport
                     : null;
             }
 
+            CancelPendingLoad(image);
             placedImageStates.Remove(image);
-            IAnimationPlayer? player = SetAnimatedImage(image, path, true);
+
+            // For animated assets that are not already decoded, offload to a background thread
+            // to avoid blocking the UI thread (mirrors AO2's AnimationLoader async approach).
+            bool isAnimated = Ao2AnimationPreview.IsPotentialAnimatedPath(path);
+            bool isCached = isAnimated && Ao2AnimationPreview.IsAnimationCached(path, lastWriteTimeUtc);
+            if (isAnimated && !isCached)
+            {
+                string capturedPath = path;
+                DateTime capturedWrite = lastWriteTimeUtc;
+                double capturedLeft = placement.Left;
+                double capturedTop = placement.Top;
+                double capturedWidth = placement.Width;
+                double capturedHeight = placement.Height;
+                Stretch capturedStretch = stretch;
+
+                CancellationTokenSource cts = new CancellationTokenSource();
+                pendingAsyncLoads[image] = cts;
+
+                Task.Run(() =>
+                {
+                    if (cts.Token.IsCancellationRequested)
+                    {
+                        return (IAnimationPlayer?)null;
+                    }
+
+                    Ao2AnimationPreview.TryCreateAnimationPlayer(
+                        capturedPath,
+                        true,
+                        out IAnimationPlayer? p,
+                        usePreviewLimits: false,
+                        maxDimensionOverride: null);
+                    return p;
+                }).ContinueWith(task =>
+                {
+                    Dispatcher.BeginInvoke(() =>
+                    {
+                        if (!pendingAsyncLoads.TryGetValue(image, out CancellationTokenSource? currentCts)
+                            || !ReferenceEquals(currentCts, cts))
+                        {
+                            return;
+                        }
+
+                        pendingAsyncLoads.Remove(image);
+                        cts.Dispose();
+
+                        if (task.IsFaulted || task.IsCanceled)
+                        {
+                            return;
+                        }
+
+                        image.Width = capturedWidth;
+                        image.Height = capturedHeight;
+                        image.Stretch = capturedStretch;
+                        Canvas.SetLeft(image, capturedLeft);
+                        Canvas.SetTop(image, capturedTop);
+
+                        StopAnimation(image);
+                        IAnimationPlayer? player = task.Result;
+                        if (player != null)
+                        {
+                            animationPlayers[image] = player;
+                            player.FrameChanged += frame => image.Source = frame;
+                            image.Source = player.CurrentFrame;
+                            image.Visibility = Visibility.Visible;
+                            placedImageStates[image] = new PlacedImageState(capturedPath, capturedWrite);
+                        }
+                        else
+                        {
+                            ImageSource? source = AO2ViewportAssetResolver.LoadImage(capturedPath, decodePixelWidth: 0);
+                            image.Source = source;
+                            image.Visibility = source != null ? Visibility.Visible : Visibility.Collapsed;
+                            if (image.Source != null)
+                            {
+                                placedImageStates[image] = new PlacedImageState(capturedPath, capturedWrite);
+                            }
+                        }
+                    });
+                }, TaskScheduler.Default);
+
+                return null;
+            }
+
+            // Sync path: already cached or non-animated (instant decode).
+            IAnimationPlayer? syncPlayer = SetAnimatedImage(image, path, true);
             if (image.Source != null)
             {
                 placedImageStates[image] = new PlacedImageState(path, lastWriteTimeUtc);
             }
 
-            return player;
+            return syncPlayer;
         }
 
         private static void ApplyOffset(Image image, (int Horizontal, int Vertical) offset)
@@ -1283,6 +1444,7 @@ namespace OceanyaClient.Features.Viewport
         private void CompleteChatTextReveal()
         {
             StopChatTextTimer();
+            ShowChatArrow();
             additivePreviousText = chatPrefixText + chatFullText;
             chatPrefixText = string.Empty;
             currentChatAdditive = false;
@@ -1757,6 +1919,233 @@ namespace OceanyaClient.Features.Viewport
             }
 
             return result;
+        }
+
+        private void OnRtReceived(string content, int variant)
+        {
+            Dispatcher.Invoke(() => HandleRtPacket(content, variant));
+        }
+
+        private void HandleRtPacket(string content, int variant)
+        {
+            if (string.Equals(content, "testimony1", StringComparison.OrdinalIgnoreCase))
+            {
+                ShowTestimonyOverlay();
+            }
+            else if (string.Equals(content, "testimony2", StringComparison.OrdinalIgnoreCase))
+            {
+                testimonyVisible = false;
+                TestimonyImage.Source = null;
+                TestimonyImage.Visibility = Visibility.Collapsed;
+                ShowWtceOverlay("crossexamination_bubble");
+            }
+            else if (string.Equals(content, "judgeruling", StringComparison.OrdinalIgnoreCase))
+            {
+                testimonyVisible = false;
+                TestimonyImage.Source = null;
+                TestimonyImage.Visibility = Visibility.Collapsed;
+                string overlayName = variant == 0 ? "notguilty_bubble" : "guilty_bubble";
+                ShowWtceOverlay(overlayName);
+            }
+        }
+
+        private void ShowTestimonyOverlay()
+        {
+            string background = sceneClient?.curBG ?? string.Empty;
+            string? path = AO2ViewportAssetResolver.ResolveTestimonyOverlayImage(background);
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return;
+            }
+
+            testimonyVisible = true;
+            SetAnimatedImage(TestimonyImage, path, true, loop: true);
+            TestimonyImage.Visibility = Visibility.Visible;
+        }
+
+        private void HideTestimonyOverlay()
+        {
+            testimonyVisible = false;
+            StopAnimation(TestimonyImage);
+            TestimonyImage.Source = null;
+            TestimonyImage.Visibility = Visibility.Collapsed;
+        }
+
+        private void ShowWtceOverlay(string assetStem)
+        {
+            string background = sceneClient?.curBG ?? string.Empty;
+            string? path = AO2ViewportAssetResolver.ResolveWtceOverlayImage(assetStem, background);
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return;
+            }
+
+            IAnimationPlayer? player = SetAnimatedImage(WtceImage, path, true, loop: false);
+            WtceImage.Visibility = Visibility.Visible;
+            if (player != null)
+            {
+                player.PlaybackFinished += () => WtceImage.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                ScheduleContinuation(TimeSpan.FromMilliseconds(1500), () => WtceImage.Visibility = Visibility.Collapsed);
+            }
+        }
+
+        private void HideWtceOverlay()
+        {
+            StopAnimation(WtceImage);
+            WtceImage.Source = null;
+            WtceImage.Visibility = Visibility.Collapsed;
+        }
+
+        private void ShowSticker(string? characterName, string? miscName)
+        {
+            if (string.IsNullOrWhiteSpace(characterName))
+            {
+                StopAnimation(StickerImage);
+                StickerImage.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            string? path = AO2ViewportAssetResolver.ResolveStickerImage(characterName, miscName);
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                StopAnimation(StickerImage);
+                StickerImage.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            SetAnimatedImage(StickerImage, path, true, loop: true);
+        }
+
+        private void ShowEvidenceOverlay(int evidenceId, string position, ICMessage message)
+        {
+            string? imageFile = messageSourceClient?.GetEvidenceImagePath(evidenceId)
+                ?? sceneClient?.GetEvidenceImagePath(evidenceId);
+            string background = sceneClient?.curBG ?? string.Empty;
+            bool leftSide = !string.Equals(position.Trim(), "def", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(position.Trim(), "hlp", StringComparison.OrdinalIgnoreCase);
+
+            // Try animated appear overlay first
+            string? appearPath = AO2ViewportAssetResolver.ResolveEvidencePresentationImage(leftSide, background);
+            // Fall back to evidence icon
+            string? iconPath = AO2ViewportAssetResolver.ResolveEvidenceIconImage(imageFile);
+            string? displayPath = appearPath ?? iconPath;
+            if (string.IsNullOrWhiteSpace(displayPath))
+            {
+                StopAnimation(EvidenceImage);
+                EvidenceImage.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            double evidenceX = leftSide ? 5 : AO2ViewportAssetResolver.ViewportWidth - 53;
+            double evidenceY = AO2ViewportAssetResolver.ViewportHeight - 53;
+            Canvas.SetLeft(EvidenceImage, evidenceX);
+            Canvas.SetTop(EvidenceImage, evidenceY);
+
+            IAnimationPlayer? player = SetAnimatedImage(EvidenceImage, displayPath, true, loop: false);
+            EvidenceImage.Visibility = Visibility.Visible;
+            if (player != null)
+            {
+                player.PlaybackFinished += () =>
+                {
+                    // After appear animation, show the icon if available
+                    if (!string.IsNullOrWhiteSpace(iconPath) && iconPath != displayPath)
+                    {
+                        SetAnimatedImage(EvidenceImage, iconPath, true, loop: true);
+                    }
+                };
+            }
+        }
+
+        private void ShowChatArrow()
+        {
+            if (!IsVisible)
+            {
+                return;
+            }
+
+            string? path = AO2ViewportAssetResolver.ResolveChatArrowImage();
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return;
+            }
+
+            StopChatArrow();
+            if (Ao2AnimationPreview.TryCreateAnimationPlayer(path, true, out IAnimationPlayer? player, usePreviewLimits: false)
+                && player != null)
+            {
+                chatArrowPlayer = player;
+                player.FrameChanged += frame => ChatArrowImage.Source = frame;
+                ChatArrowImage.Source = player.CurrentFrame;
+            }
+            else
+            {
+                ImageSource? source = AO2ViewportAssetResolver.LoadImage(path, decodePixelWidth: 0);
+                ChatArrowImage.Source = source;
+            }
+
+            ChatArrowImage.Visibility = Visibility.Visible;
+        }
+
+        private void StopChatArrow()
+        {
+            if (chatArrowPlayer != null)
+            {
+                chatArrowPlayer.Stop();
+                chatArrowPlayer = null;
+            }
+
+            ChatArrowImage.Source = null;
+            ChatArrowImage.Visibility = Visibility.Collapsed;
+        }
+
+        private void AnimateBackgroundSlide(double bgOldLeft, double deskOldLeft)
+        {
+            double bgNewLeft = Canvas.GetLeft(BackgroundImage);
+            double deskNewLeft = Canvas.GetLeft(DeskImage);
+
+            if (Math.Abs(bgNewLeft - bgOldLeft) < 0.5 && Math.Abs(deskNewLeft - deskOldLeft) < 0.5)
+            {
+                return;
+            }
+
+            System.Windows.Media.Animation.CubicEase easing = new System.Windows.Media.Animation.CubicEase
+            {
+                EasingMode = System.Windows.Media.Animation.EasingMode.EaseInOut
+            };
+            TimeSpan duration = TimeSpan.FromMilliseconds(500);
+
+            System.Windows.Media.Animation.DoubleAnimation bgAnim = new System.Windows.Media.Animation.DoubleAnimation
+            {
+                From = bgOldLeft,
+                To = bgNewLeft,
+                Duration = duration,
+                EasingFunction = easing,
+                FillBehavior = System.Windows.Media.Animation.FillBehavior.Stop
+            };
+            bgAnim.Completed += (_, _) =>
+            {
+                BackgroundImage.BeginAnimation(Canvas.LeftProperty, null);
+                Canvas.SetLeft(BackgroundImage, bgNewLeft);
+            };
+            BackgroundImage.BeginAnimation(Canvas.LeftProperty, bgAnim);
+
+            System.Windows.Media.Animation.DoubleAnimation deskAnim = new System.Windows.Media.Animation.DoubleAnimation
+            {
+                From = deskOldLeft,
+                To = deskNewLeft,
+                Duration = duration,
+                EasingFunction = easing,
+                FillBehavior = System.Windows.Media.Animation.FillBehavior.Stop
+            };
+            deskAnim.Completed += (_, _) =>
+            {
+                DeskImage.BeginAnimation(Canvas.LeftProperty, null);
+                Canvas.SetLeft(DeskImage, deskNewLeft);
+            };
+            DeskImage.BeginAnimation(Canvas.LeftProperty, deskAnim);
         }
 
         private enum ViewportPhase

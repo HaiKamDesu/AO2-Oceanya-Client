@@ -51,6 +51,7 @@ namespace AOBot_Testing.Agents
         private readonly List<string> availableMusic = new List<string>();
         private readonly List<Player> currentAreaPlayers = new List<Player>();
         private readonly List<string> currentEvidenceNames = new List<string>();
+        private readonly List<string> currentEvidenceImages = new List<string>();
         private string serverAssetUrl = string.Empty;
         private string serverSoftware = string.Empty;
         public CharacterFolder? currentINI;
@@ -117,6 +118,13 @@ namespace AOBot_Testing.Agents
         /// Parameters: displayName, songPath (null = stop), loopEnabled, channel, effectFlags (FADE_IN=1, FADE_OUT=2, SYNC_POS=4).
         /// </summary>
         public Action<string, string?, bool, int, int>? OnMusicChanged;
+
+        /// <summary>
+        /// Raised when an RT# packet is received.
+        /// Parameters: content (e.g. "testimony1", "testimony2", "judgeruling"), variant (integer suffix, typically 0 or 1).
+        /// </summary>
+        public Action<string, int>? OnRtReceived;
+
         public Action<IReadOnlyList<AreaInfo>>? OnAvailableAreaInfosUpdated;
 
         /// <summary>
@@ -729,6 +737,16 @@ namespace AOBot_Testing.Agents
                 curBG = newBG;
                 OnBGChange?.Invoke(newBG);
             }
+            else if (message.StartsWith("RT#"))
+            {
+                string[] fields = message.Split('#');
+                if (fields.Length >= 3)
+                {
+                    string content = Globals.ReplaceTextForSymbols(fields[1]).Trim();
+                    int.TryParse(fields[2].TrimEnd('%'), out int variant);
+                    OnRtReceived?.Invoke(content, variant);
+                }
+            }
             else if (message.StartsWith("LE#"))
             {
                 ParseEvidenceList(message);
@@ -968,6 +986,7 @@ namespace AOBot_Testing.Agents
         {
             string[] fields = message.Split('#');
             currentEvidenceNames.Clear();
+            currentEvidenceImages.Clear();
 
             foreach (string field in fields.Skip(1))
             {
@@ -983,7 +1002,22 @@ namespace AOBot_Testing.Agents
                 }
 
                 currentEvidenceNames.Add(Globals.ReplaceTextForSymbols(subFields[0]));
+                currentEvidenceImages.Add(subFields.Length > 2 ? Globals.ReplaceTextForSymbols(subFields[2]).Trim() : string.Empty);
             }
+        }
+
+        /// <summary>
+        /// Returns the image file name for a 1-based evidence ID from the last LE# packet, or null if not found.
+        /// </summary>
+        public string? GetEvidenceImagePath(int evidenceId)
+        {
+            if (evidenceId <= 0 || evidenceId > currentEvidenceImages.Count)
+            {
+                return null;
+            }
+
+            string image = currentEvidenceImages[evidenceId - 1];
+            return string.IsNullOrWhiteSpace(image) ? null : image;
         }
 
         private void HandleMusicPacket(string message)

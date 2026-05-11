@@ -761,6 +761,186 @@ namespace OceanyaClient.Features.Viewport
         }
 
         /// <summary>
+        /// Resolves the AO2 testimony overlay image ("testimony") for the current background misc.
+        /// </summary>
+        public static string? ResolveTestimonyOverlayImage(string? backgroundName = null)
+        {
+            return ResolveWtceOverlayImage("testimony", backgroundName);
+        }
+
+        /// <summary>
+        /// Resolves a named WT/CE/verdict overlay image asset from configured AO roots.
+        /// </summary>
+        public static string? ResolveWtceOverlayImage(string assetStem, string? backgroundName = null)
+        {
+            if (string.IsNullOrWhiteSpace(assetStem))
+            {
+                return null;
+            }
+
+            string bgMisc = GetBackgroundMiscFolder(backgroundName);
+            foreach (string baseFolder in Globals.BaseFolders ?? new List<string>())
+            {
+                foreach (string root in EnumerateWtceImageRoots(baseFolder, bgMisc))
+                {
+                    string? resolved = ResolveImageStem(root, assetStem);
+                    if (!string.IsNullOrWhiteSpace(resolved))
+                    {
+                        return resolved;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Resolves a character sticker overlay image ("sticker/{characterName}") from configured AO roots.
+        /// </summary>
+        public static string? ResolveStickerImage(string? characterName, string? miscName = null)
+        {
+            if (string.IsNullOrWhiteSpace(characterName))
+            {
+                return null;
+            }
+
+            string stem = "sticker/" + characterName.Trim();
+            string misc = miscName?.Trim() ?? string.Empty;
+            foreach (string baseFolder in Globals.BaseFolders ?? new List<string>())
+            {
+                foreach (string root in EnumerateAo2ImageAssetRoots(baseFolder, string.Empty, misc))
+                {
+                    string? resolved = ResolveImageStem(root, stem);
+                    if (!string.IsNullOrWhiteSpace(resolved))
+                    {
+                        return resolved;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Resolves the AO2 evidence appear animation image for left or right side presentation.
+        /// </summary>
+        public static string? ResolveEvidencePresentationImage(bool leftSide, string? backgroundName = null)
+        {
+            string stem = leftSide ? "evidence_appear_left" : "evidence_appear_right";
+            string bgMisc = GetBackgroundMiscFolder(backgroundName);
+            foreach (string baseFolder in Globals.BaseFolders ?? new List<string>())
+            {
+                foreach (string root in EnumerateWtceImageRoots(baseFolder, bgMisc))
+                {
+                    string? resolved = ResolveImageStem(root, stem);
+                    if (!string.IsNullOrWhiteSpace(resolved))
+                    {
+                        return resolved;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Resolves an AO2 evidence icon image from the evidence/ directory.
+        /// </summary>
+        public static string? ResolveEvidenceIconImage(string? evidenceImageFile)
+        {
+            if (string.IsNullOrWhiteSpace(evidenceImageFile))
+            {
+                return null;
+            }
+
+            string file = evidenceImageFile.Trim();
+            foreach (string baseFolder in Globals.BaseFolders ?? new List<string>())
+            {
+                string candidate = Path.Combine(baseFolder, "evidence", file);
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+
+                // Try without extension if present (AO2-style stem lookup)
+                if (!string.IsNullOrWhiteSpace(Path.GetExtension(file)))
+                {
+                    continue;
+                }
+
+                string? resolved = ResolveImageStem(Path.Combine(baseFolder, "evidence"), file);
+                if (!string.IsNullOrWhiteSpace(resolved))
+                {
+                    return resolved;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Resolves the AO2 "chat_arrow" overlay image from configured AO roots.
+        /// </summary>
+        public static string? ResolveChatArrowImage(string? miscName = null)
+        {
+            string misc = miscName?.Trim() ?? string.Empty;
+            foreach (string baseFolder in Globals.BaseFolders ?? new List<string>())
+            {
+                foreach (string root in EnumerateAo2ImageAssetRoots(baseFolder, string.Empty, misc))
+                {
+                    string? resolved = ResolveImageStem(root, "chat_arrow");
+                    if (!string.IsNullOrWhiteSpace(resolved))
+                    {
+                        return resolved;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Reads the misc folder name from a background's design.ini, or returns empty string.
+        /// </summary>
+        private static string GetBackgroundMiscFolder(string? backgroundName)
+        {
+            if (string.IsNullOrWhiteSpace(backgroundName))
+            {
+                return string.Empty;
+            }
+
+            Background? background = ResolveBackground(backgroundName);
+            if (background == null)
+            {
+                return string.Empty;
+            }
+
+            return ReadDesignValue(background.PathToFile, "misc").Trim();
+        }
+
+        /// <summary>
+        /// Enumerates image root directories for WT/CE/testimony/verdict overlays.
+        /// Matches AO2's bg_misc_from_design_ini lookup order: misc/{bgMisc}, themes/default/misc/{bgMisc}, themes/default, base.
+        /// </summary>
+        private static IEnumerable<string> EnumerateWtceImageRoots(string baseFolder, string bgMisc)
+        {
+            if (string.IsNullOrWhiteSpace(baseFolder))
+            {
+                yield break;
+            }
+
+            if (!string.IsNullOrWhiteSpace(bgMisc))
+            {
+                yield return Path.Combine(baseFolder, "misc", bgMisc);
+                yield return Path.Combine(baseFolder, "themes", "default", "misc", bgMisc);
+            }
+
+            yield return Path.Combine(baseFolder, "misc", "default");
+            yield return Path.Combine(baseFolder, "themes", "default");
+            yield return baseFolder;
+        }
+
+        /// <summary>
         /// Returns the approximate duration used before continuing after a static shout overlay.
         /// </summary>
         public static TimeSpan GetShoutDuration() => DefaultShoutDuration;

@@ -107,6 +107,48 @@ The app version is centrally defined in `Directory.Build.props` via `OceanyaAppV
 | `OceanyaHivemindAgent` | Standalone tray/background app for File Hivemind sync. |
 | `UnitTests` | NUnit 4 test project referencing the main projects. |
 
+## Repository Navigation Map
+Use this map to avoid repeated broad searches. Before running wide `rg`, `find`, or directory exploration for a feature, check this section and `Documentation/FeatureIndex.md`. If the map or linked docs identify the relevant files/classes clearly enough, use those paths directly. If the needed information is missing, incomplete, outdated, or ambiguous, inspect the repository as needed; before finishing, update this map with any navigation knowledge that would help a future agent use fewer tokens.
+
+Keep entries brief and lookup-friendly. Record:
+- user-language mappings: what the user calls a feature versus the actual project, window, class, or file names
+- repository locations, module ownership, important forms/windows, classes, scripts, tests, and workflows
+- naming conventions or search terms that quickly narrow future work
+- status markers: `Confirmed`, `Likely`, `Outdated?`, or `Needs verification`
+
+When updating the map, prefer exact paths and identifiers over prose. Distinguish confirmed facts from guesses. Delete or correct stale entries when work proves them wrong.
+
+### Current Map
+| User phrase / topic | Code meaning and fast path | Status |
+|---|---|---|
+| "AO2 protocol", "packets", "client transport" | `AOBot-Testing/` (`AO2.csproj`); start with `AOClient` and structures under `AOBot-Testing/Structures/`. | Confirmed |
+| "main client", "WPF app", "GM multi-client" | `OceanyaClient/`; primary UI is `MainWindow`; startup modes are in `StartupFunctionalityCatalog`. | Confirmed |
+| "AI bot", "agent", "prompt", "AI response parser" | `AO2AIBot/`; pipeline uses `AOClientAgentController`, `AiChatCompletionService`, `AO2AiBotPromptBuilder`, `AO2AiBotPromptCatalog`, and `AOClientAgentResponseParser`. | Confirmed |
+| "save data", "settings persistence" | `Common/`; start with `SaveFile`, `SaveData`, and `Globals`. | Confirmed |
+| "File Hivemind", "background sync agent" | `OceanyaHivemindAgent/` plus launcher integration in `OceanyaClient`; stop signal name lives on `FileHivemindBackgroundAgentCommandLine.AgentStopSignalEventName`. | Confirmed |
+| "tests", "unit tests" | `UnitTests/`; normal verification runs only this project unless the user explicitly asks for UI automation. | Confirmed |
+| "UI automation", "FlaUI", "desktop smoke tests" | `UiAutomationTests/`; opt-in only, Windows interactive desktop required, run categories sequentially. | Confirmed |
+| "AO2 reference client/server behavior" | Reference-only submodules: `AO2-Client/`, `tsuserver3/`, `tsuserverCC/`. Read for behavior, do not copy code directly. | Confirmed |
+| "image asset viewer", "asset preview dialog", "animation preview" | `OceanyaClient.Utilities.AssetImageViewerDialog.Show(...)`; animation playback uses `AnimationTimelinePreviewController`. | Confirmed |
+| "dark ComboBox", "searchable dropdown" | Copy the dark ComboBox pattern from `InitialConfigurationWindow.xaml` / `CharacterFolderVisualizerWindow.xaml`; use `AutoCompleteComboBoxBehavior` for editable searchable dropdowns. | Confirmed |
+| "viewport lag", "background loading slow", "async loading" | `SetPlacedAnimatedImage` in `AO2ViewportControl.xaml.cs` — uncached animated assets (GIF/APNG/WebP) offload to `Task.Run` + `Dispatcher.BeginInvoke`; cache check via `Ao2AnimationPreview.IsAnimationCached`. | Confirmed |
+| "testimony overlay", "WITNESS TESTIMONY", "RT packet", "judgeruling", "WT/CE" | `AO2ViewportControl.xaml.cs` — `HandleRtPacket`, `ShowTestimonyOverlay`, `ShowWtceOverlay`; asset resolver `ResolveTestimonyOverlayImage` / `ResolveWtceOverlayImage`; triggered by `AOClient.OnRtReceived` which fires on RT# packets. | Confirmed |
+| "sticker", "character sticker" | `ShowSticker` in `AO2ViewportControl.xaml.cs`; asset resolver `ResolveStickerImage`; resolves `sticker/{characterName}` from theme roots. | Confirmed |
+| "evidence overlay", "evidence presentation" | `ShowEvidenceOverlay` in `AO2ViewportControl.xaml.cs`; uses `GetEvidenceImagePath` from `AOClient`; asset resolver `ResolveEvidencePresentationImage` / `ResolveEvidenceIconImage`; driven by `ICMessage.EvidenceID`. | Confirmed |
+| "chat arrow" | `ShowChatArrow` / `StopChatArrow` in `AO2ViewportControl.xaml.cs`; `ChatArrowImage` in XAML row 1; shown after `CompleteChatTextReveal`; asset resolver `ResolveChatArrowImage`. | Confirmed |
+| "slide transition", "background slide", "position change animation" | `AnimateBackgroundSlide` in `AO2ViewportControl.xaml.cs`; triggered when `ICMessage.Slide == true` and position changes; animates `Canvas.LeftProperty` on BG and Desk images with 500ms InOutCubic easing. | Confirmed |
+
+### Map Maintenance Rule
+Whenever an agent has to look up where a feature lives, how the user names a concept, which files own a workflow, or which tests cover it, and that discovery would help future agents navigate faster, add or update a map row before finishing. Do this for bug fixes, feature work, refactors, documentation updates, and investigations.
+
+### Example Workflow Only
+The following names are illustrative only and may not exist in this repository:
+1. User asks about "the Billing module's adjustment dialog."
+2. Agent checks this map and `Documentation/FeatureIndex.md` first.
+3. If missing, agent searches just enough to identify that "Billing" means `Accounting/Billing/`, "module" means the billing workflow service, and "adjustment dialog" means `BillingAdjustmentWindow.xaml`.
+4. Before finishing, agent updates the map with exact paths, relevant classes/tests, and notes that the user phrase "adjustment dialog" maps to `BillingAdjustmentWindow`.
+5. Future agents use that map entry directly instead of repeating the broad search.
+
 ## Architecture
 
 ### Startup Flow
@@ -168,9 +210,10 @@ These tests depend on external services and are not expected to pass without con
 To save tokens and reduce repeated broad searches, agents should treat `Documentation/` as a maintained feature index plus focused topic docs, not as a dumping ground.
 
 Before doing a wide code search for a feature:
-1. Check `Documentation/FeatureIndex.md`.
-2. Open the most relevant linked doc(s).
-3. Only then do a targeted code search for the specific classes/files that doc points to.
+1. Check the `Repository Navigation Map` in this file.
+2. Check `Documentation/FeatureIndex.md`.
+3. Open the most relevant linked doc(s).
+4. Only then do a targeted code search for the specific classes/files that the map or docs point to.
 
 When an agent investigates, fixes, adds, removes, or significantly refactors a feature:
 1. Update `Documentation/FeatureIndex.md` if the feature entry is missing, renamed, or moved.

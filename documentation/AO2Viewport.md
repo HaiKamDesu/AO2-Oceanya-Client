@@ -22,14 +22,20 @@ The popup size and position are saved in `SaveFile.Data.GMViewportWindowState`. 
 
 ## Current Layer Order
 The WPF layer order follows AO2 `Courtroom` construction:
-1. background
-2. speedlines placeholder
-3. main character
-4. paired character placeholder
-5. desk
-6. effect
-7. AO2 chatbox preview
-8. shout/objection overlay
+1. background (ZIndex 1)
+2. speedlines placeholder (ZIndex 1)
+3. main character (ZIndex 4, or 3 when pair is in front)
+4. paired character placeholder (ZIndex 3, or 4 when pair is in front)
+5. desk (ZIndex 5)
+6. character sticker (ZIndex 6) — `sticker/{characterName}` shown during speaking messages
+7. effect (ZIndex 8, adjustable via `layer` metadata)
+8. evidence overlay (ZIndex 9) — evidence icon/appear animation when MS# has evidence ID
+9. shout/objection overlay (ZIndex 9)
+10. flash overlay (ZIndex 10)
+11. testimony overlay (ZIndex 11) — "testimony" image shown on RT# testimony1
+12. WT/CE/verdict overlay (ZIndex 12) — shown on RT# testimony2/judgeruling
+13. AO2 chatbox (below viewport, row 1)
+14. chat arrow overlay (row 1 canvas, above chatbox) — shown after text crawl completes
 
 `AO2ViewportControl` adjusts Z-order at render time for AO2 pair ordering and effect `layer` metadata.
 
@@ -126,12 +132,11 @@ Unit coverage exists for:
 ## Known Parity Gaps
 - Preanimation timing now waits for animated playback completion first, matching AO2's receive-time `play_preanim(false)` behavior. `[stay_time]` fallback values use AO2's `time_mod=40`; `[Time]` remains only a static/unsupported-animation fallback, not a hard cutoff for normal animated GIF playback.
 - Objection/shout overlays are displayed with animated frame playback when the asset format is supported, but their continuation timing is still approximated by a timer.
-- Currently implemented viewport overlay/layer families: background, speedlines, main character, pair character, desk/position overlay, AO2 effect layer metadata, shout/objection bubble, legacy realization flash, and below-viewport chatbox. Still missing or incomplete compared to AO2: testimony overlay, WT/CE/verdict overlay, evidence presentation overlay, character sticker faces, chat arrow, background slide transitions, and exact AO2 queue/drain behavior around these overlays.
+- Currently implemented viewport overlay/layer families: background, speedlines, main character, pair character, desk/position overlay, AO2 effect layer metadata, shout/objection bubble, legacy realization flash, below-viewport chatbox, testimony overlay (RT# testimony1), WT/CE/verdict overlays (RT# testimony2/judgeruling), character sticker, evidence presentation overlay, chat arrow, and background slide transitions. Remaining gaps: exact AO2 queue/drain behavior around these overlays; effects loop/cull/max-duration/scaling; character SFX during some edge-case animation paths; chat arrow position is currently hardcoded (not read from courtroom_design.ini); slide transitions for character sprites (only BG/desk animate); WtCE overlays fall back to a 1500ms timer when no asset is found rather than AO2's exact SplashAnimationLayer timing.
 - Packet-level screenshake now matches AO2's main trigger points more closely: it respects `config.ini` `shake`, uses the AO2 300 ms / 20 ms shake window, triggers immediate shake only for AO2 idle/zoom speaking messages, triggers preanim shake at SFX time, and also responds to frame-triggered `_FrameScreenshake` entries.
 - Frame-timed emote SFX and realization flashes are now driven from the resolved animation token and local/packet `_FrameSFX` / `_FrameRealization` data instead of only from the coarse packet `SoundT` delay, but a few edge-case animation paths still need parity work.
-- Background, desk/background overlay, character, pair, effect, speedline, and shout images use the shared WPF animation player for GIF/APNG/WebP where supported. Viewport GIF playback bypasses preview frame caps. The player now re-arms itself at the next due frame time instead of polling on a coarse fixed interval, which should reduce the slight slowdown versus AO2's own animation timers. Static image dimensions and unchanged placed background/overlay assets are cached by path and last-write time to avoid message-time re-decoding stalls.
-- Effects read `layer`, `stretch`, `respect_flip`, and `respect_offset`; loop/cull/max-duration/scaling are documented but not fully animated.
-- Background slide transitions are not animated yet; origin scaling is applied to the resolved static scene.
+- Background, desk/background overlay, character, pair, effect, speedline, shout, testimony, wtce, sticker, and evidence images use the shared WPF animation player for GIF/APNG/WebP where supported. Viewport GIF playback bypasses preview frame caps. The player now re-arms itself at the next due frame time instead of polling on a coarse fixed interval.
+- Background and desk animated loads are now async: uncached GIF/APNG/WebP decodes run on a background thread via `Task.Run` so the UI thread does not block. A `CancellationTokenSource` per image slot cancels stale in-flight loads when a new request arrives. The `AnimationFrameCache` limit was raised from 48 to 96 entries. Cached assets still load synchronously (instant). Static (non-animated) images always load synchronously (fast BitmapDecoder path, not affected by this change).
 - AO2's full chat queue lifecycle is still approximated: incoming messages replace the current viewport state instead of waiting on exact text completion and queue drain conditions.
 
 ## Image Scaling Pitfalls
