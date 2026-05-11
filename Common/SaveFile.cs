@@ -497,6 +497,22 @@ namespace OceanyaClient
 
         public Dictionary<string, int> FrequentlyUsedMusic { get; set; } =
             new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        public Dictionary<string, string> MusicCustomNames { get; set; } =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        public List<CustomMusicCommand> CustomMusicCommands { get; set; } =
+            new List<CustomMusicCommand>();
+
+        public string LastCustomCommandCategoryPath { get; set; } = string.Empty;
+
+        public List<string> MusicSectionOrder { get; set; } =
+            new List<string> { "FREQUENTLY USED", "CUSTOM COMMANDS", "SERVER LIST", "LOCAL FILES" };
+
+        public bool MusicFlagFadeOut { get; set; } = true;
+        public bool MusicFlagFadeIn { get; set; } = false;
+        public bool MusicFlagSync { get; set; } = false;
+
         public double CharacterSelectorWindowWidth { get; set; } = 760;
         public double CharacterSelectorWindowHeight { get; set; } = 640;
         public double CharacterSelectorIconScale { get; set; } = 1.0;
@@ -522,6 +538,14 @@ namespace OceanyaClient
         public List<CharacterCreatorButtonEffectPreset> CharacterCreatorButtonEffectPresets { get; set; } =
             new List<CharacterCreatorButtonEffectPreset>();
         public CharacterCreatorLastBulkButtonIconConfig? CharacterCreatorLastBulkButtonIconConfig { get; set; }
+    }
+
+    public class CustomMusicCommand
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string Command { get; set; } = string.Empty;
+        public string CategoryPath { get; set; } = string.Empty;
     }
 
     public class GmMultiClientSnapshot

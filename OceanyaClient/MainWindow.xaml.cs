@@ -74,6 +74,7 @@ namespace OceanyaClient
         private readonly Brush musicFoundBrush = new SolidColorBrush(Color.FromRgb(24, 46, 31));
         private readonly Brush musicMissingBrush = new SolidColorBrush(Color.FromRgb(54, 27, 30));
         private readonly Brush musicCurrentBrush = new SolidColorBrush(Color.FromRgb(35, 55, 45));
+        private readonly Brush musicCommandBrush = new SolidColorBrush(Color.FromRgb(18, 34, 62));
         private readonly AO2ViewportAudioManager mainMusicAudioManager = new AO2ViewportAudioManager();
         private readonly Dictionary<string, string> resolvedMusicPathCache =
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -84,7 +85,10 @@ namespace OceanyaClient
         private Task? localMusicAssetsScanTask;
         private bool isLoadingDreddOverlaySelection;
         private bool isDreddFeatureEnabled;
-        private int musicEffectFlags = 2;
+        private int MusicEffectFlags =>
+            (SaveFile.Data.MusicFlagFadeIn ? 1 : 0) |
+            (SaveFile.Data.MusicFlagFadeOut ? 2 : 0) |
+            (SaveFile.Data.MusicFlagSync ? 4 : 0);
         private string currentMusicToken = string.Empty;
         private string currentMusicPlaylist = string.Empty;
         private const string DreddNoneOverlayName = "none";
@@ -1856,31 +1860,48 @@ namespace OceanyaClient
             List<MusicListItem> items = new List<MusicListItem>();
             bool showAssetPaths = SaveFile.Data.MusicListShowAssetPaths;
             HashSet<string> collapsedKeys = GetMusicCollapsedCategoryKeys();
+
             MusicListItem frequentRoot = CreateMusicCategoryItem("FREQUENTLY USED", "frequent", collapsedKeys);
+            frequentRoot.IsRootCategory = true;
+            MusicListItem customRoot = CreateMusicCategoryItem("CUSTOM COMMANDS", "custom", collapsedKeys);
+            customRoot.IsRootCategory = true;
             MusicListItem serverRoot = CreateMusicCategoryItem("SERVER LIST", "server", collapsedKeys);
+            serverRoot.IsRootCategory = true;
             MusicListItem localRoot = CreateMusicCategoryItem("LOCAL FILES", "local", collapsedKeys);
+            localRoot.IsRootCategory = true;
 
             BuildFrequentlyUsedMusicItems(frequentRoot, musicEntries, filter, showAssetPaths, collapsedKeys);
+            BuildCustomCommandItems(customRoot, filter, showAssetPaths, collapsedKeys);
             BuildServerMusicItems(serverRoot, musicEntries, filter, showAssetPaths, collapsedKeys);
             BuildLocalMusicItems(localRoot, musicEntries, filter, showAssetPaths, collapsedKeys);
 
             PropagateRedCategoryState(frequentRoot);
+            PropagateRedCategoryState(customRoot);
             PropagateRedCategoryState(serverRoot);
             PropagateRedCategoryState(localRoot);
 
-            if (ShouldIncludeMusicCategory(frequentRoot, filter))
+            Dictionary<string, MusicListItem> rootsByName = new Dictionary<string, MusicListItem>(StringComparer.OrdinalIgnoreCase)
             {
-                items.Add(frequentRoot);
+                ["FREQUENTLY USED"] = frequentRoot,
+                ["CUSTOM COMMANDS"] = customRoot,
+                ["SERVER LIST"] = serverRoot,
+                ["LOCAL FILES"] = localRoot,
+            };
+
+            HashSet<string> added = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string sectionName in SaveFile.Data.MusicSectionOrder)
+            {
+                if (!rootsByName.TryGetValue(sectionName, out MusicListItem? root)) continue;
+                if (ShouldIncludeMusicCategory(root, filter))
+                    items.Add(root);
+                added.Add(sectionName);
             }
 
-            if (ShouldIncludeMusicCategory(serverRoot, filter))
+            // Safety net: add any root not present in the saved order.
+            foreach (KeyValuePair<string, MusicListItem> pair in rootsByName)
             {
-                items.Add(serverRoot);
-            }
-
-            if (ShouldIncludeMusicCategory(localRoot, filter))
-            {
-                items.Add(localRoot);
+                if (!added.Contains(pair.Key) && ShouldIncludeMusicCategory(pair.Value, filter))
+                    items.Add(pair.Value);
             }
 
             return items;
@@ -1893,31 +1914,66 @@ namespace OceanyaClient
             bool showAssetPaths,
             HashSet<string> collapsedKeys)
         {
+            System.Collections.Generic.Dictionary<string, CustomMusicCommand> customById =
+                SaveFile.Data.CustomMusicCommands.ToDictionary(c => c.Id, StringComparer.Ordinal);
+
             var sorted = SaveFile.Data.FrequentlyUsedMusic
                 .Where(pair => pair.Value > 0)
                 .OrderByDescending(pair => pair.Value)
-                .ThenBy(pair => GetMusicDisplayName(pair.Key), NaturalStringComparer.Instance);
+                .ThenBy(pair => pair.Key, NaturalStringComparer.Instance);
 
             foreach (KeyValuePair<string, int> pair in sorted)
             {
                 string token = pair.Key;
                 int count = pair.Value;
-                string displayName = GetMusicDisplayName(token);
+                string tooltip = $"Played {count} time{(count == 1 ? "" : "s")}";
+
+                if (customById.TryGetValue(token, out CustomMusicCommand? cmd))
+                {
+                    string displayName = "[C] " + GetMusicItemCustomName(token, cmd.Name);
+                    string assetPath = cmd.Command;
+                    if (!string.IsNullOrWhiteSpace(filter)
+                        && !displayName.Contains(filter, StringComparison.OrdinalIgnoreCase)
+                        && !assetPath.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    frequentRoot.Children.Add(new MusicListItem
+                    {
+                        DisplayName = displayName,
+                        Token = token,
+                        PlayToken = cmd.Command,
+                        AssetPath = assetPath,
+                        Playlist = "FREQUENTLY USED",
+                        IsCategory = false,
+                        IsPlayable = true,
+                        IsCustomCommand = true,
+                        CustomCommandId = token,
+                        Tooltip = tooltip,
+                        RowBackground = musicCommandBrush,
+                        TitleBrush = Brushes.Gainsboro,
+                        Padding = new Thickness(7, 4, 7, 4),
+                        AssetPathVisibility = showAssetPaths ? Visibility.Visible : Visibility.Collapsed,
+                    });
+                    continue;
+                }
+
+                string musicDisplayName = GetMusicItemCustomName(token, GetMusicDisplayName(token));
                 bool localFileExists = !string.IsNullOrWhiteSpace(ResolveCachedMusicPath(token));
-                string assetPath = localFileExists
+                string musicAssetPath = localFileExists
                     ? ResolveCachedMusicDisplayPath(token)
                     : $"base/sounds/music/{StripCustomPrefix(token)}";
 
                 if (!string.IsNullOrWhiteSpace(filter)
-                    && !displayName.Contains(filter, StringComparison.OrdinalIgnoreCase)
+                    && !musicDisplayName.Contains(filter, StringComparison.OrdinalIgnoreCase)
                     && !token.Contains(filter, StringComparison.OrdinalIgnoreCase)
-                    && !assetPath.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                    && !musicAssetPath.Contains(filter, StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
 
                 bool isCurrent = MusicTokenMatchesCurrent(token, currentMusicToken);
-                string tooltip = $"Played {count} time{(count == 1 ? "" : "s")}";
                 if (!localFileExists)
                 {
                     tooltip += "\nNot found in local AO2 installation";
@@ -1925,10 +1981,10 @@ namespace OceanyaClient
 
                 frequentRoot.Children.Add(new MusicListItem
                 {
-                    DisplayName = displayName,
+                    DisplayName = musicDisplayName,
                     Token = token,
                     PlayToken = token,
-                    AssetPath = assetPath,
+                    AssetPath = musicAssetPath,
                     Playlist = "FREQUENTLY USED",
                     IsCategory = false,
                     IsPlayable = true,
@@ -1940,6 +1996,77 @@ namespace OceanyaClient
                     AssetPathVisibility = showAssetPaths ? Visibility.Visible : Visibility.Collapsed,
                 });
             }
+        }
+
+        private void BuildCustomCommandItems(
+            MusicListItem customRoot,
+            string filter,
+            bool showAssetPaths,
+            HashSet<string> collapsedKeys)
+        {
+            foreach (CustomMusicCommand cmd in SaveFile.Data.CustomMusicCommands)
+            {
+                string displayName = GetMusicItemCustomName(cmd.Id, cmd.Name);
+                string assetPath = cmd.Command;
+
+                if (!string.IsNullOrWhiteSpace(filter)
+                    && !displayName.Contains(filter, StringComparison.OrdinalIgnoreCase)
+                    && !assetPath.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                MusicListItem parent = EnsureCustomCommandCategory(customRoot, cmd.CategoryPath, collapsedKeys);
+                parent.Children.Add(new MusicListItem
+                {
+                    DisplayName = displayName,
+                    Token = cmd.Id,
+                    PlayToken = cmd.Command,
+                    AssetPath = assetPath,
+                    Playlist = "CUSTOM COMMANDS",
+                    IsCategory = false,
+                    IsPlayable = true,
+                    IsCustomCommand = true,
+                    CustomCommandId = cmd.Id,
+                    Tooltip = cmd.Command,
+                    RowBackground = musicCommandBrush,
+                    TitleBrush = Brushes.Gainsboro,
+                    Padding = new Thickness(parent == customRoot ? 7 : 18, 4, 7, 4),
+                    AssetPathVisibility = showAssetPaths ? Visibility.Visible : Visibility.Collapsed,
+                });
+            }
+
+            SortMusicChildrenNatural(customRoot);
+        }
+
+        private MusicListItem EnsureCustomCommandCategory(
+            MusicListItem root,
+            string categoryPath,
+            HashSet<string> collapsedKeys)
+        {
+            if (string.IsNullOrWhiteSpace(categoryPath))
+            {
+                return root;
+            }
+
+            MusicListItem current = root;
+            string keyPrefix = "custom";
+            foreach (string part in categoryPath.Split('/', StringSplitOptions.RemoveEmptyEntries))
+            {
+                keyPrefix = CreateMusicCategoryKey(keyPrefix, part);
+                MusicListItem? existing = current.Children
+                    .FirstOrDefault(c => c.IsCategory
+                        && string.Equals(c.DisplayName, part, StringComparison.OrdinalIgnoreCase));
+                if (existing == null)
+                {
+                    existing = CreateMusicCategoryItem(part, keyPrefix, collapsedKeys);
+                    current.Children.Add(existing);
+                }
+
+                current = existing;
+            }
+
+            return current;
         }
 
         private void BuildServerMusicItems(
@@ -1963,7 +2090,9 @@ namespace OceanyaClient
                 }
 
                 bool isSong = LooksLikeMusicEntry(token);
-                string displayName = isSong ? GetMusicDisplayName(token) : token;
+                string displayName = isSong
+                    ? GetMusicItemCustomName(token, GetMusicDisplayName(token))
+                    : token;
                 string assetPath = isSong ? ResolveCachedMusicDisplayPath(token) : string.Empty;
                 bool matchesFilter = string.IsNullOrWhiteSpace(filter)
                     || displayName.Contains(filter, StringComparison.OrdinalIgnoreCase)
@@ -2061,7 +2190,7 @@ namespace OceanyaClient
             foreach (MusicAssetEntry asset in localMusicAssetsCache ?? Array.Empty<MusicAssetEntry>())
             {
                 string token = asset.Token;
-                string displayName = GetMusicDisplayName(token);
+                string displayName = GetMusicItemCustomName(token, GetMusicDisplayName(token));
                 string assetPath = asset.FullPath;
                 if (!string.IsNullOrWhiteSpace(filter)
                     && !displayName.Contains(filter, StringComparison.OrdinalIgnoreCase)
@@ -2273,6 +2402,13 @@ namespace OceanyaClient
         {
             string fileName = Path.GetFileNameWithoutExtension(token);
             return string.IsNullOrWhiteSpace(fileName) ? token : fileName;
+        }
+
+        private static string GetMusicItemCustomName(string nameKey, string fallback)
+        {
+            return SaveFile.Data.MusicCustomNames.TryGetValue(nameKey, out string? custom)
+                && !string.IsNullOrWhiteSpace(custom)
+                ? custom : fallback;
         }
 
         private static bool LooksLikeMusicEntry(string value)
@@ -5564,6 +5700,13 @@ namespace OceanyaClient
 
         private void btnCharacterFolderVisualizer_Click(object sender, RoutedEventArgs e)
         {
+            MessageBoxResult confirm = OceanyaMessageBox.Show(
+                "Opening the Character Folder Visualizer scans your entire AO2 characters directory and may take a while.\n\nContinue?",
+                "Character Folder Visualizer",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+            if (confirm != MessageBoxResult.Yes) return;
+
             CharacterFolderVisualizerWindow visualizerWindow = new CharacterFolderVisualizerWindow(
                 OnAssetsRefreshedFromVisualizer,
                 CanSetVisualizerCharacter,
@@ -6023,11 +6166,22 @@ namespace OceanyaClient
             SetMusicCategoryExpansion(isExpanded: false);
         }
 
-        private void MusicShowAssetPathsMenuItem_Click(object sender, RoutedEventArgs e)
+        private static void AddMusicMenuCategoryHeader(ContextMenu menu, string text, bool addLeadingSeparator)
         {
-            SaveFile.Data.MusicListShowAssetPaths = menuMusicShowAssetPaths.IsChecked;
-            SaveFile.Save();
-            RefreshMusicListForCurrentClient();
+            if (addLeadingSeparator && menu.Items.Count > 0)
+                menu.Items.Add(new Separator());
+            menu.Items.Add(new MenuItem
+            {
+                Header = new TextBlock
+                {
+                    Text = text,
+                    FontWeight = FontWeights.Bold,
+                    FontSize = 11,
+                    Margin = new Thickness(4, 2, 4, 1),
+                },
+                IsEnabled = false,
+                StaysOpenOnClick = true,
+            });
         }
 
         private void treeMusic_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
@@ -6047,21 +6201,209 @@ namespace OceanyaClient
 
         private void MusicContextMenu_Opened(object sender, RoutedEventArgs e)
         {
-            bool isFrequent = treeMusic.SelectedItem is MusicListItem item && item.Playlist == "FREQUENTLY USED";
-            if (sender is ContextMenu cm)
+            if (sender is not ContextMenu menu) return;
+            menu.Items.Clear();
+
+            MusicListItem? item = treeMusic.SelectedItem as MusicListItem;
+            bool hasLeafSelection = item != null && !item.IsCategory;
+            bool isFrequent = item?.Playlist == "FREQUENTLY USED";
+            bool isCustomCommand = item?.IsCustomCommand == true;
+            bool isRootCategory = item?.IsRootCategory == true;
+
+            // PLAYBACK
+            AddMusicMenuCategoryHeader(menu, "PLAYBACK", addLeadingSeparator: false);
+            var stopItem = new MenuItem { Header = "Stop Current Song" };
+            stopItem.Click += async (_, _) => await StopMusicAsync();
+            menu.Items.Add(stopItem);
+            var randomItem = new MenuItem { Header = "Play Random Song" };
+            randomItem.Click += MusicRandomMenuItem_Click;
+            menu.Items.Add(randomItem);
+
+            // NAVIGATION
+            AddMusicMenuCategoryHeader(menu, "NAVIGATION", addLeadingSeparator: true);
+            var expandItem = new MenuItem { Header = "Expand All Categories" };
+            expandItem.Click += MusicExpandAllMenuItem_Click;
+            menu.Items.Add(expandItem);
+            var collapseItem = new MenuItem { Header = "Collapse All Categories" };
+            collapseItem.Click += MusicCollapseAllMenuItem_Click;
+            menu.Items.Add(collapseItem);
+            if (isRootCategory)
             {
-                foreach (object menuObj in cm.Items)
+                var moveUpItem = new MenuItem { Header = "Move Section Up" };
+                moveUpItem.Click += MusicSectionMoveUpMenuItem_Click;
+                menu.Items.Add(moveUpItem);
+                var moveDownItem = new MenuItem { Header = "Move Section Down" };
+                moveDownItem.Click += MusicSectionMoveDownMenuItem_Click;
+                menu.Items.Add(moveDownItem);
+            }
+
+            // OPTIONS
+            AddMusicMenuCategoryHeader(menu, "OPTIONS", addLeadingSeparator: true);
+            var showAssetPathsItem = new MenuItem
+            {
+                Header = "Show Asset Paths",
+                IsCheckable = true,
+                IsChecked = SaveFile.Data.MusicListShowAssetPaths,
+                StaysOpenOnClick = true,
+            };
+            showAssetPathsItem.Click += (_, _) =>
+            {
+                SaveFile.Data.MusicListShowAssetPaths = !SaveFile.Data.MusicListShowAssetPaths;
+                SaveFile.Save();
+                RefreshMusicListForCurrentClient();
+            };
+            menu.Items.Add(showAssetPathsItem);
+            var fadeOutItem = new MenuItem
+            {
+                Header = "Fade Out Previous",
+                IsCheckable = true,
+                IsChecked = SaveFile.Data.MusicFlagFadeOut,
+                StaysOpenOnClick = true,
+            };
+            fadeOutItem.Click += (_, _) => { SaveFile.Data.MusicFlagFadeOut = !SaveFile.Data.MusicFlagFadeOut; SaveFile.Save(); };
+            menu.Items.Add(fadeOutItem);
+            var fadeInItem = new MenuItem
+            {
+                Header = "Fade In",
+                IsCheckable = true,
+                IsChecked = SaveFile.Data.MusicFlagFadeIn,
+                StaysOpenOnClick = true,
+            };
+            fadeInItem.Click += (_, _) => { SaveFile.Data.MusicFlagFadeIn = !SaveFile.Data.MusicFlagFadeIn; SaveFile.Save(); };
+            menu.Items.Add(fadeInItem);
+            var syncItem = new MenuItem
+            {
+                Header = "Synchronize",
+                IsCheckable = true,
+                IsChecked = SaveFile.Data.MusicFlagSync,
+                StaysOpenOnClick = true,
+            };
+            syncItem.Click += (_, _) => { SaveFile.Data.MusicFlagSync = !SaveFile.Data.MusicFlagSync; SaveFile.Save(); };
+            menu.Items.Add(syncItem);
+
+            // SELECTION (only when a leaf item is selected)
+            if (hasLeafSelection)
+            {
+                AddMusicMenuCategoryHeader(menu, "SELECTION", addLeadingSeparator: true);
+                var renameItem = new MenuItem { Header = "Rename" };
+                renameItem.Click += MusicRenameMenuItem_Click;
+                menu.Items.Add(renameItem);
+                if (!isCustomCommand)
                 {
-                    if (menuObj is MenuItem mi && mi.Name == "menuMusicRemoveFrequent")
-                    {
-                        mi.Visibility = isFrequent ? Visibility.Visible : Visibility.Collapsed;
-                    }
-                    else if (menuObj is Separator sep && sep.Name == "sepMusicFrequent")
-                    {
-                        sep.Visibility = isFrequent ? Visibility.Visible : Visibility.Collapsed;
-                    }
+                    var addToCustomItem = new MenuItem { Header = "Add to Custom Commands" };
+                    addToCustomItem.Click += MusicAddToCustomMenuItem_Click;
+                    menu.Items.Add(addToCustomItem);
                 }
             }
+
+            // CUSTOM COMMANDS
+            AddMusicMenuCategoryHeader(menu, "CUSTOM COMMANDS", addLeadingSeparator: true);
+            var newCustomItem = new MenuItem { Header = "New Custom Command" };
+            newCustomItem.Click += MusicNewCustomCommandMenuItem_Click;
+            menu.Items.Add(newCustomItem);
+            if (isCustomCommand)
+            {
+                var editCustomItem = new MenuItem { Header = "Edit Custom Command" };
+                editCustomItem.Click += MusicEditCustomMenuItem_Click;
+                menu.Items.Add(editCustomItem);
+                var removeCustomItem = new MenuItem { Header = "Remove Custom Command" };
+                removeCustomItem.Click += MusicRemoveCustomMenuItem_Click;
+                menu.Items.Add(removeCustomItem);
+            }
+
+            // FREQUENTLY USED (only when selected item is from that section)
+            if (isFrequent)
+            {
+                AddMusicMenuCategoryHeader(menu, "FREQUENTLY USED", addLeadingSeparator: true);
+                var removeFrequentItem = new MenuItem { Header = "Remove from Frequently Used" };
+                removeFrequentItem.Click += MusicRemoveFrequentMenuItem_Click;
+                menu.Items.Add(removeFrequentItem);
+            }
+        }
+
+        private void MusicRenameMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (treeMusic.SelectedItem is not MusicListItem item || item.IsCategory)
+            {
+                return;
+            }
+
+            Window? owner = HostWindow ?? Window.GetWindow(this) ?? Application.Current?.MainWindow;
+            var dialog = new MusicRenameDialog(item.DisplayName) { Owner = owner };
+            if (dialog.ShowDialog() != true)
+            {
+                return;
+            }
+
+            string newName = dialog.ResultName ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(newName))
+            {
+                SaveFile.Data.MusicCustomNames.Remove(item.Token);
+            }
+            else
+            {
+                SaveFile.Data.MusicCustomNames[item.Token] = newName;
+            }
+
+            SaveFile.Save();
+            RefreshMusicListForCurrentClient();
+        }
+
+        private void MusicNewCustomCommandMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            Window? owner = HostWindow ?? Window.GetWindow(this) ?? Application.Current?.MainWindow;
+            var editor = new CustomMusicCommandEditorWindow { Owner = owner };
+            editor.ShowDialog();
+            RefreshMusicListForCurrentClient();
+        }
+
+        private void MusicAddToCustomMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (treeMusic.SelectedItem is not MusicListItem item || item.IsCategory || item.IsCustomCommand)
+            {
+                return;
+            }
+
+            string prefillName = item.DisplayName;
+            string prefillCommand = "/play " + item.PlayToken;
+
+            Window? owner = HostWindow ?? Window.GetWindow(this) ?? Application.Current?.MainWindow;
+            var editor = new CustomMusicCommandEditorWindow(prefillName, prefillCommand) { Owner = owner };
+            editor.ShowDialog();
+            RefreshMusicListForCurrentClient();
+        }
+
+        private void MusicEditCustomMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (treeMusic.SelectedItem is not MusicListItem item || !item.IsCustomCommand)
+            {
+                return;
+            }
+
+            CustomMusicCommand? cmd = SaveFile.Data.CustomMusicCommands
+                .FirstOrDefault(c => string.Equals(c.Id, item.CustomCommandId, StringComparison.Ordinal));
+            if (cmd == null)
+            {
+                return;
+            }
+
+            Window? owner = HostWindow ?? Window.GetWindow(this) ?? Application.Current?.MainWindow;
+            var editor = new CustomMusicCommandEditorWindow(cmd) { Owner = owner };
+            editor.ShowDialog();
+            RefreshMusicListForCurrentClient();
+        }
+
+        private void MusicRemoveCustomMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (treeMusic.SelectedItem is not MusicListItem item || !item.IsCustomCommand)
+            {
+                return;
+            }
+
+            SaveFile.Data.CustomMusicCommands.RemoveAll(
+                c => string.Equals(c.Id, item.CustomCommandId, StringComparison.Ordinal));
+            SaveFile.Save();
+            RefreshMusicListForCurrentClient();
         }
 
         private void MusicRemoveFrequentMenuItem_Click(object sender, RoutedEventArgs e)
@@ -6103,23 +6445,28 @@ namespace OceanyaClient
             e.Handled = true;
         }
 
-        private void MusicFlagMenuItem_Click(object sender, RoutedEventArgs e)
+        private void MusicSectionMoveUpMenuItem_Click(object sender, RoutedEventArgs e)
         {
-            musicEffectFlags = 0;
-            if (menuMusicFadeIn.IsChecked)
-            {
-                musicEffectFlags |= 1;
-            }
+            if (treeMusic.SelectedItem is not MusicListItem item || !item.IsRootCategory) return;
+            List<string> order = SaveFile.Data.MusicSectionOrder;
+            int idx = order.IndexOf(item.DisplayName);
+            if (idx <= 0) return;
+            order.RemoveAt(idx);
+            order.Insert(idx - 1, item.DisplayName);
+            SaveFile.Save();
+            RefreshMusicListForCurrentClient();
+        }
 
-            if (menuMusicFadeOut.IsChecked)
-            {
-                musicEffectFlags |= 2;
-            }
-
-            if (menuMusicSync.IsChecked)
-            {
-                musicEffectFlags |= 4;
-            }
+        private void MusicSectionMoveDownMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (treeMusic.SelectedItem is not MusicListItem item || !item.IsRootCategory) return;
+            List<string> order = SaveFile.Data.MusicSectionOrder;
+            int idx = order.IndexOf(item.DisplayName);
+            if (idx < 0 || idx >= order.Count - 1) return;
+            order.RemoveAt(idx);
+            order.Insert(idx + 1, item.DisplayName);
+            SaveFile.Save();
+            RefreshMusicListForCurrentClient();
         }
 
         private async Task PlaySelectedMusicAsync()
@@ -6149,6 +6496,21 @@ namespace OceanyaClient
                 ApplyProfileToSingleInternalClient(profileClient);
             }
 
+            if (selectedItem.IsCustomCommand)
+            {
+                await networkClient.SendOOCMessage(selectedItem.PlayToken);
+                string cmdKey = selectedItem.CustomCommandId;
+                if (!SaveFile.Data.FrequentlyUsedMusic.ContainsKey(cmdKey))
+                {
+                    SaveFile.Data.FrequentlyUsedMusic[cmdKey] = 0;
+                }
+
+                SaveFile.Data.FrequentlyUsedMusic[cmdKey]++;
+                SaveFile.Save();
+                RefreshMusicListForCurrentClient();
+                return;
+            }
+
             string playToken = string.IsNullOrWhiteSpace(selectedItem.PlayToken) ? selectedItem.Token : selectedItem.PlayToken;
             bool useOocPlay = selectedItem.Playlist == "LOCAL FILES" || selectedItem.Playlist == "FREQUENTLY USED";
 
@@ -6162,7 +6524,7 @@ namespace OceanyaClient
             }
             else
             {
-                await networkClient.PlayMusic(playToken, musicEffectFlags);
+                await networkClient.PlayMusic(playToken, MusicEffectFlags);
             }
 
             // Track play count under the resolved token.
@@ -6190,10 +6552,10 @@ namespace OceanyaClient
                 ApplyProfileToSingleInternalClient(profileClient);
             }
 
-            await networkClient.StopMusic(musicEffectFlags);
+            await networkClient.StopMusic(MusicEffectFlags);
             currentMusicToken = string.Empty;
             currentMusicPlaylist = string.Empty;
-            mainMusicAudioManager.StopMusic(musicEffectFlags);
+            mainMusicAudioManager.StopMusic(MusicEffectFlags);
             RefreshMusicListForCurrentClient();
         }
 
@@ -6203,7 +6565,7 @@ namespace OceanyaClient
             AreaNavigatorPopupSurface.Height = SaveFile.Data.AreaNavigatorPopupHeight;
             MusicListPopupSurface.Width = SaveFile.Data.MusicListPopupWidth;
             MusicListPopupSurface.Height = SaveFile.Data.MusicListPopupHeight;
-            menuMusicShowAssetPaths.IsChecked = SaveFile.Data.MusicListShowAssetPaths;
+            // MusicListShowAssetPaths state is read dynamically when the context menu opens.
         }
 
         private void AreaNavigatorRightResizeThumb_DragDelta(object sender, DragDeltaEventArgs e)
@@ -6366,7 +6728,10 @@ namespace OceanyaClient
             public string CategoryKey { get; set; } = string.Empty;
             public string? Tooltip { get; set; }
             public bool IsCategory { get; set; }
+            public bool IsRootCategory { get; set; }
             public bool IsPlayable { get; set; }
+            public bool IsCustomCommand { get; set; }
+            public string CustomCommandId { get; set; } = string.Empty;
             public bool IsExpanded { get; set; } = true;
             public ObservableCollection<MusicListItem> Children { get; } = new ObservableCollection<MusicListItem>();
             public Brush RowBackground { get; set; } = Brushes.Transparent;

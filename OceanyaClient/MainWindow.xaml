@@ -817,36 +817,34 @@
                                          VirtualizingPanel.VirtualizationMode="Recycling"
                                          ScrollViewer.CanContentScroll="True">
                                     <TreeView.ContextMenu>
-                                        <ContextMenu Opened="MusicContextMenu_Opened">
-                                            <MenuItem Header="Stop Current Song" Click="MusicStopMenuItem_Click"/>
-                                            <MenuItem Header="Play Random Song" Click="MusicRandomMenuItem_Click"/>
-                                            <Separator/>
-                                            <MenuItem Header="Expand All Categories" Click="MusicExpandAllMenuItem_Click"/>
-                                            <MenuItem Header="Collapse All Categories" Click="MusicCollapseAllMenuItem_Click"/>
-                                            <Separator/>
-                                            <MenuItem x:Name="menuMusicShowAssetPaths" Header="Show Asset Paths" IsCheckable="True" IsChecked="False" Click="MusicShowAssetPathsMenuItem_Click"/>
-                                            <Separator/>
-                                            <MenuItem x:Name="menuMusicFadeOut" Header="Fade Out Previous" IsCheckable="True" IsChecked="True" Click="MusicFlagMenuItem_Click"/>
-                                            <MenuItem x:Name="menuMusicFadeIn" Header="Fade In" IsCheckable="True" Click="MusicFlagMenuItem_Click"/>
-                                            <MenuItem x:Name="menuMusicSync" Header="Synchronize" IsCheckable="True" Click="MusicFlagMenuItem_Click"/>
-                                            <Separator x:Name="sepMusicFrequent" Visibility="Collapsed"/>
-                                            <MenuItem x:Name="menuMusicRemoveFrequent" Header="Remove from Frequently Used" Visibility="Collapsed" Click="MusicRemoveFrequentMenuItem_Click"/>
-                                        </ContextMenu>
+                                        <ContextMenu Opened="MusicContextMenu_Opened"/>
                                     </TreeView.ContextMenu>
                                     <TreeView.ItemContainerStyle>
                                         <Style TargetType="{x:Type TreeViewItem}">
                                             <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
                                             <Setter Property="Foreground" Value="#FFE8E8E8"/>
+                                            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
                                             <Setter Property="VirtualizingPanel.IsVirtualizing" Value="True"/>
                                             <Setter Property="VirtualizingPanel.VirtualizationMode" Value="Recycling"/>
                                             <EventSetter Event="Expanded" Handler="MusicTreeItemExpansionChanged"/>
                                             <EventSetter Event="Collapsed" Handler="MusicTreeItemExpansionChanged"/>
+                                            <Style.Resources>
+                                                <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" Color="Transparent"/>
+                                                <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightBrushKey}" Color="Transparent"/>
+                                                <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}" Color="#FFE8E8E8"/>
+                                                <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightTextBrushKey}" Color="#FFE8E8E8"/>
+                                            </Style.Resources>
                                         </Style>
                                     </TreeView.ItemContainerStyle>
                                     <TreeView.ItemTemplate>
                                         <HierarchicalDataTemplate ItemsSource="{Binding Children}">
-                                            <Border Margin="0,0,0,2" Padding="{Binding Padding}" Background="{Binding RowBackground}"
-                                                    ToolTip="{Binding Tooltip}">
+                                            <Border x:Name="ItemBorder"
+                                                    Margin="0,0,0,2"
+                                                    Padding="{Binding Padding}"
+                                                    Background="{Binding RowBackground}"
+                                                    ToolTip="{Binding Tooltip}"
+                                                    BorderThickness="3,0,0,0"
+                                                    BorderBrush="Transparent">
                                                 <StackPanel>
                                                     <TextBlock Text="{Binding DisplayName}"
                                                                Foreground="{Binding TitleBrush}"
@@ -859,6 +857,11 @@
                                                                TextTrimming="CharacterEllipsis"/>
                                                 </StackPanel>
                                             </Border>
+                                            <HierarchicalDataTemplate.Triggers>
+                                                <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=TreeViewItem}}" Value="True">
+                                                    <Setter TargetName="ItemBorder" Property="BorderBrush" Value="#FF4A90D9"/>
+                                                </DataTrigger>
+                                            </HierarchicalDataTemplate.Triggers>
                                         </HierarchicalDataTemplate>
                                     </TreeView.ItemTemplate>
                                 </TreeView>
