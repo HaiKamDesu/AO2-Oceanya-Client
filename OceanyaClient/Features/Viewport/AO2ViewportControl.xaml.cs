@@ -332,6 +332,15 @@ namespace OceanyaClient.Features.Viewport
             }
         }
 
+        /// <summary>
+        /// Directly renders a preview IC message without a live client connection.
+        /// Call after <see cref="AttachClient"/> to show the initial scene, then call this to trigger the emote.
+        /// </summary>
+        internal void PreviewMessage(ICMessage message)
+        {
+            Dispatcher.Invoke(() => RenderMessage(message));
+        }
+
         private void AttachClientEvents()
         {
             if (sceneClient != null)

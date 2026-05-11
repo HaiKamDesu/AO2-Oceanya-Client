@@ -200,6 +200,11 @@ Documentation should usually capture:
 - **Dependencies**: Inject dependencies rather than constructing them inline when practical.
 - **Namespaces**: Follow the existing structure such as `AOBot_Testing.Agents`, `AOBot_Testing.Structures`, etc.
 
+## Reusable Dialogs And Controls
+- **Image Asset Viewer**: `OceanyaClient.Utilities.AssetImageViewerDialog.Show(Window? owner, IReadOnlyList<AssetEntry> entries, int initialIndex = 0)` — the full-featured dark-themed image viewer (zoom, animated timeline with play/pause/seek/loop, prev/next navigation, image-bounds overlay). Used by the character creator file organizer and the IC emote grid context menu. Call it anywhere you need to preview one or more image/animation assets by absolute path.
+  - `AssetEntry(string? AbsolutePath, string Label, string? MetaText = null, ImageSource? FallbackPreview = null)`
+  - Animation playback is powered by `OceanyaClient.Utilities.AnimationTimelinePreviewController` (frame-accurate, supports APNG/GIF/WebP via the same decoder stack as the viewport).
+
 ## UI Consistency
 - **Dark ComboBoxes**: For dark-themed windows, use the fully themed ComboBox pattern from `InitialConfigurationWindow.xaml` / `CharacterFolderVisualizerWindow.xaml`. Do not ship light/default dropdown popups in dark windows.
 - **Auto-complete dropdowns**: Use `AutoCompleteComboBoxBehavior` for editable searchable dropdowns with filter-on-type, arrow navigation, and Enter-to-commit behavior.

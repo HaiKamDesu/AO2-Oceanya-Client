@@ -6,12 +6,10 @@
       "WebFetch(domain:blog.danielclayton.co.uk)",
       "WebFetch(domain:medium.com)",
       "WebFetch(domain:arxiv.org)",
-
       "Read(*)",
       "Glob(*)",
       "Grep(*)",
       "LS(*)",
-
       "Bash(pwd:*)",
       "Bash(ls:*)",
       "Bash(cat:*)",
@@ -33,7 +31,6 @@
       "Bash(git branch:*)",
       "Bash(git ls-files:*)",
       "Bash(git grep:*)",
-
       "Bash(dotnet build:*)",
       "Bash(/mnt/c/Windows/Microsoft.NET/Framework64/v4.0.30319/MSBuild.exe \"Oceanya Client.sln\" /t:Build /p:Configuration=Debug /v:minimal)",
       "Bash(cmd.exe /c \"C:\\\\Program Files\\\\dotnet\\\\dotnet.exe build OceanyaClient/OceanyaClient.csproj -c Debug -v minimal 2>&1\")",
@@ -55,7 +52,9 @@
       "Bash(cmd.exe /c type \"G:\\\\My Drive\\\\Veles Academy\\\\base\\\\background\\\\custom\\\\velesBG\\\\design.ini\")",
       "Bash(cmd.exe /c dir \"G:\\\\My Drive\\\\Veles Academy\\\\base\\\\background\\\\custom\\\\velesBG\" /B)",
       "Bash(git -C \"/mnt/d/Programs/Attorney Online/RPG/AO2-Oceanya-Bot\" show 8ffaf89 --stat)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" build \"Oceanya Client.sln\")",
+      "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" test UnitTests/UnitTests.csproj --filter \"FullyQualifiedName~UnitTests\")"
     ]
   },
   "enableAllProjectMcpServers": false

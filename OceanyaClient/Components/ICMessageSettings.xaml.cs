@@ -23,6 +23,7 @@ using static OceanyaClient.Components.ImageComboBox;
 using System.Xml.Linq;
 using OceanyaClient.Utilities;
 using System.Windows.Automation;
+using OceanyaClient.Features.Viewport;
 
 namespace OceanyaClient.Components
 {
@@ -587,6 +588,235 @@ namespace OceanyaClient.Components
             EmoteDropdown.Add(emote.DisplayID, emote.PathToImage_off);
             EmoteGrid.AddElement(toggleBtn);
             emotes.Add(emote, toggleBtn);
+            toggleBtn.ContextMenu = BuildEmoteButtonContextMenu(emote);
+        }
+
+        private ContextMenu BuildEmoteButtonContextMenu(Emote emote)
+        {
+            ContextMenu menu = new ContextMenu();
+            bool hasPreAnim = !string.IsNullOrWhiteSpace(emote.PreAnimation)
+                && emote.PreAnimation.Trim() != "-";
+
+            MenuItem preAnimItem = new MenuItem { Header = "Preview Pre-animation" };
+            preAnimItem.IsEnabled = hasPreAnim;
+            preAnimItem.Click += (_, _) => OpenEmoteSpritePreview(
+                $"Pre-animation: {emote.PreAnimation}",
+                ResolveEmoteSpritePath(EmoteSpriteKind.PreAnimation, emote));
+            menu.Items.Add(preAnimItem);
+
+            MenuItem idleItem = new MenuItem { Header = "Preview Idle" };
+            idleItem.Click += (_, _) => OpenEmoteSpritePreview(
+                $"Idle: {emote.Animation}",
+                ResolveEmoteSpritePath(EmoteSpriteKind.Idle, emote));
+            menu.Items.Add(idleItem);
+
+            MenuItem talkItem = new MenuItem { Header = "Preview Talk" };
+            talkItem.Click += (_, _) => OpenEmoteSpritePreview(
+                $"Talk: {emote.Animation}",
+                ResolveEmoteSpritePath(EmoteSpriteKind.Talk, emote));
+            menu.Items.Add(talkItem);
+
+            menu.Items.Add(new Separator());
+
+            MenuItem viewportItem = new MenuItem { Header = "Preview in Viewport" };
+            viewportItem.Click += (_, _) => OpenEmoteViewportPreview(emote);
+            menu.Items.Add(viewportItem);
+
+            return menu;
+        }
+
+        private enum EmoteSpriteKind { PreAnimation, Idle, Talk }
+
+        private string? ResolveEmoteSpritePath(EmoteSpriteKind kind, Emote emote)
+        {
+            CharacterFolder? character = curClient?.currentINI;
+            if (character == null) return null;
+            return kind switch
+            {
+                EmoteSpriteKind.PreAnimation => AO2ViewportAssetResolver.ResolveCharacterPreAnimation(character, emote.PreAnimation),
+                EmoteSpriteKind.Idle => AO2ViewportAssetResolver.ResolveCharacterDialogAnimation(character, emote.DisplayID, talking: false),
+                EmoteSpriteKind.Talk => AO2ViewportAssetResolver.ResolveCharacterDialogAnimation(character, emote.DisplayID, talking: true),
+                _ => null
+            };
+        }
+
+        private void OpenEmoteSpritePreview(string title, string? assetPath)
+        {
+            Window? ownerWindow = Window.GetWindow(this);
+            var entry = new AssetImageViewerDialog.AssetEntry(
+                AbsolutePath: assetPath,
+                Label: System.IO.Path.GetFileName(assetPath ?? title),
+                MetaText: assetPath ?? "(not resolved)");
+            AssetImageViewerDialog.Show(ownerWindow, new[] { entry });
+        }
+
+        private void OpenEmoteViewportPreview(Emote emote)
+        {
+            if (curClient?.currentINI == null) return;
+            AOClient client = curClient;
+
+            ICMessage previewMsg = BuildPreviewICMessage(emote, client);
+
+            Window? ownerWindow = Window.GetWindow(this);
+
+            AO2ViewportControl viewport = new AO2ViewportControl();
+
+            AOClient syntheticClient = new AOClient("ws://localhost:1");
+            syntheticClient.curBG = client.curBG;
+            syntheticClient.curPos = client.curPos;
+            viewport.AttachClient(syntheticClient, null, null, null);
+
+            Button replayButton = new Button
+            {
+                Content = "▶ Replay",
+                Width = 90,
+                Height = 28,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Margin = new Thickness(8, 6, 0, 6)
+            };
+
+            TextBlock infoText = new TextBlock
+            {
+                Text = $"{client.currentINI.Name}  ·  {emote.DisplayID}",
+                Foreground = new SolidColorBrush(Color.FromRgb(200, 213, 226)),
+                FontSize = 12,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(10, 0, 8, 0),
+                TextTrimming = TextTrimming.CharacterEllipsis
+            };
+
+            Border previewBadge = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(160, 70, 20)),
+                CornerRadius = new CornerRadius(3),
+                Padding = new Thickness(7, 2, 7, 2),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 8, 0),
+                Child = new TextBlock
+                {
+                    Text = "PREVIEW",
+                    Foreground = Brushes.White,
+                    FontSize = 11,
+                    FontWeight = FontWeights.Bold
+                }
+            };
+
+            DockPanel toolbar = new DockPanel { LastChildFill = true };
+            DockPanel.SetDock(replayButton, Dock.Left);
+            DockPanel.SetDock(previewBadge, Dock.Right);
+            toolbar.Children.Add(replayButton);
+            toolbar.Children.Add(previewBadge);
+            toolbar.Children.Add(infoText);
+
+            Viewbox viewbox = new Viewbox
+            {
+                Stretch = Stretch.Uniform,
+                Child = viewport
+            };
+
+            Grid content = new Grid();
+            content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            Grid.SetRow(viewbox, 0);
+            Grid.SetRow(toolbar, 1);
+            content.Children.Add(viewbox);
+            content.Children.Add(toolbar);
+
+            string emoteName = string.IsNullOrWhiteSpace(emote.Name) ? emote.DisplayID : emote.Name;
+            GenericOceanyaWindow dialog = new GenericOceanyaWindow
+            {
+                Owner = ownerWindow,
+                Title = $"Emote Preview — {emoteName}",
+                HeaderText = $"Emote Preview — {emoteName}",
+                Width = 540,
+                Height = 660,
+                MinWidth = 320,
+                MinHeight = 420,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                ShowInTaskbar = false,
+                IsUserResizeEnabled = true,
+                IsUserMoveEnabled = true,
+                IsCloseButtonVisible = true,
+                BodyMargin = new Thickness(0),
+                BodyContent = content
+            };
+
+            replayButton.Click += (_, _) => viewport.PreviewMessage(previewMsg);
+            dialog.Loaded += (_, _) => viewport.PreviewMessage(previewMsg);
+            dialog.Show();
+        }
+
+        private static ICMessage BuildPreviewICMessage(Emote emote, AOClient client)
+        {
+            string side = !string.IsNullOrWhiteSpace(client.curPos)
+                ? client.curPos
+                : client.currentINI?.configINI?.Side ?? "def";
+
+            string sfxName = client.PreanimEnabled && !string.IsNullOrWhiteSpace(emote.sfxName)
+                ? emote.sfxName
+                : "1";
+
+            return new ICMessage
+            {
+                DeskMod = emote.DeskMod,
+                PreAnim = emote.PreAnimation,
+                Character = client.currentINI!.Name,
+                Emote = emote.Animation,
+                Message = "This is a preview",
+                Side = side,
+                SfxName = sfxName,
+                EmoteModifier = ResolvePreviewEmoteModifier(emote.Modifier, client.PreanimEnabled, client.Immediate),
+                SfxDelay = emote.sfxDelay,
+                ShoutModifier = ICMessage.ShoutModifiers.Nothing,
+                Flip = client.flip,
+                Realization = false,
+                TextColor = ICMessage.TextColors.White,
+                ShowName = "",
+                CharId = 0,
+                EvidenceID = "0",
+                OtherCharId = -1,
+                NonInterruptingPreAnim = client.PreanimEnabled && client.Immediate,
+                SfxLooping = false,
+                ScreenShake = false,
+                FramesShake = $"{emote.PreAnimation}^(b){emote.Animation}^(a){emote.Animation}^",
+                FramesRealization = $"{emote.PreAnimation}^(b){emote.Animation}^(a){emote.Animation}^",
+                FramesSfx = $"{emote.PreAnimation}^(b){emote.Animation}^(a){emote.Animation}^",
+                Additive = false,
+                Effect = ICMessage.Effects.None,
+                Blips = "",
+                Slide = false
+            };
+        }
+
+        private static ICMessage.EmoteModifiers ResolvePreviewEmoteModifier(
+            ICMessage.EmoteModifiers baseModifier, bool preanimEnabled, bool immediate)
+        {
+            ICMessage.EmoteModifiers resolved = baseModifier;
+
+            if (resolved == ICMessage.EmoteModifiers.PlayPreanimationAndObjection)
+                resolved = ICMessage.EmoteModifiers.PlayPreanimation;
+            else if (resolved == ICMessage.EmoteModifiers.Unused3)
+                resolved = ICMessage.EmoteModifiers.NoPreanimation;
+            else if (resolved == ICMessage.EmoteModifiers.Unused4)
+                resolved = ICMessage.EmoteModifiers.NoPreanimationAndZoom;
+
+            if (preanimEnabled && !immediate)
+            {
+                if (resolved == ICMessage.EmoteModifiers.NoPreanimation)
+                    resolved = ICMessage.EmoteModifiers.PlayPreanimation;
+                else if (resolved == ICMessage.EmoteModifiers.NoPreanimationAndZoom)
+                    resolved = ICMessage.EmoteModifiers.ObjectionAndZoomNoPreanim;
+            }
+            else
+            {
+                if (resolved == ICMessage.EmoteModifiers.PlayPreanimation)
+                    resolved = ICMessage.EmoteModifiers.NoPreanimation;
+                else if (resolved == ICMessage.EmoteModifiers.ObjectionAndZoomNoPreanim)
+                    resolved = ICMessage.EmoteModifiers.NoPreanimationAndZoom;
+            }
+
+            return resolved;
         }
 
         private static string SanitizeAutomationSegment(string value)
