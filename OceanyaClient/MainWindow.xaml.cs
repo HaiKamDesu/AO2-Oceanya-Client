@@ -6498,6 +6498,7 @@ namespace OceanyaClient
 
             if (selectedItem.IsCustomCommand)
             {
+                CustomConsole.Info($"[MUSIC] Custom command OOC: {selectedItem.PlayToken}", CustomConsole.LogCategory.Music);
                 await networkClient.SendOOCMessage(selectedItem.PlayToken);
                 string cmdKey = selectedItem.CustomCommandId;
                 if (!SaveFile.Data.FrequentlyUsedMusic.ContainsKey(cmdKey))
@@ -6508,22 +6509,42 @@ namespace OceanyaClient
                 SaveFile.Data.FrequentlyUsedMusic[cmdKey]++;
                 SaveFile.Save();
                 RefreshMusicListForCurrentClient();
+                MusicListPopup.IsOpen = false;
                 return;
             }
 
             string playToken = string.IsNullOrWhiteSpace(selectedItem.PlayToken) ? selectedItem.Token : selectedItem.PlayToken;
+            bool isUrl = AO2ViewportAudioResolver.IsStreamingUrl(playToken);
             bool useOocPlay = selectedItem.Playlist == "LOCAL FILES" || selectedItem.Playlist == "FREQUENTLY USED";
 
             if (useOocPlay)
             {
                 // Local/frequently-used tracks bypass server validation via OOC /play.
-                // tsuserverCC always prepends "custom/" when broadcasting, so "../token"
-                // resolves to the correct sounds/music/ path on all AO2 clients.
-                string oocToken = networkClient.IsTsuServerCC ? "../" + playToken : playToken;
-                await networkClient.SendOOCMessage("/play " + oocToken);
+                // tsuserverCC uses shlex.split(), so the argument must be quoted to handle
+                // spaces in song names. It also prepends "custom/" to non-URL tokens, so
+                // "../token" resolves back to sounds/music/. URLs are sent as-is (no prefix).
+                // tsuserver3 takes the raw arg string and needs no quoting.
+                string oocMessage;
+                if (networkClient.IsTsuServerCC)
+                {
+                    string oocArg = isUrl ? playToken : "../" + playToken;
+                    oocMessage = $"/play \"{oocArg}\"";
+                }
+                else
+                {
+                    oocMessage = "/play " + playToken;
+                }
+
+                CustomConsole.Info(
+                    $"[MUSIC] OOC play → {oocMessage} (server={networkClient.ServerSoftware}, isUrl={isUrl})",
+                    CustomConsole.LogCategory.Music);
+                await networkClient.SendOOCMessage(oocMessage);
             }
             else
             {
+                CustomConsole.Info(
+                    $"[MUSIC] MC packet play: token={playToken}, effectFlags={MusicEffectFlags}, isUrl={isUrl}",
+                    CustomConsole.LogCategory.Music);
                 await networkClient.PlayMusic(playToken, MusicEffectFlags);
             }
 
@@ -6536,6 +6557,7 @@ namespace OceanyaClient
             SaveFile.Data.FrequentlyUsedMusic[playToken]++;
             SaveFile.Save();
             RefreshMusicListForCurrentClient();
+            MusicListPopup.IsOpen = false;
         }
 
         private async Task StopMusicAsync()
@@ -6552,11 +6574,13 @@ namespace OceanyaClient
                 ApplyProfileToSingleInternalClient(profileClient);
             }
 
+            CustomConsole.Info($"[MUSIC] Stop: effectFlags={MusicEffectFlags}", CustomConsole.LogCategory.Music);
             await networkClient.StopMusic(MusicEffectFlags);
             currentMusicToken = string.Empty;
             currentMusicPlaylist = string.Empty;
             mainMusicAudioManager.StopMusic(MusicEffectFlags);
             RefreshMusicListForCurrentClient();
+            MusicListPopup.IsOpen = false;
         }
 
         private void ApplySavedPopupSettings()

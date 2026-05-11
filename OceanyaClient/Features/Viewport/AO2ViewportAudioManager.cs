@@ -1,4 +1,5 @@
 using System;
+using Common;
 using ManagedBass;
 using OceanyaClient;
 
@@ -209,6 +210,16 @@ namespace OceanyaClient.Features.Viewport
             string? path = AO2ViewportAudioResolver.ResolveMusicPath(token);
             bool fadeOut = (effectFlags & 2) != 0;
             bool fadeIn = (effectFlags & 1) != 0;
+
+            if (!string.IsNullOrWhiteSpace(token))
+            {
+                if (AO2ViewportAudioResolver.IsStreamingUrl(token))
+                    CustomConsole.Info($"[AUDIO] URL stream: {token}", Common.CustomConsole.LogCategory.Music);
+                else if (!string.IsNullOrWhiteSpace(path))
+                    CustomConsole.Info($"[AUDIO] Local file resolved: token={token} → {path}", Common.CustomConsole.LogCategory.Music);
+                else
+                    CustomConsole.Warning($"[AUDIO] Token not found locally: {token}", category: Common.CustomConsole.LogCategory.Music);
+            }
 
             bool pathChanged = !string.Equals(currentMusicPath, path ?? string.Empty, StringComparison.OrdinalIgnoreCase);
             bool loopChanged = currentMusicLoop != loop;

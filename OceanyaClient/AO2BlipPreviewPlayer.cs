@@ -58,6 +58,29 @@ namespace OceanyaClient
                 return false;
             }
 
+            // AO2 parity: HTTP/HTTPS/FTP tokens are streamed directly from the URL
+            // using BASS_StreamCreateURL instead of loading a local file.
+            bool isUrl = fullPath.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                || fullPath.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                || fullPath.StartsWith("ftp://", StringComparison.OrdinalIgnoreCase);
+
+            if (isUrl)
+            {
+                FreeStreams();
+                // URL streaming (BASS_StreamCreateURL). Loop is not supported for URL streams.
+                int streamHandle = Bass.CreateStream(fullPath, 0, BassFlags.Default, null, IntPtr.Zero);
+                streams[0] = streamHandle;
+                if (streamHandle != 0)
+                {
+                    _ = Bass.ChannelSetAttribute(streamHandle, ChannelAttribute.Volume, volume);
+                    LastErrorMessage = string.Empty;
+                    return true;
+                }
+
+                LastErrorMessage = $"Could not create URL stream for '{fullPath}'. BASS error: {Bass.LastError}.";
+                return false;
+            }
+
             FreeStreams();
 
             bool anyCreated = false;

@@ -14,11 +14,26 @@ namespace OceanyaClient.Features.Viewport
         private static readonly string[] SuffixOrder = { ".opus", ".ogg", ".mp3", ".wav" };
 
         /// <summary>
+        /// Returns true when the token is a direct HTTP/HTTPS/FTP streaming URL.
+        /// AO2 parity: AO2 checks startsWith("http") and uses BASS_StreamCreateURL for those tokens.
+        /// </summary>
+        public static bool IsStreamingUrl(string? token)
+        {
+            return token != null
+                && (token.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                    || token.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                    || token.StartsWith("ftp://", StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>
         /// Resolves a local AO2-style music token to a file path.
         /// Uses exact token matching so Oceanya has the same play/no-play behavior as AO2.
+        /// Direct HTTP/HTTPS/FTP URLs are returned as-is for URL streaming.
         /// </summary>
         public static string? ResolveMusicPath(string? token)
         {
+            if (IsStreamingUrl(token))
+                return token;
             return ResolveSoundPath("music", token);
         }
 
@@ -28,6 +43,11 @@ namespace OceanyaClient.Features.Viewport
             if (string.IsNullOrWhiteSpace(normalized))
             {
                 return string.Empty;
+            }
+
+            if (IsStreamingUrl(normalized))
+            {
+                return normalized;
             }
 
             string? resolved = ResolveMusicPath(normalized);
