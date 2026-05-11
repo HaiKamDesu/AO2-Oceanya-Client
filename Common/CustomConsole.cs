@@ -39,7 +39,11 @@ namespace Common
             /// <summary>OOC (out-of-character) chat messages</summary>
             OOC,
             /// <summary>AO2 viewport rendering and playback diagnostics</summary>
-            Viewport
+            Viewport,
+            /// <summary>Music packet send/receive diagnostics</summary>
+            Music,
+            /// <summary>SFX/blip/shout packet diagnostics</summary>
+            SFX
         }
 
         /// <summary>

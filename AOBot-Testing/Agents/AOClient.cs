@@ -52,6 +52,7 @@ namespace AOBot_Testing.Agents
         private readonly List<Player> currentAreaPlayers = new List<Player>();
         private readonly List<string> currentEvidenceNames = new List<string>();
         private string serverAssetUrl = string.Empty;
+        private string serverSoftware = string.Empty;
         public CharacterFolder? currentINI;
         public Emote? currentEmote;
 
@@ -182,6 +183,16 @@ namespace AOBot_Testing.Agents
         }
 
         public string ServerAssetUrl => serverAssetUrl;
+
+        /// <summary>
+        /// The server software identifier from the ID# handshake (e.g. "tsuserver3", "tsuservercc").
+        /// </summary>
+        public string ServerSoftware => serverSoftware;
+
+        /// <summary>
+        /// True when the connected server is tsuserverCC (adds "custom/" prefix when broadcasting /play).
+        /// </summary>
+        public bool IsTsuServerCC => serverSoftware.IndexOf("cc", StringComparison.OrdinalIgnoreCase) >= 0;
 
         public bool IsTransportConnected => transport != null && transport.IsConnected;
 
@@ -436,7 +447,9 @@ namespace AOBot_Testing.Agents
                 return;
             }
 
-            string token = Globals.ReplaceSymbolsForText(musicToken?.Trim() ?? string.Empty);
+            // Music tokens are file paths; only '#' and '%' are protocol separators
+            // and those rarely appear in filenames. Send as-is, matching AO2 client behavior.
+            string token = musicToken?.Trim() ?? string.Empty;
             if (string.IsNullOrWhiteSpace(token))
             {
                 return;
@@ -452,6 +465,9 @@ namespace AOBot_Testing.Agents
                     ? $"MC#{token}#{iniPuppetID}#%"
                     : $"MC#{token}#{iniPuppetID}#{showName}#%";
 
+            CustomConsole.Info(
+                $"[MUSIC OUT] token=\"{token}\" iniPuppetID={iniPuppetID} showName=\"{showName}\" effectFlags={effectFlags} hasEFFECTS={SupportsServerFeature("EFFECTS")} packet={packet}",
+                Common.CustomConsole.LogCategory.Music);
             await SendPacket(packet);
         }
 
@@ -983,6 +999,10 @@ namespace AOBot_Testing.Agents
             {
                 return;
             }
+
+            CustomConsole.Info(
+                $"[MUSIC IN] song=\"{song}\" charId={characterId} isSelf={characterId == iniPuppetID} myIniPuppetID={iniPuppetID} raw={message}",
+                Common.CustomConsole.LogCategory.Music);
 
             bool loopEnabled = fields.Length > 4 && fields[4].Trim() == "1";
             int channel = 0;
@@ -1606,8 +1626,9 @@ namespace AOBot_Testing.Agents
             if (parts.Length >= 3 && int.TryParse(parts[1], out int parsedPlayerId))
             {
                 playerID = parsedPlayerId;
-                string serverVersion = parts[2];
-                CustomConsole.Info($"Assigned Player ID: {playerID} | Server Version: {serverVersion}");
+                serverSoftware = parts[2];
+                string serverVersion = parts.Length >= 4 ? parts[3] : string.Empty;
+                CustomConsole.Info($"Assigned Player ID: {playerID} | Server Software: {serverSoftware} | Server Version: {serverVersion}");
             }
 
             await SendPacket($"ID#{AOClientProtocolConstants.ClientName}#{AOClientProtocolConstants.ClientVersion}#%");

@@ -80,6 +80,7 @@ namespace OceanyaClient
         private readonly Dictionary<string, string> displayMusicPathCache =
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private IReadOnlyList<MusicAssetEntry>? localMusicAssetsCache;
+        private Dictionary<string, string>? localMusicIndex;
         private Task? localMusicAssetsScanTask;
         private bool isLoadingDreddOverlaySelection;
         private bool isDreddFeatureEnabled;
@@ -454,6 +455,7 @@ namespace OceanyaClient
             hasRaisedFinishedLoading = true;
             StartupTimingLogger.Log("main_window_loaded");
             MarkAutomationReady();
+            EnsureLocalMusicAssetsScanStarted();
             if (SaveFile.Data.GMViewportWindowState?.IsVisible == true)
             {
                 Dispatcher.BeginInvoke(new Action(OpenViewportWindow));
@@ -1854,11 +1856,22 @@ namespace OceanyaClient
             List<MusicListItem> items = new List<MusicListItem>();
             bool showAssetPaths = SaveFile.Data.MusicListShowAssetPaths;
             HashSet<string> collapsedKeys = GetMusicCollapsedCategoryKeys();
+            MusicListItem frequentRoot = CreateMusicCategoryItem("FREQUENTLY USED", "frequent", collapsedKeys);
             MusicListItem serverRoot = CreateMusicCategoryItem("SERVER LIST", "server", collapsedKeys);
             MusicListItem localRoot = CreateMusicCategoryItem("LOCAL FILES", "local", collapsedKeys);
 
+            BuildFrequentlyUsedMusicItems(frequentRoot, musicEntries, filter, showAssetPaths, collapsedKeys);
             BuildServerMusicItems(serverRoot, musicEntries, filter, showAssetPaths, collapsedKeys);
-            BuildLocalMusicItems(localRoot, filter, showAssetPaths, collapsedKeys);
+            BuildLocalMusicItems(localRoot, musicEntries, filter, showAssetPaths, collapsedKeys);
+
+            PropagateRedCategoryState(frequentRoot);
+            PropagateRedCategoryState(serverRoot);
+            PropagateRedCategoryState(localRoot);
+
+            if (ShouldIncludeMusicCategory(frequentRoot, filter))
+            {
+                items.Add(frequentRoot);
+            }
 
             if (ShouldIncludeMusicCategory(serverRoot, filter))
             {
@@ -1873,6 +1886,62 @@ namespace OceanyaClient
             return items;
         }
 
+        private void BuildFrequentlyUsedMusicItems(
+            MusicListItem frequentRoot,
+            IReadOnlyList<string> musicEntries,
+            string filter,
+            bool showAssetPaths,
+            HashSet<string> collapsedKeys)
+        {
+            var sorted = SaveFile.Data.FrequentlyUsedMusic
+                .Where(pair => pair.Value > 0)
+                .OrderByDescending(pair => pair.Value)
+                .ThenBy(pair => GetMusicDisplayName(pair.Key), NaturalStringComparer.Instance);
+
+            foreach (KeyValuePair<string, int> pair in sorted)
+            {
+                string token = pair.Key;
+                int count = pair.Value;
+                string displayName = GetMusicDisplayName(token);
+                bool localFileExists = !string.IsNullOrWhiteSpace(ResolveCachedMusicPath(token));
+                string assetPath = localFileExists
+                    ? ResolveCachedMusicDisplayPath(token)
+                    : $"base/sounds/music/{StripCustomPrefix(token)}";
+
+                if (!string.IsNullOrWhiteSpace(filter)
+                    && !displayName.Contains(filter, StringComparison.OrdinalIgnoreCase)
+                    && !token.Contains(filter, StringComparison.OrdinalIgnoreCase)
+                    && !assetPath.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                bool isCurrent = MusicTokenMatchesCurrent(token, currentMusicToken);
+                string tooltip = $"Played {count} time{(count == 1 ? "" : "s")}";
+                if (!localFileExists)
+                {
+                    tooltip += "\nNot found in local AO2 installation";
+                }
+
+                frequentRoot.Children.Add(new MusicListItem
+                {
+                    DisplayName = displayName,
+                    Token = token,
+                    PlayToken = token,
+                    AssetPath = assetPath,
+                    Playlist = "FREQUENTLY USED",
+                    IsCategory = false,
+                    IsPlayable = true,
+                    Tooltip = tooltip,
+                    RowBackground = isCurrent ? musicCurrentBrush : localFileExists ? musicFoundBrush : musicMissingBrush,
+                    TitleBrush = isCurrent ? Brushes.LightGreen : Brushes.Gainsboro,
+                    FontWeight = isCurrent ? FontWeights.SemiBold : FontWeights.Normal,
+                    Padding = new Thickness(7, 4, 7, 4),
+                    AssetPathVisibility = showAssetPaths ? Visibility.Visible : Visibility.Collapsed,
+                });
+            }
+        }
+
         private void BuildServerMusicItems(
             MusicListItem serverRoot,
             IReadOnlyList<string> musicEntries,
@@ -1881,6 +1950,7 @@ namespace OceanyaClient
             HashSet<string> collapsedKeys)
         {
             MusicListItem? currentCategory = null;
+            List<MusicListItem> uncategorizedSongs = new List<MusicListItem>();
 
             foreach (string entry in musicEntries)
             {
@@ -1901,8 +1971,7 @@ namespace OceanyaClient
                     || assetPath.Contains(filter, StringComparison.OrdinalIgnoreCase)
                     || (currentCategory?.DisplayName.Contains(filter, StringComparison.OrdinalIgnoreCase) == true);
 
-                if (!string.IsNullOrWhiteSpace(filter)
-                    && !matchesFilter)
+                if (!string.IsNullOrWhiteSpace(filter) && !matchesFilter)
                 {
                     if (!isSong)
                     {
@@ -1919,17 +1988,21 @@ namespace OceanyaClient
                     continue;
                 }
 
-                bool isCurrent = isSong
-                    && string.Equals(token, currentMusicToken, StringComparison.OrdinalIgnoreCase);
+                bool isCurrent = MusicTokenMatchesCurrent(token, currentMusicToken);
                 bool localFileExists = !string.IsNullOrWhiteSpace(ResolveCachedMusicPath(token));
+                string displayAssetPath = localFileExists
+                    ? assetPath
+                    : $"base/sounds/music/{StripCustomPrefix(token)}";
                 MusicListItem songItem = new MusicListItem
                 {
                     DisplayName = displayName,
                     Token = token,
-                    AssetPath = assetPath,
+                    PlayToken = token,
+                    AssetPath = displayAssetPath,
                     Playlist = currentCategory?.DisplayName ?? string.Empty,
                     IsCategory = false,
                     IsPlayable = true,
+                    Tooltip = localFileExists ? null : "Not found in local AO2 installation",
                     RowBackground = isCurrent ? musicCurrentBrush : localFileExists ? musicFoundBrush : musicMissingBrush,
                     TitleBrush = isCurrent ? Brushes.LightGreen : Brushes.Gainsboro,
                     FontWeight = isCurrent ? FontWeights.SemiBold : FontWeights.Normal,
@@ -1939,7 +2012,7 @@ namespace OceanyaClient
 
                 if (currentCategory == null)
                 {
-                    serverRoot.Children.Add(songItem);
+                    uncategorizedSongs.Add(songItem);
                 }
                 else
                 {
@@ -1951,14 +2024,40 @@ namespace OceanyaClient
                     currentCategory.Children.Add(songItem);
                 }
             }
+
+            // Uncategorized songs go after all categories (folders-first ordering).
+            foreach (MusicListItem song in uncategorizedSongs)
+            {
+                serverRoot.Children.Add(song);
+            }
         }
 
         private void BuildLocalMusicItems(
             MusicListItem localRoot,
+            IReadOnlyList<string> musicEntries,
             string filter,
             bool showAssetPaths,
             HashSet<string> collapsedKeys)
         {
+            // Build a lookup: lowercase base name (no extension) → server token, for local→server matching
+            Dictionary<string, string> serverByToken = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, string> serverByBaseName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string entry in musicEntries)
+            {
+                if (!LooksLikeMusicEntry(entry))
+                {
+                    continue;
+                }
+
+                string strippedEntry = StripCustomPrefix(entry);
+                serverByToken.TryAdd(strippedEntry, entry);
+                serverByToken.TryAdd(entry, entry);
+                string entryBase = Path.GetFileNameWithoutExtension(strippedEntry);
+                serverByBaseName.TryAdd(entryBase, entry);
+            }
+
+            List<MusicListItem> uncategorizedSongs = new List<MusicListItem>();
+
             foreach (MusicAssetEntry asset in localMusicAssetsCache ?? Array.Empty<MusicAssetEntry>())
             {
                 string token = asset.Token;
@@ -1972,12 +2071,20 @@ namespace OceanyaClient
                     continue;
                 }
 
+                bool isCurrent = MusicTokenMatchesCurrent(token, currentMusicToken);
                 MusicListItem parent = EnsureLocalMusicCategory(localRoot, token, collapsedKeys);
-                bool isCurrent = string.Equals(token, currentMusicToken, StringComparison.OrdinalIgnoreCase);
-                parent.Children.Add(new MusicListItem
+
+                // Find best server-side token to actually send in MC packet
+                string tokenBase = Path.GetFileNameWithoutExtension(token);
+                string playToken = serverByToken.TryGetValue(token, out string? exactMatch) ? exactMatch
+                    : serverByBaseName.TryGetValue(tokenBase, out string? baseMatch) ? baseMatch
+                    : token;
+
+                MusicListItem songItem = new MusicListItem
                 {
                     DisplayName = displayName,
                     Token = token,
+                    PlayToken = playToken,
                     AssetPath = assetPath,
                     Playlist = "LOCAL FILES",
                     IsCategory = false,
@@ -1985,10 +2092,72 @@ namespace OceanyaClient
                     RowBackground = isCurrent ? musicCurrentBrush : musicFoundBrush,
                     TitleBrush = isCurrent ? Brushes.LightGreen : Brushes.Gainsboro,
                     FontWeight = isCurrent ? FontWeights.SemiBold : FontWeights.Normal,
-                    Padding = new Thickness(18, 4, 7, 4),
+                    Padding = new Thickness(parent == localRoot ? 7 : 18, 4, 7, 4),
                     AssetPathVisibility = showAssetPaths ? Visibility.Visible : Visibility.Collapsed,
-                });
+                };
+
+                if (parent == localRoot)
+                {
+                    uncategorizedSongs.Add(songItem);
+                }
+                else
+                {
+                    parent.Children.Add(songItem);
+                }
             }
+
+            // Sort category nodes (and their children recursively) by Windows natural order,
+            // then append uncategorized songs (also naturally sorted) at the bottom.
+            SortMusicChildrenNatural(localRoot);
+            foreach (MusicListItem song in uncategorizedSongs.OrderBy(s => s.DisplayName, NaturalStringComparer.Instance))
+            {
+                localRoot.Children.Add(song);
+            }
+        }
+
+        private static void SortMusicChildrenNatural(MusicListItem node)
+        {
+            if (node.Children.Count == 0)
+            {
+                return;
+            }
+
+            List<MusicListItem> categories = node.Children
+                .Where(c => c.IsCategory)
+                .OrderBy(c => c.DisplayName, NaturalStringComparer.Instance)
+                .ToList();
+            List<MusicListItem> songs = node.Children
+                .Where(c => !c.IsCategory)
+                .OrderBy(c => c.DisplayName, NaturalStringComparer.Instance)
+                .ToList();
+
+            node.Children.Clear();
+            foreach (MusicListItem cat in categories)
+            {
+                SortMusicChildrenNatural(cat);
+                node.Children.Add(cat);
+            }
+
+            foreach (MusicListItem song in songs)
+            {
+                node.Children.Add(song);
+            }
+        }
+
+        private bool PropagateRedCategoryState(MusicListItem node)
+        {
+            if (node.Children.Count == 0)
+            {
+                return !node.IsCategory && node.RowBackground == musicMissingBrush;
+            }
+
+            bool allMissing = node.Children.All(child => PropagateRedCategoryState(child));
+            if (node.IsCategory && allMissing)
+            {
+                node.RowBackground = musicMissingBrush;
+            }
+
+            return allMissing;
         }
 
         private MusicListItem EnsureLocalMusicCategory(
@@ -2073,6 +2242,8 @@ namespace OceanyaClient
 
         private static string ResolveMusicPlaylist(IReadOnlyList<string> musicEntries, string musicToken)
         {
+            // Strip "custom/" prefix so tsuserverCC echoes still resolve to the right playlist.
+            string normalizedTarget = StripCustomPrefix(musicToken.Trim());
             string currentCategory = string.Empty;
             foreach (string entry in musicEntries)
             {
@@ -2088,7 +2259,8 @@ namespace OceanyaClient
                     continue;
                 }
 
-                if (string.Equals(token, musicToken, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(token, normalizedTarget, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(token, musicToken, StringComparison.OrdinalIgnoreCase))
                 {
                     return currentCategory;
                 }
@@ -2126,6 +2298,31 @@ namespace OceanyaClient
                 : parentKey.TrimEnd('/') + "/" + normalized;
         }
 
+        /// <summary>
+        /// Returns true when <paramref name="token"/> refers to the same track as
+        /// <paramref name="currentToken"/>, accounting for servers that echo music
+        /// packets with a leading "custom/" prefix (e.g. tsuserverCC).
+        /// </summary>
+        private static bool MusicTokenMatchesCurrent(string token, string currentToken)
+        {
+            if (string.Equals(token, currentToken, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            string strippedCurrent = StripCustomPrefix(currentToken);
+            return !string.Equals(strippedCurrent, currentToken, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(token, strippedCurrent, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string StripCustomPrefix(string token)
+        {
+            const string prefix = "custom/";
+            return token.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                ? token.Substring(prefix.Length)
+                : token;
+        }
+
         private static HashSet<string> GetMusicCollapsedCategoryKeys()
         {
             return new HashSet<string>(
@@ -2140,6 +2337,12 @@ namespace OceanyaClient
                 return cachedPath;
             }
 
+            if (localMusicIndex != null && localMusicIndex.TryGetValue(token, out string? indexedPath))
+            {
+                resolvedMusicPathCache[token] = indexedPath;
+                return indexedPath;
+            }
+
             string resolvedPath = AO2ViewportAudioResolver.ResolveMusicPath(token) ?? string.Empty;
             resolvedMusicPathCache[token] = resolvedPath;
             return resolvedPath;
@@ -2150,6 +2353,12 @@ namespace OceanyaClient
             if (displayMusicPathCache.TryGetValue(token, out string? cachedPath))
             {
                 return cachedPath;
+            }
+
+            if (localMusicIndex != null && localMusicIndex.TryGetValue(token, out string? indexedPath))
+            {
+                displayMusicPathCache[token] = indexedPath;
+                return indexedPath;
             }
 
             string displayPath = AO2ViewportAudioResolver.ResolveMusicDisplayPath(token);
@@ -2176,9 +2385,20 @@ namespace OceanyaClient
         private async Task RefreshLocalMusicAssetsAndRefreshAsync()
         {
             IReadOnlyList<MusicAssetEntry> assets = await Task.Run(AO2ViewportAudioResolver.EnumerateLocalMusicAssets);
+            Dictionary<string, string> index = await Task.Run(() =>
+            {
+                Dictionary<string, string> built = new Dictionary<string, string>(assets.Count, StringComparer.OrdinalIgnoreCase);
+                foreach (MusicAssetEntry entry in assets)
+                {
+                    built.TryAdd(entry.Token, entry.FullPath);
+                }
+
+                return built;
+            });
             await Dispatcher.InvokeAsync(() =>
             {
                 localMusicAssetsCache = assets;
+                localMusicIndex = index;
                 localMusicAssetsScanTask = null;
                 RefreshMusicListForCurrentClient();
             }, DispatcherPriority.Background);
@@ -2187,6 +2407,7 @@ namespace OceanyaClient
         private void ResetLocalMusicAssetCache()
         {
             localMusicAssetsCache = null;
+            localMusicIndex = null;
             localMusicAssetsScanTask = null;
         }
 
@@ -5809,6 +6030,52 @@ namespace OceanyaClient
             RefreshMusicListForCurrentClient();
         }
 
+        private void treeMusic_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            DependencyObject? obj = e.OriginalSource as DependencyObject;
+            while (obj != null)
+            {
+                if (obj is TreeViewItem tvi)
+                {
+                    tvi.IsSelected = true;
+                    break;
+                }
+
+                obj = VisualTreeHelper.GetParent(obj);
+            }
+        }
+
+        private void MusicContextMenu_Opened(object sender, RoutedEventArgs e)
+        {
+            bool isFrequent = treeMusic.SelectedItem is MusicListItem item && item.Playlist == "FREQUENTLY USED";
+            if (sender is ContextMenu cm)
+            {
+                foreach (object menuObj in cm.Items)
+                {
+                    if (menuObj is MenuItem mi && mi.Name == "menuMusicRemoveFrequent")
+                    {
+                        mi.Visibility = isFrequent ? Visibility.Visible : Visibility.Collapsed;
+                    }
+                    else if (menuObj is Separator sep && sep.Name == "sepMusicFrequent")
+                    {
+                        sep.Visibility = isFrequent ? Visibility.Visible : Visibility.Collapsed;
+                    }
+                }
+            }
+        }
+
+        private void MusicRemoveFrequentMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (treeMusic.SelectedItem is not MusicListItem item || item.Playlist != "FREQUENTLY USED")
+            {
+                return;
+            }
+
+            SaveFile.Data.FrequentlyUsedMusic.Remove(item.Token);
+            SaveFile.Save();
+            RefreshMusicListForCurrentClient();
+        }
+
         private void MusicTreeItemExpansionChanged(object sender, RoutedEventArgs e)
         {
             if (sender is not TreeViewItem treeViewItem
@@ -5882,9 +6149,30 @@ namespace OceanyaClient
                 ApplyProfileToSingleInternalClient(profileClient);
             }
 
-            await networkClient.PlayMusic(selectedItem.Token, musicEffectFlags);
-            currentMusicToken = selectedItem.Token;
-            currentMusicPlaylist = selectedItem.Playlist;
+            string playToken = string.IsNullOrWhiteSpace(selectedItem.PlayToken) ? selectedItem.Token : selectedItem.PlayToken;
+            bool useOocPlay = selectedItem.Playlist == "LOCAL FILES" || selectedItem.Playlist == "FREQUENTLY USED";
+
+            if (useOocPlay)
+            {
+                // Local/frequently-used tracks bypass server validation via OOC /play.
+                // tsuserverCC always prepends "custom/" when broadcasting, so "../token"
+                // resolves to the correct sounds/music/ path on all AO2 clients.
+                string oocToken = networkClient.IsTsuServerCC ? "../" + playToken : playToken;
+                await networkClient.SendOOCMessage("/play " + oocToken);
+            }
+            else
+            {
+                await networkClient.PlayMusic(playToken, musicEffectFlags);
+            }
+
+            // Track play count under the resolved token.
+            if (!SaveFile.Data.FrequentlyUsedMusic.ContainsKey(playToken))
+            {
+                SaveFile.Data.FrequentlyUsedMusic[playToken] = 0;
+            }
+
+            SaveFile.Data.FrequentlyUsedMusic[playToken]++;
+            SaveFile.Save();
             RefreshMusicListForCurrentClient();
         }
 
@@ -6076,6 +6364,7 @@ namespace OceanyaClient
             public string AssetPath { get; set; } = string.Empty;
             public string Playlist { get; set; } = string.Empty;
             public string CategoryKey { get; set; } = string.Empty;
+            public string? Tooltip { get; set; }
             public bool IsCategory { get; set; }
             public bool IsPlayable { get; set; }
             public bool IsExpanded { get; set; } = true;
@@ -6085,7 +6374,26 @@ namespace OceanyaClient
             public FontWeight FontWeight { get; set; } = FontWeights.Normal;
             public Thickness Padding { get; set; } = new Thickness(7, 4, 7, 4);
             public Visibility AssetPathVisibility { get; set; } = Visibility.Collapsed;
+            public string PlayToken { get; set; } = string.Empty;
         }
+
+        private sealed class NaturalStringComparer : IComparer<string>
+        {
+            public static readonly NaturalStringComparer Instance = new NaturalStringComparer();
+
+            private NaturalStringComparer() { }
+
+            public int Compare(string? x, string? y)
+            {
+                if (x is null && y is null) return 0;
+                if (x is null) return -1;
+                if (y is null) return 1;
+                return StrCmpLogicalW(x, y);
+            }
+        }
+
+        [DllImport("shlwapi.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        private static extern int StrCmpLogicalW(string psz1, string psz2);
 
         protected override void OnPreviewKeyDown(KeyEventArgs e)
         {

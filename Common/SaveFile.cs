@@ -494,6 +494,9 @@ namespace OceanyaClient
         public List<ExtraAudioRule> ExtraAudioRules { get; set; } = new List<ExtraAudioRule>();
         public Dictionary<string, int> FrequentlyUsedIniPuppets { get; set; } =
             new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        public Dictionary<string, int> FrequentlyUsedMusic { get; set; } =
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         public double CharacterSelectorWindowWidth { get; set; } = 760;
         public double CharacterSelectorWindowHeight { get; set; } = 640;
         public double CharacterSelectorIconScale { get; set; } = 1.0;

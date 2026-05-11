@@ -805,15 +805,19 @@
                                          Foreground="#FFE8E8E8"
                                          TextChanged="txtMusicSearch_TextChanged"/>
                                 <TreeView x:Name="treeMusic"
+                                         PreviewMouseRightButtonDown="treeMusic_PreviewMouseRightButtonDown"
                                          Grid.Row="2"
                                          AutomationProperties.AutomationId="Main.MusicList.List"
                                          Margin="0,0,0,8"
                                          Background="#FF11161A"
                                          BorderBrush="#FF2F434E"
                                          Foreground="#FFE8E8E8"
-                                         MouseDoubleClick="treeMusic_MouseDoubleClick">
+                                         MouseDoubleClick="treeMusic_MouseDoubleClick"
+                                         VirtualizingPanel.IsVirtualizing="True"
+                                         VirtualizingPanel.VirtualizationMode="Recycling"
+                                         ScrollViewer.CanContentScroll="True">
                                     <TreeView.ContextMenu>
-                                        <ContextMenu>
+                                        <ContextMenu Opened="MusicContextMenu_Opened">
                                             <MenuItem Header="Stop Current Song" Click="MusicStopMenuItem_Click"/>
                                             <MenuItem Header="Play Random Song" Click="MusicRandomMenuItem_Click"/>
                                             <Separator/>
@@ -825,19 +829,24 @@
                                             <MenuItem x:Name="menuMusicFadeOut" Header="Fade Out Previous" IsCheckable="True" IsChecked="True" Click="MusicFlagMenuItem_Click"/>
                                             <MenuItem x:Name="menuMusicFadeIn" Header="Fade In" IsCheckable="True" Click="MusicFlagMenuItem_Click"/>
                                             <MenuItem x:Name="menuMusicSync" Header="Synchronize" IsCheckable="True" Click="MusicFlagMenuItem_Click"/>
+                                            <Separator x:Name="sepMusicFrequent" Visibility="Collapsed"/>
+                                            <MenuItem x:Name="menuMusicRemoveFrequent" Header="Remove from Frequently Used" Visibility="Collapsed" Click="MusicRemoveFrequentMenuItem_Click"/>
                                         </ContextMenu>
                                     </TreeView.ContextMenu>
                                     <TreeView.ItemContainerStyle>
                                         <Style TargetType="{x:Type TreeViewItem}">
                                             <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
                                             <Setter Property="Foreground" Value="#FFE8E8E8"/>
+                                            <Setter Property="VirtualizingPanel.IsVirtualizing" Value="True"/>
+                                            <Setter Property="VirtualizingPanel.VirtualizationMode" Value="Recycling"/>
                                             <EventSetter Event="Expanded" Handler="MusicTreeItemExpansionChanged"/>
                                             <EventSetter Event="Collapsed" Handler="MusicTreeItemExpansionChanged"/>
                                         </Style>
                                     </TreeView.ItemContainerStyle>
                                     <TreeView.ItemTemplate>
                                         <HierarchicalDataTemplate ItemsSource="{Binding Children}">
-                                            <Border Margin="0,0,0,2" Padding="{Binding Padding}" Background="{Binding RowBackground}">
+                                            <Border Margin="0,0,0,2" Padding="{Binding Padding}" Background="{Binding RowBackground}"
+                                                    ToolTip="{Binding Tooltip}">
                                                 <StackPanel>
                                                     <TextBlock Text="{Binding DisplayName}"
                                                                Foreground="{Binding TitleBrush}"

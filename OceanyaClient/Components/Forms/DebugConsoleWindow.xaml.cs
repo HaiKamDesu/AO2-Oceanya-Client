@@ -172,6 +172,8 @@ namespace OceanyaClient
                 FilterIC.IsChecked      = _enabledCategories.Contains("IC");
                 FilterOOC.IsChecked     = _enabledCategories.Contains("OOC");
                 FilterViewport.IsChecked = _enabledCategories.Contains("Viewport");
+                FilterMusic.IsChecked   = _enabledCategories.Contains("Music");
+                FilterSFX.IsChecked     = _enabledCategories.Contains("SFX");
 
                 UpdateFilterSummary();
             }
@@ -184,11 +186,13 @@ namespace OceanyaClient
         private void CategoryFilter_Changed(object sender, RoutedEventArgs e)
         {
             _enabledCategories.Clear();
-            if (FilterSystem.IsChecked == true)  _enabledCategories.Add("System");
-            if (FilterNetwork.IsChecked == true) _enabledCategories.Add("Network");
-            if (FilterIC.IsChecked == true)      _enabledCategories.Add("IC");
-            if (FilterOOC.IsChecked == true)     _enabledCategories.Add("OOC");
+            if (FilterSystem.IsChecked == true)   _enabledCategories.Add("System");
+            if (FilterNetwork.IsChecked == true)  _enabledCategories.Add("Network");
+            if (FilterIC.IsChecked == true)       _enabledCategories.Add("IC");
+            if (FilterOOC.IsChecked == true)      _enabledCategories.Add("OOC");
             if (FilterViewport.IsChecked == true) _enabledCategories.Add("Viewport");
+            if (FilterMusic.IsChecked == true)    _enabledCategories.Add("Music");
+            if (FilterSFX.IsChecked == true)      _enabledCategories.Add("SFX");
 
             UpdateFilterSummary();
 
@@ -440,6 +444,12 @@ namespace OceanyaClient
                 try { DragMove(); }
                 catch { }
             }
+        }
+
+        private void BtnClearLog_Click(object sender, RoutedEventArgs e)
+        {
+            _currentParagraph.Inlines.Clear();
+            _lineCount = 0;
         }
 
         private void CloseButton_Click(object sender, RoutedEventArgs e)

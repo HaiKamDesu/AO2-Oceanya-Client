@@ -71,6 +71,41 @@
             <Setter Property="Cursor" Value="Hand"/>
         </Style>
 
+        <!-- Utility action button style (e.g. Clear) -->
+        <Style x:Key="ActionButtonStyle" TargetType="{x:Type Button}">
+            <Setter Property="Background" Value="#2A2A2A"/>
+            <Setter Property="Foreground" Value="#CCCCCC"/>
+            <Setter Property="BorderBrush" Value="#555555"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="10,5"/>
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Button}">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="3"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#3A3A3A"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#777777"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#1A1A1A"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- Close Button Style -->
         <Style x:Key="CloseButtonStyle" TargetType="{x:Type Button}">
             <Setter Property="Background" Value="Transparent"/>
@@ -126,6 +161,7 @@
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
             <ToggleButton x:Name="FilterDropdownToggle"
@@ -179,6 +215,16 @@
                                   Style="{StaticResource CategoryCheckBoxStyle}"
                                   Checked="CategoryFilter_Changed"
                                   Unchecked="CategoryFilter_Changed"/>
+                        <CheckBox x:Name="FilterMusic"
+                                  Content="Music"
+                                  Style="{StaticResource CategoryCheckBoxStyle}"
+                                  Checked="CategoryFilter_Changed"
+                                  Unchecked="CategoryFilter_Changed"/>
+                        <CheckBox x:Name="FilterSFX"
+                                  Content="SFX"
+                                  Style="{StaticResource CategoryCheckBoxStyle}"
+                                  Checked="CategoryFilter_Changed"
+                                  Unchecked="CategoryFilter_Changed"/>
                     </StackPanel>
                 </Border>
             </Popup>
@@ -192,6 +238,15 @@
                        VerticalAlignment="Center"
                        Margin="8,0,0,0"
                        TextTrimming="CharacterEllipsis"/>
+
+            <!-- Clear log button -->
+            <Button x:Name="BtnClearLog"
+                    Grid.Column="2"
+                    Style="{StaticResource ActionButtonStyle}"
+                    Click="BtnClearLog_Click"
+                    ToolTip="Clear console output">
+                <TextBlock Text="Clear" VerticalAlignment="Center"/>
+            </Button>
         </Grid>
 
         <!-- Console output -->

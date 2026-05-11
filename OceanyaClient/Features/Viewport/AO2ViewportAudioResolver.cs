@@ -14,7 +14,8 @@ namespace OceanyaClient.Features.Viewport
         private static readonly string[] SuffixOrder = { ".opus", ".ogg", ".mp3", ".wav" };
 
         /// <summary>
-        /// Resolves a local AO2-style music token.
+        /// Resolves a local AO2-style music token to a file path.
+        /// Uses exact token matching so Oceanya has the same play/no-play behavior as AO2.
         /// </summary>
         public static string? ResolveMusicPath(string? token)
         {
