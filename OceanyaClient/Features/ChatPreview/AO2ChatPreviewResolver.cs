@@ -88,7 +88,9 @@ namespace OceanyaClient.Features.ChatPreview
                 ShownameBounds = TryParseBounds(GetValue(designValues, "showname"))
                     ?? new AO2ChatPreviewBounds(1, 0, 46, 15),
                 MessageBounds = TryParseBounds(GetValue(designValues, "message"))
-                    ?? new AO2ChatPreviewBounds(6, 12, 238, 60)
+                    ?? new AO2ChatPreviewBounds(6, 12, 238, 60),
+                ChatArrowBounds = TryParseBounds(GetValue(designValues, "chat_arrow"))
+                    ?? new AO2ChatPreviewBounds(245, 84, 11, 9)
             };
             for (int i = 0; i < style.ChatColors.Length; i++)
             {
@@ -492,6 +494,7 @@ namespace OceanyaClient.Features.ChatPreview
         public AO2ChatPreviewBounds ChatboxBounds { get; set; } = new AO2ChatPreviewBounds(0, 0, 256, 104);
         public AO2ChatPreviewBounds ShownameBounds { get; set; } = new AO2ChatPreviewBounds(1, 0, 46, 15);
         public AO2ChatPreviewBounds MessageBounds { get; set; } = new AO2ChatPreviewBounds(6, 12, 238, 60);
+        public AO2ChatPreviewBounds ChatArrowBounds { get; set; } = new AO2ChatPreviewBounds(245, 84, 11, 9);
         public Color[] ChatColors { get; } = new Color[9];
         public string[] ChatMarkupStart { get; } = new string[9];
         public string[] ChatMarkupEnd { get; } = new string[9];

@@ -2072,6 +2072,12 @@ namespace OceanyaClient.Features.Viewport
                 return;
             }
 
+            AO2ChatPreviewBounds arrowBounds = ChatPreview.GetChatArrowBounds();
+            Canvas.SetLeft(ChatArrowImage, arrowBounds.X);
+            Canvas.SetTop(ChatArrowImage, arrowBounds.Y);
+            ChatArrowImage.Width = arrowBounds.Width;
+            ChatArrowImage.Height = arrowBounds.Height;
+
             StopChatArrow();
             if (Ao2AnimationPreview.TryCreateAnimationPlayer(path, true, out IAnimationPlayer? player, usePreviewLimits: false)
                 && player != null)

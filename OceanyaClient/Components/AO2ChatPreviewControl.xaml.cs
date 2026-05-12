@@ -142,6 +142,15 @@ namespace OceanyaClient
             }
         }
 
+        /// <summary>
+        /// Returns the resolved chat arrow position and size from the active style, or the FullChar default if no style is loaded.
+        /// Coordinates are relative to the chatbox canvas top-left (same coordinate system as AO2's courtroom_design.ini).
+        /// </summary>
+        public AO2ChatPreviewBounds GetChatArrowBounds()
+        {
+            return activeStyle?.ChatArrowBounds ?? new AO2ChatPreviewBounds(245, 84, 11, 9);
+        }
+
         public void RefreshPreview()
         {
             string showname = string.IsNullOrWhiteSpace(PreviewShowname) ? "Preview Name" : PreviewShowname.Trim();

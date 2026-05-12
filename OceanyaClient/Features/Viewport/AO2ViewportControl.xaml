@@ -47,10 +47,10 @@
 
         <Canvas Grid.Row="1" Width="256" Height="104" IsHitTestVisible="False">
             <Image x:Name="ChatArrowImage"
-                   Canvas.Left="196"
-                   Canvas.Top="76"
-                   Width="16"
-                   Height="16"
+                   Canvas.Left="245"
+                   Canvas.Top="84"
+                   Width="11"
+                   Height="9"
                    Stretch="Uniform"
                    Visibility="Collapsed"/>
         </Canvas>
