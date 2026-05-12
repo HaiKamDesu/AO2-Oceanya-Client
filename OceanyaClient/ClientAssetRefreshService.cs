@@ -11,6 +11,7 @@ using System.Windows;
 using AOBot_Testing.Structures;
 using Common;
 using OceanyaClient.Features.GoogleDriveSync;
+using OceanyaClient.Features.Viewport;
 
 namespace OceanyaClient
 {
@@ -396,6 +397,7 @@ namespace OceanyaClient
             Globals.UpdateConfigINI(Globals.PathToConfigINI);
             RefreshAllCharacters(progress);
             RefreshAllBackgrounds(progress);
+            PrebakeAllBackgroundAnimations(progress);
 
             progress?.Invoke("Indexing blip files...");
             _ = BlipCatalog.Refresh();
@@ -433,6 +435,7 @@ namespace OceanyaClient
             if (plan.RequiresFullBackgroundRefresh)
             {
                 RefreshAllBackgrounds(progress);
+                PrebakeAllBackgroundAnimations(progress);
                 performedWork = true;
             }
             else
@@ -440,6 +443,7 @@ namespace OceanyaClient
                 foreach (string backgroundName in plan.BackgroundNames.OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
                 {
                     RefreshBackground(backgroundName, progress);
+                    PrebakeBackgroundAnimations(backgroundName, progress);
                     performedWork = true;
                 }
             }
@@ -515,6 +519,123 @@ namespace OceanyaClient
                 {
                     progress?.Invoke("Indexed background mount path: " + path);
                 });
+        }
+
+        /// <summary>
+        /// Decodes all position-variant animations for every known background and writes them to the
+        /// disk animation cache.  After this runs once, the viewport can load any background position
+        /// instantly from disk on every subsequent session without full decoder work.
+        /// All paths across all backgrounds are collected first, deduplicated, then decoded in
+        /// parallel — same pattern as character integrity verification, with no nested parallelism.
+        /// </summary>
+        private static void PrebakeAllBackgroundAnimations(Action<string>? progress)
+        {
+            List<string> backgroundNames = GetAllKnownBackgroundNames();
+            if (backgroundNames.Count == 0)
+            {
+                return;
+            }
+
+            // Collect every unique animated asset path across all backgrounds and all position variants.
+            // Deduplication avoids re-decoding files shared by multiple backgrounds.
+            string[] positions = { string.Empty, "def", "hld", "jud", "hlp", "pro", "wit", "jur", "sea" };
+            var allPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            progress?.Invoke($"Collecting animation assets for {backgroundNames.Count} backgrounds...");
+            foreach (string bgName in backgroundNames)
+            {
+                foreach (string pos in positions)
+                {
+                    string? bgPath = AO2ViewportAssetResolver.ResolveBackgroundPlacement(bgName, pos).ImagePath;
+                    if (!string.IsNullOrWhiteSpace(bgPath) && Ao2AnimationPreview.IsPotentialAnimatedPath(bgPath))
+                    {
+                        allPaths.Add(bgPath);
+                    }
+
+                    string? deskPath = AO2ViewportAssetResolver.ResolveDeskPlacement(bgName, pos).ImagePath;
+                    if (!string.IsNullOrWhiteSpace(deskPath) && Ao2AnimationPreview.IsPotentialAnimatedPath(deskPath))
+                    {
+                        allPaths.Add(deskPath);
+                    }
+                }
+            }
+
+            List<string> pathList = allPaths.ToList();
+            int total = pathList.Count;
+            if (total == 0)
+            {
+                return;
+            }
+
+            int completed = 0;
+            progress?.Invoke($"Pre-baking {total} animation assets across {backgroundNames.Count} backgrounds...");
+
+            ParallelOptions options = new ParallelOptions
+            {
+                MaxDegreeOfParallelism = AssetRefreshParallelism.GetDegreeOfParallelism(total)
+            };
+
+            Parallel.ForEach(pathList, options, assetPath =>
+            {
+                DateTime lastWrite = File.Exists(assetPath) ? File.GetLastWriteTimeUtc(assetPath) : DateTime.MinValue;
+                if (Ao2AnimationPreview.IsAnimationCached(assetPath, lastWrite))
+                {
+                    Interlocked.Increment(ref completed);
+                    return;
+                }
+
+                Ao2AnimationPreview.TryCreateAnimationPlayer(
+                    assetPath,
+                    loop: true,
+                    out IAnimationPlayer? player,
+                    usePreviewLimits: false,
+                    maxDimensionOverride: null);
+                player?.Stop();
+
+                int done = Interlocked.Increment(ref completed);
+                progress?.Invoke($"Pre-baking animations ({done}/{total}): {Path.GetFileName(assetPath)}");
+            });
+        }
+
+        private static void PrebakeBackgroundAnimations(string backgroundName, Action<string>? progress)
+        {
+            if (string.IsNullOrWhiteSpace(backgroundName))
+            {
+                return;
+            }
+
+            progress?.Invoke($"Pre-baking viewport animations: {backgroundName}");
+            AO2ViewportAssetResolver.PrefetchBackground(backgroundName);
+        }
+
+        private static List<string> GetAllKnownBackgroundNames()
+        {
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string bgFolder in Background.BackgroundFolders)
+            {
+                if (!Directory.Exists(bgFolder))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    foreach (string dir in Directory.GetDirectories(bgFolder))
+                    {
+                        string name = Path.GetFileName(dir);
+                        if (!string.IsNullOrWhiteSpace(name))
+                        {
+                            names.Add(name);
+                        }
+                    }
+                }
+                catch
+                {
+                    // Non-fatal: skip inaccessible folders
+                }
+            }
+
+            return names.OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
         }
 
         private static void RefreshCharacter(string characterName, Action<string>? progress)

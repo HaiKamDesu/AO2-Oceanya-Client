@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -9,7 +10,8 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
-using ImageMagick;
+using Common;
+using SkiaSharp;
 using DrawingBitmap = System.Drawing.Bitmap;
 using DrawingGraphics = System.Drawing.Graphics;
 using DrawingImage = System.Drawing.Image;
@@ -272,6 +274,18 @@ namespace OceanyaClient
 
             if (extension == ".gif")
             {
+                // For the viewport (usePreviewLimits=false) try BitmapFrameAnimationPlayer first so
+                // that decoded frames are stored in AnimationFrameCache and the disk cache.  This makes
+                // the second and subsequent sessions instant without re-decoding the file.
+                // GifAnimationPlayer is kept as a fallback for edge-case GIFs that WPF handles poorly.
+                if (!usePreviewLimits
+                    && BitmapFrameAnimationPlayer.TryCreate(resolvedPath, loop, out BitmapFrameAnimationPlayer? cachedGifPlayer, maxDimension)
+                    && cachedGifPlayer != null)
+                {
+                    player = cachedGifPlayer;
+                    return true;
+                }
+
                 try
                 {
                     player = usePreviewLimits
@@ -378,14 +392,12 @@ namespace OceanyaClient
                     return true;
                 }
 
-                if (ShouldPreferMagickDecoder(extension, path)
-                    && TryDecodeAnimationFramesWithMagick(path, out List<BitmapSource>? magickFrames, out List<TimeSpan>? magickDurations, maxDimension)
-                    && magickFrames != null
-                    && magickDurations != null
-                    && magickFrames.Count > 0)
+                if (string.Equals(extension, ".webp", StringComparison.OrdinalIgnoreCase)
+                    && TryDecodeWebPFirstFrameWithSkia(path, out BitmapSource? skiaFrame, out double skiaDurationMs)
+                    && skiaFrame != null)
                 {
-                    frame = magickFrames[0];
-                    estimatedDurationMs = magickDurations.Sum(duration => duration.TotalMilliseconds);
+                    frame = skiaFrame;
+                    estimatedDurationMs = skiaDurationMs;
                     return true;
                 }
 
@@ -491,15 +503,34 @@ namespace OceanyaClient
             try
             {
                 DateTime lastWriteUtc = File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue;
-                var cacheKey = (path, lastWriteUtc, Math.Max(1, maxDimension));
+                int effectiveMaxDim = Math.Max(1, maxDimension);
+                var cacheKey = (path, lastWriteUtc, effectiveMaxDim);
                 if (TryGetCachedAnimationFrames(cacheKey, out frames, out frameDurations))
                 {
+                    return true;  // memory hit — hot path, no logging overhead
+                }
+
+                string fileName = Path.GetFileName(path);
+                string threadTag = $"T{Environment.CurrentManagedThreadId}";
+                var sw = Stopwatch.StartNew();
+
+                // Disk cache check: if frames were decoded in a previous session they are stored as
+                // raw BGRA pixels and can be reconstituted without any format-specific decoder work.
+                if (OceanyaAnimationDiskCache.TryLoad(path, lastWriteUtc, effectiveMaxDim, out frames, out frameDurations)
+                    && frames != null && frameDurations != null)
+                {
+                    sw.Stop();
+                    LogVp($"DISK-HIT  {fileName} ({frames.Count}fr) {sw.ElapsedMilliseconds}ms [{threadTag}]");
+                    CacheAnimationFrames(cacheKey, frames, frameDurations);
                     return true;
                 }
+                sw.Stop();
+                LogVp($"DISK-MISS {fileName} ({sw.ElapsedMilliseconds}ms) [{threadTag}]");
 
                 string extension = Path.GetExtension(path).ToLowerInvariant();
 
                 // APNG files are decoded by the dedicated ApngFrameDecoder
+                sw.Restart();
                 if (IsApngExtensionOrContent(extension, path)
                     && ApngFrameDecoder.TryDecode(path, out List<BitmapSource>? apngFrames, out List<TimeSpan>? apngDurations)
                     && apngFrames != null && apngDurations != null
@@ -507,23 +538,69 @@ namespace OceanyaClient
                 {
                     frames = apngFrames;
                     frameDurations = apngDurations;
+                    sw.Stop();
+                    LogVp($"APNG-DECODE {fileName} ({frames.Count}fr) {sw.ElapsedMilliseconds}ms [{threadTag}]");
                     CacheAnimationFrames(cacheKey, frames, frameDurations);
+                    OceanyaAnimationDiskCache.SaveAsync(path, lastWriteUtc, effectiveMaxDim, frames, frameDurations);
                     return true;
                 }
 
-                if (ShouldPreferMagickDecoder(extension, path)
-                    && TryDecodeAnimationFramesWithMagick(path, out List<BitmapSource>? magickFrames, out List<TimeSpan>? magickDurations, maxDimension)
-                    && magickFrames != null
-                    && magickDurations != null
-                    && magickFrames.Count > 1
-                    && magickFrames.Count == magickDurations.Count)
+                // WebP: SkiaSharp decodes animated WebP natively without any codec installation.
+                // Skip WIC for .webp — on systems without the Windows WebP Image Extensions
+                // the WIC attempt fails after 50-160 ms of wasted work per file.
+                if (string.Equals(extension, ".webp", StringComparison.OrdinalIgnoreCase))
                 {
-                    frames = magickFrames;
-                    frameDurations = magickDurations;
-                    CacheAnimationFrames(cacheKey, frames, frameDurations);
-                    return true;
+                    sw.Restart();
+                    if (TryDecodeAnimationFramesWithSkia(path, out List<BitmapSource>? skiaFrames, out List<TimeSpan>? skiaDurations)
+                        && skiaFrames != null && skiaDurations != null)
+                    {
+                        frames = skiaFrames;
+                        frameDurations = skiaDurations;
+                        sw.Stop();
+                        LogVp($"SKIA-DECODE {fileName} ({frames.Count}fr) {sw.ElapsedMilliseconds}ms [{threadTag}]");
+                        CacheAnimationFrames(cacheKey, frames, frameDurations);
+                        OceanyaAnimationDiskCache.SaveAsync(path, lastWriteUtc, effectiveMaxDim, frames, frameDurations);
+                        return true;
+                    }
+                    sw.Stop();
+                    LogVp($"SKIA-FAIL  {fileName} ({sw.ElapsedMilliseconds}ms) [{threadTag}]");
+                    return false;
                 }
 
+                // GIF and other formats: WIC BitmapDecoder.
+                sw.Restart();
+                if (TryDecodeWithBitmapDecoder(path, extension, out List<BitmapSource>? wicFrames, out List<TimeSpan>? wicDurations)
+                    && wicFrames != null && wicDurations != null)
+                {
+                    frames = wicFrames;
+                    frameDurations = wicDurations;
+                    sw.Stop();
+                    LogVp($"WIC-DECODE {fileName} ({frames.Count}fr) {sw.ElapsedMilliseconds}ms [{threadTag}]");
+                    CacheAnimationFrames(cacheKey, frames, frameDurations);
+                    OceanyaAnimationDiskCache.SaveAsync(path, lastWriteUtc, effectiveMaxDim, frames, frameDurations);
+                    return true;
+                }
+                sw.Stop();
+                LogVp($"WIC-FAIL  {fileName} ({sw.ElapsedMilliseconds}ms) [{threadTag}]");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                LogVp($"EXCEPTION {Path.GetFileName(path)}: {ex.GetType().Name} {ex.Message}");
+                return false;
+            }
+        }
+
+        private static bool TryDecodeWithBitmapDecoder(
+            string path,
+            string extension,
+            out List<BitmapSource>? frames,
+            out List<TimeSpan>? frameDurations)
+        {
+            frames = null;
+            frameDurations = null;
+            try
+            {
                 BitmapDecoder decoder = BitmapDecoder.Create(
                     new Uri(path, UriKind.Absolute),
                     BitmapCreateOptions.None,
@@ -591,7 +668,6 @@ namespace OceanyaClient
 
                 frames = decodedFrames;
                 frameDurations = decodedDurations;
-                CacheAnimationFrames(cacheKey, frames, frameDurations);
                 return true;
             }
             catch
@@ -599,6 +675,158 @@ namespace OceanyaClient
                 return false;
             }
         }
+
+        /// <summary>
+        /// Decodes the first frame of any WebP file (static or animated) using SkiaSharp.
+        /// Used when only a thumbnail or the initial frame is needed without decoding all frames.
+        /// </summary>
+        private static bool TryDecodeWebPFirstFrameWithSkia(
+            string path,
+            out BitmapSource? frame,
+            out double estimatedDurationMs)
+        {
+            frame = null;
+            estimatedDurationMs = 0;
+            try
+            {
+                using SKCodec? codec = SKCodec.Create(path);
+                if (codec == null)
+                {
+                    return false;
+                }
+
+                int srcWidth = codec.Info.Width;
+                int srcHeight = codec.Info.Height;
+                if (srcWidth <= 0 || srcHeight <= 0)
+                {
+                    return false;
+                }
+
+                SKImageInfo decodeInfo = new SKImageInfo(srcWidth, srcHeight, SKColorType.Bgra8888, SKAlphaType.Premul);
+                using SKBitmap bitmap = new SKBitmap(decodeInfo);
+
+                // GetPixels without frame options decodes the first/only frame for both
+                // static WebP (FrameCount = 0) and animated WebP (FrameCount > 0).
+                SKCodecResult result = codec.GetPixels(decodeInfo, bitmap.GetPixels());
+                if (result != SKCodecResult.Success && result != SKCodecResult.IncompleteInput)
+                {
+                    return false;
+                }
+
+                int stride = srcWidth * 4;
+                byte[] pixels = new byte[stride * srcHeight];
+                Marshal.Copy(bitmap.GetPixels(), pixels, 0, pixels.Length);
+
+                BitmapSource bmpSource = BitmapSource.Create(
+                    srcWidth, srcHeight, 96, 96,
+                    PixelFormats.Pbgra32, null, pixels, stride);
+                if (bmpSource.CanFreeze)
+                {
+                    bmpSource.Freeze();
+                }
+
+                frame = bmpSource;
+                // FrameCount > 0 means animated; sum frame durations for the estimate
+                if (codec.FrameCount > 0)
+                {
+                    estimatedDurationMs = codec.FrameInfo.Sum(
+                        fi => (double)Math.Max(fi.Duration, (int)DefaultFrameDelayMilliseconds));
+                }
+
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool TryDecodeAnimationFramesWithSkia(
+            string path,
+            out List<BitmapSource>? frames,
+            out List<TimeSpan>? frameDurations)
+        {
+            frames = null;
+            frameDurations = null;
+
+            var allBitmaps = new List<SKBitmap>();
+            try
+            {
+                using SKCodec? codec = SKCodec.Create(path);
+                if (codec == null || codec.FrameCount <= 1)
+                {
+                    return false;
+                }
+
+                SKCodecFrameInfo[] frameInfo = codec.FrameInfo;
+                int srcWidth = codec.Info.Width;
+                int srcHeight = codec.Info.Height;
+                int frameCount = codec.FrameCount;
+
+                SKImageInfo decodeInfo = new SKImageInfo(srcWidth, srcHeight, SKColorType.Bgra8888, SKAlphaType.Premul);
+
+                List<BitmapSource> decodedFrames = new List<BitmapSource>(frameCount);
+                List<TimeSpan> decodedDurations = new List<TimeSpan>(frameCount);
+
+                for (int i = 0; i < frameCount; i++)
+                {
+                    int requiredFrame = frameInfo[i].RequiredFrame;
+                    SKBitmap bitmap = new SKBitmap(decodeInfo);
+                    allBitmaps.Add(bitmap);
+
+                    if (requiredFrame >= 0 && requiredFrame < allBitmaps.Count - 1)
+                    {
+                        using SKCanvas canvas = new SKCanvas(bitmap);
+                        canvas.DrawBitmap(allBitmaps[requiredFrame], 0, 0);
+                    }
+
+                    SKCodecResult result = codec.GetPixels(decodeInfo, bitmap.GetPixels(), new SKCodecOptions(i, requiredFrame));
+                    if (result != SKCodecResult.Success && result != SKCodecResult.IncompleteInput)
+                    {
+                        return false;
+                    }
+
+                    int stride = srcWidth * 4;
+                    byte[] pixels = new byte[stride * srcHeight];
+                    Marshal.Copy(bitmap.GetPixels(), pixels, 0, pixels.Length);
+
+                    BitmapSource bmpSource = BitmapSource.Create(
+                        srcWidth, srcHeight, 96, 96,
+                        PixelFormats.Pbgra32, null, pixels, stride);
+                    if (bmpSource.CanFreeze)
+                    {
+                        bmpSource.Freeze();
+                    }
+
+                    decodedFrames.Add(bmpSource);
+
+                    int durationMs = frameInfo[i].Duration;
+                    if (durationMs <= 0)
+                    {
+                        durationMs = (int)DefaultFrameDelayMilliseconds;
+                    }
+                    decodedDurations.Add(TimeSpan.FromMilliseconds(durationMs));
+                }
+
+                frames = decodedFrames;
+                frameDurations = decodedDurations;
+                return decodedFrames.Count > 1 && decodedFrames.Count == decodedDurations.Count;
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                foreach (SKBitmap b in allBitmaps)
+                {
+                    b.Dispose();
+                }
+            }
+        }
+
+        private static void LogVp(string message) =>
+            CustomConsole.Log(message, CustomConsole.LogLevel.Debug, CustomConsole.LogCategory.Viewport);
 
         private static bool TryGetCachedAnimationFrames(
             (string path, DateTime lastWriteUtc, int maxDim) key,
@@ -669,134 +897,6 @@ namespace OceanyaClient
             return false;
         }
 
-        /// <summary>Returns true when ImageMagick is the preferred decoder (WebP only — APNG is handled by ApngFrameDecoder).</summary>
-        private static bool ShouldPreferMagickDecoder(string extension, string path)
-        {
-            return string.Equals(extension, ".webp", StringComparison.OrdinalIgnoreCase);
-        }
-
-        private static bool TryDecodeAnimationFramesWithMagick(
-            string path,
-            out List<BitmapSource>? frames,
-            out List<TimeSpan>? frameDurations,
-            int maxDimension = MaxAnimatedPreviewDimension)
-        {
-            frames = null;
-            frameDurations = null;
-
-            try
-            {
-                using MagickImageCollection source = new MagickImageCollection(path);
-                if (source.Count == 0)
-                {
-                    return false;
-                }
-
-                source.Coalesce();
-                if (source.Count == 0)
-                {
-                    return false;
-                }
-
-                List<int> selectedFrameIndices = BuildSelectedFrameIndices(source.Count, MaxAnimatedPreviewFrames);
-                if (selectedFrameIndices.Count == 0)
-                {
-                    return false;
-                }
-
-                List<BitmapSource> decodedFrames = new List<BitmapSource>(selectedFrameIndices.Count);
-                List<TimeSpan> decodedDurations = new List<TimeSpan>(selectedFrameIndices.Count);
-                for (int i = 0; i < selectedFrameIndices.Count; i++)
-                {
-                    int selectedIndex = selectedFrameIndices[i];
-                    int nextSelectedIndexExclusive = i + 1 < selectedFrameIndices.Count
-                        ? selectedFrameIndices[i + 1]
-                        : source.Count;
-
-                    TimeSpan sampledDuration = TimeSpan.Zero;
-                    for (int sourceIndex = selectedIndex; sourceIndex < nextSelectedIndexExclusive; sourceIndex++)
-                    {
-                        sampledDuration += ReadMagickDelay(source[sourceIndex]);
-                    }
-
-                    if (sampledDuration <= TimeSpan.Zero)
-                    {
-                        sampledDuration = TimeSpan.FromMilliseconds(DefaultFrameDelayMilliseconds);
-                    }
-
-                    using MagickImage frameImage = (MagickImage)source[selectedIndex].Clone();
-                    int sourceWidth = Math.Max(1, (int)frameImage.Width);
-                    int sourceHeight = Math.Max(1, (int)frameImage.Height);
-                    (int targetWidth, int targetHeight) = ComputePreviewDimensions(
-                        sourceWidth,
-                        sourceHeight,
-                        maxDimension);
-                    if (targetWidth != sourceWidth || targetHeight != sourceHeight)
-                    {
-                        frameImage.FilterType = FilterType.Triangle;
-                        frameImage.Resize((uint)targetWidth, (uint)targetHeight);
-                    }
-
-                    int width = Math.Max(1, (int)frameImage.Width);
-                    int height = Math.Max(1, (int)frameImage.Height);
-                    int stride = width * 4;
-                    byte[]? pixels = frameImage.GetPixels().ToByteArray(PixelMapping.BGRA);
-                    if (pixels == null || pixels.Length == 0)
-                    {
-                        continue;
-                    }
-
-                    BitmapSource frame = BitmapSource.Create(
-                        width,
-                        height,
-                        96,
-                        96,
-                        PixelFormats.Bgra32,
-                        null,
-                        pixels,
-                        stride);
-                    decodedFrames.Add(NormalizeBitmapForUi(frame));
-                    decodedDurations.Add(sampledDuration);
-                }
-
-                frames = decodedFrames;
-                frameDurations = decodedDurations;
-                return decodedFrames.Count > 0 && decodedFrames.Count == decodedDurations.Count;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        private static List<int> BuildSelectedFrameIndices(int sourceFrameCount, int maxFrames)
-        {
-            int safeFrameCount = Math.Max(0, sourceFrameCount);
-            int safeMaxFrames = Math.Max(1, maxFrames);
-            if (safeFrameCount <= safeMaxFrames)
-            {
-                return Enumerable.Range(0, safeFrameCount).ToList();
-            }
-
-            List<int> selected = new List<int>(safeMaxFrames);
-            double stride = safeFrameCount / (double)safeMaxFrames;
-            for (int i = 0; i < safeMaxFrames; i++)
-            {
-                int sourceIndex = Math.Min(safeFrameCount - 1, (int)Math.Round(i * stride));
-                if (selected.Count == 0 || selected[selected.Count - 1] != sourceIndex)
-                {
-                    selected.Add(sourceIndex);
-                }
-            }
-
-            if (selected.Count == 0 || selected[selected.Count - 1] != safeFrameCount - 1)
-            {
-                selected.Add(safeFrameCount - 1);
-            }
-
-            return selected;
-        }
-
         private static (int width, int height) ComputePreviewDimensions(int sourceWidth, int sourceHeight, int maxDimension)
         {
             int safeWidth = Math.Max(1, sourceWidth);
@@ -812,29 +912,6 @@ namespace OceanyaClient
             int width = Math.Max(1, (int)Math.Round(safeWidth * scale));
             int height = Math.Max(1, (int)Math.Round(safeHeight * scale));
             return (width, height);
-        }
-
-        private static TimeSpan ReadMagickDelay(IMagickImage<byte> image)
-        {
-            int ticksPerSecond = (int)image.AnimationTicksPerSecond;
-            if (ticksPerSecond <= 0)
-            {
-                ticksPerSecond = 100;
-            }
-
-            int delayTicks = (int)image.AnimationDelay;
-            if (delayTicks <= 0)
-            {
-                return TimeSpan.FromMilliseconds(DefaultFrameDelayMilliseconds);
-            }
-
-            double milliseconds = (delayTicks * 1000d) / ticksPerSecond;
-            if (milliseconds <= 0)
-            {
-                milliseconds = DefaultFrameDelayMilliseconds;
-            }
-
-            return TimeSpan.FromMilliseconds(milliseconds);
         }
 
         private static BitmapSource ScaleBitmapForPreview(BitmapSource source, int decodePixelWidth)

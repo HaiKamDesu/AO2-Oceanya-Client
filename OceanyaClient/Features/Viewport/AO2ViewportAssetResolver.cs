@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media;
 using AOBot_Testing.Structures;
@@ -1180,6 +1182,83 @@ namespace OceanyaClient.Features.Viewport
             }
 
             return Ao2AnimationPreview.LoadStaticPreviewImage(path, decodePixelWidth: decodePixelWidth, fallback: null);
+        }
+
+        /// <summary>
+        /// Decodes and caches all animated assets for every known position of the given background on background threads,
+        /// so that subsequent IC messages for this background render synchronously with no decode stall.
+        /// Safe to call from any thread. Cancelled automatically when the background changes.
+        /// </summary>
+        public static void PrefetchBackground(string? backgroundName, CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(backgroundName) || cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            // All standard AO2 position aliases plus the empty/default case.
+            string[] positions = { string.Empty, "def", "hld", "jud", "hlp", "pro", "wit", "jur", "sea" };
+
+            // Collect every unique image path this background can produce across all positions.
+            HashSet<string> paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string pos in positions)
+            {
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                string? bgPath = ResolveBackgroundPlacement(backgroundName, pos).ImagePath;
+                if (!string.IsNullOrWhiteSpace(bgPath))
+                {
+                    paths.Add(bgPath);
+                }
+
+                string? deskPath = ResolveDeskPlacement(backgroundName, pos).ImagePath;
+                if (!string.IsNullOrWhiteSpace(deskPath))
+                {
+                    paths.Add(deskPath);
+                }
+            }
+
+            // Decode each animated asset in parallel to warm the animation frame cache.
+            // Parallelism is bounded by processor count so we don't starve the UI thread.
+            ParallelOptions options = new ParallelOptions
+            {
+                CancellationToken = cancellationToken,
+                MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount)
+            };
+
+            try
+            {
+                Parallel.ForEach(paths, options, assetPath =>
+                {
+                    if (!Ao2AnimationPreview.IsPotentialAnimatedPath(assetPath))
+                    {
+                        return;
+                    }
+
+                    DateTime lastWrite = File.Exists(assetPath) ? File.GetLastWriteTimeUtc(assetPath) : DateTime.MinValue;
+                    if (Ao2AnimationPreview.IsAnimationCached(assetPath, lastWrite))
+                    {
+                        return;
+                    }
+
+                    // TryCreateAnimationPlayer decodes and caches the frames as a side effect.
+                    // Discard the player; only the cached frames matter for future sync loads.
+                    Ao2AnimationPreview.TryCreateAnimationPlayer(
+                        assetPath,
+                        loop: true,
+                        out IAnimationPlayer? player,
+                        usePreviewLimits: false,
+                        maxDimensionOverride: null);
+                    player?.Stop();
+                });
+            }
+            catch (OperationCanceledException)
+            {
+                // Background changed before prefetch completed — normal cancellation path.
+            }
         }
 
         private static Background? ResolveBackground(string? backgroundName)

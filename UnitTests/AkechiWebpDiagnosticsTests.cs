@@ -7,7 +7,7 @@ using System.Text;
 using System.Threading;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using ImageMagick;
+using SkiaSharp;
 using NUnit.Framework;
 using OceanyaClient;
 
@@ -44,13 +44,23 @@ namespace UnitTests
 
             try
             {
-                using (MagickImage image = new MagickImage(MagickColors.Transparent, 32, 32))
+                using (SKBitmap bitmap = new SKBitmap(32, 32, SKColorType.Bgra8888, SKAlphaType.Premul))
                 {
-                    using MagickImage redSquare = new MagickImage(MagickColors.Red, 16, 16);
-                    image.Composite(redSquare, 8, 8, CompositeOperator.Over);
+                    using (SKCanvas canvas = new SKCanvas(bitmap))
+                    {
+                        canvas.Clear(SKColors.Transparent);
+                        using SKPaint paint = new SKPaint { Color = SKColors.Red };
+                        canvas.DrawRect(8, 8, 16, 16, paint);
+                    }
 
-                    image.Format = MagickFormat.WebP;
-                    image.Write(webpPath);
+                    using SKData? webpData = bitmap.Encode(SKEncodedImageFormat.Webp, 100);
+                    if (webpData == null)
+                    {
+                        Assert.Fail("SkiaSharp failed to encode synthetic WebP.");
+                        return;
+                    }
+
+                    File.WriteAllBytes(webpPath, webpData.ToArray());
                 }
 
                 AssertWebpPreviewFrameLooksValid(webpPath, requireAnimationPlayer: false);
