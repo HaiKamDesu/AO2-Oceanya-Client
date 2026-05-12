@@ -67,7 +67,6 @@ The app version is centrally defined in `Directory.Build.props` via `OceanyaAppV
 /bin/bash -lc '"/mnt/c/Program Files/dotnet/dotnet.exe" build "Oceanya Client.sln" --configuration Debug'
 /bin/bash -lc '"/mnt/c/Program Files/dotnet/dotnet.exe" test "UiAutomationTests/UiAutomationTests.csproj" --configuration Debug --no-build --filter "Category=Smoke" --logger "trx;LogFileName=ui-smoke-results.trx" --results-directory TestResults/UiSmoke'
 /bin/bash -lc '"/mnt/c/Program Files/dotnet/dotnet.exe" test "UiAutomationTests/UiAutomationTests.csproj" --configuration Debug --no-build --filter "Category=GmPacket" --logger "trx;LogFileName=ui-gmpacket-results.trx" --results-directory TestResults/UiGmPacket'
-/bin/bash -lc '"/mnt/c/Program Files/dotnet/dotnet.exe" test "UiAutomationTests/UiAutomationTests.csproj" --configuration Debug --no-build --filter "Category=OnlineLocalhost" --logger "trx;LogFileName=ui-online-localhost-results.trx" --results-directory TestResults/UiOnlineLocalhost'
 ```
 
 - The same Windows-native commands can also be run directly from PowerShell/CMD on Windows if preferred.
@@ -76,7 +75,7 @@ The app version is centrally defined in `Directory.Build.props` via `OceanyaAppV
   - Failure screenshots go under `<results-directory>/UiAutomationArtifacts/Screenshots/`.
 - Agent execution rules for FlaUI runs:
   - Treat every FlaUI `dotnet test` invocation as **exclusive interactive desktop work**. Never run it in parallel with another FlaUI lane, another UI automation tool, or any other action that can steal focus, keyboard input, mouse input, or window z-order.
-  - Run FlaUI categories **sequentially only**. Never overlap `Smoke`, `GmPacket`, `Online`, or `OnlineLocalhost`, even if they target different result directories.
+  - Run FlaUI categories **sequentially only**. Never overlap `Smoke`, `GmPacket`, or `Online`, even if they target different result directories.
   - Build and FlaUI test execution must always be **separate commands**, never chained with `&&` or any equivalent shell composition.
   - Before launching FlaUI, verify an active interactive Windows desktop session with `query session`.
   - After launching `dotnet test`, treat the run as **still active until that specific process exits and returns an exit code**. A long pause in console output does **not** mean the run is done.
@@ -94,7 +93,6 @@ The app version is centrally defined in `Directory.Build.props` via `OceanyaAppV
   - `Smoke`: deterministic offline suite
   - `Online`: generic loopback integration suite
   - `GmPacket`: deterministic GM multi client packet-validation subset
-  - `OnlineLocalhost`: optional localhost `ws://localhost:50001` lane
 
 ## Project Structure
 
@@ -127,7 +125,7 @@ When updating the map, prefer exact paths and identifiers over prose. Distinguis
 | "save data", "settings persistence" | `Common/`; start with `SaveFile`, `SaveData`, and `Globals`. | Confirmed |
 | "File Hivemind", "background sync agent" | `OceanyaHivemindAgent/` plus launcher integration in `OceanyaClient`; stop signal name lives on `FileHivemindBackgroundAgentCommandLine.AgentStopSignalEventName`. | Confirmed |
 | "tests", "unit tests" | `UnitTests/`; normal verification runs only this project unless the user explicitly asks for UI automation. | Confirmed |
-| "UI automation", "FlaUI", "desktop smoke tests" | `UiAutomationTests/`; opt-in only, Windows interactive desktop required, run categories sequentially. | Confirmed |
+| "UI automation", "FlaUI", "desktop smoke tests" | `UiAutomationTests/`; opt-in only, Windows interactive desktop required, run categories sequentially. Fixture args live in `SmokeFixturePaths` / `OnlineFixturePaths` and disable GM snapshot + viewport persistence for isolation. | Confirmed |
 | "AO2 reference client/server behavior" | Reference-only submodules: `AO2-Client/`, `tsuserver3/`, `tsuserverCC/`. Read for behavior, do not copy code directly. | Confirmed |
 | "image asset viewer", "asset preview dialog", "animation preview" | `OceanyaClient.Utilities.AssetImageViewerDialog.Show(...)`; animation playback uses `AnimationTimelinePreviewController`. | Confirmed |
 | "dark ComboBox", "searchable dropdown" | Copy the dark ComboBox pattern from `InitialConfigurationWindow.xaml` / `CharacterFolderVisualizerWindow.xaml`; use `AutoCompleteComboBoxBehavior` for editable searchable dropdowns. | Confirmed |
@@ -137,6 +135,11 @@ When updating the map, prefer exact paths and identifiers over prose. Distinguis
 | "evidence overlay", "evidence presentation" | `ShowEvidenceOverlay` in `AO2ViewportControl.xaml.cs`; uses `GetEvidenceImagePath` from `AOClient`; asset resolver `ResolveEvidencePresentationImage` / `ResolveEvidenceIconImage`; driven by `ICMessage.EvidenceID`. | Confirmed |
 | "chat arrow" | `ShowChatArrow` / `StopChatArrow` in `AO2ViewportControl.xaml.cs`; `ChatArrowImage` in XAML row 1; shown after `CompleteChatTextReveal`; asset resolver `ResolveChatArrowImage`. | Confirmed |
 | "slide transition", "background slide", "position change animation" | `AnimateBackgroundSlide` in `AO2ViewportControl.xaml.cs`; triggered when `ICMessage.Slide == true` and position changes; animates `Canvas.LeftProperty` on BG and Desk images with 500ms InOutCubic easing. | Confirmed |
+| "viewport tests", "viewport parity tests", "RT# test", "LE# test" | `UnitTests/ViewportParityTests.cs` — `AO2ViewportParityPacketTests` (RT#/LE# AOClient events) and `AO2ViewportParityAssetResolverTests` (testimony/wtce/sticker/chat-arrow/evidence resolver filesystem tests). | Confirmed |
+| "music packet tests", "MC# test", "OnMusicChanged test" | `UnitTests/MusicPacketTests.cs` — `MusicPacketHandlingTests`; covers MC# → `OnMusicChanged`, `OnIcActionReceived`, loop/channel/effects fields, stop, server-initiated, missing-fields guards. | Confirmed |
+| "add client test", "CharacterSelectorWindow", "CharacterSelector.FirstSelectableCard" | Add-client UI tests now use `CharacterSelectorWindow`, not `InputDialog`. Automation anchors: `CharacterSelector.Cancel`, `CharacterSelector.ClientName`, `CharacterSelector.FirstSelectableCard`, and `CharacterSelector.Character.{Name}`. | Confirmed |
+| "viewport FlaUI test", "viewport smoke test", "Viewport.Host" | `UiAutomationTests/ViewportSmokeTests.cs` — Category Smoke; opens viewport via `Main.Viewport.Open` and waits for `Viewport.Host` automation anchor in `AO2ViewportWindowContent`. `AO2ViewportWindowContent.xaml.cs` marks automation ready in constructor and on Loaded; test mode disables persisted viewport auto-restore. | Confirmed |
+| "GM packet FlaUI tests", "GmPacket", "Online category duplicates GM" | `UiAutomationTests/GmMultiClientPacketTests.cs` + `GmPacketTestInfrastructure.cs`; deterministic loopback packet tests use explicit selector character anchors and a controllable loopback server for both TCP and WebSocket endpoints. `Category=Online` also includes these GM packet tests plus `OnlineLaneTests`. | Confirmed |
 
 ### Map Maintenance Rule
 Whenever an agent has to look up where a feature lives, how the user names a concept, which files own a workflow, or which tests cover it, and that discovery would help future agents navigate faster, add or update a map row before finishing. Do this for bug fixes, feature work, refactors, documentation updates, and investigations.

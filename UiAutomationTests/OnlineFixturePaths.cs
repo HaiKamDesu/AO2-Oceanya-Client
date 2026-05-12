@@ -42,6 +42,8 @@ internal static class OnlineFixturePaths
             "--test-startup-functionality=" + StartupFunctionalityIds.GmMultiClient,
             "--test-skip-server-validation",
             "--test-skip-asset-refresh-prompts",
+            "--test-disable-gm-snapshot-persistence",
+            "--test-disable-viewport-window-persistence",
             "--test-savefile=" + Quote(SaveFilePath),
             "--test-config-ini=" + Quote(SmokeFixturePaths.ConfigIniPath),
             "--test-server-json=" + Quote(SmokeFixturePaths.ServerJsonPath),

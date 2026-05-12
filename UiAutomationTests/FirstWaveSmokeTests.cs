@@ -95,6 +95,9 @@ public sealed class FirstWaveSmokeTests
         Window mainWindow = app.WaitForReadyWindow("Main.AddClient");
         app.WaitForDescendantById(mainWindow, "Main.OpenCharacterFolderVisualizer").AsButton().Invoke();
 
+        Window confirmWindow = app.WaitForReadyWindow("MessageBox.Yes");
+        app.WaitForDescendantById(confirmWindow, "MessageBox.Yes").AsButton().Invoke();
+
         Window folderVisualizerWindow = app.WaitForReadyWindow("FolderVisualizer.List");
 
         Assert.Multiple(() =>
@@ -192,15 +195,15 @@ public sealed class FirstWaveSmokeTests
     }
 
     [Test]
-    public void MainWindow_AddClient_CancelInputDialog_LeavesMessagingDisabled()
+    public void MainWindow_AddClient_CancelCharacterSelector_LeavesMessagingDisabled()
     {
         app = FlaUiSmokeApp.Launch(SmokeFixturePaths.BuildMainWindowArguments());
 
         Window mainWindow = app.WaitForReadyWindow("Main.AddClient");
         app.WaitForDescendantById(mainWindow, "Main.AddClient").AsButton().Invoke();
 
-        Window inputDialog = app.WaitForReadyWindow("InputDialog.Ok");
-        app.WaitForDescendantById(inputDialog, "InputDialog.Cancel").AsButton().Invoke();
+        Window selectorWindow = app.WaitForReadyWindow("CharacterSelector.Cancel");
+        app.WaitForDescendantById(selectorWindow, "CharacterSelector.Cancel").AsButton().Invoke();
 
         Window returnedMainWindow = app.WaitForReadyWindow("Main.AddClient");
         WaitForElementEnabled(returnedMainWindow, "Main.Ooc.Message", expectedEnabled: false);
@@ -272,9 +275,9 @@ public sealed class FirstWaveSmokeTests
     {
         app!.WaitForDescendantById(mainWindow, "Main.AddClient").AsButton().Invoke();
 
-        Window inputDialog = app.WaitForReadyWindow("InputDialog.Ok");
-        SetText(inputDialog, "InputDialog.Input", clientName);
-        app.WaitForDescendantById(inputDialog, "InputDialog.Ok").AsButton().Invoke();
+        Window selectorWindow = app.WaitForReadyWindow("CharacterSelector.Cancel");
+        SetText(selectorWindow, "CharacterSelector.ClientName", clientName);
+        app.WaitForDescendantById(selectorWindow, "CharacterSelector.FirstSelectableCard").Click();
 
         Window returnedMainWindow = app.WaitForReadyWindow("Main.AddClient");
         WaitForElementEnabled(returnedMainWindow, "Main.Ooc.Message", expectedEnabled: true);

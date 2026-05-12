@@ -407,6 +407,11 @@ namespace OceanyaClient
             chkPosOnIniSwap.IsChecked = SaveFile.Data.SwitchPosOnIniSwap;
             chkSticky.IsChecked = SaveFile.Data.StickyEffect;
             chkInvertLog.IsChecked = SaveFile.Data.InvertICLog;
+            if (OceanyaTestMode.Current.IsEnabled)
+            {
+                chkSticky.Visibility = Visibility.Visible;
+                chkPosOnIniSwap.Visibility = Visibility.Visible;
+            }
             ApplySavedPopupSettings();
             ApplySavedClientSettingsToRuntime();
             InitializeDreddFeatureUi();
@@ -460,7 +465,8 @@ namespace OceanyaClient
             StartupTimingLogger.Log("main_window_loaded");
             MarkAutomationReady();
             EnsureLocalMusicAssetsScanStarted();
-            if (SaveFile.Data.GMViewportWindowState?.IsVisible == true)
+            if (!OceanyaTestMode.Current.DisableViewportWindowPersistence
+                && SaveFile.Data.GMViewportWindowState?.IsVisible == true)
             {
                 Dispatcher.BeginInvoke(new Action(OpenViewportWindow));
             }
@@ -2743,6 +2749,7 @@ namespace OceanyaClient
                     "Courtroom 2",
                     "Detention Center"
                 });
+            singleInternalClient.ApplyCharacterAvailabilityForTests(CharacterFolder.FullList.Select(character => character.Name));
         }
 
         private void InitializeDreddFeatureUi()
@@ -3797,7 +3804,7 @@ namespace OceanyaClient
 
         private void CaptureGmMultiClientSnapshot()
         {
-            if (suppressSnapshotCapture || isRestoringSnapshot)
+            if (suppressSnapshotCapture || isRestoringSnapshot || OceanyaTestMode.Current.DisableGmSnapshotPersistence)
             {
                 return;
             }
@@ -3840,6 +3847,11 @@ namespace OceanyaClient
 
         private async Task RestoreGmMultiClientSnapshotAsync()
         {
+            if (OceanyaTestMode.Current.DisableGmSnapshotPersistence)
+            {
+                return;
+            }
+
             GmMultiClientSnapshot? snapshot = SaveFile.Data.GMMultiClientSnapshot;
             if (snapshot?.Clients == null || snapshot.Clients.Count == 0 || clients.Count > 0)
             {
@@ -4904,9 +4916,12 @@ namespace OceanyaClient
             if (viewportWindow?.IsVisible == true)
             {
                 CaptureViewportWindowState();
-                SaveFile.Data.GMViewportWindowState ??= new ViewportWindowState();
-                SaveFile.Data.GMViewportWindowState.IsVisible = false;
-                SaveFile.Save();
+                if (!OceanyaTestMode.Current.DisableViewportWindowPersistence)
+                {
+                    SaveFile.Data.GMViewportWindowState ??= new ViewportWindowState();
+                    SaveFile.Data.GMViewportWindowState.IsVisible = false;
+                    SaveFile.Save();
+                }
                 viewportWindow.Hide();
                 return;
             }
@@ -4977,9 +4992,12 @@ namespace OceanyaClient
 
                 eventArgs.Cancel = true;
                 CaptureViewportWindowState();
-                SaveFile.Data.GMViewportWindowState ??= new ViewportWindowState();
-                SaveFile.Data.GMViewportWindowState.IsVisible = false;
-                SaveFile.Save();
+                if (!OceanyaTestMode.Current.DisableViewportWindowPersistence)
+                {
+                    SaveFile.Data.GMViewportWindowState ??= new ViewportWindowState();
+                    SaveFile.Data.GMViewportWindowState.IsVisible = false;
+                    SaveFile.Save();
+                }
                 viewportWindow?.Hide();
             };
             viewportWindow.Closed += (_, _) =>
@@ -5017,9 +5035,12 @@ namespace OceanyaClient
                         NormalizeVisibleViewportWindowSize(preferWidth: false);
                         isRestoringViewportWindow = false;
                         CaptureViewportWindowState();
-                        SaveFile.Data.GMViewportWindowState ??= new ViewportWindowState();
-                        SaveFile.Data.GMViewportWindowState.IsVisible = true;
-                        SaveFile.Save();
+                        if (!OceanyaTestMode.Current.DisableViewportWindowPersistence)
+                        {
+                            SaveFile.Data.GMViewportWindowState ??= new ViewportWindowState();
+                            SaveFile.Data.GMViewportWindowState.IsVisible = true;
+                            SaveFile.Save();
+                        }
                     }
                     finally
                     {
@@ -5405,6 +5426,11 @@ namespace OceanyaClient
 
         private void CaptureViewportWindowState()
         {
+            if (OceanyaTestMode.Current.DisableViewportWindowPersistence)
+            {
+                return;
+            }
+
             if (viewportWindow == null || viewportWindow.WindowState != WindowState.Normal || isRestoringViewportWindow)
             {
                 return;

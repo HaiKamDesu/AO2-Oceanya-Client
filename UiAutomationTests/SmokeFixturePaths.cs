@@ -45,6 +45,8 @@ internal static class SmokeFixturePaths
             "--test-disable-waitforms",
             "--test-skip-server-validation",
             "--test-skip-asset-refresh-prompts",
+            "--test-disable-gm-snapshot-persistence",
+            "--test-disable-viewport-window-persistence",
             "--test-savefile=" + Quote(SaveFilePath),
             "--test-config-ini=" + Quote(ConfigIniPath),
             "--test-server-json=" + Quote(ServerJsonPath),

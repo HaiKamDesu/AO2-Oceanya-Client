@@ -85,6 +85,21 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
+        <Button x:Name="FirstSelectableAutomationButton"
+                Width="1"
+                Height="1"
+                Opacity="0"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Top"
+                AutomationProperties.AutomationId="CharacterSelector.FirstSelectableCard"
+                Click="FirstSelectableAutomationButton_Click"/>
+        <StackPanel x:Name="CharacterAutomationButtonsPanel"
+                    Width="1"
+                    Height="1"
+                    Opacity="0"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Top"/>
+
         <!-- Client name row (hidden when not adding a new client) -->
         <Grid Grid.Row="0" x:Name="ClientNameRow" Margin="0,0,0,10">
             <Grid.ColumnDefinitions>

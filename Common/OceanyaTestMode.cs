@@ -15,6 +15,8 @@ namespace OceanyaClient
         public bool AutoLaunchStartupFunctionality { get; set; }
         public bool SkipServerValidation { get; set; }
         public bool SkipAssetRefreshPrompts { get; set; }
+        public bool DisableGmSnapshotPersistence { get; set; }
+        public bool DisableViewportWindowPersistence { get; set; }
         public string StartupFunctionalityId { get; set; } = string.Empty;
         public string ConfigIniPath { get; set; } = string.Empty;
         public string ServerEndpoint { get; set; } = string.Empty;
@@ -92,6 +94,16 @@ namespace OceanyaClient
                 {
                     options.IsEnabled = true;
                     options.SkipAssetRefreshPrompts = true;
+                }
+                else if (string.Equals(arg, "--test-disable-gm-snapshot-persistence", StringComparison.OrdinalIgnoreCase))
+                {
+                    options.IsEnabled = true;
+                    options.DisableGmSnapshotPersistence = true;
+                }
+                else if (string.Equals(arg, "--test-disable-viewport-window-persistence", StringComparison.OrdinalIgnoreCase))
+                {
+                    options.IsEnabled = true;
+                    options.DisableViewportWindowPersistence = true;
                 }
                 else if (TryParseAssignment(arg, "--test-startup-functionality", out string startupFunctionalityId))
                 {

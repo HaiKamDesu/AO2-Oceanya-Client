@@ -20,6 +20,8 @@ namespace OceanyaClient.Features.Viewport
         public AO2ViewportWindowContent()
         {
             InitializeComponent();
+            MarkAutomationReady();
+            Loaded += (_, _) => MarkAutomationReady();
         }
 
         /// <inheritdoc/>

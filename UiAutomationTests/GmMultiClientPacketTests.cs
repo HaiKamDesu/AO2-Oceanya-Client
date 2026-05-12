@@ -1,4 +1,3 @@
-using System.Net.WebSockets;
 using System.Threading;
 using AOBot_Testing.Structures;
 using FlaUI.Core.AutomationElements;
@@ -34,9 +33,9 @@ public sealed class GmMultiClientPacketTests
         using GmPacketLoopbackServer server = new GmPacketLoopbackServer();
         Window mainWindow = LaunchAndConnect(server);
 
-        GmPacketUiDriver.AddClient(app!, mainWindow, "PacketClientOne");
+        GmPacketUiDriver.AddClient(app!, mainWindow, "PacketClientOne", "SmokePhoenix");
         GmPacketUiDriver.WaitForElementEnabled(mainWindow, "Main.Ic.Message", expectedEnabled: true);
-        GmPacketUiDriver.AddClient(app!, mainWindow, "PacketClientTwo");
+        GmPacketUiDriver.AddClient(app!, mainWindow, "PacketClientTwo", "SmokeEdgeworth");
 
         GmPacketUiDriver.Click(mainWindow, "Main.Client.1");
         GmPacketUiDriver.SelectComboBoxItem(mainWindow, "Main.Ic.Character", "SmokePhoenix");
@@ -63,12 +62,35 @@ public sealed class GmMultiClientPacketTests
             Assert.That(firstClientPacket.ConnectionId, Is.EqualTo(1), "First GM client should send on the first transport connection.");
             Assert.That(firstMessage.CharId, Is.EqualTo(0), "First GM client should send with the first selected INI puppet.");
             Assert.That(firstMessage.Character, Is.EqualTo("SmokePhoenix"));
-            Assert.That(firstMessage.ShowName, Is.EqualTo("Smoke Phoenix"));
+            Assert.That(firstMessage.ShowName, Is.EqualTo("PacketClientOne"));
 
             Assert.That(secondClientPacket.ConnectionId, Is.EqualTo(2), "Second GM client should send on the second transport connection.");
             Assert.That(secondMessage.CharId, Is.EqualTo(1), "Second GM client should send with the second selected INI puppet.");
             Assert.That(secondMessage.Character, Is.EqualTo("SmokeEdgeworth"));
-            Assert.That(secondMessage.ShowName, Is.EqualTo("Smoke Edgeworth"));
+            Assert.That(secondMessage.ShowName, Is.EqualTo("PacketClientTwo"));
+        });
+    }
+
+    [Test]
+    public async Task GmPacket_WebSocketEndpoint_IcSend_IsCapturedByControlledServer()
+    {
+        using GmPacketLoopbackServer server = new GmPacketLoopbackServer(useWebSocket: true);
+        Window mainWindow = LaunchAndConnect(server);
+        GmPacketUiDriver.AddClient(app!, mainWindow, "WebSocketClient", "SmokePhoenix");
+        GmPacketUiDriver.WaitForElementEnabled(mainWindow, "Main.Ic.Message", expectedEnabled: true);
+
+        CapturedPacket packet = await GmPacketUiDriver.SendIcAndCapturePacketAsync(
+            mainWindow,
+            "websocket-ic-send",
+            server);
+        ICMessage message = RequireParsedIcMessage(packet);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(packet.ConnectionId, Is.EqualTo(1));
+            Assert.That(message.Character, Is.EqualTo("SmokePhoenix"));
+            Assert.That(message.ShowName, Is.EqualTo("WebSocketClient"));
+            Assert.That(message.Message, Is.EqualTo("websocket-ic-send"));
         });
     }
 
@@ -77,7 +99,7 @@ public sealed class GmMultiClientPacketTests
     {
         using GmPacketLoopbackServer server = new GmPacketLoopbackServer();
         Window mainWindow = LaunchAndConnect(server);
-        GmPacketUiDriver.AddClient(app!, mainWindow, "SwapClient");
+        GmPacketUiDriver.AddClient(app!, mainWindow, "SwapClient", "SmokePhoenix");
         GmPacketUiDriver.WaitForElementEnabled(mainWindow, "Main.Ic.Message", expectedEnabled: true);
 
         GmPacketUiDriver.SelectComboBoxItem(mainWindow, "Main.Ic.Position", "jud");
@@ -113,7 +135,7 @@ public sealed class GmMultiClientPacketTests
     {
         using GmPacketLoopbackServer server = new GmPacketLoopbackServer();
         Window mainWindow = LaunchAndConnect(server);
-        GmPacketUiDriver.AddClient(app!, mainWindow, "EmoteClient");
+        GmPacketUiDriver.AddClient(app!, mainWindow, "EmoteClient", "SmokePhoenix");
         GmPacketUiDriver.WaitForElementEnabled(mainWindow, "Main.Ic.Message", expectedEnabled: true);
 
         if (selectionSource.StartsWith("combo:", StringComparison.Ordinal))
@@ -142,7 +164,7 @@ public sealed class GmMultiClientPacketTests
     {
         using GmPacketLoopbackServer server = new GmPacketLoopbackServer();
         Window mainWindow = LaunchAndConnect(server);
-        GmPacketUiDriver.AddClient(app!, mainWindow, "ColorSfxClient");
+        GmPacketUiDriver.AddClient(app!, mainWindow, "ColorSfxClient", "SmokePhoenix");
         GmPacketUiDriver.WaitForElementEnabled(mainWindow, "Main.Ic.Message", expectedEnabled: true);
 
         GmPacketUiDriver.SelectComboBoxItem(mainWindow, "Main.Ic.TextColor", "Red");
@@ -166,7 +188,7 @@ public sealed class GmMultiClientPacketTests
     {
         using GmPacketLoopbackServer server = new GmPacketLoopbackServer();
         Window mainWindow = LaunchAndConnect(server);
-        GmPacketUiDriver.AddClient(app!, mainWindow, "EffectClient");
+        GmPacketUiDriver.AddClient(app!, mainWindow, "EffectClient", "SmokePhoenix");
         GmPacketUiDriver.WaitForElementEnabled(mainWindow, "Main.Ic.Message", expectedEnabled: true);
 
         GmPacketUiDriver.SelectComboBoxItem(mainWindow, "Main.Ic.Effect", "Hearts");
@@ -195,7 +217,7 @@ public sealed class GmMultiClientPacketTests
     {
         using GmPacketLoopbackServer server = new GmPacketLoopbackServer();
         Window mainWindow = LaunchAndConnect(server);
-        GmPacketUiDriver.AddClient(app!, mainWindow, "CheckboxClient");
+        GmPacketUiDriver.AddClient(app!, mainWindow, "CheckboxClient", "SmokePhoenix");
         GmPacketUiDriver.WaitForElementEnabled(mainWindow, "Main.Ic.Message", expectedEnabled: true);
 
         GmPacketUiDriver.Toggle(mainWindow, "Main.Ic.Preanim", ToggleState.On);
@@ -225,7 +247,7 @@ public sealed class GmMultiClientPacketTests
     {
         using GmPacketLoopbackServer server = new GmPacketLoopbackServer();
         Window mainWindow = LaunchAndConnect(server);
-        GmPacketUiDriver.AddClient(app!, mainWindow, "ShoutClient");
+        GmPacketUiDriver.AddClient(app!, mainWindow, "ShoutClient", "SmokePhoenix");
         GmPacketUiDriver.WaitForElementEnabled(mainWindow, "Main.Ic.Message", expectedEnabled: true);
 
         GmPacketUiDriver.Toggle(mainWindow, automationId, ToggleState.On);
@@ -241,7 +263,7 @@ public sealed class GmMultiClientPacketTests
     {
         using GmPacketLoopbackServer server = new GmPacketLoopbackServer();
         Window mainWindow = LaunchAndConnect(server);
-        GmPacketUiDriver.AddClient(app!, mainWindow, "StickyClient");
+        GmPacketUiDriver.AddClient(app!, mainWindow, "StickyClient", "SmokePhoenix");
         GmPacketUiDriver.WaitForElementEnabled(mainWindow, "Main.Ic.Message", expectedEnabled: true);
 
         GmPacketUiDriver.Toggle(mainWindow, "Main.Options.StickyEffects", ToggleState.On);
@@ -267,7 +289,7 @@ public sealed class GmMultiClientPacketTests
 
     private Window LaunchAndConnect(GmPacketLoopbackServer server)
     {
-        app = FlaUiSmokeApp.Launch(OnlineFixturePaths.BuildArguments(server.Port));
+        app = FlaUiSmokeApp.Launch(OnlineFixturePaths.BuildArguments(server.Endpoint));
         Window mainWindow = app.WaitForReadyWindow("Main.AddClient");
         return mainWindow;
     }
@@ -292,57 +314,5 @@ public sealed class GmMultiClientPacketTests
             packet.Packet.StartsWith("MS#", StringComparison.Ordinal)
             && (packet.Packet.Contains("#" + actualMessage + "#", StringComparison.Ordinal)
                 || packet.Packet.Contains("#~" + actualMessage + "~#", StringComparison.Ordinal)));
-    }
-}
-
-[TestFixture]
-[Category("OnlineLocalhost")]
-[NonParallelizable]
-[Apartment(ApartmentState.STA)]
-public sealed class LocalhostTsuserver3GmTests
-{
-    private FlaUiSmokeApp? app;
-
-    [TearDown]
-    public void TearDown()
-    {
-        if (TestContext.CurrentContext.Result.Outcome.Status != NUnit.Framework.Interfaces.TestStatus.Passed)
-        {
-            app?.CaptureFailureScreenshot(TestContext.CurrentContext.Test.Name);
-        }
-
-        app?.KillImmediately();
-        app = null;
-    }
-
-    [Test]
-    public async Task LocalhostTsuserver3_GmMultiClient_IcSend_IsAttemptedWhenServerIsReachable()
-    {
-        if (!await IsLocalWebSocketReachableAsync(new Uri("ws://localhost:50001")))
-        {
-            Assert.Ignore("Skipped because ws://localhost:50001 was not reachable.");
-        }
-
-        app = FlaUiSmokeApp.Launch(OnlineFixturePaths.BuildArguments("ws://localhost:50001"));
-        Window mainWindow = app.WaitForReadyWindow("Main.AddClient");
-
-        GmPacketUiDriver.AddClient(app, mainWindow, "LocalhostClient");
-        GmPacketUiDriver.WaitForElementEnabled(mainWindow, "Main.Ic.Message", expectedEnabled: true);
-    }
-
-    private static async Task<bool> IsLocalWebSocketReachableAsync(Uri uri)
-    {
-        using ClientWebSocket socket = new ClientWebSocket();
-        using CancellationTokenSource timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-
-        try
-        {
-            await socket.ConnectAsync(uri, timeout.Token);
-            return socket.State == WebSocketState.Open;
-        }
-        catch
-        {
-            return false;
-        }
     }
 }

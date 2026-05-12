@@ -60,6 +60,7 @@ namespace OceanyaClient
         private OceanyaMessageBox()
         {
             InitializeComponent();
+            MarkAutomationReady();
         }
 
         /// <inheritdoc/>

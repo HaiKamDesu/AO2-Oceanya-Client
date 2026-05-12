@@ -48,6 +48,7 @@ namespace OceanyaClient
         private readonly bool showClientNameField;
 
         private string? selectedCharacterName;
+        private string? firstSelectableAutomationCharacterName;
         private Border? selectedCardBorder;
         private double currentIconScale;
         private bool suppressIconScaleChange;
@@ -91,6 +92,7 @@ namespace OceanyaClient
             suppressIconScaleChange = false;
 
             Closed += OnWindowClosed;
+            MarkAutomationReady();
         }
 
         public override string HeaderText => "SELECT CHARACTER";
@@ -118,6 +120,7 @@ namespace OceanyaClient
         private void BuildSections()
         {
             SectionsPanel.Children.Clear();
+            CharacterAutomationButtonsPanel.Children.Clear();
             sections.Clear();
 
             var localByName = CharacterFolder.FullList
@@ -163,7 +166,36 @@ namespace OceanyaClient
                 .SelectMany(s => s.Cards)
                 .FirstOrDefault(c => c.Entry.IsAvailable && c.Entry.IsLocal);
             if (firstSelectable.Card != null)
-                AutomationProperties.SetAutomationId(firstSelectable.Card, "CharacterSelector.FirstSelectableCard");
+            {
+                firstSelectableAutomationCharacterName = firstSelectable.Entry.Name;
+                FirstSelectableAutomationButton.IsEnabled = true;
+                FirstSelectableAutomationButton.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                firstSelectableAutomationCharacterName = null;
+                FirstSelectableAutomationButton.IsEnabled = false;
+                FirstSelectableAutomationButton.Visibility = Visibility.Collapsed;
+            }
+
+            foreach (CharEntry entry in sections.SelectMany(s => s.Cards).Select(c => c.Entry)
+                         .Where(e => e.IsAvailable && e.IsLocal)
+                         .GroupBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
+                         .Select(g => g.First()))
+            {
+                Button button = new Button
+                {
+                    Width = 1,
+                    Height = 1,
+                    Opacity = 0,
+                    Tag = entry.Name
+                };
+                AutomationProperties.SetAutomationId(
+                    button,
+                    "CharacterSelector.Character." + SanitizeAutomationSegment(entry.Name));
+                button.Click += CharacterAutomationButton_Click;
+                CharacterAutomationButtonsPanel.Children.Add(button);
+            }
 
             // Pre-select current character (only if selectable)
             if (!string.IsNullOrWhiteSpace(selectedCharacterName))
@@ -448,6 +480,41 @@ namespace OceanyaClient
             selectedCharacterName = null;
             DialogResult = false;
             Close();
+        }
+
+        private void FirstSelectableAutomationButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(firstSelectableAutomationCharacterName))
+            {
+                return;
+            }
+
+            selectedCharacterName = firstSelectableAutomationCharacterName;
+            DialogResult = true;
+            Close();
+        }
+
+        private void CharacterAutomationButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not FrameworkElement { Tag: string characterName }
+                || string.IsNullOrWhiteSpace(characterName))
+            {
+                return;
+            }
+
+            selectedCharacterName = characterName;
+            DialogResult = true;
+            Close();
+        }
+
+        private static string SanitizeAutomationSegment(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return "Empty";
+            }
+
+            return new string(value.Trim().Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
         }
 
         private sealed record CharEntry(string Name, bool IsAvailable, string LocalIconPath, bool IsLocal, string Category);

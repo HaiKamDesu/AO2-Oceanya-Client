@@ -6,8 +6,7 @@ two categories:
 | Category | Transport | Fixture | Description |
 |---|---|---|---|
 | `Smoke` | Offline (stubbed) | `UnitTests/TestAssets/FlaUISmoke/` | Deterministic regression suite; no real server needed |
-| `Online` | Real TCP (in-process server) | `UnitTests/TestAssets/FlaUIOnline/` + FlaUISmoke shared | Integration lane; validates real AO2 packet flow, including GM multi client `MS#` packet assertions after UI interactions |
-| `OnlineLocalhost` | Real WebSocket (`ws://localhost:50001`) | `UnitTests/TestAssets/FlaUIOnline/` + FlaUISmoke shared | Optional localhost tsuserver3 lane; skips cleanly when the local server is unavailable |
+| `Online` | Real loopback transport (in-process server) | `UnitTests/TestAssets/FlaUIOnline/` + FlaUISmoke shared | Integration lane; validates real AO2 packet flow, including GM multi client `MS#` packet assertions after UI interactions over controlled TCP and WebSocket endpoints |
 
 ## Categories
 
@@ -15,7 +14,6 @@ two categories:
 |---|---|---|
 | Smoke | `[Category("Smoke")]` | `--filter "Category=Smoke"` |
 | Online | `[Category("Online")]` | `--filter "Category=Online"` |
-| OnlineLocalhost | `[Category("OnlineLocalhost")]` | `--filter "Category=OnlineLocalhost"` |
 | GmPacket | `[Category("GmPacket")]` | `--filter "Category=GmPacket"` |
 
 ## Prerequisites
@@ -25,10 +23,10 @@ two categories:
 | OS — interactive Windows desktop | Required | Required |
 | .NET SDK 8.0 | Required | Required |
 | OceanyaClient built in `Debug` | Required | Required |
-| Real AO2 server | Not needed | Not needed — uses in-process TCP server |
+| Real AO2 server | Not needed | Not needed — uses in-process loopback servers |
 | Loopback TCP available | Not needed | Required (standard on all platforms) |
 
-`OnlineLocalhost` additionally requires a reachable local tsuserver3 at `ws://localhost:50001`; otherwise those tests are skipped with `Assert.Ignore`. The deterministic `GmPacket` subset does not depend on localhost availability.
+The deterministic `GmPacket` subset does not depend on localhost tsuserver3 availability.
 
 ## Running Locally
 
@@ -53,13 +51,7 @@ dotnet test UiAutomationTests/UiAutomationTests.csproj `
     --no-build `
     --filter "Category=Online"
 
-# 2c. Run the optional localhost tsuserver3 lane
-dotnet test UiAutomationTests/UiAutomationTests.csproj `
-    --configuration Debug `
-    --no-build `
-    --filter "Category=OnlineLocalhost"
-
-# 2d. Run only the GM multi client packet-validation subset
+# 2c. Run only the GM multi client packet-validation subset
 dotnet test UiAutomationTests/UiAutomationTests.csproj `
     --configuration Debug `
     --no-build `
@@ -78,10 +70,6 @@ On WSL, replace `dotnet` with the full path:
 # Online
 /mnt/c/Program\ Files/dotnet/dotnet.exe test UiAutomationTests/UiAutomationTests.csproj \
     --configuration Debug --no-build --filter "Category=Online"
-
-# Optional localhost tsuserver3
-/mnt/c/Program\ Files/dotnet/dotnet.exe test UiAutomationTests/UiAutomationTests.csproj \
-    --configuration Debug --no-build --filter "Category=OnlineLocalhost"
 
 # GM multi client packet-validation subset
 /mnt/c/Program\ Files/dotnet/dotnet.exe test UiAutomationTests/UiAutomationTests.csproj \

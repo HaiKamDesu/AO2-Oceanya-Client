@@ -128,6 +128,15 @@ Unit coverage exists for:
 - pair ordering suffix parsing
 - shout overlay and zoom speedline names
 - AO2 viewport chat geometry and `chat_config.ini` color-markup metadata
+- RT# packet → `OnRtReceived` event (testimony1/testimony2/judgeruling, variant, symbol escaping, missing-fields guard) — `UnitTests/ViewportParityTests.cs`
+- LE# packet → `GetEvidenceImagePath` (single/multi item, 1-based lookup, skip-short-fields, blank image, symbol escaping, boundary IDs, replace on new packet) — `UnitTests/ViewportParityTests.cs`
+- `ResolveWtceOverlayImage` / `ResolveTestimonyOverlayImage` — misc/default fallback, bg-misc priority, absent asset, blank stem — `UnitTests/ViewportParityTests.cs`
+- `ResolveStickerImage` — present/absent/null-name — `UnitTests/ViewportParityTests.cs`
+- `ResolveChatArrowImage` — present/absent — `UnitTests/ViewportParityTests.cs`
+- `ResolveEvidenceIconImage` — exact filename, extensionless lookup, absent, null — `UnitTests/ViewportParityTests.cs`
+- `ResolveEvidencePresentationImage` — left/right side stems, absent — `UnitTests/ViewportParityTests.cs`
+- MC# packet → `OnMusicChanged` / `OnIcActionReceived` (song, stop, server-initiated, loop, channel, effects, too-few-fields) — `UnitTests/MusicPacketTests.cs`
+- Viewport window opens when `Main.Viewport.Open` is clicked (Smoke UI automation) — `UiAutomationTests/ViewportSmokeTests.cs`
 
 ## Known Parity Gaps
 - Preanimation timing now waits for animated playback completion first, matching AO2's receive-time `play_preanim(false)` behavior. `[stay_time]` fallback values use AO2's `time_mod=40`; `[Time]` remains only a static/unsupported-animation fallback, not a hard cutoff for normal animated GIF playback.

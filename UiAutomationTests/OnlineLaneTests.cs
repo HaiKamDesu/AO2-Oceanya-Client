@@ -157,7 +157,7 @@ public sealed class OnlineLaneTests
         app!.WaitForDescendantById(mainWindow, "Main.AddClient").AsButton().Invoke();
         Window selectorWindow = app.WaitForReadyWindow("CharacterSelector.Cancel");
         SetText(selectorWindow, "CharacterSelector.ClientName", clientName);
-        app.WaitForDescendantById(selectorWindow, "CharacterSelector.FirstSelectableCard")?.Click();
+        app.WaitForDescendantById(selectorWindow, "CharacterSelector.Character.SmokePhoenix")?.Click();
 
         // Connect() takes ~2 s; WaitForReadyWindow has a 30 s ceiling.
         app.WaitForReadyWindow("Main.AddClient");
@@ -252,9 +252,9 @@ public sealed class OnlineLaneTests
                 }
                 else if (string.Equals(packet, "RC#%", StringComparison.Ordinal))
                 {
-                    // Send a single character entry (no local match — INI puppet
-                    // selection silently skips, which is fine for OOC tests).
-                    await SendToClientAsync(stream, "SC#OnlineLaneCharacter#%", cancellationToken);
+                    // Send a fixture-local character so the current CharacterSelector
+                    // flow can confirm a real INI puppet before the online assertions.
+                    await SendToClientAsync(stream, "SC#SmokePhoenix#%", cancellationToken);
                 }
                 else if (string.Equals(packet, "RM#%", StringComparison.Ordinal))
                 {

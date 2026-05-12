@@ -443,6 +443,23 @@ namespace AOBot_Testing.Agents
         }
 
         /// <summary>
+        /// Applies deterministic local character availability without requiring a live transport connection.
+        /// </summary>
+        /// <param name="characters">Available server character names to expose.</param>
+        public void ApplyCharacterAvailabilityForTests(IEnumerable<string> characters)
+        {
+            serverCharacterList.Clear();
+            foreach (string character in characters)
+            {
+                string normalized = character?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(normalized))
+                {
+                    serverCharacterList[normalized] = true;
+                }
+            }
+        }
+
+        /// <summary>
         /// Sends an AO2 music change packet for the selected INI puppet.
         /// </summary>
         /// <param name="musicToken">Song or server-recognized category token.</param>

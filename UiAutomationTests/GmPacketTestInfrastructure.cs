@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using AOBot_Testing.Structures;
@@ -20,13 +21,18 @@ internal sealed class GmPacketLoopbackServer : IDisposable
     private readonly object characterLock = new();
     private readonly string[] characters;
     private readonly string[] features;
+    private readonly bool useWebSocket;
     private int nextConnectionId;
     private bool disposed;
 
-    public GmPacketLoopbackServer(IEnumerable<string>? characters = null, IEnumerable<string>? features = null)
+    public GmPacketLoopbackServer(
+        IEnumerable<string>? characters = null,
+        IEnumerable<string>? features = null,
+        bool useWebSocket = false)
     {
         this.characters = (characters ?? new[] { "SmokePhoenix", "SmokeEdgeworth" }).ToArray();
         this.features = (features ?? DefaultFeatures).ToArray();
+        this.useWebSocket = useWebSocket;
         listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
@@ -51,6 +57,8 @@ internal sealed class GmPacketLoopbackServer : IDisposable
     };
 
     public int Port => ((IPEndPoint)listener.LocalEndpoint).Port;
+
+    public string Endpoint => (useWebSocket ? "ws://127.0.0.1:" : "tcp://127.0.0.1:") + Port;
 
     public IReadOnlyCollection<CapturedPacket> Packets => packets.ToArray();
 
@@ -130,18 +138,26 @@ internal sealed class GmPacketLoopbackServer : IDisposable
                 using NetworkStream stream = client.GetStream();
                 StringBuilder buffer = new StringBuilder();
 
-                string? firstPacket = await ReadPacketAsync(stream, buffer, cancellationToken);
-                if (firstPacket != null)
+                if (useWebSocket)
                 {
-                    RecordPacket(connectionId, firstPacket);
+                    await CompleteWebSocketHandshakeAsync(stream, cancellationToken);
+                    await SendToClientAsync(stream, $"ID#{connectionId}#tsuserver#7#%", cancellationToken, useWebSocket);
                 }
+                else
+                {
+                    string? firstPacket = await ReadPacketAsync(stream, buffer, cancellationToken, useWebSocket);
+                    if (firstPacket != null)
+                    {
+                        RecordPacket(connectionId, firstPacket);
+                    }
 
-                await SendToClientAsync(stream, "decryptor#NOENCRYPT#%", cancellationToken);
-                await SendToClientAsync(stream, $"ID#{connectionId}#tsuserver#7#%", cancellationToken);
+                    await SendToClientAsync(stream, "decryptor#NOENCRYPT#%", cancellationToken, useWebSocket);
+                    await SendToClientAsync(stream, $"ID#{connectionId}#tsuserver#7#%", cancellationToken, useWebSocket);
+                }
 
                 while (!cancellationToken.IsCancellationRequested)
                 {
-                    string? packet = await ReadPacketAsync(stream, buffer, cancellationToken);
+                    string? packet = await ReadPacketAsync(stream, buffer, cancellationToken, useWebSocket);
                     if (packet == null)
                     {
                         break;
@@ -151,30 +167,30 @@ internal sealed class GmPacketLoopbackServer : IDisposable
 
                     if (string.Equals(packet, "ID#AO2#2.11.0#%", StringComparison.Ordinal))
                     {
-                        await SendToClientAsync(stream, $"PN#{connectionId}#10#%", cancellationToken);
-                        await SendToClientAsync(stream, "FL#" + string.Join("#", features) + "#%", cancellationToken);
+                        await SendToClientAsync(stream, $"PN#{connectionId}#10#%", cancellationToken, useWebSocket);
+                        await SendToClientAsync(stream, "FL#" + string.Join("#", features) + "#%", cancellationToken, useWebSocket);
                     }
                     else if (string.Equals(packet, "askchaa#%", StringComparison.Ordinal))
                     {
-                        await SendToClientAsync(stream, "SI#1#0#0#%", cancellationToken);
+                        await SendToClientAsync(stream, "SI#1#0#0#%", cancellationToken, useWebSocket);
                     }
                     else if (string.Equals(packet, "RC#%", StringComparison.Ordinal))
                     {
-                        await SendToClientAsync(stream, "SC#" + string.Join("#", characters) + "#%", cancellationToken);
-                        await SendToClientAsync(stream, BuildCharsCheckPacket(), cancellationToken);
+                        await SendToClientAsync(stream, "SC#" + string.Join("#", characters) + "#%", cancellationToken, useWebSocket);
+                        await SendToClientAsync(stream, BuildCharsCheckPacket(), cancellationToken, useWebSocket);
                     }
                     else if (string.Equals(packet, "RM#%", StringComparison.Ordinal))
                     {
-                        await SendToClientAsync(stream, "SM#Lobby#%", cancellationToken);
+                        await SendToClientAsync(stream, "SM#Lobby#%", cancellationToken, useWebSocket);
                     }
                     else if (string.Equals(packet, "RD#%", StringComparison.Ordinal))
                     {
-                        await SendToClientAsync(stream, "DONE#%", cancellationToken);
+                        await SendToClientAsync(stream, "DONE#%", cancellationToken, useWebSocket);
                     }
                     else if (packet.StartsWith("CC#", StringComparison.Ordinal))
                     {
                         HandleCharacterSelect(connectionId, packet);
-                        await SendToClientAsync(stream, BuildCharsCheckPacket(), cancellationToken);
+                        await SendToClientAsync(stream, BuildCharsCheckPacket(), cancellationToken, useWebSocket);
                     }
                 }
             }
@@ -226,8 +242,18 @@ internal sealed class GmPacketLoopbackServer : IDisposable
         packets.Enqueue(new CapturedPacket(connectionId, packet, DateTime.UtcNow));
     }
 
-    private static async Task SendToClientAsync(NetworkStream stream, string packet, CancellationToken cancellationToken)
+    private static async Task SendToClientAsync(
+        NetworkStream stream,
+        string packet,
+        CancellationToken cancellationToken,
+        bool useWebSocket)
     {
+        if (useWebSocket)
+        {
+            await SendWebSocketTextMessageAsync(stream, packet, cancellationToken);
+            return;
+        }
+
         byte[] bytes = Encoding.UTF8.GetBytes(packet);
         await stream.WriteAsync(bytes.AsMemory(0, bytes.Length), cancellationToken);
         await stream.FlushAsync(cancellationToken);
@@ -236,15 +262,25 @@ internal sealed class GmPacketLoopbackServer : IDisposable
     private static async Task<string?> ReadPacketAsync(
         NetworkStream stream,
         StringBuilder packetBuffer,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool useWebSocket)
     {
-        string current = packetBuffer.ToString();
-        int end = current.IndexOf("#%", StringComparison.Ordinal);
-        if (end >= 0)
+        string? bufferedPacket = TakeBufferedPacket(packetBuffer);
+        if (bufferedPacket != null)
         {
-            string buffered = current.Substring(0, end + 2);
-            packetBuffer.Remove(0, end + 2);
-            return buffered;
+            return bufferedPacket;
+        }
+
+        if (useWebSocket)
+        {
+            string? message = await ReadWebSocketTextMessageAsync(stream, cancellationToken);
+            if (message == null)
+            {
+                return null;
+            }
+
+            packetBuffer.Append(message);
+            return TakeBufferedPacket(packetBuffer);
         }
 
         byte[] buffer = new byte[4096];
@@ -257,19 +293,161 @@ internal sealed class GmPacketLoopbackServer : IDisposable
             }
 
             packetBuffer.Append(Encoding.UTF8.GetString(buffer, 0, bytesRead));
-            current = packetBuffer.ToString();
-            end = current.IndexOf("#%", StringComparison.Ordinal);
-            if (end < 0)
+            bufferedPacket = TakeBufferedPacket(packetBuffer);
+            if (bufferedPacket == null)
             {
                 continue;
             }
 
-            string packet = current.Substring(0, end + 2);
-            packetBuffer.Remove(0, end + 2);
-            return packet;
+            return bufferedPacket;
         }
 
         return null;
+    }
+
+    private static string? TakeBufferedPacket(StringBuilder packetBuffer)
+    {
+        string current = packetBuffer.ToString();
+        int end = current.IndexOf("#%", StringComparison.Ordinal);
+        if (end < 0)
+        {
+            return null;
+        }
+
+        string packet = current.Substring(0, end + 2);
+        packetBuffer.Remove(0, end + 2);
+        return packet;
+    }
+
+    private static async Task CompleteWebSocketHandshakeAsync(NetworkStream stream, CancellationToken cancellationToken)
+    {
+        StringBuilder request = new StringBuilder();
+        byte[] oneByte = new byte[1];
+        while (!request.ToString().Contains("\r\n\r\n", StringComparison.Ordinal))
+        {
+            int bytesRead = await stream.ReadAsync(oneByte.AsMemory(0, 1), cancellationToken);
+            if (bytesRead <= 0)
+            {
+                throw new IOException("WebSocket handshake ended before headers completed.");
+            }
+
+            request.Append((char)oneByte[0]);
+        }
+
+        string key = request.ToString()
+            .Split("\r\n", StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Split(':', 2))
+            .Where(parts => parts.Length == 2)
+            .Where(parts => string.Equals(parts[0].Trim(), "Sec-WebSocket-Key", StringComparison.OrdinalIgnoreCase))
+            .Select(parts => parts[1].Trim())
+            .FirstOrDefault()
+            ?? throw new InvalidOperationException("WebSocket handshake did not include Sec-WebSocket-Key.");
+
+        string accept = Convert.ToBase64String(SHA1.HashData(
+            Encoding.ASCII.GetBytes(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
+        string response =
+            "HTTP/1.1 101 Switching Protocols\r\n" +
+            "Upgrade: websocket\r\n" +
+            "Connection: Upgrade\r\n" +
+            "Sec-WebSocket-Accept: " + accept + "\r\n\r\n";
+
+        byte[] responseBytes = Encoding.ASCII.GetBytes(response);
+        await stream.WriteAsync(responseBytes.AsMemory(0, responseBytes.Length), cancellationToken);
+        await stream.FlushAsync(cancellationToken);
+    }
+
+    private static async Task SendWebSocketTextMessageAsync(
+        NetworkStream stream,
+        string message,
+        CancellationToken cancellationToken)
+    {
+        byte[] payload = Encoding.UTF8.GetBytes(message);
+        List<byte> frame = new List<byte> { 0x81 };
+        if (payload.Length < 126)
+        {
+            frame.Add((byte)payload.Length);
+        }
+        else
+        {
+            frame.Add(126);
+            frame.Add((byte)(payload.Length >> 8));
+            frame.Add((byte)payload.Length);
+        }
+
+        frame.AddRange(payload);
+        byte[] bytes = frame.ToArray();
+        await stream.WriteAsync(bytes.AsMemory(0, bytes.Length), cancellationToken);
+        await stream.FlushAsync(cancellationToken);
+    }
+
+    private static async Task<string?> ReadWebSocketTextMessageAsync(
+        NetworkStream stream,
+        CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            byte[] header = await ReadExactAsync(stream, 2, cancellationToken);
+            byte opcode = (byte)(header[0] & 0x0F);
+            bool masked = (header[1] & 0x80) != 0;
+            ulong length = (ulong)(header[1] & 0x7F);
+            if (length == 126)
+            {
+                byte[] extended = await ReadExactAsync(stream, 2, cancellationToken);
+                length = (ulong)((extended[0] << 8) | extended[1]);
+            }
+            else if (length == 127)
+            {
+                byte[] extended = await ReadExactAsync(stream, 8, cancellationToken);
+                length = 0;
+                foreach (byte value in extended)
+                {
+                    length = (length << 8) | value;
+                }
+            }
+
+            byte[] mask = masked ? await ReadExactAsync(stream, 4, cancellationToken) : Array.Empty<byte>();
+            byte[] payload = await ReadExactAsync(stream, checked((int)length), cancellationToken);
+            if (masked)
+            {
+                for (int i = 0; i < payload.Length; i++)
+                {
+                    payload[i] = (byte)(payload[i] ^ mask[i % 4]);
+                }
+            }
+
+            if (opcode == 0x8)
+            {
+                return null;
+            }
+
+            if (opcode == 0x1)
+            {
+                return Encoding.UTF8.GetString(payload);
+            }
+        }
+
+        return null;
+    }
+
+    private static async Task<byte[]> ReadExactAsync(
+        NetworkStream stream,
+        int length,
+        CancellationToken cancellationToken)
+    {
+        byte[] buffer = new byte[length];
+        int offset = 0;
+        while (offset < length)
+        {
+            int bytesRead = await stream.ReadAsync(buffer.AsMemory(offset, length - offset), cancellationToken);
+            if (bytesRead <= 0)
+            {
+                throw new IOException("Connection closed before expected bytes arrived.");
+            }
+
+            offset += bytesRead;
+        }
+
+        return buffer;
     }
 }
 
@@ -325,12 +503,20 @@ internal sealed record CapturedPacket(int ConnectionId, string Packet, DateTime 
 
 internal static class GmPacketUiDriver
 {
-    public static void AddClient(FlaUiSmokeApp app, Window mainWindow, string clientName)
+    public static void AddClient(
+        FlaUiSmokeApp app,
+        Window mainWindow,
+        string clientName,
+        string? selectedCharacterName = null)
     {
         app.WaitForDescendantById(mainWindow, "Main.AddClient").AsButton().Invoke();
         Window selectorWindow = app.WaitForReadyWindow("CharacterSelector.Cancel");
         SetText(selectorWindow, "CharacterSelector.ClientName", clientName);
-        app.WaitForDescendantById(selectorWindow, "CharacterSelector.FirstSelectableCard")?.Click();
+        string selectorAutomationId = string.IsNullOrWhiteSpace(selectedCharacterName)
+            ? "CharacterSelector.FirstSelectableCard"
+            : "CharacterSelector.Character." + SanitizeAutomationSegment(selectedCharacterName);
+
+        app.WaitForDescendantById(selectorWindow, selectorAutomationId)?.Click();
         app.WaitForReadyWindow("Main.AddClient");
     }
 
@@ -391,7 +577,6 @@ internal static class GmPacketUiDriver
         RetryAction(
             () =>
             {
-                bool interactedWithPopupItem = false;
                 comboBox.Expand();
 
                 ComboBoxItem? selectedItem = comboBox.Select(itemName);
@@ -404,7 +589,6 @@ internal static class GmPacketUiDriver
                 AutomationElement? popupItem = FindPopupSelectionTarget(window, automationId, itemName);
                 if (popupItem != null)
                 {
-                    interactedWithPopupItem = true;
                     if (popupItem.Patterns.SelectionItem.IsSupported)
                     {
                         popupItem.Patterns.SelectionItem.Pattern.Select();
@@ -429,9 +613,12 @@ internal static class GmPacketUiDriver
 
                 comboBox.Collapse();
 
-                if (!IsComboSelectionConfirmed(window, automationId, itemName) && !interactedWithPopupItem)
+                if (!IsComboSelectionConfirmed(window, automationId, itemName))
                 {
-                    throw new InvalidOperationException("Combo box selection did not stick: " + itemName);
+                    if (!TryConfirmComboBoxViaTextEntry(window, automationId, comboBox, itemName))
+                    {
+                        throw new InvalidOperationException("Combo box selection did not stick: " + itemName);
+                    }
                 }
             },
             "select combo box item " + itemName + " for " + automationId);

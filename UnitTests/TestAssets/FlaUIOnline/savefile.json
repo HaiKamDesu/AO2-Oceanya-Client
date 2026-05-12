@@ -2,8 +2,9 @@
   "ConfigIniPath": "D:\\Programs\\Attorney Online\\RPG\\AO2-Oceanya-Bot\\UnitTests\\TestAssets\\FlaUISmoke\\config.ini",
   "StartupFunctionalityId": "gm_multi_client",
   "UseSingleInternalClient": false,
-  "SelectedServerEndpoint": "tcp://127.0.0.1:61231",
-  "SelectedServerName": "tcp://127.0.0.1:61231",
+  "SkipLoadingScreen": false,
+  "SelectedServerEndpoint": "ws://127.0.0.1:60010",
+  "SelectedServerName": "ws://127.0.0.1:60010",
   "CustomServerEndpoints": [],
   "CustomServerEntries": [],
   "AdvancedFeatures": {
@@ -453,10 +454,69 @@
     "Top": null,
     "IsMaximized": false
   },
+  "GMViewportWindowState": {
+    "Width": 256,
+    "Height": 296,
+    "Left": null,
+    "Top": null,
+    "IsVisible": false
+  },
+  "GMMainWindowState": {
+    "Width": 510,
+    "Height": 676,
+    "Left": null,
+    "Top": null,
+    "IsMaximized": false
+  },
+  "GMMultiClientSnapshot": {
+    "Clients": [],
+    "SelectedClientIndex": -1,
+    "SelectedClientName": "",
+    "UseSingleInternalClient": false
+  },
+  "GMViewportChatBackgroundColor": "",
   "CharacterCreatorPreviewVolume": 1,
   "AudioMusicVolume": 0.5,
   "AudioSfxVolume": 1,
   "AudioBlipVolume": 0.5,
+  "MusicEffectFadeOut": true,
+  "MusicEffectFadeIn": false,
+  "MusicEffectSyncPos": false,
+  "AreaNavigatorPopupWidth": 282,
+  "AreaNavigatorPopupHeight": 296,
+  "MusicListPopupWidth": 320,
+  "MusicListPopupHeight": 420,
+  "MusicListShowAssetPaths": false,
+  "MusicListCollapsedCategoryKeys": [],
+  "EnabledLogCategories": [
+    "System",
+    "Network",
+    "IC",
+    "OOC",
+    "Viewport"
+  ],
+  "CallwordRules": [],
+  "ExtraAudioRules": [],
+  "FrequentlyUsedIniPuppets": {
+    "SmokeEdgeworth": 20,
+    "SmokePhoenix": 103
+  },
+  "FrequentlyUsedMusic": {},
+  "MusicCustomNames": {},
+  "CustomMusicCommands": [],
+  "LastCustomCommandCategoryPath": "",
+  "MusicSectionOrder": [
+    "FREQUENTLY USED",
+    "CUSTOM COMMANDS",
+    "SERVER LIST",
+    "LOCAL FILES"
+  ],
+  "MusicFlagFadeOut": true,
+  "MusicFlagFadeIn": false,
+  "MusicFlagSync": false,
+  "CharacterSelectorWindowWidth": 762,
+  "CharacterSelectorWindowHeight": 672,
+  "CharacterSelectorIconScale": 1,
   "CharacterCreatorEmoteTileWidth": 420,
   "CharacterCreatorEmoteTileHeight": 430,
   "CharacterCreatorCuttingPreviewHeight": 170,
@@ -468,7 +528,15 @@
   "CharacterFolderActiveTagFilters": [],
   "CharacterFolderTagPanelWidth": 260,
   "CharacterFolderTagPanelCollapsed": false,
-  "PopupWindowStates": {},
+  "PopupWindowStates": {
+    "OceanyaClient.GenericOceanyaWindow|Select Character": {
+      "Width": 762,
+      "Height": 672,
+      "Left": 579,
+      "Top": 204,
+      "IsMaximized": false
+    }
+  },
   "CharacterCreatorCutSelections": {},
   "CharacterCreatorButtonBackgroundPresets": [],
   "CharacterCreatorButtonEffectPresets": [],
