@@ -31,10 +31,12 @@ music files under local `sounds/music` asset folders.
   - `Synchronize`: if music is already playing, the new song starts from the same time position as the old song. For
     example, if the old song was 30 seconds in, the new one starts 30 seconds in too. This is useful when switching
     between matching versions of a track.
-- These toggles are only user-controllable for `SERVER LIST` entries that send direct `MC#` packets. `LOCAL FILES`,
-  `FREQUENTLY USED`, and `CUSTOM COMMANDS` route through `/play` or arbitrary OOC commands, so the context menu disables
-  the AO2 effect toggles for those selected rows. tsuserver3 `/play` sends effect flags as `0`; tsuserverCC `/play`
-  hardcodes `FADE_OUT`, so neither path can honor the user's `Fade In` or `Synchronize` toggles.
+- These toggles are only user-controllable for rows that resolve to a server-recognized music token and can send a direct
+  `MC#` packet. That includes normal server-list songs and tsuserverCC area custom-music-list songs delivered through
+  `FM`/`SM`. Arbitrary `LOCAL FILES`, unrecognized `FREQUENTLY USED` entries, and `CUSTOM COMMANDS` route through
+  `/play` or arbitrary OOC commands, so the context menu disables the AO2 effect toggles for those selected rows.
+  tsuserver3 `/play` sends effect flags as `0`; tsuserverCC `/play` hardcodes `FADE_OUT`, so neither path can honor the
+  user's `Fade In` or `Synchronize` toggles.
 - Stopping sends `MC#~stop.mp3#<charId>#...#%`.
 
 ## UI Behavior

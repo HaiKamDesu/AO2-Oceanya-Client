@@ -6422,7 +6422,7 @@ namespace OceanyaClient
             bool isCustomCommand = item?.IsCustomCommand == true;
             bool isRootCategory = item?.IsRootCategory == true;
             bool musicEffectsSupported = !hasLeafSelection
-                || (item != null && IsServerMusicEffectItem(item));
+                || TryResolveServerRecognizedMusicToken(item, out _);
 
             // PLAYBACK
             AddMusicMenuCategoryHeader(menu, "PLAYBACK", addLeadingSeparator: false);
@@ -6550,15 +6550,6 @@ namespace OceanyaClient
             }
         }
 
-        private static bool IsServerMusicEffectItem(MusicListItem item)
-        {
-            return !item.IsCategory
-                && !item.IsCustomCommand
-                && !string.Equals(item.Playlist, "LOCAL FILES", StringComparison.OrdinalIgnoreCase)
-                && !string.Equals(item.Playlist, "FREQUENTLY USED", StringComparison.OrdinalIgnoreCase)
-                && !string.Equals(item.Playlist, "CUSTOM COMMANDS", StringComparison.OrdinalIgnoreCase);
-        }
-
         private static string GetMusicEffectTooltip(bool isSupported, string supportedTooltip)
         {
             if (isSupported)
@@ -6566,7 +6557,69 @@ namespace OceanyaClient
                 return supportedTooltip;
             }
 
-            return "Only works for songs from SERVER LIST. This selected item plays through /play or a custom command, so AO2 effect flags cannot be sent.";
+            return "Only works for songs the server recognizes. This selected item plays through /play or a custom command, so AO2 effect flags cannot be sent.";
+        }
+
+        private bool TryResolveServerRecognizedMusicToken(MusicListItem? item, out string musicToken)
+        {
+            musicToken = string.Empty;
+            if (item == null || item.IsCategory || item.IsCustomCommand)
+            {
+                return false;
+            }
+
+            AOClient? profileClient = currentClient;
+            AOClient? networkClient = profileClient == null ? null : GetTargetClientForNetwork(profileClient);
+            return TryResolveServerRecognizedMusicToken(
+                item,
+                networkClient?.GetAvailableMusicSnapshot() ?? Array.Empty<string>(),
+                out musicToken);
+        }
+
+        private static bool TryResolveServerRecognizedMusicToken(
+            MusicListItem item,
+            IReadOnlyList<string> musicEntries,
+            out string musicToken)
+        {
+            musicToken = string.Empty;
+            if (item.IsCategory || item.IsCustomCommand)
+            {
+                return false;
+            }
+
+            string[] candidates =
+            {
+                item.PlayToken?.Trim() ?? string.Empty,
+                item.Token?.Trim() ?? string.Empty,
+                StripCustomPrefix(item.PlayToken?.Trim() ?? string.Empty),
+                StripCustomPrefix(item.Token?.Trim() ?? string.Empty),
+            };
+
+            foreach (string entryRaw in musicEntries)
+            {
+                string entry = entryRaw.Trim();
+                if (!LooksLikeMusicEntry(entry))
+                {
+                    continue;
+                }
+
+                foreach (string candidate in candidates)
+                {
+                    if (string.IsNullOrWhiteSpace(candidate))
+                    {
+                        continue;
+                    }
+
+                    if (string.Equals(entry, candidate, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(entry, StripCustomPrefix(candidate), StringComparison.OrdinalIgnoreCase))
+                    {
+                        musicToken = entry;
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         }
 
         private void MusicRenameMenuItem_Click(object sender, RoutedEventArgs e)
@@ -6763,7 +6816,12 @@ namespace OceanyaClient
 
             string playToken = string.IsNullOrWhiteSpace(selectedItem.PlayToken) ? selectedItem.Token : selectedItem.PlayToken;
             bool isUrl = AO2ViewportAudioResolver.IsStreamingUrl(playToken);
-            bool useOocPlay = selectedItem.Playlist == "LOCAL FILES" || selectedItem.Playlist == "FREQUENTLY USED";
+            bool canSendEffects = TryResolveServerRecognizedMusicToken(
+                selectedItem,
+                networkClient.GetAvailableMusicSnapshot(),
+                out string serverRecognizedToken);
+            bool useOocPlay = !canSendEffects
+                && (selectedItem.Playlist == "LOCAL FILES" || selectedItem.Playlist == "FREQUENTLY USED");
 
             if (useOocPlay)
             {
@@ -6790,6 +6848,11 @@ namespace OceanyaClient
             }
             else
             {
+                if (canSendEffects)
+                {
+                    playToken = serverRecognizedToken;
+                }
+
                 CustomConsole.Info(
                     $"[MUSIC] MC packet play: token={playToken}, effectFlags={MusicEffectFlags}, isUrl={isUrl}",
                     CustomConsole.LogCategory.MusicList);
