@@ -489,7 +489,7 @@ namespace OceanyaClient
         public bool MusicListShowAssetPaths { get; set; } = false;
         public List<string> MusicListCollapsedCategoryKeys { get; set; } = new List<string>();
         public List<string> EnabledLogCategories { get; set; } =
-            new List<string> { "System", "Network", "IC", "OOC", "Viewport" };
+            new List<string> { "System", "Network", "IC", "OOC", "Viewport", "MusicList", "AreaVisualizer" };
         public List<CallwordRule> CallwordRules { get; set; } = new List<CallwordRule>();
         public List<ExtraAudioRule> ExtraAudioRules { get; set; } = new List<ExtraAudioRule>();
         public Dictionary<string, int> FrequentlyUsedIniPuppets { get; set; } =
@@ -785,7 +785,29 @@ namespace OceanyaClient
             data.EnabledLogCategories ??= new List<string>();
             if (data.EnabledLogCategories.Count == 0)
             {
-                data.EnabledLogCategories.AddRange(new[] { "System", "Network", "IC", "OOC", "Viewport" });
+                data.EnabledLogCategories.AddRange(new[] { "System", "Network", "IC", "OOC", "Viewport", "MusicList", "AreaVisualizer" });
+            }
+
+            for (int i = 0; i < data.EnabledLogCategories.Count; i++)
+            {
+                if (string.Equals(data.EnabledLogCategories[i], "Music", StringComparison.OrdinalIgnoreCase))
+                {
+                    data.EnabledLogCategories[i] = "MusicList";
+                }
+                else if (string.Equals(data.EnabledLogCategories[i], "Area visualizer", StringComparison.OrdinalIgnoreCase))
+                {
+                    data.EnabledLogCategories[i] = "AreaVisualizer";
+                }
+            }
+
+            if (!data.EnabledLogCategories.Contains("MusicList", StringComparer.OrdinalIgnoreCase))
+            {
+                data.EnabledLogCategories.Add("MusicList");
+            }
+
+            if (!data.EnabledLogCategories.Contains("AreaVisualizer", StringComparer.OrdinalIgnoreCase))
+            {
+                data.EnabledLogCategories.Add("AreaVisualizer");
             }
 
             data.CharacterFolderPreviewEmoteOverrides ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -1006,6 +1028,7 @@ namespace OceanyaClient
                     CharacterName = rule.CharacterName?.Trim() ?? string.Empty,
                     EmoteName = rule.EmoteName?.Trim() ?? string.Empty,
                     SoundPath = rule.SoundPath?.Trim() ?? string.Empty,
+                    VolumePercent = Math.Max(0, rule.VolumePercent),
                     WholeWord = rule.WholeWord,
                     IsEnabled = rule.IsEnabled
                 })

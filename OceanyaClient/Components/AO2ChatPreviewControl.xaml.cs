@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Windows;
@@ -291,188 +290,27 @@ namespace OceanyaClient
             Paragraph paragraph = new Paragraph
             {
                 Margin = new Thickness(0),
-                TextAlignment = ResolveAo2MessageAlignment(rawText, out string text)
+            TextAlignment = AO2ChatTextFormatter.ResolveMessageAlignment(rawText, out string text)
             };
 
-            foreach ((string textElement, Color color) in EnumerateAo2FormattedTextElements(style, text, MessageColorIndex))
+            foreach (AO2FormattedTextSegment segment in AO2ChatTextFormatter.EnumerateFormattedTextSegments(
+                style,
+                text,
+                MessageColorIndex,
+                MessageColorOverride))
             {
-                paragraph.Inlines.Add(new Run(textElement)
+                paragraph.Inlines.Add(new Run(segment.Text)
                 {
-                    Foreground = new SolidColorBrush(color)
+                    Foreground = new SolidColorBrush(segment.Color)
                 });
             }
 
             MessageTextBox.Document.Blocks.Add(paragraph);
         }
 
-        private static TextAlignment ResolveAo2MessageAlignment(string rawText, out string text)
-        {
-            text = rawText ?? string.Empty;
-            string trimmed = text.Trim();
-            string? marker = trimmed.StartsWith("~~", StringComparison.Ordinal)
-                ? "~~"
-                : trimmed.StartsWith("~>", StringComparison.Ordinal)
-                    ? "~>"
-                    : trimmed.StartsWith("<>", StringComparison.Ordinal)
-                        ? "<>"
-                        : null;
-            if (marker == null)
-            {
-                return TextAlignment.Left;
-            }
-
-            int markerIndex = text.IndexOf(marker, StringComparison.Ordinal);
-            if (markerIndex >= 0)
-            {
-                text = text.Remove(markerIndex, marker.Length);
-            }
-
-            return marker switch
-            {
-                "~~" => TextAlignment.Center,
-                "~>" => TextAlignment.Right,
-                "<>" => TextAlignment.Justify,
-                _ => TextAlignment.Left
-            };
-        }
-
-        private IEnumerable<(string Text, Color Color)> EnumerateAo2FormattedTextElements(
-            AO2ChatPreviewStyle style,
-            string text,
-            int defaultColorIndex)
-        {
-            int safeDefaultColorIndex = Math.Clamp(defaultColorIndex, 0, style.ChatColors.Length - 1);
-            Stack<int> colorStack = new Stack<int>();
-            colorStack.Push(safeDefaultColorIndex);
-            bool parseEscape = false;
-            for (int index = 0; index < text.Length;)
-            {
-                string textElement = GetTextElement(text, index);
-                index += textElement.Length;
-
-                if (parseEscape)
-                {
-                    parseEscape = false;
-                    if (textElement == "n")
-                    {
-                        yield return (Environment.NewLine, GetMessageColor(style, colorStack.Peek()));
-                    }
-                    else if (textElement != "s" && textElement != "f" && textElement != "p")
-                    {
-                        yield return (textElement, GetMessageColor(style, colorStack.Peek()));
-                    }
-
-                    continue;
-                }
-
-                if (textElement == "\\")
-                {
-                    parseEscape = true;
-                    continue;
-                }
-
-                if (textElement == "{" || textElement == "}")
-                {
-                    continue;
-                }
-
-                if (TryApplyAo2ColorMarkup(
-                    style,
-                    textElement,
-                    safeDefaultColorIndex,
-                    colorStack,
-                    out bool skip,
-                    out Color markerColor))
-                {
-                    if (!skip)
-                    {
-                        yield return (textElement, markerColor);
-                    }
-
-                    continue;
-                }
-
-                yield return (textElement, GetMessageColor(style, colorStack.Peek()));
-            }
-        }
-
-        private bool TryApplyAo2ColorMarkup(
-            AO2ChatPreviewStyle style,
-            string textElement,
-            int defaultColorIndex,
-            Stack<int> colorStack,
-            out bool skip,
-            out Color markerColor)
-        {
-            skip = false;
-            markerColor = GetMessageColor(style, colorStack.Count > 0 ? colorStack.Peek() : defaultColorIndex);
-            for (int i = 0; i < style.ChatColors.Length; i++)
-            {
-                string start = style.ChatMarkupStart[i] ?? string.Empty;
-                string end = style.ChatMarkupEnd[i] ?? string.Empty;
-                if (string.IsNullOrEmpty(start))
-                {
-                    continue;
-                }
-
-                bool isToggle = string.IsNullOrEmpty(end) || string.Equals(end, start, StringComparison.Ordinal);
-                if (isToggle && string.Equals(textElement, start, StringComparison.Ordinal))
-                {
-                    if (colorStack.Count > 0 && colorStack.Peek() == i && defaultColorIndex != i)
-                    {
-                        markerColor = GetMessageColor(style, colorStack.Peek());
-                        colorStack.Pop();
-                    }
-                    else
-                    {
-                        colorStack.Push(i);
-                        markerColor = GetMessageColor(style, colorStack.Peek());
-                    }
-
-                    skip = style.ChatMarkupRemove[i];
-                    return true;
-                }
-
-                if (string.Equals(textElement, start, StringComparison.Ordinal))
-                {
-                    colorStack.Push(i);
-                    markerColor = GetMessageColor(style, colorStack.Peek());
-                    skip = style.ChatMarkupRemove[i];
-                    return true;
-                }
-
-                if (colorStack.Count > 0
-                    && colorStack.Peek() == i
-                    && string.Equals(textElement, end, StringComparison.Ordinal))
-                {
-                    markerColor = GetMessageColor(style, colorStack.Peek());
-                    colorStack.Pop();
-                    skip = style.ChatMarkupRemove[i];
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
         private Color GetMessageColor(AO2ChatPreviewStyle style, int colorIndex)
         {
-            if (colorIndex == MessageColorIndex && MessageColorOverride.HasValue)
-            {
-                return MessageColorOverride.Value;
-            }
-
-            return colorIndex >= 0 && colorIndex < style.ChatColors.Length
-                ? style.ChatColors[colorIndex]
-                : style.MessageColor;
-        }
-
-        private static string GetTextElement(string text, int index)
-        {
-            TextElementEnumerator enumerator = StringInfo.GetTextElementEnumerator(text, index);
-            return enumerator.MoveNext()
-                ? enumerator.GetTextElement()
-                : text.Substring(index, 1);
+            return AO2ChatTextFormatter.GetMessageColor(style, colorIndex, MessageColorIndex, MessageColorOverride);
         }
 
         private void ApplyDynamicShownameLayout(AO2ChatPreviewStyle style, string showname)

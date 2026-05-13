@@ -11,6 +11,7 @@ using AOBot_Testing.Structures;
 using Common;
 using NUnit.Framework;
 using OceanyaClient;
+using OceanyaClient.Features.Chat;
 using OceanyaClient.Features.Viewport;
 using OceanyaClient.Components;
 using OceanyaClient.Features.Startup;
@@ -240,6 +241,69 @@ namespace UnitTests
                 Assert.That(CallwordAudioNotifier.ContainsWholeWord("hello Kamui", "Kam"), Is.False);
                 Assert.That(CallwordAudioNotifier.ContainsWholeWord("hello akam", "Kam"), Is.False);
                 Assert.That(CallwordAudioNotifier.ContainsWholeWord("hello Kam_Test", "Kam"), Is.False);
+            });
+        }
+
+        [Test]
+        public void SaveFile_NormalizesCallwordRules_PreservesVolumePercent()
+        {
+            SaveFile.ResetForTests(
+                new SaveData
+                {
+                    CallwordRules = new List<CallwordRule>
+                    {
+                        new CallwordRule
+                        {
+                            TriggerType = CallwordTriggerType.MessageContains,
+                            Match = "hold it",
+                            SoundPath = "sfx/notify.opus",
+                            VolumePercent = 300,
+                            IsEnabled = true
+                        }
+                    }
+                },
+                persist: false);
+
+            Assert.That(SaveFile.Data.CallwordRules.Single().VolumePercent, Is.EqualTo(300));
+        }
+
+        [Test]
+        public void Ao2TextLogWriter_WritesAo2StyleLogBesideConfiguredAoInstall()
+        {
+            string aoRoot = Path.Combine(tempRoot, "ao");
+            Directory.CreateDirectory(aoRoot);
+            string configPath = Path.Combine(aoRoot, "config.ini");
+            File.WriteAllLines(
+                configPath,
+                new[]
+                {
+                    "automatic_logging_enabled=true",
+                    "demo_logging_enabled=true"
+                });
+            SaveFile.Data.ConfigIniPath = configPath;
+            SaveFile.Data.SelectedServerName = "Test/Server";
+            Globals.PathToConfigINI = configPath;
+            Globals.SetSelectedServerEndpoint("ws://127.0.0.1:27016");
+
+            Ao2TextLogWriter writer = new Ao2TextLogWriter();
+            writer.RefreshSession();
+            writer.AppendIcMessage(
+                new ICMessage { Character = "Phoenix", ShowName = "Nick", Message = "Hello" },
+                "Nick",
+                "Hello");
+            writer.AppendIcAction("Nick", "shouts", "OBJECTION!");
+            writer.AppendServerMessage("Judge", "Court is now in session.");
+
+            string logRoot = Path.Combine(aoRoot, "logs", "TestServer");
+            string logFile = Directory.GetFiles(logRoot, "*.log").Single();
+            string logText = File.ReadAllText(logFile);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(logText, Does.Contain("Joined server TestServer hosted on address ws://127.0.0.1:27016 on "));
+                Assert.That(logText, Does.Contain("] Nick (Phoenix): Hello"));
+                Assert.That(logText, Does.Contain("] Nick shouts: OBJECTION!"));
+                Assert.That(logText, Does.Contain("Judge: Court is now in session."));
             });
         }
 

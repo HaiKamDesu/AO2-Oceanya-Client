@@ -15,8 +15,15 @@ Current categories are:
 - `IC`: in-character send/receive and GM client IC state.
 - `OOC`: out-of-character messages.
 - `Viewport`: AO2 viewport rendering, asset fallback, and playback diagnostics.
+- `MusicList`: music list packet, tree-build, local-scan, and playback diagnostics.
+- `AreaVisualizer`: area navigator popup rebuild and refresh diagnostics.
+- `SFX`: SFX, blip, and shout playback diagnostics.
 
 Use a real category instead of embedding tags such as `[Viewport]` in the message text. Keep `Network` for packet text and use `IC` or `Viewport` for higher-level interpretation around those packets.
+
+## Export
+The debug console has an `Export` button next to `Clear`. It opens a Windows save-file dialog and writes the currently
+visible console document, honoring the active category filters and any manual clear done in the window.
 
 ## GM Multi-Client Diagnostics
 IC send now logs the selected profile, target network client, connection state, selected INI puppet id/name, local render character, emote, and message length before sending. `AOClient.SendICMessage` also logs packet metadata before the raw `MS#` packet. These logs are intended to diagnose cases where manual INI puppet selection leaves the local render character different from the selected server character slot.

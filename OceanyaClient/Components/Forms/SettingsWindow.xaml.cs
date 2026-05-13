@@ -353,6 +353,7 @@ namespace OceanyaClient
                 CharacterName = rule.CharacterName,
                 EmoteName = rule.EmoteName,
                 SoundPath = rule.SoundPath,
+                VolumePercent = rule.VolumePercent,
                 WholeWord = rule.WholeWord,
                 IsEnabled = rule.IsEnabled
             };

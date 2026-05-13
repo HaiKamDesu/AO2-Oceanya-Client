@@ -5,6 +5,26 @@ This document explains how the AO2 client reads `chat_config.ini` for IC text co
 
 It is based on the reference client source in `AO2-Client/`.
 
+## Main-window IC log formatting in Oceanya
+The GM multi-client IC log shares the same AO2 IC text formatter as the viewport chatbox. Normal incoming/outgoing IC
+messages go through the centralized formatter in `OceanyaClient/Features/ChatPreview/AO2ChatTextFormatter.cs`, so
+packet text color, `chat_config.ini` color markers, escaped newlines, pause/shake/flash escapes, alignment markers, and
+speed markers behave consistently between the main-window log and the viewport.
+
+AO2 action announcements are intentionally different. `CT`/action-style messages such as shouts, presented evidence,
+played songs, and stopped music are logged as plain announcement text in the main-window IC log. Their text may still be
+bolded by the log row, but it must not parse IC color markers; a song title such as `Tranquility ~ Extasis` stays plain
+instead of treating `~ Extasis` as red IC text.
+
+## AO2-compatible text logs in Oceanya
+Oceanya writes AO2-style text logs through `OceanyaClient/Features/Chat/Ao2TextLogWriter.cs`. It reads the selected AO `config.ini` with `Ao2ConfigIniSettings`, honors `automatic_logging_enabled` for writes, and uses `demo_logging_enabled` to decide whether to create the session log path, matching AO2's `log_filename` behavior.
+
+Logs are written beside the selected AO install:
+
+`<AO install>/logs/<sanitized server name>/<UTC yyyy-MM-dd HH-mm-ss UTC>.log`
+
+The first line is AO2's joined-server line. IC messages use the `ChatLogPiece::toString()` shape: `[timestamp] showname (character): message` when the local character name differs from the display name. IC actions add the action before the colon, and OOC/server messages use `name: message`.
+
 ## Where `chat_config.ini` is loaded from
 Color config values are read through:
 
