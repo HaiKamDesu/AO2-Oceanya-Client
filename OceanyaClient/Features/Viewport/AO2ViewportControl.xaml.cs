@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -58,7 +57,6 @@ namespace OceanyaClient.Features.Viewport
         private readonly TranslateTransform pairCharacterShakeTransform = new TranslateTransform();
         private readonly TranslateTransform chatShakeTransform = new TranslateTransform();
         private readonly Dictionary<Image, CancellationTokenSource> pendingAsyncLoads = new Dictionary<Image, CancellationTokenSource>();
-        private CancellationTokenSource? backgroundPrefetchCts;
         private string currentRenderPosition = string.Empty;
         private bool testimonyVisible;
         private IAnimationPlayer? chatArrowPlayer;
@@ -337,10 +335,6 @@ namespace OceanyaClient.Features.Viewport
             if (!hadClient || !sameMessageSource)
             {
                 RenderBackgroundOnly();
-                if (sceneClient?.curBG is string curBg && !string.IsNullOrWhiteSpace(curBg))
-                {
-                    StartBackgroundPrefetch(curBg);
-                }
             }
         }
 
@@ -451,16 +445,6 @@ namespace OceanyaClient.Features.Viewport
                 audioManager.StopSfxAndBlips();
                 RenderBackgroundOnly();
             });
-            StartBackgroundPrefetch(background);
-        }
-
-        private void StartBackgroundPrefetch(string backgroundName)
-        {
-            backgroundPrefetchCts?.Cancel();
-            backgroundPrefetchCts?.Dispose();
-            CancellationTokenSource cts = new CancellationTokenSource();
-            backgroundPrefetchCts = cts;
-            Task.Run(() => AO2ViewportAssetResolver.PrefetchBackground(backgroundName, cts.Token), cts.Token);
         }
 
         private void RenderBackgroundOnly()
@@ -592,6 +576,23 @@ namespace OceanyaClient.Features.Viewport
             bool immediate)
         {
             string messageText = Globals.ReplaceTextForSymbols(message.Message);
+
+            if (immediate)
+            {
+                renderSpeaking = () => RenderSpeakingScene(
+                    background,
+                    position,
+                    character,
+                    showname,
+                    message,
+                    startTextReveal: false);
+            }
+
+            // Build the continuation handler before RenderScene so it can be passed as the
+            // onCharacterPlayerReady callback.  SetCharacterAnimatedImageAsync calls it
+            // synchronously when frames are already cached, or on the dispatcher once an
+            // async decode finishes — whichever comes first.  The `continued` guard ensures
+            // renderSpeaking is called exactly once even if the callback fires multiple times.
             bool continued = false;
             Action<IAnimationPlayer?> handlePreAnimationPlayer = preAnimationPlayer =>
             {
@@ -656,28 +657,6 @@ namespace OceanyaClient.Features.Viewport
                 phase: ViewportPhase.PreAnimation,
                 startTextReveal: immediate,
                 onCharacterPlayerReady: handlePreAnimationPlayer);
-
-            if (immediate)
-            {
-                renderSpeaking = () => RenderSpeakingScene(
-                    background,
-                    position,
-                    character,
-                    showname,
-                    message,
-                    startTextReveal: false);
-            }
-
-            if (animationPlayers.TryGetValue(CharacterImage, out IAnimationPlayer? preAnimationPlayer))
-            {
-                handlePreAnimationPlayer(preAnimationPlayer);
-                return;
-            }
-
-            if (!pendingAsyncLoads.ContainsKey(CharacterImage))
-            {
-                handlePreAnimationPlayer(null);
-            }
         }
 
         private void RenderSpeakingScene(
@@ -758,7 +737,7 @@ namespace OceanyaClient.Features.Viewport
                     character,
                     resolvedCharacterAnimation.ResolvedToken,
                     messageSequence);
-            SetCharacterAnimatedImage(
+            SetCharacterAnimatedImageAsync(
                 CharacterImage,
                 resolvedCharacterAnimation.AssetPath,
                 !string.IsNullOrWhiteSpace(resolvedCharacterAnimation.AssetPath),
@@ -1059,7 +1038,6 @@ namespace OceanyaClient.Features.Viewport
             bool loop = true,
             Action<int>? onFrameChanged = null)
         {
-            CancelPendingLoad(image);
             StopAnimation(image);
             if (!visible || string.IsNullOrWhiteSpace(path))
             {
@@ -1067,15 +1045,6 @@ namespace OceanyaClient.Features.Viewport
                 image.Visibility = Visibility.Collapsed;
                 return null;
             }
-
-            string imgLabel = ReferenceEquals(image, BackgroundImage) ? "BG"
-                : ReferenceEquals(image, DeskImage) ? "Desk"
-                : ReferenceEquals(image, CharacterImage) ? "Char"
-                : ReferenceEquals(image, PairCharacterImage) ? "PairChar"
-                : "Other";
-            bool onUi = Dispatcher.CheckAccess();
-            string threadTag = $"{(onUi ? "UI" : "BG")}:T{Environment.CurrentManagedThreadId}";
-            var sw = Stopwatch.StartNew();
 
             if (Ao2AnimationPreview.TryCreateAnimationPlayer(
                     path,
@@ -1085,159 +1054,140 @@ namespace OceanyaClient.Features.Viewport
                     maxDimensionOverride: null)
                 && player != null)
             {
-                sw.Stop();
-                CustomConsole.Log(
-                    $"SetAnim {imgLabel}: animated {Path.GetFileName(path)} {sw.ElapsedMilliseconds}ms [{threadTag}]",
-                    CustomConsole.LogLevel.Debug, CustomConsole.LogCategory.Viewport);
-                AttachAnimationPlayer(image, player, onFrameChanged);
+                animationPlayers[image] = player;
+                player.FrameChanged += frame => image.Source = frame;
+                if (onFrameChanged != null)
+                {
+                    player.FrameIndexChanged += onFrameChanged;
+                }
+
+                image.Source = player.CurrentFrame;
+                image.Visibility = Visibility.Visible;
+                onFrameChanged?.Invoke(player.CurrentFrameIndex);
                 return player;
             }
 
-            sw.Stop();
-            CustomConsole.Log(
-                $"SetAnim {imgLabel}: static {Path.GetFileName(path)} {sw.ElapsedMilliseconds}ms [{threadTag}]",
-                CustomConsole.LogLevel.Debug, CustomConsole.LogCategory.Viewport);
             ImageSource? source = AO2ViewportAssetResolver.LoadImage(path, decodePixelWidth: 0);
             image.Source = source;
             image.Visibility = source != null ? Visibility.Visible : Visibility.Collapsed;
             return null;
         }
 
-        private bool SetCharacterAnimatedImage(
+        /// <summary>
+        /// Loads an animated or static image into <paramref name="image"/>.
+        /// When frames are already cached the player is assigned synchronously and
+        /// <paramref name="onPlayerReady"/> fires before this method returns.
+        /// When the animation has not yet been decoded, decoding runs on a background
+        /// thread and <paramref name="onPlayerReady"/> is invoked on the dispatcher once
+        /// it completes.  A stale decode is silently dropped if the image slot is
+        /// re-assigned (e.g. the user sends another IC message) before it finishes.
+        /// </summary>
+        private void SetCharacterAnimatedImageAsync(
             Image image,
             string? path,
             bool visible,
-            out IAnimationPlayer? immediatePlayer,
             bool loop = true,
             Action<int>? onFrameChanged = null,
             Action<IAnimationPlayer?>? onPlayerReady = null)
         {
-            immediatePlayer = null;
+            CancelPendingLoad(image);
+
             if (!visible || string.IsNullOrWhiteSpace(path))
             {
-                immediatePlayer = SetAnimatedImage(image, null, false, loop, onFrameChanged);
-                return false;
+                StopAnimation(image);
+                image.Source = null;
+                image.Visibility = Visibility.Collapsed;
+                onPlayerReady?.Invoke(null);
+                return;
             }
 
             string? resolvedPath = Ao2AnimationPreview.ResolveAo2ImagePath(path);
             if (string.IsNullOrWhiteSpace(resolvedPath) || !File.Exists(resolvedPath))
             {
-                immediatePlayer = SetAnimatedImage(image, path, visible, loop, onFrameChanged);
-                return false;
+                IAnimationPlayer? syncPlayer = SetAnimatedImage(image, path, visible, loop, onFrameChanged);
+                onPlayerReady?.Invoke(syncPlayer);
+                return;
             }
 
             DateTime lastWriteTimeUtc = File.GetLastWriteTimeUtc(resolvedPath);
-            if (!Ao2AnimationPreview.IsPotentialAnimatedPath(resolvedPath)
-                || Ao2AnimationPreview.IsAnimationCached(resolvedPath, lastWriteTimeUtc))
+            bool isAnimated = Ao2AnimationPreview.IsPotentialAnimatedPath(resolvedPath);
+            bool isCached = isAnimated && Ao2AnimationPreview.IsAnimationCached(resolvedPath, lastWriteTimeUtc);
+
+            // Fast path: static image or frames already cached — assign synchronously.
+            if (!isAnimated || isCached)
             {
-                immediatePlayer = SetAnimatedImage(image, resolvedPath, visible, loop, onFrameChanged);
-                return false;
+                IAnimationPlayer? syncPlayer = SetAnimatedImage(image, resolvedPath, visible, loop, onFrameChanged);
+                onPlayerReady?.Invoke(syncPlayer);
+                return;
             }
 
-            CancelPendingLoad(image);
-            string imgLabel = ReferenceEquals(image, CharacterImage) ? "Char"
-                : ReferenceEquals(image, PairCharacterImage) ? "PairChar"
-                : "Other";
-            string fileName = Path.GetFileName(resolvedPath);
-            var totalSw = Stopwatch.StartNew();
-            var cts = new CancellationTokenSource();
+            // Slow path: animated and not yet decoded.
+            // Clear the slot immediately so the old sprite does not linger, then decode
+            // on a background thread (mirrors AO2's AnimationLoader async approach).
+            StopAnimation(image);
+            image.Source = null;
+            image.Visibility = Visibility.Collapsed;
+
+            CancellationTokenSource cts = new CancellationTokenSource();
             pendingAsyncLoads[image] = cts;
-            CustomConsole.Log(
-                $"SetAnim {imgLabel}: ASYNC-START {fileName} [UI:T{Environment.CurrentManagedThreadId}]",
-                CustomConsole.LogLevel.Debug, CustomConsole.LogCategory.Viewport);
+            string capturedPath = resolvedPath;
+            bool capturedLoop = loop;
+            Action<int>? capturedOnFrameChanged = onFrameChanged;
 
             Task.Run(() =>
             {
-                IAnimationPlayer? asyncPlayer = null;
-                ImageSource? staticSource = null;
-                long decodeMs = 0;
-                try
-                {
-                    var decodeSw = Stopwatch.StartNew();
-                    Ao2AnimationPreview.TryCreateAnimationPlayer(
-                        resolvedPath,
-                        loop,
-                        out asyncPlayer,
-                        usePreviewLimits: false,
-                        maxDimensionOverride: null);
-                    if (asyncPlayer == null)
-                    {
-                        staticSource = AO2ViewportAssetResolver.LoadImage(resolvedPath, decodePixelWidth: 0);
-                    }
-
-                    decodeSw.Stop();
-                    decodeMs = decodeSw.ElapsedMilliseconds;
-                }
-                catch (Exception exception)
-                {
-                    CustomConsole.Error($"Failed to decode viewport character animation '{resolvedPath}'.", exception);
-                }
-
+                Ao2AnimationPreview.TryCreateAnimationPlayer(
+                    capturedPath,
+                    capturedLoop,
+                    out IAnimationPlayer? p,
+                    usePreviewLimits: false,
+                    maxDimensionOverride: null);
+                return p;
+            }).ContinueWith(task =>
+            {
                 Dispatcher.BeginInvoke(() =>
                 {
-                    if (!pendingAsyncLoads.TryGetValue(image, out CancellationTokenSource? stored)
-                        || !ReferenceEquals(stored, cts))
+                    if (!pendingAsyncLoads.TryGetValue(image, out CancellationTokenSource? currentCts)
+                        || !ReferenceEquals(currentCts, cts))
                     {
-                        asyncPlayer?.Stop();
+                        // A newer load superseded this one — discard the result.
                         return;
                     }
 
                     pendingAsyncLoads.Remove(image);
                     cts.Dispose();
-                    totalSw.Stop();
-                    CustomConsole.Log(
-                        $"SetAnim {imgLabel}: ASYNC-DONE {fileName} decode={decodeMs}ms total={totalSw.ElapsedMilliseconds}ms [{(asyncPlayer != null ? "animated" : "static/fail")}]",
-                        CustomConsole.LogLevel.Debug, CustomConsole.LogCategory.Viewport);
 
-                    StopAnimation(image);
-                    if (asyncPlayer != null)
+                    if (task.IsFaulted || task.IsCanceled)
                     {
-                        AttachAnimationPlayer(image, asyncPlayer, onFrameChanged);
-                        asyncPlayer.Restart();
-                        onPlayerReady?.Invoke(asyncPlayer);
+                        onPlayerReady?.Invoke(null);
                         return;
                     }
 
-                    image.Source = staticSource;
-                    image.Visibility = staticSource != null ? Visibility.Visible : Visibility.Collapsed;
-                    onPlayerReady?.Invoke(null);
+                    StopAnimation(image);
+                    IAnimationPlayer? player = task.Result;
+                    if (player != null)
+                    {
+                        animationPlayers[image] = player;
+                        player.FrameChanged += frame => image.Source = frame;
+                        if (capturedOnFrameChanged != null)
+                        {
+                            player.FrameIndexChanged += capturedOnFrameChanged;
+                        }
+
+                        image.Source = player.CurrentFrame;
+                        image.Visibility = Visibility.Visible;
+                        capturedOnFrameChanged?.Invoke(player.CurrentFrameIndex);
+                    }
+                    else
+                    {
+                        ImageSource? source = AO2ViewportAssetResolver.LoadImage(capturedPath, decodePixelWidth: 0);
+                        image.Source = source;
+                        image.Visibility = source != null ? Visibility.Visible : Visibility.Collapsed;
+                    }
+
+                    onPlayerReady?.Invoke(player);
                 });
-            }, cts.Token);
-
-            return true;
-        }
-
-        private IAnimationPlayer? SetCharacterAnimatedImage(
-            Image image,
-            string? path,
-            bool visible,
-            bool loop = true,
-            Action<int>? onFrameChanged = null,
-            Action<IAnimationPlayer?>? onPlayerReady = null)
-        {
-            bool asyncStarted = SetCharacterAnimatedImage(
-                image,
-                path,
-                visible,
-                out IAnimationPlayer? immediatePlayer,
-                loop,
-                onFrameChanged,
-                onPlayerReady);
-            return asyncStarted ? null : immediatePlayer;
-        }
-
-        private void AttachAnimationPlayer(Image image, IAnimationPlayer player, Action<int>? onFrameChanged)
-        {
-            animationPlayers[image] = player;
-            player.FrameChanged += frame => image.Source = frame;
-            if (onFrameChanged != null)
-            {
-                player.FrameIndexChanged += onFrameChanged;
-            }
-
-            image.Source = player.CurrentFrame;
-            image.Visibility = Visibility.Visible;
-            onFrameChanged?.Invoke(player.CurrentFrameIndex);
+            }, TaskScheduler.Default);
         }
 
         private static void SetPlacedImage(
@@ -1256,7 +1206,7 @@ namespace OceanyaClient.Features.Viewport
             image.Visibility = visible && source != null ? Visibility.Visible : Visibility.Collapsed;
         }
 
-        private void SetPlacedAnimatedImage(
+        private IAnimationPlayer? SetPlacedAnimatedImage(
             Image image,
             AO2ViewportAssetResolver.ViewportImagePlacement placement,
             bool visible,
@@ -1268,14 +1218,12 @@ namespace OceanyaClient.Features.Viewport
             Canvas.SetLeft(image, placement.Left);
             Canvas.SetTop(image, placement.Top);
 
-            string imgLabel = ReferenceEquals(image, BackgroundImage) ? "BG" : "Desk";
             string path = placement.ImagePath ?? string.Empty;
             if (!visible || string.IsNullOrWhiteSpace(path))
             {
                 CancelPendingLoad(image);
                 placedImageStates.Remove(image);
-                SetAnimatedImage(image, null, false);
-                return;
+                return SetAnimatedImage(image, null, false);
             }
 
             DateTime lastWriteTimeUtc = File.Exists(path)
@@ -1287,89 +1235,103 @@ namespace OceanyaClient.Features.Viewport
                 && image.Source != null)
             {
                 image.Visibility = Visibility.Visible;
-                return;
+                return animationPlayers.TryGetValue(image, out IAnimationPlayer? existingPlayer)
+                    ? existingPlayer
+                    : null;
             }
 
             CancelPendingLoad(image);
-            StopAnimation(image);
+            placedImageStates.Remove(image);
 
-            // Memory-cache hit: frames already decoded this session — wire up player with no stall.
-            if (Ao2AnimationPreview.IsAnimationCached(path, lastWriteTimeUtc))
+            // For animated assets that are not already decoded, offload to a background thread
+            // to avoid blocking the UI thread (mirrors AO2's AnimationLoader async approach).
+            bool isAnimated = Ao2AnimationPreview.IsPotentialAnimatedPath(path);
+            bool isCached = isAnimated && Ao2AnimationPreview.IsAnimationCached(path, lastWriteTimeUtc);
+            if (isAnimated && !isCached)
             {
-                var swSync = Stopwatch.StartNew();
-                IAnimationPlayer? syncPlayer = SetAnimatedImage(image, path, true);
-                swSync.Stop();
-                CustomConsole.Log(
-                    $"PlacedAnim {imgLabel}: MEM-HIT {Path.GetFileName(path)} ready in {swSync.ElapsedMilliseconds}ms [UI]",
-                    CustomConsole.LogLevel.Debug, CustomConsole.LogCategory.Viewport);
-                if (image.Source != null)
-                {
-                    placedImageStates[image] = new PlacedImageState(path, lastWriteTimeUtc);
-                }
+                string capturedPath = path;
+                DateTime capturedWrite = lastWriteTimeUtc;
+                double capturedLeft = placement.Left;
+                double capturedTop = placement.Top;
+                double capturedWidth = placement.Width;
+                double capturedHeight = placement.Height;
+                Stretch capturedStretch = stretch;
 
-                return;
+                CancellationTokenSource cts = new CancellationTokenSource();
+                pendingAsyncLoads[image] = cts;
+
+                Task.Run(() =>
+                {
+                    if (cts.Token.IsCancellationRequested)
+                    {
+                        return (IAnimationPlayer?)null;
+                    }
+
+                    Ao2AnimationPreview.TryCreateAnimationPlayer(
+                        capturedPath,
+                        true,
+                        out IAnimationPlayer? p,
+                        usePreviewLimits: false,
+                        maxDimensionOverride: null);
+                    return p;
+                }).ContinueWith(task =>
+                {
+                    Dispatcher.BeginInvoke(() =>
+                    {
+                        if (!pendingAsyncLoads.TryGetValue(image, out CancellationTokenSource? currentCts)
+                            || !ReferenceEquals(currentCts, cts))
+                        {
+                            return;
+                        }
+
+                        pendingAsyncLoads.Remove(image);
+                        cts.Dispose();
+
+                        if (task.IsFaulted || task.IsCanceled)
+                        {
+                            return;
+                        }
+
+                        image.Width = capturedWidth;
+                        image.Height = capturedHeight;
+                        image.Stretch = capturedStretch;
+                        Canvas.SetLeft(image, capturedLeft);
+                        Canvas.SetTop(image, capturedTop);
+
+                        StopAnimation(image);
+                        IAnimationPlayer? player = task.Result;
+                        if (player != null)
+                        {
+                            animationPlayers[image] = player;
+                            player.FrameChanged += frame => image.Source = frame;
+                            image.Source = player.CurrentFrame;
+                            image.Visibility = Visibility.Visible;
+                            placedImageStates[image] = new PlacedImageState(capturedPath, capturedWrite);
+                        }
+                        else
+                        {
+                            ImageSource? source = AO2ViewportAssetResolver.LoadImage(capturedPath, decodePixelWidth: 0);
+                            image.Source = source;
+                            image.Visibility = source != null ? Visibility.Visible : Visibility.Collapsed;
+                            if (image.Source != null)
+                            {
+                                placedImageStates[image] = new PlacedImageState(capturedPath, capturedWrite);
+                            }
+                        }
+                    });
+                }, TaskScheduler.Default);
+
+                return null;
             }
 
-            // Memory-cache miss: decode on a background thread so the UI thread never stalls.
-            // The previous image stays visible until the new one is ready.
-            var totalSw = Stopwatch.StartNew();
-            var cts = new CancellationTokenSource();
-            pendingAsyncLoads[image] = cts;
-            string capturedPath = path;
-            DateTime capturedLastWrite = lastWriteTimeUtc;
-            string fileName = Path.GetFileName(path);
-            CustomConsole.Log(
-                $"PlacedAnim {imgLabel}: ASYNC-START {fileName} [UI:T{Environment.CurrentManagedThreadId}]",
-                CustomConsole.LogLevel.Debug, CustomConsole.LogCategory.Viewport);
-
-            Task.Run(() =>
+            // Sync path: already cached or non-animated (instant decode).
+            IAnimationPlayer? syncPlayer = SetAnimatedImage(image, path, true);
+            if (image.Source != null)
             {
-                var decodeSw = Stopwatch.StartNew();
-                Ao2AnimationPreview.TryCreateAnimationPlayer(
-                    capturedPath,
-                    loop: true,
-                    out IAnimationPlayer? bgPlayer,
-                    usePreviewLimits: false,
-                    maxDimensionOverride: null);
-                decodeSw.Stop();
-                long decodeMs = decodeSw.ElapsedMilliseconds;
+                placedImageStates[image] = new PlacedImageState(path, lastWriteTimeUtc);
+            }
 
-                Dispatcher.BeginInvoke(() =>
-                {
-                    if (!pendingAsyncLoads.TryGetValue(image, out CancellationTokenSource? stored)
-                        || !ReferenceEquals(stored, cts))
-                    {
-                        bgPlayer?.Stop();
-                        return;
-                    }
-
-                    pendingAsyncLoads.Remove(image);
-                    cts.Dispose();
-                    totalSw.Stop();
-
-                    CustomConsole.Log(
-                        $"PlacedAnim {imgLabel}: ASYNC-DONE {fileName} decode={decodeMs}ms total={totalSw.ElapsedMilliseconds}ms [{(bgPlayer != null ? "animated" : "static/fail")}]",
-                        CustomConsole.LogLevel.Debug, CustomConsole.LogCategory.Viewport);
-
-                    StopAnimation(image);
-                    if (bgPlayer != null)
-                    {
-                        animationPlayers[image] = bgPlayer;
-                        bgPlayer.FrameChanged += frame => image.Source = frame;
-                        image.Source = bgPlayer.CurrentFrame;
-                        image.Visibility = Visibility.Visible;
-                    }
-                    else
-                    {
-                        SetAnimatedImage(image, capturedPath, true);
-                    }
-
-                    if (image.Source != null)
-                    {
-                        placedImageStates[image] = new PlacedImageState(capturedPath, capturedLastWrite);
-                    }
-                });
-            });
+            return syncPlayer;
         }
 
         private static void ApplyOffset(Image image, (int Horizontal, int Vertical) offset)
@@ -1404,7 +1366,7 @@ namespace OceanyaClient.Features.Viewport
                 pairCharacter,
                 message.OtherEmote,
                 talking: false);
-            SetCharacterAnimatedImage(PairCharacterImage, pairPath, !string.IsNullOrWhiteSpace(pairPath));
+            SetCharacterAnimatedImageAsync(PairCharacterImage, pairPath, !string.IsNullOrWhiteSpace(pairPath));
             PairCharacterImage.RenderTransformOrigin = new Point(0.5, 0.5);
             PairCharacterImage.RenderTransform = BuildCharacterTransform(message.OtherFlip, pairCharacterShakeTransform);
             ApplyOffset(PairCharacterImage, (message.OtherOffset, message.OtherOffsetVertical));
@@ -1654,39 +1616,18 @@ namespace OceanyaClient.Features.Viewport
             string? postPath = AO2ViewportAssetResolver.ResolveCharacterPostAnimation(character, emoteName);
             if (!string.IsNullOrWhiteSpace(postPath))
             {
-                void HandlePostPlayer(IAnimationPlayer? postPlayer)
+                IAnimationPlayer? postPlayer = SetAnimatedImage(CharacterImage, postPath, true, loop: false);
+                if (postPlayer != null)
                 {
-                    if (postPlayer != null)
+                    postPlayer.PlaybackFinished += () =>
                     {
-                        postPlayer.PlaybackFinished += () =>
+                        if (sequence == messageSequence)
                         {
-                            if (sequence == messageSequence)
-                            {
-                                RenderIdleCharacterAnimation(character, emoteName);
-                            }
-                        };
-                        return;
-                    }
-
-                    if (sequence == messageSequence)
-                    {
-                        RenderIdleCharacterAnimation(character, emoteName);
-                    }
-                }
-
-                if (SetCharacterAnimatedImage(
-                        CharacterImage,
-                        postPath,
-                        true,
-                        out IAnimationPlayer? postPlayer,
-                        loop: false,
-                        onPlayerReady: HandlePostPlayer))
-                {
+                            RenderIdleCharacterAnimation(character, emoteName);
+                        }
+                    };
                     return;
                 }
-
-                HandlePostPlayer(postPlayer);
-                return;
             }
 
             RenderIdleCharacterAnimation(character, emoteName);
@@ -1695,7 +1636,7 @@ namespace OceanyaClient.Features.Viewport
         private void RenderIdleCharacterAnimation(CharacterFolder character, string emoteName)
         {
             string? idlePath = AO2ViewportAssetResolver.ResolveCharacterDialogAnimation(character, emoteName, talking: false);
-            SetCharacterAnimatedImage(CharacterImage, idlePath, !string.IsNullOrWhiteSpace(idlePath));
+            SetAnimatedImage(CharacterImage, idlePath, !string.IsNullOrWhiteSpace(idlePath));
         }
 
         private int GetNextDisplayedTextElement(

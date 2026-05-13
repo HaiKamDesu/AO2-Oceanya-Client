@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -10,7 +9,6 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
-using Common;
 using SkiaSharp;
 using DrawingBitmap = System.Drawing.Bitmap;
 using DrawingGraphics = System.Drawing.Graphics;
@@ -274,18 +272,6 @@ namespace OceanyaClient
 
             if (extension == ".gif")
             {
-                // For the viewport (usePreviewLimits=false) try BitmapFrameAnimationPlayer first so
-                // that decoded frames are stored in AnimationFrameCache and the disk cache.  This makes
-                // the second and subsequent sessions instant without re-decoding the file.
-                // GifAnimationPlayer is kept as a fallback for edge-case GIFs that WPF handles poorly.
-                if (!usePreviewLimits
-                    && BitmapFrameAnimationPlayer.TryCreate(resolvedPath, loop, out BitmapFrameAnimationPlayer? cachedGifPlayer, maxDimension)
-                    && cachedGifPlayer != null)
-                {
-                    player = cachedGifPlayer;
-                    return true;
-                }
-
                 try
                 {
                     player = usePreviewLimits
@@ -503,34 +489,15 @@ namespace OceanyaClient
             try
             {
                 DateTime lastWriteUtc = File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue;
-                int effectiveMaxDim = Math.Max(1, maxDimension);
-                var cacheKey = (path, lastWriteUtc, effectiveMaxDim);
+                var cacheKey = (path, lastWriteUtc, Math.Max(1, maxDimension));
                 if (TryGetCachedAnimationFrames(cacheKey, out frames, out frameDurations))
                 {
-                    return true;  // memory hit — hot path, no logging overhead
-                }
-
-                string fileName = Path.GetFileName(path);
-                string threadTag = $"T{Environment.CurrentManagedThreadId}";
-                var sw = Stopwatch.StartNew();
-
-                // Disk cache check: if frames were decoded in a previous session they are stored as
-                // raw BGRA pixels and can be reconstituted without any format-specific decoder work.
-                if (OceanyaAnimationDiskCache.TryLoad(path, lastWriteUtc, effectiveMaxDim, out frames, out frameDurations)
-                    && frames != null && frameDurations != null)
-                {
-                    sw.Stop();
-                    LogVp($"DISK-HIT  {fileName} ({frames.Count}fr) {sw.ElapsedMilliseconds}ms [{threadTag}]");
-                    CacheAnimationFrames(cacheKey, frames, frameDurations);
                     return true;
                 }
-                sw.Stop();
-                LogVp($"DISK-MISS {fileName} ({sw.ElapsedMilliseconds}ms) [{threadTag}]");
 
                 string extension = Path.GetExtension(path).ToLowerInvariant();
 
                 // APNG files are decoded by the dedicated ApngFrameDecoder
-                sw.Restart();
                 if (IsApngExtensionOrContent(extension, path)
                     && ApngFrameDecoder.TryDecode(path, out List<BitmapSource>? apngFrames, out List<TimeSpan>? apngDurations)
                     && apngFrames != null && apngDurations != null
@@ -538,69 +505,24 @@ namespace OceanyaClient
                 {
                     frames = apngFrames;
                     frameDurations = apngDurations;
-                    sw.Stop();
-                    LogVp($"APNG-DECODE {fileName} ({frames.Count}fr) {sw.ElapsedMilliseconds}ms [{threadTag}]");
                     CacheAnimationFrames(cacheKey, frames, frameDurations);
-                    OceanyaAnimationDiskCache.SaveAsync(path, lastWriteUtc, effectiveMaxDim, frames, frameDurations);
                     return true;
                 }
 
-                // WebP: SkiaSharp decodes animated WebP natively without any codec installation.
-                // Skip WIC for .webp — on systems without the Windows WebP Image Extensions
-                // the WIC attempt fails after 50-160 ms of wasted work per file.
                 if (string.Equals(extension, ".webp", StringComparison.OrdinalIgnoreCase))
                 {
-                    sw.Restart();
                     if (TryDecodeAnimationFramesWithSkia(path, out List<BitmapSource>? skiaFrames, out List<TimeSpan>? skiaDurations)
                         && skiaFrames != null && skiaDurations != null)
                     {
                         frames = skiaFrames;
                         frameDurations = skiaDurations;
-                        sw.Stop();
-                        LogVp($"SKIA-DECODE {fileName} ({frames.Count}fr) {sw.ElapsedMilliseconds}ms [{threadTag}]");
                         CacheAnimationFrames(cacheKey, frames, frameDurations);
-                        OceanyaAnimationDiskCache.SaveAsync(path, lastWriteUtc, effectiveMaxDim, frames, frameDurations);
                         return true;
                     }
-                    sw.Stop();
-                    LogVp($"SKIA-FAIL  {fileName} ({sw.ElapsedMilliseconds}ms) [{threadTag}]");
+
                     return false;
                 }
 
-                // GIF and other formats: WIC BitmapDecoder.
-                sw.Restart();
-                if (TryDecodeWithBitmapDecoder(path, extension, out List<BitmapSource>? wicFrames, out List<TimeSpan>? wicDurations)
-                    && wicFrames != null && wicDurations != null)
-                {
-                    frames = wicFrames;
-                    frameDurations = wicDurations;
-                    sw.Stop();
-                    LogVp($"WIC-DECODE {fileName} ({frames.Count}fr) {sw.ElapsedMilliseconds}ms [{threadTag}]");
-                    CacheAnimationFrames(cacheKey, frames, frameDurations);
-                    OceanyaAnimationDiskCache.SaveAsync(path, lastWriteUtc, effectiveMaxDim, frames, frameDurations);
-                    return true;
-                }
-                sw.Stop();
-                LogVp($"WIC-FAIL  {fileName} ({sw.ElapsedMilliseconds}ms) [{threadTag}]");
-                return false;
-            }
-            catch (Exception ex)
-            {
-                LogVp($"EXCEPTION {Path.GetFileName(path)}: {ex.GetType().Name} {ex.Message}");
-                return false;
-            }
-        }
-
-        private static bool TryDecodeWithBitmapDecoder(
-            string path,
-            string extension,
-            out List<BitmapSource>? frames,
-            out List<TimeSpan>? frameDurations)
-        {
-            frames = null;
-            frameDurations = null;
-            try
-            {
                 BitmapDecoder decoder = BitmapDecoder.Create(
                     new Uri(path, UriKind.Absolute),
                     BitmapCreateOptions.None,
@@ -668,12 +590,82 @@ namespace OceanyaClient
 
                 frames = decodedFrames;
                 frameDurations = decodedDurations;
+                CacheAnimationFrames(cacheKey, frames, frameDurations);
                 return true;
             }
             catch
             {
                 return false;
             }
+        }
+
+        private static bool TryGetCachedAnimationFrames(
+            (string path, DateTime lastWriteUtc, int maxDim) key,
+            out List<BitmapSource>? frames,
+            out List<TimeSpan>? frameDurations)
+        {
+            frames = null;
+            frameDurations = null;
+            lock (AnimationFrameCacheLock)
+            {
+                if (!AnimationFrameCache.TryGetValue(key, out CachedDecodedAnimation? cached))
+                {
+                    return false;
+                }
+
+                frames = cached.Frames.ToList();
+                frameDurations = cached.FrameDurations.ToList();
+                return frames.Count > 1 && frames.Count == frameDurations.Count;
+            }
+        }
+
+        private static void CacheAnimationFrames(
+            (string path, DateTime lastWriteUtc, int maxDim) key,
+            IReadOnlyList<BitmapSource> frames,
+            IReadOnlyList<TimeSpan> frameDurations)
+        {
+            if (frames.Count <= 1 || frames.Count != frameDurations.Count)
+            {
+                return;
+            }
+
+            lock (AnimationFrameCacheLock)
+            {
+                if (AnimationFrameCache.Count >= AnimationFrameCacheEntryLimit)
+                {
+                    AnimationFrameCache.Remove(AnimationFrameCache.Keys.First());
+                }
+
+                AnimationFrameCache[key] = new CachedDecodedAnimation(frames.ToList(), frameDurations.ToList());
+            }
+        }
+
+        private sealed class CachedDecodedAnimation
+        {
+            public CachedDecodedAnimation(List<BitmapSource> frames, List<TimeSpan> frameDurations)
+            {
+                Frames = frames;
+                FrameDurations = frameDurations;
+            }
+
+            public List<BitmapSource> Frames { get; }
+            public List<TimeSpan> FrameDurations { get; }
+        }
+
+        /// <summary>Returns true when the path is an APNG file (by extension or content).</summary>
+        private static bool IsApngExtensionOrContent(string extension, string path)
+        {
+            if (string.Equals(extension, ".apng", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (string.Equals(extension, ".png", StringComparison.OrdinalIgnoreCase))
+            {
+                return IsApngFile(path);
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -726,7 +718,6 @@ namespace OceanyaClient
                 }
 
                 frame = bmpSource;
-                // FrameCount > 0 means animated; sum frame durations for the estimate
                 if (codec.FrameCount > 0)
                 {
                     estimatedDurationMs = codec.FrameInfo.Sum(
@@ -805,6 +796,7 @@ namespace OceanyaClient
                     {
                         durationMs = (int)DefaultFrameDelayMilliseconds;
                     }
+
                     decodedDurations.Add(TimeSpan.FromMilliseconds(durationMs));
                 }
 
@@ -825,76 +817,32 @@ namespace OceanyaClient
             }
         }
 
-        private static void LogVp(string message) =>
-            CustomConsole.Log(message, CustomConsole.LogLevel.Debug, CustomConsole.LogCategory.Viewport);
-
-        private static bool TryGetCachedAnimationFrames(
-            (string path, DateTime lastWriteUtc, int maxDim) key,
-            out List<BitmapSource>? frames,
-            out List<TimeSpan>? frameDurations)
+        private static List<int> BuildSelectedFrameIndices(int sourceFrameCount, int maxFrames)
         {
-            frames = null;
-            frameDurations = null;
-            lock (AnimationFrameCacheLock)
+            int safeFrameCount = Math.Max(0, sourceFrameCount);
+            int safeMaxFrames = Math.Max(1, maxFrames);
+            if (safeFrameCount <= safeMaxFrames)
             {
-                if (!AnimationFrameCache.TryGetValue(key, out CachedDecodedAnimation? cached))
+                return Enumerable.Range(0, safeFrameCount).ToList();
+            }
+
+            List<int> selected = new List<int>(safeMaxFrames);
+            double stride = safeFrameCount / (double)safeMaxFrames;
+            for (int i = 0; i < safeMaxFrames; i++)
+            {
+                int sourceIndex = Math.Min(safeFrameCount - 1, (int)Math.Round(i * stride));
+                if (selected.Count == 0 || selected[selected.Count - 1] != sourceIndex)
                 {
-                    return false;
+                    selected.Add(sourceIndex);
                 }
-
-                frames = cached.Frames.ToList();
-                frameDurations = cached.FrameDurations.ToList();
-                return frames.Count > 1 && frames.Count == frameDurations.Count;
             }
-        }
 
-        private static void CacheAnimationFrames(
-            (string path, DateTime lastWriteUtc, int maxDim) key,
-            IReadOnlyList<BitmapSource> frames,
-            IReadOnlyList<TimeSpan> frameDurations)
-        {
-            if (frames.Count <= 1 || frames.Count != frameDurations.Count)
+            if (selected.Count == 0 || selected[selected.Count - 1] != safeFrameCount - 1)
             {
-                return;
+                selected.Add(safeFrameCount - 1);
             }
 
-            lock (AnimationFrameCacheLock)
-            {
-                if (AnimationFrameCache.Count >= AnimationFrameCacheEntryLimit)
-                {
-                    AnimationFrameCache.Remove(AnimationFrameCache.Keys.First());
-                }
-
-                AnimationFrameCache[key] = new CachedDecodedAnimation(frames.ToList(), frameDurations.ToList());
-            }
-        }
-
-        private sealed class CachedDecodedAnimation
-        {
-            public CachedDecodedAnimation(List<BitmapSource> frames, List<TimeSpan> frameDurations)
-            {
-                Frames = frames;
-                FrameDurations = frameDurations;
-            }
-
-            public List<BitmapSource> Frames { get; }
-            public List<TimeSpan> FrameDurations { get; }
-        }
-
-        /// <summary>Returns true when the path is an APNG file (by extension or content).</summary>
-        private static bool IsApngExtensionOrContent(string extension, string path)
-        {
-            if (string.Equals(extension, ".apng", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-
-            if (string.Equals(extension, ".png", StringComparison.OrdinalIgnoreCase))
-            {
-                return IsApngFile(path);
-            }
-
-            return false;
+            return selected;
         }
 
         private static (int width, int height) ComputePreviewDimensions(int sourceWidth, int sourceHeight, int maxDimension)
