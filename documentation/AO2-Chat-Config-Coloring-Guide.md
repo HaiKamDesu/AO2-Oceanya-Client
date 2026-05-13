@@ -5,6 +5,15 @@ This document explains how the AO2 client reads `chat_config.ini` for IC text co
 
 It is based on the reference client source in `AO2-Client/`.
 
+## AO2-compatible text logs in Oceanya
+Oceanya writes AO2-style text logs through `OceanyaClient/Features/Chat/Ao2TextLogWriter.cs`. It reads the selected AO `config.ini` with `Ao2ConfigIniSettings`, honors `automatic_logging_enabled` for writes, and uses `demo_logging_enabled` to decide whether to create the session log path, matching AO2's `log_filename` behavior.
+
+Logs are written beside the selected AO install:
+
+`<AO install>/logs/<sanitized server name>/<UTC yyyy-MM-dd HH-mm-ss UTC>.log`
+
+The first line is AO2's joined-server line. IC messages use the `ChatLogPiece::toString()` shape: `[timestamp] showname (character): message` when the local character name differs from the display name. IC actions add the action before the colon, and OOC/server messages use `name: message`.
+
 ## Where `chat_config.ini` is loaded from
 Color config values are read through:
 

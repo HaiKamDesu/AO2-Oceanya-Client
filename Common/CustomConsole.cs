@@ -40,8 +40,10 @@ namespace Common
             OOC,
             /// <summary>AO2 viewport rendering and playback diagnostics</summary>
             Viewport,
-            /// <summary>Music packet send/receive diagnostics</summary>
-            Music,
+            /// <summary>Music list packet, tree build, and playback diagnostics</summary>
+            MusicList,
+            /// <summary>Area navigator list build and refresh diagnostics</summary>
+            AreaVisualizer,
             /// <summary>SFX/blip/shout packet diagnostics</summary>
             SFX
         }

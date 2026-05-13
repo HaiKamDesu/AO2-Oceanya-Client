@@ -6,7 +6,7 @@ known area list, including ARUP player counts, status, case manager, and lock st
 
 ## Main Entry Points
 - `OceanyaClient/MainWindow.xaml`: connection info bar and area navigator popup.
-- `OceanyaClient/MainWindow.xaml.cs`: renders `AOClient.AvailableAreaInfos` and sends area-switch requests.
+- `OceanyaClient/MainWindow.xaml.cs`: snapshots `AOClient.AvailableAreaInfos`, builds popup rows off the UI thread, and sends area-switch requests.
 - `AOBot-Testing/Agents/AOClient.cs`: parses `SM`, `FA`, `ARUP`, and `/getarea`-style OOC responses.
 - `AOBot-Testing/Structures/AreaInfo.cs`: row model for area name, player count, status, CM, and lock state.
 - `Common/SaveFile.cs`: persists the navigator popup width and height.
@@ -14,6 +14,10 @@ known area list, including ARUP player counts, status, case manager, and lock st
 ## UI Behavior
 - The popup uses the same dark surface styling as the main client controls.
 - The bottom-right resize handle saves the chosen width and height across sessions.
+- Opening the popup shows the current cached state immediately, then requests a fresh server area list without holding
+  the popup closed. Area row construction is cancellable and runs off the UI thread; only the finished item source is
+  assigned on the dispatcher.
+- Debug timing for area row rebuilds is logged under the `AreaVisualizer` category in the debug console.
 
 ## Packet Flow
 - `SM` can contain area names before music entries during initial AO2 handshake.

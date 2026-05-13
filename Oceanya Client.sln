@@ -36,6 +36,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Documentation", "Documentat
 		Documentation\MusicList.md = Documentation\MusicList.md
 		Documentation\ReleasePackaging.md = Documentation\ReleasePackaging.md
 		Documentation\ReleaseNotes\OceanyaClient-v4.0.md = Documentation\ReleaseNotes\OceanyaClient-v4.0.md
+		Documentation\SaveFileAndUpdatePersistence.md = Documentation\SaveFileAndUpdatePersistence.md
 		Documentation\TaggingCharacters\CharacterFolderIdentitySummary.md = Documentation\TaggingCharacters\CharacterFolderIdentitySummary.md
 		Documentation\TaggingCharacters\CharacterTaggingMigrationGuide.md = Documentation\TaggingCharacters\CharacterTaggingMigrationGuide.md
 		Documentation\TaggingCharacters\character_folder_tags_backup_20260222_135533.json = Documentation\TaggingCharacters\character_folder_tags_backup_20260222_135533.json

@@ -2,6 +2,7 @@ using Common;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Windows;
@@ -172,7 +173,8 @@ namespace OceanyaClient
                 FilterIC.IsChecked      = _enabledCategories.Contains("IC");
                 FilterOOC.IsChecked     = _enabledCategories.Contains("OOC");
                 FilterViewport.IsChecked = _enabledCategories.Contains("Viewport");
-                FilterMusic.IsChecked   = _enabledCategories.Contains("Music");
+                FilterMusicList.IsChecked = _enabledCategories.Contains("MusicList");
+                FilterAreaVisualizer.IsChecked = _enabledCategories.Contains("AreaVisualizer");
                 FilterSFX.IsChecked     = _enabledCategories.Contains("SFX");
 
                 UpdateFilterSummary();
@@ -191,7 +193,8 @@ namespace OceanyaClient
             if (FilterIC.IsChecked == true)       _enabledCategories.Add("IC");
             if (FilterOOC.IsChecked == true)      _enabledCategories.Add("OOC");
             if (FilterViewport.IsChecked == true) _enabledCategories.Add("Viewport");
-            if (FilterMusic.IsChecked == true)    _enabledCategories.Add("Music");
+            if (FilterMusicList.IsChecked == true) _enabledCategories.Add("MusicList");
+            if (FilterAreaVisualizer.IsChecked == true) _enabledCategories.Add("AreaVisualizer");
             if (FilterSFX.IsChecked == true)      _enabledCategories.Add("SFX");
 
             UpdateFilterSummary();
@@ -282,6 +285,8 @@ namespace OceanyaClient
         private static readonly Brush CatICBrush      = new SolidColorBrush(Color.FromRgb(0xA8, 0x7F, 0xFF));
         private static readonly Brush CatOOCBrush     = new SolidColorBrush(Color.FromRgb(0xFF, 0xD9, 0x66));
         private static readonly Brush CatViewportBrush = new SolidColorBrush(Color.FromRgb(0x66, 0xD9, 0x99));
+        private static readonly Brush CatMusicListBrush = new SolidColorBrush(Color.FromRgb(0xC7, 0xA4, 0x5A));
+        private static readonly Brush CatAreaVisualizerBrush = new SolidColorBrush(Color.FromRgb(0x6A, 0xC6, 0xCF));
 
         private static Brush GetCategoryBrush(CustomConsole.LogCategory category) => category switch
         {
@@ -289,6 +294,8 @@ namespace OceanyaClient
             CustomConsole.LogCategory.IC      => CatICBrush,
             CustomConsole.LogCategory.OOC     => CatOOCBrush,
             CustomConsole.LogCategory.Viewport => CatViewportBrush,
+            CustomConsole.LogCategory.MusicList => CatMusicListBrush,
+            CustomConsole.LogCategory.AreaVisualizer => CatAreaVisualizerBrush,
             _                                 => CatSystemBrush
         };
 
@@ -298,6 +305,8 @@ namespace OceanyaClient
             CustomConsole.LogCategory.IC      => "[IC] ",
             CustomConsole.LogCategory.OOC     => "[OOC]",
             CustomConsole.LogCategory.Viewport => "[VPT]",
+            CustomConsole.LogCategory.MusicList => "[MUS]",
+            CustomConsole.LogCategory.AreaVisualizer => "[ARA]",
             _                                 => "[SYS]"
         };
 
@@ -450,6 +459,28 @@ namespace OceanyaClient
         {
             _currentParagraph.Inlines.Clear();
             _lineCount = 0;
+        }
+
+        private void BtnExportLog_Click(object sender, RoutedEventArgs e)
+        {
+            Microsoft.Win32.SaveFileDialog dialog = new Microsoft.Win32.SaveFileDialog
+            {
+                Title = "Export Debug Console Log",
+                Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*",
+                FileName = $"OceanyaDebugLog_{DateTime.Now:yyyyMMdd_HHmmss}.txt",
+                DefaultExt = ".txt",
+                AddExtension = true,
+                OverwritePrompt = true,
+            };
+
+            bool? result = dialog.ShowDialog(HostWindow);
+            if (result != true || string.IsNullOrWhiteSpace(dialog.FileName))
+            {
+                return;
+            }
+
+            TextRange visibleText = new TextRange(ConsoleTextBox.Document.ContentStart, ConsoleTextBox.Document.ContentEnd);
+            File.WriteAllText(dialog.FileName, visibleText.Text);
         }
 
         private void CloseButton_Click(object sender, RoutedEventArgs e)

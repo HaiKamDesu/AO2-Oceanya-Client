@@ -215,8 +215,13 @@
                                   Style="{StaticResource CategoryCheckBoxStyle}"
                                   Checked="CategoryFilter_Changed"
                                   Unchecked="CategoryFilter_Changed"/>
-                        <CheckBox x:Name="FilterMusic"
-                                  Content="Music"
+                        <CheckBox x:Name="FilterMusicList"
+                                  Content="Music List"
+                                  Style="{StaticResource CategoryCheckBoxStyle}"
+                                  Checked="CategoryFilter_Changed"
+                                  Unchecked="CategoryFilter_Changed"/>
+                        <CheckBox x:Name="FilterAreaVisualizer"
+                                  Content="Area visualizer"
                                   Style="{StaticResource CategoryCheckBoxStyle}"
                                   Checked="CategoryFilter_Changed"
                                   Unchecked="CategoryFilter_Changed"/>
@@ -239,14 +244,21 @@
                        Margin="8,0,0,0"
                        TextTrimming="CharacterEllipsis"/>
 
-            <!-- Clear log button -->
-            <Button x:Name="BtnClearLog"
-                    Grid.Column="2"
-                    Style="{StaticResource ActionButtonStyle}"
-                    Click="BtnClearLog_Click"
-                    ToolTip="Clear console output">
-                <TextBlock Text="Clear" VerticalAlignment="Center"/>
-            </Button>
+            <StackPanel Grid.Column="2" Orientation="Horizontal">
+                <Button x:Name="BtnExportLog"
+                        Style="{StaticResource ActionButtonStyle}"
+                        Click="BtnExportLog_Click"
+                        ToolTip="Export currently visible console output to a text file">
+                    <TextBlock Text="Export" VerticalAlignment="Center"/>
+                </Button>
+                <Button x:Name="BtnClearLog"
+                        Margin="6,0,0,0"
+                        Style="{StaticResource ActionButtonStyle}"
+                        Click="BtnClearLog_Click"
+                        ToolTip="Clear console output">
+                    <TextBlock Text="Clear" VerticalAlignment="Center"/>
+                </Button>
+            </StackPanel>
         </Grid>
 
         <!-- Console output -->

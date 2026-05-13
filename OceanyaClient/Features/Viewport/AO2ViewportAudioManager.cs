@@ -214,11 +214,11 @@ namespace OceanyaClient.Features.Viewport
             if (!string.IsNullOrWhiteSpace(token))
             {
                 if (AO2ViewportAudioResolver.IsStreamingUrl(token))
-                    CustomConsole.Info($"[AUDIO] URL stream: {token}", Common.CustomConsole.LogCategory.Music);
+                    CustomConsole.Info($"[AUDIO] URL stream: {token}", Common.CustomConsole.LogCategory.MusicList);
                 else if (!string.IsNullOrWhiteSpace(path))
-                    CustomConsole.Info($"[AUDIO] Local file resolved: token={token} → {path}", Common.CustomConsole.LogCategory.Music);
+                    CustomConsole.Info($"[AUDIO] Local file resolved: token={token} → {path}", Common.CustomConsole.LogCategory.MusicList);
                 else
-                    CustomConsole.Warning($"[AUDIO] Token not found locally: {token}", category: Common.CustomConsole.LogCategory.Music);
+                    CustomConsole.Warning($"[AUDIO] Token not found locally: {token}", category: Common.CustomConsole.LogCategory.MusicList);
             }
 
             bool pathChanged = !string.Equals(currentMusicPath, path ?? string.Empty, StringComparison.OrdinalIgnoreCase);

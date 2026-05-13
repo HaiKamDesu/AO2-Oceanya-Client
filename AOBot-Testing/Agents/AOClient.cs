@@ -492,7 +492,7 @@ namespace AOBot_Testing.Agents
 
             CustomConsole.Info(
                 $"[MUSIC OUT] token=\"{token}\" iniPuppetID={iniPuppetID} showName=\"{showName}\" effectFlags={effectFlags} hasEFFECTS={SupportsServerFeature("EFFECTS")} packet={packet}",
-                Common.CustomConsole.LogCategory.Music);
+                Common.CustomConsole.LogCategory.MusicList);
             await SendPacket(packet);
         }
 
@@ -1053,7 +1053,7 @@ namespace AOBot_Testing.Agents
 
             CustomConsole.Info(
                 $"[MUSIC IN] song=\"{song}\" charId={characterId} isSelf={characterId == iniPuppetID} myIniPuppetID={iniPuppetID} raw={message}",
-                Common.CustomConsole.LogCategory.Music);
+                Common.CustomConsole.LogCategory.MusicList);
 
             bool loopEnabled = fields.Length > 4 && fields[4].Trim() == "1";
             int channel = 0;

@@ -9,7 +9,7 @@ music files under local `sounds/music` asset folders.
 
 ## Main Entry Points
 - `OceanyaClient/MainWindow.xaml`: bottom-row Music List button, popup list, search, right-click menu, current-playing footer.
-- `OceanyaClient/MainWindow.xaml.cs`: builds display rows from `AOClient.AvailableMusic`, sends play/stop packets, tracks current song.
+- `OceanyaClient/MainWindow.xaml.cs`: snapshots `AOClient.AvailableMusic`, builds display rows off the UI thread, sends play/stop packets, tracks current song.
 - `AOBot-Testing/Agents/AOClient.cs`: parses `SM`/`FM`, exposes `AvailableMusic`, sends `MC` music packets, raises `OnMusicChanged`.
 - `OceanyaClient/Features/Viewport/AO2ViewportAudioResolver.cs`: resolves music tokens for playback and full local asset paths.
 - `Common/SaveFile.cs`: persists popup dimensions and the music-list "show asset paths" preference.
@@ -32,6 +32,12 @@ music files under local `sounds/music` asset folders.
   become children until the next category.
 - `LOCAL FILES` scans configured base folders' `sounds/music` trees asynchronously. Folder paths become nested
   categories, and supported local files use their relative AO2 music token.
+- Opening, filtering, packet refresh, and current-song refresh schedule cancellable background tree rebuilds. The UI
+  thread only snapshots current state and assigns the finished tree, so slow disks or large local music folders should
+  not freeze interaction.
+- Music list row building must not call `AO2ViewportAudioResolver.ResolveMusicPath` or other disk-probing helpers for
+  every server token. It uses the already-built local music index when available; otherwise it shows the expected
+  `base/sounds/music/...` path until the async local scan completes.
 - Collapsed/expanded music categories are persisted by stable category keys across sessions.
 - Song titles are green when the local file resolves and red when the local file is missing. This matches AO2's
   found/missing visual cue; missing entries are still selectable so the server can receive the same `MC` token.
@@ -39,6 +45,7 @@ music files under local `sounds/music` asset folders.
   song and in the currently-playing footer.
 - If the viewport window is not visible, `MainWindow` owns a fallback music player so area-entry/current-music packets
   still produce local audio.
+- Debug timing for tree rebuilds and local scans is logged under the `MusicList` category in the debug console.
 
 ## Pitfalls
 - AO2 and the tsuserver forks do not expose a client command for seeking to an exact timestamp. The UI therefore does
