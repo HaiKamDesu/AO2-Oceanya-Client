@@ -1407,8 +1407,9 @@ namespace OceanyaClient
                 message,
                 isSentFromSelf,
                 textColor,
-                nameLinks: nameLinks);
-            ao2TextLogWriter.AppendIcMessage(sourceMessage, showName, message);
+                nameLinks: nameLinks,
+                useAo2Formatting: true);
+            ao2TextLogWriter.AppendIcMessage(sourceMessage, showName, ICMessage.StripFormattingCodes(message));
         }
 
         private void AddLoggedIcActionMessage(
@@ -2497,7 +2498,7 @@ namespace OceanyaClient
             txtCurrentMusicPath.Text = ResolveFastMusicDisplayPath(currentMusicToken);
             txtCurrentMusicPath.Visibility = SaveFile.Data.MusicListShowAssetPaths ? Visibility.Visible : Visibility.Collapsed;
             string playlist = string.IsNullOrWhiteSpace(currentMusicPlaylist)
-                ? ResolveMusicPlaylist(networkClient.AvailableMusic, currentMusicToken)
+                ? ResolveMusicPlaylist(networkClient.GetAvailableMusicSnapshot(), currentMusicToken)
                 : currentMusicPlaylist;
             txtCurrentMusicPlaylist.Visibility = string.IsNullOrWhiteSpace(playlist) ? Visibility.Collapsed : Visibility.Visible;
             txtCurrentMusicPlaylist.Text = string.IsNullOrWhiteSpace(playlist) ? string.Empty : "Playlist: " + playlist;
@@ -3556,7 +3557,7 @@ namespace OceanyaClient
                     currentMusicToken = songPath?.Trim() ?? string.Empty;
                     currentMusicPlaylist = string.IsNullOrWhiteSpace(currentMusicToken)
                         ? string.Empty
-                        : ResolveMusicPlaylist(networkClient.AvailableMusic, currentMusicToken);
+                        : ResolveMusicPlaylist(networkClient.GetAvailableMusicSnapshot(), currentMusicToken);
                     if (string.IsNullOrWhiteSpace(currentMusicToken))
                     {
                         mainMusicAudioManager.StopMusic(effectFlags);
@@ -3592,7 +3593,13 @@ namespace OceanyaClient
                     }
 
                     bool isSentFromSelf = icMessage.CharId == singleInternalClient.iniPuppetID;
-                    AddLoggedIcMessageWithContext(targetClient, icMessage.ShowName, ICMessage.StripFormattingCodes(icMessage.Message), isSentFromSelf, icMessage.TextColor, icMessage);
+                    AddLoggedIcMessageWithContext(
+                        targetClient,
+                        icMessage.ShowName,
+                        icMessage.Message,
+                        isSentFromSelf,
+                        icMessage.TextColor,
+                        icMessage);
 
                     targetClient.curBG = singleInternalClient.curBG;
                     targetClient.iniPuppetID = singleInternalClient.iniPuppetID;
@@ -4509,7 +4516,13 @@ namespace OceanyaClient
                 {
                     bool isSentFromSelf = clients.Select(x => x.Value.iniPuppetID).Contains(icMessage.CharId);
 
-                    AddLoggedIcMessageWithContext(bot, icMessage.ShowName, ICMessage.StripFormattingCodes(icMessage.Message), isSentFromSelf, icMessage.TextColor, icMessage);
+                    AddLoggedIcMessageWithContext(
+                        bot,
+                        icMessage.ShowName,
+                        icMessage.Message,
+                        isSentFromSelf,
+                        icMessage.TextColor,
+                        icMessage);
                 });
             };
             bot.OnIcActionReceived += (string showName, string action, bool isSentFromSelf, ICMessage.TextColors textColor) =>
@@ -6408,6 +6421,8 @@ namespace OceanyaClient
             bool isFrequent = item?.Playlist == "FREQUENTLY USED";
             bool isCustomCommand = item?.IsCustomCommand == true;
             bool isRootCategory = item?.IsRootCategory == true;
+            bool musicEffectsSupported = !hasLeafSelection
+                || (item != null && IsServerMusicEffectItem(item));
 
             // PLAYBACK
             AddMusicMenuCategoryHeader(menu, "PLAYBACK", addLeadingSeparator: false);
@@ -6455,28 +6470,43 @@ namespace OceanyaClient
             var fadeOutItem = new MenuItem
             {
                 Header = "Fade Out Previous",
+                ToolTip = GetMusicEffectTooltip(
+                    musicEffectsSupported,
+                    "When you start another song, the current song slowly gets quieter instead of stopping instantly."),
                 IsCheckable = true,
                 IsChecked = SaveFile.Data.MusicFlagFadeOut,
+                IsEnabled = musicEffectsSupported,
                 StaysOpenOnClick = true,
             };
+            ToolTipService.SetShowOnDisabled(fadeOutItem, true);
             fadeOutItem.Click += (_, _) => { SaveFile.Data.MusicFlagFadeOut = !SaveFile.Data.MusicFlagFadeOut; SaveFile.Save(); };
             menu.Items.Add(fadeOutItem);
             var fadeInItem = new MenuItem
             {
                 Header = "Fade In",
+                ToolTip = GetMusicEffectTooltip(
+                    musicEffectsSupported,
+                    "The new song starts quiet and quickly becomes normal volume."),
                 IsCheckable = true,
                 IsChecked = SaveFile.Data.MusicFlagFadeIn,
+                IsEnabled = musicEffectsSupported,
                 StaysOpenOnClick = true,
             };
+            ToolTipService.SetShowOnDisabled(fadeInItem, true);
             fadeInItem.Click += (_, _) => { SaveFile.Data.MusicFlagFadeIn = !SaveFile.Data.MusicFlagFadeIn; SaveFile.Save(); };
             menu.Items.Add(fadeInItem);
             var syncItem = new MenuItem
             {
                 Header = "Synchronize",
+                ToolTip = GetMusicEffectTooltip(
+                    musicEffectsSupported,
+                    "The new song starts at the same time position as the song that was already playing."),
                 IsCheckable = true,
                 IsChecked = SaveFile.Data.MusicFlagSync,
+                IsEnabled = musicEffectsSupported,
                 StaysOpenOnClick = true,
             };
+            ToolTipService.SetShowOnDisabled(syncItem, true);
             syncItem.Click += (_, _) => { SaveFile.Data.MusicFlagSync = !SaveFile.Data.MusicFlagSync; SaveFile.Save(); };
             menu.Items.Add(syncItem);
 
@@ -6518,6 +6548,25 @@ namespace OceanyaClient
                 removeFrequentItem.Click += MusicRemoveFrequentMenuItem_Click;
                 menu.Items.Add(removeFrequentItem);
             }
+        }
+
+        private static bool IsServerMusicEffectItem(MusicListItem item)
+        {
+            return !item.IsCategory
+                && !item.IsCustomCommand
+                && !string.Equals(item.Playlist, "LOCAL FILES", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(item.Playlist, "FREQUENTLY USED", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(item.Playlist, "CUSTOM COMMANDS", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string GetMusicEffectTooltip(bool isSupported, string supportedTooltip)
+        {
+            if (isSupported)
+            {
+                return supportedTooltip;
+            }
+
+            return "Only works for songs from SERVER LIST. This selected item plays through /play or a custom command, so AO2 effect flags cannot be sent.";
         }
 
         private void MusicRenameMenuItem_Click(object sender, RoutedEventArgs e)
@@ -6923,7 +6972,7 @@ namespace OceanyaClient
             {
                 networkClient.ApplyAreaStateForTests(
                     selectedAreaItem.Name,
-                    networkClient.AvailableAreaInfos.Select(areaInfo => areaInfo.Name));
+                    networkClient.AvailableAreaInfos.Select(areaInfo => areaInfo.Name).ToList());
                 RefreshAreaNavigatorForCurrentClient();
                 return;
             }

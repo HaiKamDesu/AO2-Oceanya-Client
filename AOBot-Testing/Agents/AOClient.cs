@@ -46,6 +46,7 @@ namespace AOBot_Testing.Agents
 
         public int playerID;
         private string currentArea = string.Empty;
+        private readonly object availableStateLock = new object();
         private readonly List<string> availableAreas = new List<string>();
         private readonly List<AreaInfo> availableAreaInfos = new List<AreaInfo>();
         private readonly List<string> availableMusic = new List<string>();
@@ -138,7 +139,10 @@ namespace AOBot_Testing.Agents
         {
             get
             {
-                return currentArea;
+                lock (availableStateLock)
+                {
+                    return currentArea;
+                }
             }
         }
 
@@ -146,7 +150,10 @@ namespace AOBot_Testing.Agents
         {
             get
             {
-                return availableAreas.AsReadOnly();
+                lock (availableStateLock)
+                {
+                    return availableAreas.ToList();
+                }
             }
         }
 
@@ -154,7 +161,10 @@ namespace AOBot_Testing.Agents
         {
             get
             {
-                return availableAreaInfos.AsReadOnly();
+                lock (availableStateLock)
+                {
+                    return CloneAreaInfos(availableAreaInfos);
+                }
             }
         }
 
@@ -162,8 +172,19 @@ namespace AOBot_Testing.Agents
         {
             get
             {
-                return availableMusic.AsReadOnly();
+                lock (availableStateLock)
+                {
+                    return availableMusic.ToList();
+                }
             }
+        }
+
+        /// <summary>
+        /// Returns a stable copy of the currently advertised server music list.
+        /// </summary>
+        public IReadOnlyList<string> GetAvailableMusicSnapshot()
+        {
+            return AvailableMusic;
         }
 
         public IReadOnlyList<Player> CurrentAreaPlayers
@@ -782,9 +803,12 @@ namespace AOBot_Testing.Agents
             lastCharsCheck = string.Empty;
             serverFeatures.Clear();
             serverCharacterList.Clear();
-            availableAreas.Clear();
-            availableAreaInfos.Clear();
-            availableMusic.Clear();
+            lock (availableStateLock)
+            {
+                availableAreas.Clear();
+                availableAreaInfos.Clear();
+                availableMusic.Clear();
+            }
 
             transport = AOClientTransportFactory.Create(serverUri);
             try
@@ -1283,51 +1307,73 @@ namespace AOBot_Testing.Agents
                 return;
             }
 
-            if (string.Equals(currentArea, newArea, StringComparison.Ordinal))
+            bool changed;
+            lock (availableStateLock)
             {
-                return;
+                if (string.Equals(currentArea, newArea, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                currentArea = newArea;
+                currentAreaPlayers.Clear();
+                changed = true;
             }
 
-            currentArea = newArea;
-            currentAreaPlayers.Clear();
-            OnCurrentAreaChanged?.Invoke(currentArea);
+            if (changed)
+            {
+                OnCurrentAreaChanged?.Invoke(newArea);
+            }
         }
 
         private void ReplaceAvailableAreas(IEnumerable<string> areas)
         {
-            Dictionary<string, AreaInfo> previousAreaInfos = availableAreaInfos
-                .Where(areaInfo => !string.IsNullOrWhiteSpace(areaInfo.Name))
-                .GroupBy(areaInfo => areaInfo.Name.Trim(), StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
-
-            availableAreas.Clear();
-            availableAreaInfos.Clear();
-
-            foreach (string area in areas)
+            List<string> areaSnapshot;
+            List<AreaInfo> areaInfoSnapshot;
+            string? defaultArea = null;
+            lock (availableStateLock)
             {
-                if (string.IsNullOrWhiteSpace(area))
+                Dictionary<string, AreaInfo> previousAreaInfos = availableAreaInfos
+                    .Where(areaInfo => !string.IsNullOrWhiteSpace(areaInfo.Name))
+                    .GroupBy(areaInfo => areaInfo.Name.Trim(), StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+
+                availableAreas.Clear();
+                availableAreaInfos.Clear();
+
+                foreach (string area in areas)
                 {
-                    continue;
+                    if (string.IsNullOrWhiteSpace(area))
+                    {
+                        continue;
+                    }
+
+                    string areaName = area.Trim();
+                    availableAreas.Add(areaName);
+                    if (previousAreaInfos.TryGetValue(areaName, out AreaInfo? previousAreaInfo))
+                    {
+                        previousAreaInfo.Name = areaName;
+                        availableAreaInfos.Add(previousAreaInfo);
+                    }
+                    else
+                    {
+                        availableAreaInfos.Add(new AreaInfo(areaName, -1, "Unknown", "Unknown", "Unknown"));
+                    }
                 }
 
-                string areaName = area.Trim();
-                availableAreas.Add(areaName);
-                if (previousAreaInfos.TryGetValue(areaName, out AreaInfo? previousAreaInfo))
+                areaSnapshot = availableAreas.ToList();
+                areaInfoSnapshot = CloneAreaInfos(availableAreaInfos);
+                if (string.IsNullOrWhiteSpace(currentArea) && availableAreas.Count > 0)
                 {
-                    previousAreaInfo.Name = areaName;
-                    availableAreaInfos.Add(previousAreaInfo);
-                }
-                else
-                {
-                    availableAreaInfos.Add(new AreaInfo(areaName, -1, "Unknown", "Unknown", "Unknown"));
+                    defaultArea = availableAreas[0];
                 }
             }
 
-            OnAvailableAreasUpdated?.Invoke(availableAreas.AsReadOnly());
-            OnAvailableAreaInfosUpdated?.Invoke(availableAreaInfos.AsReadOnly());
-            if (string.IsNullOrWhiteSpace(currentArea) && availableAreas.Count > 0)
+            OnAvailableAreasUpdated?.Invoke(areaSnapshot);
+            OnAvailableAreaInfosUpdated?.Invoke(areaInfoSnapshot);
+            if (!string.IsNullOrWhiteSpace(defaultArea))
             {
-                SetCurrentArea(availableAreas[0]);
+                SetCurrentArea(defaultArea);
             }
         }
 
@@ -1390,19 +1436,25 @@ namespace AOBot_Testing.Agents
 
         private void ReplaceAvailableMusic(IEnumerable<string> music)
         {
-            availableMusic.Clear();
-            foreach (string entry in music)
+            List<string> musicSnapshot;
+            lock (availableStateLock)
             {
-                string trimmedEntry = entry.Trim();
-                if (string.IsNullOrWhiteSpace(trimmedEntry))
+                availableMusic.Clear();
+                foreach (string entry in music)
                 {
-                    continue;
+                    string trimmedEntry = entry.Trim();
+                    if (string.IsNullOrWhiteSpace(trimmedEntry))
+                    {
+                        continue;
+                    }
+
+                    availableMusic.Add(trimmedEntry);
                 }
 
-                availableMusic.Add(trimmedEntry);
+                musicSnapshot = availableMusic.ToList();
             }
 
-            OnAvailableMusicUpdated?.Invoke(availableMusic.AsReadOnly());
+            OnAvailableMusicUpdated?.Invoke(musicSnapshot);
         }
 
         private void ParseAreaUpdate(string message)
@@ -1421,116 +1473,137 @@ namespace AOBot_Testing.Agents
                 return;
             }
 
-            for (int nElement = 1; nElement < content.Length; nElement++)
+            List<AreaInfo> areaInfoSnapshot;
+            lock (availableStateLock)
             {
-                int areaIndex = nElement - 1;
-                if (areaIndex >= availableAreaInfos.Count)
+                for (int nElement = 1; nElement < content.Length; nElement++)
                 {
-                    break;
+                    int areaIndex = nElement - 1;
+                    if (areaIndex >= availableAreaInfos.Count)
+                    {
+                        break;
+                    }
+
+                    string value = Globals.ReplaceTextForSymbols(content[nElement]).Trim();
+                    AreaInfo targetArea = availableAreaInfos[areaIndex];
+
+                    if (updateType == 0)
+                    {
+                        if (int.TryParse(value, out int players))
+                        {
+                            targetArea.Players = players;
+                        }
+                    }
+                    else if (updateType == 1)
+                    {
+                        if (!string.IsNullOrWhiteSpace(value))
+                        {
+                            targetArea.Status = value;
+                        }
+                    }
+                    else if (updateType == 2)
+                    {
+                        if (!string.IsNullOrWhiteSpace(value))
+                        {
+                            targetArea.CaseManager = value;
+                        }
+                    }
+                    else if (updateType == 3)
+                    {
+                        if (!string.IsNullOrWhiteSpace(value))
+                        {
+                            targetArea.LockState = value;
+                        }
+                    }
                 }
 
-                string value = Globals.ReplaceTextForSymbols(content[nElement]).Trim();
-                AreaInfo targetArea = availableAreaInfos[areaIndex];
-
-                if (updateType == 0)
-                {
-                    if (int.TryParse(value, out int players))
-                    {
-                        targetArea.Players = players;
-                    }
-                }
-                else if (updateType == 1)
-                {
-                    if (!string.IsNullOrWhiteSpace(value))
-                    {
-                        targetArea.Status = value;
-                    }
-                }
-                else if (updateType == 2)
-                {
-                    if (!string.IsNullOrWhiteSpace(value))
-                    {
-                        targetArea.CaseManager = value;
-                    }
-                }
-                else if (updateType == 3)
-                {
-                    if (!string.IsNullOrWhiteSpace(value))
-                    {
-                        targetArea.LockState = value;
-                    }
-                }
+                areaInfoSnapshot = CloneAreaInfos(availableAreaInfos);
             }
 
-            OnAvailableAreaInfosUpdated?.Invoke(availableAreaInfos.AsReadOnly());
+            OnAvailableAreaInfosUpdated?.Invoke(areaInfoSnapshot);
         }
 
         private void ApplyAreaInfosFromAreaListMessage(string messageText)
         {
             string[] lines = messageText.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
             bool updated = false;
+            string changedArea = string.Empty;
+            List<string> areaSnapshot;
+            List<AreaInfo> areaInfoSnapshot;
 
-            foreach (string line in lines)
+            lock (availableStateLock)
             {
-                Match areaLine = Regex.Match(
-                    line,
-                    @"^Area\s+[^:]+:\s*(?<name>.+?)\s*\(users:\s*(?<players>\d+)\)\s*\[(?<status>[^\]]*)\]\[(?<cm>[^\]]*)\](?<lock>\[[^\]]+\])?(?<current>\s+\[\*\])?\s*$",
-                    RegexOptions.IgnoreCase);
-                if (!areaLine.Success)
+                foreach (string line in lines)
                 {
-                    continue;
+                    Match areaLine = Regex.Match(
+                        line,
+                        @"^Area\s+[^:]+:\s*(?<name>.+?)\s*\(users:\s*(?<players>\d+)\)\s*\[(?<status>[^\]]*)\]\[(?<cm>[^\]]*)\](?<lock>\[[^\]]+\])?(?<current>\s+\[\*\])?\s*$",
+                        RegexOptions.IgnoreCase);
+                    if (!areaLine.Success)
+                    {
+                        continue;
+                    }
+
+                    string areaName = areaLine.Groups["name"].Value.Trim();
+                    if (string.IsNullOrWhiteSpace(areaName))
+                    {
+                        continue;
+                    }
+
+                    AreaInfo targetArea = EnsureAreaInfo(areaName);
+                    if (int.TryParse(areaLine.Groups["players"].Value, out int players))
+                    {
+                        targetArea.Players = players;
+                    }
+
+                    string status = areaLine.Groups["status"].Value.Trim();
+                    if (!string.IsNullOrWhiteSpace(status))
+                    {
+                        targetArea.Status = status;
+                    }
+
+                    string caseManager = areaLine.Groups["cm"].Value.Trim();
+                    if (caseManager.StartsWith("CMs:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        caseManager = caseManager.Substring(4).Trim();
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(caseManager))
+                    {
+                        targetArea.CaseManager = caseManager;
+                    }
+
+                    string lockState = areaLine.Groups["lock"].Value.Trim().Trim('[', ']');
+                    targetArea.LockState = string.IsNullOrWhiteSpace(lockState) ? "OPEN" : lockState;
+                    updated = true;
+
+                    if (areaLine.Groups["current"].Success
+                        && !string.Equals(currentArea, areaName, StringComparison.Ordinal))
+                    {
+                        currentArea = areaName;
+                        currentAreaPlayers.Clear();
+                        changedArea = areaName;
+                    }
                 }
 
-                string areaName = areaLine.Groups["name"].Value.Trim();
-                if (string.IsNullOrWhiteSpace(areaName))
-                {
-                    continue;
-                }
-
-                AreaInfo targetArea = EnsureAreaInfo(areaName);
-                if (int.TryParse(areaLine.Groups["players"].Value, out int players))
-                {
-                    targetArea.Players = players;
-                }
-
-                string status = areaLine.Groups["status"].Value.Trim();
-                if (!string.IsNullOrWhiteSpace(status))
-                {
-                    targetArea.Status = status;
-                }
-
-                string caseManager = areaLine.Groups["cm"].Value.Trim();
-                if (caseManager.StartsWith("CMs:", StringComparison.OrdinalIgnoreCase))
-                {
-                    caseManager = caseManager.Substring(4).Trim();
-                }
-
-                if (!string.IsNullOrWhiteSpace(caseManager))
-                {
-                    targetArea.CaseManager = caseManager;
-                }
-
-                string lockState = areaLine.Groups["lock"].Value.Trim().Trim('[', ']');
-                targetArea.LockState = string.IsNullOrWhiteSpace(lockState) ? "OPEN" : lockState;
-                updated = true;
-
-                if (areaLine.Groups["current"].Success)
-                {
-                    SetCurrentArea(areaName);
-                }
+                areaSnapshot = availableAreas.ToList();
+                areaInfoSnapshot = CloneAreaInfos(availableAreaInfos);
             }
 
             if (updated)
             {
-                OnAvailableAreasUpdated?.Invoke(availableAreas.AsReadOnly());
-                OnAvailableAreaInfosUpdated?.Invoke(availableAreaInfos.AsReadOnly());
+                OnAvailableAreasUpdated?.Invoke(areaSnapshot);
+                OnAvailableAreaInfosUpdated?.Invoke(areaInfoSnapshot);
+            }
+
+            if (!string.IsNullOrWhiteSpace(changedArea))
+            {
+                OnCurrentAreaChanged?.Invoke(changedArea);
             }
         }
 
         private void ApplyAreaInfoFromGetAreaMessage(string areaName, string messageText)
         {
-            AreaInfo targetArea = EnsureAreaInfo(areaName);
-
             Match areaHeader = Regex.Match(
                 messageText,
                 @"\[[^\]]*\]:\s*\[(?<players>\d+)\s+Users?\]\[(?<status>[^\]]*)\](?:\[(?<lock>[^\]]*)\])?",
@@ -1540,24 +1613,31 @@ namespace AOBot_Testing.Agents
                 return;
             }
 
-            if (int.TryParse(areaHeader.Groups["players"].Value, out int players))
+            List<AreaInfo> areaInfoSnapshot;
+            lock (availableStateLock)
             {
-                targetArea.Players = players;
+                AreaInfo targetArea = EnsureAreaInfo(areaName);
+                if (int.TryParse(areaHeader.Groups["players"].Value, out int players))
+                {
+                    targetArea.Players = players;
+                }
+
+                string status = areaHeader.Groups["status"].Value.Trim();
+                if (!string.IsNullOrWhiteSpace(status))
+                {
+                    targetArea.Status = status;
+                }
+
+                string lockState = areaHeader.Groups["lock"].Value.Trim();
+                if (!string.IsNullOrWhiteSpace(lockState))
+                {
+                    targetArea.LockState = lockState;
+                }
+
+                areaInfoSnapshot = CloneAreaInfos(availableAreaInfos);
             }
 
-            string status = areaHeader.Groups["status"].Value.Trim();
-            if (!string.IsNullOrWhiteSpace(status))
-            {
-                targetArea.Status = status;
-            }
-
-            string lockState = areaHeader.Groups["lock"].Value.Trim();
-            if (!string.IsNullOrWhiteSpace(lockState))
-            {
-                targetArea.LockState = lockState;
-            }
-
-            OnAvailableAreaInfosUpdated?.Invoke(availableAreaInfos.AsReadOnly());
+            OnAvailableAreaInfosUpdated?.Invoke(areaInfoSnapshot);
         }
 
         private AreaInfo EnsureAreaInfo(string areaName)
@@ -1573,6 +1653,18 @@ namespace AOBot_Testing.Agents
             targetArea = new AreaInfo(areaName, -1, "Unknown", "Unknown", "Unknown");
             availableAreaInfos.Add(targetArea);
             return targetArea;
+        }
+
+        private static List<AreaInfo> CloneAreaInfos(IEnumerable<AreaInfo> areaInfos)
+        {
+            return areaInfos
+                .Select(areaInfo => new AreaInfo(
+                    areaInfo.Name,
+                    areaInfo.Players,
+                    areaInfo.Status,
+                    areaInfo.CaseManager,
+                    areaInfo.LockState))
+                .ToList();
         }
 
         private bool ShouldIgnoreAreaDowngrade(string parsedArea)

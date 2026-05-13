@@ -170,6 +170,36 @@ namespace OceanyaClient
         }
 
         /// <summary>
+        /// Returns the byte position of the first loaded stream, or 0 when no stream is loaded.
+        /// </summary>
+        internal long GetFirstStreamPosition()
+        {
+            int stream = streams.FirstOrDefault(handle => handle != 0);
+            return stream == 0 ? 0 : Bass.ChannelGetPosition(stream);
+        }
+
+        /// <summary>
+        /// Applies <paramref name="positionBytes"/> to all loaded streams that can accept it.
+        /// </summary>
+        internal void SetStreamPosition(long positionBytes)
+        {
+            if (positionBytes <= 0)
+            {
+                return;
+            }
+
+            for (int i = 0; i < streamCount; i++)
+            {
+                if (streams[i] == 0)
+                {
+                    continue;
+                }
+
+                _ = Bass.ChannelSetPosition(streams[i], positionBytes);
+            }
+        }
+
+        /// <summary>
         /// Starts playback at volume 0 then slides to <paramref name="targetVolume"/> over
         /// <paramref name="durationMs"/> milliseconds — equivalent to AO2's FADE_IN effect.
         /// </summary>

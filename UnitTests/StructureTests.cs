@@ -8,6 +8,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Media;
 using OceanyaClient.Features.ChatPreview;
 using OceanyaClient.Features.Viewport;
 
@@ -548,6 +549,45 @@ namespace UnitTests
             Assert.That(style.ChatMarkupEnd[1], Is.EqualTo("[/g]"));
             Assert.That(style.ChatMarkupRemove[1], Is.True);
             Assert.That(style.ChatMarkupTalking[1], Is.False);
+        }
+
+        [Test]
+        public void Test_AO2ChatTextFormatter_AppliesViewportMarkupRules()
+        {
+            AO2ChatPreviewStyle style = new AO2ChatPreviewStyle();
+            style.ChatColors[0] = Colors.White;
+            style.ChatColors[1] = Colors.Lime;
+            style.ChatColors[2] = Colors.Red;
+            style.ChatMarkupStart[2] = "~";
+            style.ChatMarkupEnd[2] = "~";
+            style.ChatMarkupRemove[2] = true;
+
+            List<AO2FormattedTextSegment> segments = AO2ChatTextFormatter.EnumerateFormattedTextSegments(
+                style,
+                "Tranquility ~Extasis~",
+                0).ToList();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(string.Concat(segments.Select(segment => segment.Text)), Is.EqualTo("Tranquility Extasis"));
+                Assert.That(
+                    string.Concat(segments.Where(segment => segment.Color == Colors.Red).Select(segment => segment.Text)),
+                    Is.EqualTo("Extasis"));
+            });
+        }
+
+        [Test]
+        public void Test_AO2ChatTextFormatter_StripsAo2VisibilityTokens()
+        {
+            AO2ChatPreviewStyle style = new AO2ChatPreviewStyle();
+            style.ChatColors[0] = Colors.White;
+
+            List<AO2FormattedTextSegment> segments = AO2ChatTextFormatter.EnumerateFormattedTextSegments(
+                style,
+                "Wait\\nnow\\s{fast}\\f\\p!",
+                0).ToList();
+
+            Assert.That(string.Concat(segments.Select(segment => segment.Text)), Is.EqualTo("Wait" + Environment.NewLine + "nowfast!"));
         }
 
         [Test]

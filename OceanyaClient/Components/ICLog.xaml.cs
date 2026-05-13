@@ -3,11 +3,11 @@ using AOBot_Testing.Structures;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Media;
+using OceanyaClient.Features.ChatPreview;
 
 namespace OceanyaClient.Components
 {
@@ -81,9 +81,19 @@ namespace OceanyaClient.Components
             bool isSentFromSelf = false,
             ICMessage.TextColors textColor = ICMessage.TextColors.White,
             IReadOnlyList<LogMessageActionLink>? nameLinks = null,
-            IReadOnlyList<LogMessageActionLink>? messageLinks = null)
+            IReadOnlyList<LogMessageActionLink>? messageLinks = null,
+            bool useAo2Formatting = false)
         {
-            AddMessageCore(client, showName, message, isSentFromSelf, textColor, nameLinks, messageLinks, transientHandle: null);
+            AddMessageCore(
+                client,
+                showName,
+                message,
+                isSentFromSelf,
+                textColor,
+                nameLinks,
+                messageLinks,
+                useAo2Formatting,
+                transientHandle: null);
         }
 
         public void AddActionMessage(
@@ -104,10 +114,20 @@ namespace OceanyaClient.Components
             bool isSentFromSelf = false,
             ICMessage.TextColors textColor = ICMessage.TextColors.White,
             IReadOnlyList<LogMessageActionLink>? nameLinks = null,
-            IReadOnlyList<LogMessageActionLink>? messageLinks = null)
+            IReadOnlyList<LogMessageActionLink>? messageLinks = null,
+            bool useAo2Formatting = false)
         {
             LogMessageHandle handle = new LogMessageHandle();
-            AddMessageCore(client, showName, message, isSentFromSelf, textColor, nameLinks, messageLinks, handle);
+            AddMessageCore(
+                client,
+                showName,
+                message,
+                isSentFromSelf,
+                textColor,
+                nameLinks,
+                messageLinks,
+                useAo2Formatting,
+                handle);
             return handle;
         }
 
@@ -119,7 +139,8 @@ namespace OceanyaClient.Components
             bool isSentFromSelf = false,
             ICMessage.TextColors textColor = ICMessage.TextColors.White,
             IReadOnlyList<LogMessageActionLink>? nameLinks = null,
-            IReadOnlyList<LogMessageActionLink>? messageLinks = null)
+            IReadOnlyList<LogMessageActionLink>? messageLinks = null,
+            bool useAo2Formatting = false)
         {
             if (handle == null)
             {
@@ -135,11 +156,28 @@ namespace OceanyaClient.Components
             LogState state = EnsureLogState(logClient);
             if (!state.TransientEntries.TryGetValue(handle.Id, out Paragraph? paragraph))
             {
-                AddMessageCore(client, showName, message, isSentFromSelf, textColor, nameLinks, messageLinks, handle);
+                AddMessageCore(
+                    client,
+                    showName,
+                    message,
+                    isSentFromSelf,
+                    textColor,
+                    nameLinks,
+                    messageLinks,
+                    useAo2Formatting,
+                    handle);
                 return;
             }
 
-            PopulateParagraph(paragraph, showName, message, isSentFromSelf, textColor, nameLinks, messageLinks);
+            PopulateParagraph(
+                paragraph,
+                showName,
+                message,
+                isSentFromSelf,
+                textColor,
+                nameLinks,
+                messageLinks,
+                useAo2Formatting);
 
             if (IsCurrentLogStream(client))
             {
@@ -281,6 +319,7 @@ namespace OceanyaClient.Components
             ICMessage.TextColors textColor,
             IReadOnlyList<LogMessageActionLink>? nameLinks,
             IReadOnlyList<LogMessageActionLink>? messageLinks,
+            bool useAo2Formatting,
             LogMessageHandle? transientHandle)
         {
             AOClient? logClient = ResolveLogClient(client);
@@ -291,7 +330,14 @@ namespace OceanyaClient.Components
 
             LogState state = EnsureLogState(logClient);
             bool shouldScroll = IsScrolledToBottom();
-            Paragraph paragraph = CreateParagraph(showName, message, isSentFromSelf, textColor, nameLinks, messageLinks);
+            Paragraph paragraph = CreateParagraph(
+                showName,
+                message,
+                isSentFromSelf,
+                textColor,
+                nameLinks,
+                messageLinks,
+                useAo2Formatting);
 
             if (state.Inverted)
             {
@@ -378,14 +424,23 @@ namespace OceanyaClient.Components
             bool isSentFromSelf,
             ICMessage.TextColors textColor,
             IReadOnlyList<LogMessageActionLink>? nameLinks,
-            IReadOnlyList<LogMessageActionLink>? messageLinks)
+            IReadOnlyList<LogMessageActionLink>? messageLinks,
+            bool useAo2Formatting)
         {
             Paragraph paragraph = new Paragraph
             {
                 Margin = new Thickness(0, 2, 0, 2),
                 LineHeight = 2
             };
-            PopulateParagraph(paragraph, showName, message, isSentFromSelf, textColor, nameLinks, messageLinks);
+            PopulateParagraph(
+                paragraph,
+                showName,
+                message,
+                isSentFromSelf,
+                textColor,
+                nameLinks,
+                messageLinks,
+                useAo2Formatting);
             return paragraph;
         }
 
@@ -412,7 +467,8 @@ namespace OceanyaClient.Components
             bool isSentFromSelf,
             ICMessage.TextColors textColor,
             IReadOnlyList<LogMessageActionLink>? nameLinks,
-            IReadOnlyList<LogMessageActionLink>? messageLinks)
+            IReadOnlyList<LogMessageActionLink>? messageLinks,
+            bool useAo2Formatting)
         {
             paragraph.Inlines.Clear();
 
@@ -447,7 +503,7 @@ namespace OceanyaClient.Components
             };
             paragraph.Inlines.Add(suffixRun);
 
-            foreach (Inline inline in FormatMessageText(message ?? string.Empty, textColor))
+            foreach (Inline inline in FormatMessageText(message ?? string.Empty, textColor, useAo2Formatting))
             {
                 paragraph.Inlines.Add(inline);
             }
@@ -508,7 +564,7 @@ namespace OceanyaClient.Components
             });
 
             bool emphasizeMessage = string.Equals(action, "shouts", StringComparison.OrdinalIgnoreCase);
-            foreach (Inline inline in FormatMessageText(message ?? string.Empty, textColor))
+            foreach (Inline inline in FormatPlainText(message ?? string.Empty, textColor))
             {
                 if (emphasizeMessage)
                 {
@@ -609,89 +665,64 @@ namespace OceanyaClient.Components
             }, System.Windows.Threading.DispatcherPriority.Background);
         }
 
-        private List<Inline> FormatMessageText(string message, ICMessage.TextColors defaultColor)
+        private List<Inline> FormatMessageText(
+            string message,
+            ICMessage.TextColors defaultColor,
+            bool useAo2Formatting)
+        {
+            return useAo2Formatting
+                ? FormatAo2MessageText(message, defaultColor)
+                : FormatPlainText(message, defaultColor);
+        }
+
+        private List<Inline> FormatPlainText(string message, ICMessage.TextColors defaultColor)
+        {
+            Brush brush = GetFallbackBrush(defaultColor);
+            return new List<Inline>
+            {
+                new Run(message ?? string.Empty)
+                {
+                    Foreground = brush
+                }
+            };
+        }
+
+        private List<Inline> FormatAo2MessageText(string message, ICMessage.TextColors defaultColor)
         {
             List<Inline> formattedRuns = new List<Inline>();
-            List<(string Text, ICMessage.TextColors Color)> segments = new List<(string Text, ICMessage.TextColors Color)>();
-            Stack<(ICMessage.TextColors Color, char EndMarker)> colorStack = new Stack<(ICMessage.TextColors Color, char EndMarker)>();
-            colorStack.Push((defaultColor, '\0'));
-
-            StringBuilder currentText = new StringBuilder();
-
-            int index = 0;
-            while (index < message.Length)
-            {
-                char current = message[index];
-                bool isProcessed = false;
-                FormatRule? markerRule = formatRules.FirstOrDefault(rule => rule.Start == current || rule.End == current);
-
-                if (markerRule != null)
-                {
-                    if (colorStack.Count > 1 && current == colorStack.Peek().EndMarker)
-                    {
-                        if (currentText.Length > 0)
-                        {
-                            segments.Add((currentText.ToString(), colorStack.Peek().Color));
-                            currentText.Clear();
-                        }
-
-                        if (!markerRule.Remove)
-                        {
-                            currentText.Append(current);
-                            segments.Add((currentText.ToString(), colorStack.Peek().Color));
-                            currentText.Clear();
-                        }
-
-                        colorStack.Pop();
-                        isProcessed = true;
-                    }
-                    else if (current == markerRule.Start)
-                    {
-                        if (currentText.Length > 0)
-                        {
-                            segments.Add((currentText.ToString(), colorStack.Peek().Color));
-                            currentText.Clear();
-                        }
-
-                        colorStack.Push((markerRule.Name, markerRule.End));
-                        if (!markerRule.Remove)
-                        {
-                            currentText.Append(current);
-                            segments.Add((currentText.ToString(), colorStack.Peek().Color));
-                            currentText.Clear();
-                        }
-
-                        isProcessed = true;
-                    }
-                }
-
-                if (!isProcessed)
-                {
-                    currentText.Append(current);
-                }
-
-                index++;
-            }
-
-            if (currentText.Length > 0)
-            {
-                segments.Add((currentText.ToString(), colorStack.Peek().Color));
-            }
-
-            foreach ((string Text, ICMessage.TextColors Color) segment in segments)
+            AO2ChatPreviewStyle style = AO2ChatPreviewResolver.Resolve(
+                "default",
+                hasShowname: true,
+                preferViewportTheme: true);
+            int defaultColorIndex = Math.Clamp((int)defaultColor, 0, style.ChatColors.Length - 1);
+            Color fallbackDefaultColor = ToMediaColor(ICMessage.GetColorFromTextColor(defaultColor));
+            foreach (AO2FormattedTextSegment segment in AO2ChatTextFormatter.EnumerateFormattedTextSegments(
+                style,
+                message ?? string.Empty,
+                defaultColorIndex,
+                fallbackDefaultColor))
             {
                 if (string.IsNullOrEmpty(segment.Text))
                 {
                     continue;
                 }
 
-                Brush brush = segment.Color == ICMessage.TextColors.White
-                    ? Brushes.White
-                    : formatRules.First(rule => rule.Name == segment.Color).ColorBrush;
-                formattedRuns.Add(new Run(segment.Text) { Foreground = brush });
+                formattedRuns.Add(new Run(segment.Text) { Foreground = new SolidColorBrush(segment.Color) });
             }
 
             return formattedRuns;
+        }
+
+        private Brush GetFallbackBrush(ICMessage.TextColors color)
+        {
+            return color == ICMessage.TextColors.White
+                ? Brushes.White
+                : formatRules.FirstOrDefault(rule => rule.Name == color)?.ColorBrush ?? Brushes.White;
+        }
+
+        private static Color ToMediaColor(System.Drawing.Color color)
+        {
+            return Color.FromArgb(color.A, color.R, color.G, color.B);
         }
     }
 }

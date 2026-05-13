@@ -203,13 +203,14 @@ namespace OceanyaClient.Features.Viewport
 
         /// <summary>
         /// Plays an AO2-style music token, applying the effect flags from the MC# packet.
-        /// effectFlags bits: FADE_IN=1, FADE_OUT=2, SYNC_POS=4 (SYNC_POS not yet implemented).
+        /// effectFlags bits: FADE_IN=1, FADE_OUT=2, SYNC_POS=4.
         /// </summary>
         public void PlayMusic(string? token, bool loop = true, int effectFlags = 0)
         {
             string? path = AO2ViewportAudioResolver.ResolveMusicPath(token);
             bool fadeOut = (effectFlags & 2) != 0;
             bool fadeIn = (effectFlags & 1) != 0;
+            bool synchronize = (effectFlags & 4) != 0;
 
             if (!string.IsNullOrWhiteSpace(token))
             {
@@ -221,50 +222,48 @@ namespace OceanyaClient.Features.Viewport
                     CustomConsole.Warning($"[AUDIO] Token not found locally: {token}", category: Common.CustomConsole.LogCategory.MusicList);
             }
 
-            bool pathChanged = !string.Equals(currentMusicPath, path ?? string.Empty, StringComparison.OrdinalIgnoreCase);
-            bool loopChanged = currentMusicLoop != loop;
+            long synchronizedPosition = synchronize ? musicPlayer.GetFirstStreamPosition() : 0;
 
-            if (pathChanged || loopChanged)
+            // Free any previously fading stream that has already stopped naturally.
+            CleanupFadingMusicStreamIfStopped();
+
+            if (fadeOut)
             {
-                // Free any previously fading stream that has already stopped naturally.
-                CleanupFadingMusicStreamIfStopped();
-
-                if (fadeOut)
+                // Detach current stream and let it fade out independently.
+                // BASS slides the volume to 0 then stops the channel automatically.
+                StopAndFreeFadingMusicStream();
+                int oldStream = musicPlayer.TakeFirstActiveStream();
+                if (oldStream != 0)
                 {
-                    // Detach current stream and let it fade out independently.
-                    // BASS slides the volume to 0 then stops the channel automatically.
-                    StopAndFreeFadingMusicStream();
-                    int oldStream = musicPlayer.TakeFirstActiveStream();
-                    if (oldStream != 0)
-                    {
-                        _ = Bass.ChannelSlideAttribute(oldStream, ChannelAttribute.Volume, -1f, FadeOutDurationMs);
-                        fadingMusicStream = oldStream;
-                    }
+                    _ = Bass.ChannelSlideAttribute(oldStream, ChannelAttribute.Volume, -1f, FadeOutDurationMs);
+                    fadingMusicStream = oldStream;
                 }
-                else
-                {
-                    musicPlayer.Stop();
-                    StopAndFreeFadingMusicStream();
-                }
-
-                currentMusicPath = string.Empty;
-                currentMusicLoop = loop;
             }
+            else
+            {
+                musicPlayer.Stop();
+                StopAndFreeFadingMusicStream();
+            }
+
+            currentMusicPath = string.Empty;
+            currentMusicLoop = loop;
 
             if (string.IsNullOrWhiteSpace(path))
             {
                 return;
             }
 
-            if (pathChanged || loopChanged)
+            if (!musicPlayer.TrySetBlip(path, loop: loop))
             {
-                if (!musicPlayer.TrySetBlip(path, loop: loop))
-                {
-                    return;
-                }
-
-                currentMusicPath = path;
+                return;
             }
+
+            if (synchronizedPosition > 0)
+            {
+                musicPlayer.SetStreamPosition(synchronizedPosition);
+            }
+
+            currentMusicPath = path;
 
             float targetVolume = (float)AudioSettings.ResolveMusicVolume(token);
             if (fadeIn)
