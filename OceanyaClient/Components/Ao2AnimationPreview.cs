@@ -817,6 +817,104 @@ namespace OceanyaClient
             }
         }
 
+        /// <summary>
+        /// Decodes an animated WebP frame-by-frame on the calling thread, invoking
+        /// <paramref name="frameCallback"/> immediately after each frame is ready.
+        /// Caches all decoded frames in <see cref="AnimationFrameCache"/> on success so that
+        /// subsequent calls via <see cref="TryDecodeAnimationFrames"/> return instantly.
+        /// Returns false for non-animated, single-frame, or decode-failed files.
+        /// </summary>
+        internal static bool TryStreamWebPFrames(
+            string path,
+            Action<BitmapSource, TimeSpan> frameCallback,
+            CancellationToken cancellationToken = default)
+        {
+            var allBitmaps = new List<SKBitmap>();
+            var allFrames = new List<BitmapSource>();
+            var allDurations = new List<TimeSpan>();
+            try
+            {
+                using SKCodec? codec = SKCodec.Create(path);
+                if (codec == null || codec.FrameCount <= 1)
+                {
+                    return false;
+                }
+
+                SKCodecFrameInfo[] frameInfo = codec.FrameInfo;
+                int srcWidth = codec.Info.Width;
+                int srcHeight = codec.Info.Height;
+                int frameCount = codec.FrameCount;
+                SKImageInfo decodeInfo = new SKImageInfo(srcWidth, srcHeight, SKColorType.Bgra8888, SKAlphaType.Premul);
+
+                for (int i = 0; i < frameCount; i++)
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        return false;
+                    }
+
+                    int requiredFrame = frameInfo[i].RequiredFrame;
+                    SKBitmap bitmap = new SKBitmap(decodeInfo);
+                    allBitmaps.Add(bitmap);
+
+                    if (requiredFrame >= 0 && requiredFrame < allBitmaps.Count - 1)
+                    {
+                        using SKCanvas canvas = new SKCanvas(bitmap);
+                        canvas.DrawBitmap(allBitmaps[requiredFrame], 0, 0);
+                    }
+
+                    SKCodecResult result = codec.GetPixels(decodeInfo, bitmap.GetPixels(), new SKCodecOptions(i, requiredFrame));
+                    if (result != SKCodecResult.Success && result != SKCodecResult.IncompleteInput)
+                    {
+                        return false;
+                    }
+
+                    int stride = srcWidth * 4;
+                    byte[] pixels = new byte[stride * srcHeight];
+                    Marshal.Copy(bitmap.GetPixels(), pixels, 0, pixels.Length);
+
+                    BitmapSource bmpSource = BitmapSource.Create(
+                        srcWidth, srcHeight, 96, 96,
+                        PixelFormats.Pbgra32, null, pixels, stride);
+                    if (bmpSource.CanFreeze)
+                    {
+                        bmpSource.Freeze();
+                    }
+
+                    int durationMs = frameInfo[i].Duration;
+                    if (durationMs <= 0)
+                    {
+                        durationMs = (int)DefaultFrameDelayMilliseconds;
+                    }
+
+                    TimeSpan duration = TimeSpan.FromMilliseconds(durationMs);
+                    allFrames.Add(bmpSource);
+                    allDurations.Add(duration);
+                    frameCallback(bmpSource, duration);
+                }
+
+                if (allFrames.Count > 1)
+                {
+                    DateTime lastWrite = File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue;
+                    var cacheKey = (path, lastWrite, Math.Max(1, MaxAnimatedPreviewDimension));
+                    CacheAnimationFrames(cacheKey, allFrames, allDurations);
+                }
+
+                return allFrames.Count > 1;
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                foreach (SKBitmap b in allBitmaps)
+                {
+                    b.Dispose();
+                }
+            }
+        }
+
         private static List<int> BuildSelectedFrameIndices(int sourceFrameCount, int maxFrames)
         {
             int safeFrameCount = Math.Max(0, sourceFrameCount);
@@ -1268,6 +1366,11 @@ namespace OceanyaClient
         private bool isRunning;
         private DateTime nextFrameAtUtc;
 
+        // Streaming-mode state — only active when created via CreateForStreaming.
+        private bool streaming;
+        private volatile bool streamingComplete;
+        private ConcurrentQueue<(BitmapSource Frame, TimeSpan Duration)>? pendingStreamedFrames;
+
         public event Action<ImageSource>? FrameChanged;
         public event Action<int>? FrameIndexChanged;
         public event Action? PlaybackFinished;
@@ -1314,6 +1417,61 @@ namespace OceanyaClient
             }
         }
 
+        /// <summary>
+        /// Creates a player that accepts frames one-at-a-time via <see cref="EnqueueStreamedFrame"/>.
+        /// Call <see cref="BeginStreamedPlayback"/> on the UI thread after frame 0 is enqueued,
+        /// and <see cref="SignalStreamingComplete"/> from the decode thread when all frames are done.
+        /// </summary>
+        internal static BitmapFrameAnimationPlayer CreateForStreaming(bool loop)
+        {
+            BitmapFrameAnimationPlayer p = new BitmapFrameAnimationPlayer(loop);
+            p.streaming = true;
+            p.pendingStreamedFrames = new ConcurrentQueue<(BitmapSource, TimeSpan)>();
+            return p;
+        }
+
+        /// <summary>Called from the background decode thread after each frame is ready.</summary>
+        internal void EnqueueStreamedFrame(BitmapSource frame, TimeSpan duration)
+        {
+            pendingStreamedFrames?.Enqueue((frame, duration));
+        }
+
+        /// <summary>Called from the background decode thread after all frames have been enqueued.</summary>
+        internal void SignalStreamingComplete()
+        {
+            streamingComplete = true;
+        }
+
+        /// <summary>
+        /// Drains whatever frames have arrived so far and starts playback.
+        /// Must be called on the UI thread after at least frame 0 has been enqueued.
+        /// </summary>
+        internal void BeginStreamedPlayback()
+        {
+            DrainPendingFrames();
+            if (frames.Count == 0)
+            {
+                return;
+            }
+
+            frameIndex = 0;
+            StartPlayback();
+        }
+
+        private void DrainPendingFrames()
+        {
+            if (pendingStreamedFrames == null)
+            {
+                return;
+            }
+
+            while (pendingStreamedFrames.TryDequeue(out (BitmapSource Frame, TimeSpan Duration) item))
+            {
+                frames.Add(item.Frame);
+                frameDurations.Add(item.Duration);
+            }
+        }
+
         public void SetLoop(bool shouldLoop)
         {
             loop = shouldLoop;
@@ -1348,6 +1506,8 @@ namespace OceanyaClient
             frames.Clear();
             frameDurations.Clear();
             frameIndex = 0;
+            // Prevent the background decoder from stalling if it's still running.
+            streamingComplete = true;
         }
 
         private void StartPlayback()
@@ -1371,6 +1531,11 @@ namespace OceanyaClient
 
         private void Tick(DateTime nowUtc)
         {
+            if (streaming)
+            {
+                DrainPendingFrames();
+            }
+
             if (!isRunning || frames.Count == 0 || frameDurations.Count == 0 || nowUtc < nextFrameAtUtc)
             {
                 return;
@@ -1381,6 +1546,14 @@ namespace OceanyaClient
                 int nextIndex = frameIndex + 1;
                 if (nextIndex >= frames.Count)
                 {
+                    if (streaming && !streamingComplete)
+                    {
+                        // Decoder hasn't produced the next frame yet — hold on the current frame
+                        // and check again on the next tick (~16 ms).
+                        nextFrameAtUtc = nowUtc + TimeSpan.FromMilliseconds(16);
+                        return;
+                    }
+
                     if (!loop)
                     {
                         endedWithoutLoop = true;

@@ -1133,61 +1133,138 @@ namespace OceanyaClient.Features.Viewport
             string capturedPath = resolvedPath;
             bool capturedLoop = loop;
             Action<int>? capturedOnFrameChanged = onFrameChanged;
+            Action<IAnimationPlayer?>? capturedOnPlayerReady = onPlayerReady;
 
-            Task.Run(() =>
+            string capturedExt = Path.GetExtension(capturedPath).ToLowerInvariant();
+            if (capturedExt == ".webp")
             {
-                Ao2AnimationPreview.TryCreateAnimationPlayer(
-                    capturedPath,
-                    capturedLoop,
-                    out IAnimationPlayer? p,
-                    usePreviewLimits: false,
-                    maxDimensionOverride: null);
-                return p;
-            }).ContinueWith(task =>
-            {
-                Dispatcher.BeginInvoke(() =>
+                // Streaming path: show frame 0 the moment it is decoded (~10-50 ms) and add
+                // remaining frames incrementally — matches AO2's AnimationLoader behaviour.
+                BitmapFrameAnimationPlayer streamPlayer = BitmapFrameAnimationPlayer.CreateForStreaming(capturedLoop);
+                bool firstFrameDispatched = false;
+
+                Task.Run(() =>
                 {
-                    if (!pendingAsyncLoads.TryGetValue(image, out CancellationTokenSource? currentCts)
-                        || !ReferenceEquals(currentCts, cts))
-                    {
-                        // A newer load superseded this one — discard the result.
-                        return;
-                    }
-
-                    pendingAsyncLoads.Remove(image);
-                    cts.Dispose();
-
-                    if (task.IsFaulted || task.IsCanceled)
-                    {
-                        onPlayerReady?.Invoke(null);
-                        return;
-                    }
-
-                    StopAnimation(image);
-                    IAnimationPlayer? player = task.Result;
-                    if (player != null)
-                    {
-                        animationPlayers[image] = player;
-                        player.FrameChanged += frame => image.Source = frame;
-                        if (capturedOnFrameChanged != null)
+                    bool streamSuccess = Ao2AnimationPreview.TryStreamWebPFrames(
+                        capturedPath,
+                        (frame, duration) =>
                         {
-                            player.FrameIndexChanged += capturedOnFrameChanged;
+                            if (cts.Token.IsCancellationRequested)
+                            {
+                                return;
+                            }
+
+                            streamPlayer.EnqueueStreamedFrame(frame, duration);
+
+                            if (!firstFrameDispatched)
+                            {
+                                firstFrameDispatched = true;
+                                Dispatcher.BeginInvoke(() =>
+                                {
+                                    if (!pendingAsyncLoads.TryGetValue(image, out CancellationTokenSource? currentCts)
+                                        || !ReferenceEquals(currentCts, cts))
+                                    {
+                                        return;
+                                    }
+
+                                    StopAnimation(image);
+                                    animationPlayers[image] = streamPlayer;
+                                    streamPlayer.FrameChanged += f => image.Source = f;
+                                    if (capturedOnFrameChanged != null)
+                                    {
+                                        streamPlayer.FrameIndexChanged += capturedOnFrameChanged;
+                                    }
+
+                                    streamPlayer.BeginStreamedPlayback();
+                                    image.Source = streamPlayer.CurrentFrame;
+                                    image.Visibility = Visibility.Visible;
+                                    capturedOnFrameChanged?.Invoke(streamPlayer.CurrentFrameIndex);
+                                    capturedOnPlayerReady?.Invoke(streamPlayer);
+                                });
+                            }
+                        },
+                        cts.Token);
+
+                    streamPlayer.SignalStreamingComplete();
+
+                    bool dispatched = firstFrameDispatched;
+                    Dispatcher.BeginInvoke(() =>
+                    {
+                        if (pendingAsyncLoads.TryGetValue(image, out CancellationTokenSource? currentCts)
+                            && ReferenceEquals(currentCts, cts))
+                        {
+                            pendingAsyncLoads.Remove(image);
+                            cts.Dispose();
                         }
 
-                        image.Source = player.CurrentFrame;
-                        image.Visibility = Visibility.Visible;
-                        capturedOnFrameChanged?.Invoke(player.CurrentFrameIndex);
-                    }
-                    else
-                    {
-                        ImageSource? source = AO2ViewportAssetResolver.LoadImage(capturedPath, decodePixelWidth: 0);
-                        image.Source = source;
-                        image.Visibility = source != null ? Visibility.Visible : Visibility.Collapsed;
-                    }
-
-                    onPlayerReady?.Invoke(player);
+                        if (!dispatched)
+                        {
+                            // Frame 0 never arrived (file unreadable or single-frame) — fall back to static load.
+                            ImageSource? source = AO2ViewportAssetResolver.LoadImage(capturedPath, decodePixelWidth: 0);
+                            image.Source = source;
+                            image.Visibility = source != null ? Visibility.Visible : Visibility.Collapsed;
+                            capturedOnPlayerReady?.Invoke(null);
+                        }
+                    });
                 });
-            }, TaskScheduler.Default);
+            }
+            else
+            {
+                // Non-WebP (GIF / APNG): decode all frames first, then show — existing behaviour.
+                Task.Run(() =>
+                {
+                    Ao2AnimationPreview.TryCreateAnimationPlayer(
+                        capturedPath,
+                        capturedLoop,
+                        out IAnimationPlayer? p,
+                        usePreviewLimits: false,
+                        maxDimensionOverride: null);
+                    return p;
+                }).ContinueWith(task =>
+                {
+                    Dispatcher.BeginInvoke(() =>
+                    {
+                        if (!pendingAsyncLoads.TryGetValue(image, out CancellationTokenSource? currentCts)
+                            || !ReferenceEquals(currentCts, cts))
+                        {
+                            return;
+                        }
+
+                        pendingAsyncLoads.Remove(image);
+                        cts.Dispose();
+
+                        if (task.IsFaulted || task.IsCanceled)
+                        {
+                            capturedOnPlayerReady?.Invoke(null);
+                            return;
+                        }
+
+                        StopAnimation(image);
+                        IAnimationPlayer? player = task.Result;
+                        if (player != null)
+                        {
+                            animationPlayers[image] = player;
+                            player.FrameChanged += frame => image.Source = frame;
+                            if (capturedOnFrameChanged != null)
+                            {
+                                player.FrameIndexChanged += capturedOnFrameChanged;
+                            }
+
+                            image.Source = player.CurrentFrame;
+                            image.Visibility = Visibility.Visible;
+                            capturedOnFrameChanged?.Invoke(player.CurrentFrameIndex);
+                        }
+                        else
+                        {
+                            ImageSource? source = AO2ViewportAssetResolver.LoadImage(capturedPath, decodePixelWidth: 0);
+                            image.Source = source;
+                            image.Visibility = source != null ? Visibility.Visible : Visibility.Collapsed;
+                        }
+
+                        capturedOnPlayerReady?.Invoke(player);
+                    });
+                }, TaskScheduler.Default);
+            }
         }
 
         private static void SetPlacedImage(
