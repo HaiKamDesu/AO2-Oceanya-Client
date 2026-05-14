@@ -90,7 +90,9 @@ namespace OceanyaClient.Features.Viewport
             bool Stretch,
             bool RespectFlip,
             bool RespectOffset,
-            bool Loop = false);
+            bool Loop = false,
+            bool Cull = false,
+            int? MaxDurationMs = null);
 
         /// <summary>
         /// Resolved animation metadata for a viewport character layer.
@@ -505,8 +507,11 @@ namespace OceanyaClient.Features.Viewport
             bool respectFlip = IsTrue(GetProperty(properties, "respect_flip")) && flip;
             bool respectOffset = IsTrue(GetProperty(properties, "respect_offset"));
             bool loop = IsTrue(GetProperty(properties, "loop"));
+            bool cull = IsTrue(GetProperty(properties, "cull"));
+            string? maxDurationStr = GetProperty(properties, "max_duration");
+            int? maxDurationMs = int.TryParse(maxDurationStr, NumberStyles.Integer, CultureInfo.InvariantCulture, out int md) && md > 0 ? md : (int?)null;
 
-            return new ViewportEffect(effectPath, layer, stretch, respectFlip, respectOffset, loop);
+            return new ViewportEffect(effectPath, layer, stretch, respectFlip, respectOffset, loop, cull, maxDurationMs);
         }
 
         /// <summary>

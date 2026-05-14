@@ -412,6 +412,20 @@ namespace OceanyaClient.Features.Viewport
         {
             if (channel != 0)
             {
+                if (actionFilter != null && !actionFilter(showName))
+                {
+                    return;
+                }
+
+                Dispatcher.Invoke(() =>
+                {
+                    if (!IsVisible)
+                    {
+                        return;
+                    }
+
+                    audioManager.PlayAmbientMusic(channel, songPath, loop);
+                });
                 return;
             }
 
@@ -720,10 +734,15 @@ namespace OceanyaClient.Features.Viewport
                 && (isPreAnimation
                     ? AO2ViewportAssetResolver.ShouldCenterAndHidePairDuringPreAnimation(message.DeskMod)
                     : AO2ViewportAssetResolver.ShouldCenterAndHidePairDuringSpeaking(message.DeskMod, message.EmoteModifier));
+            AO2ChatPreviewStyle talkingStyle = AO2ChatPreviewResolver.Resolve(
+                AO2ViewportAssetResolver.ResolveCharacterChatToken(character),
+                !string.IsNullOrWhiteSpace(showname),
+                preferViewportTheme: true);
             bool useTalkingSprite = !isPreAnimation
                 && showChat
-                && !string.IsNullOrWhiteSpace(message?.Message)
-                && AO2ViewportAssetResolver.IsTextColorTalking(message.TextColor);
+                && message != null
+                && !string.IsNullOrWhiteSpace(message.Message)
+                && talkingStyle.ChatMarkupTalking[(int)message.TextColor];
             AO2ViewportAssetResolver.ResolvedCharacterAnimation resolvedCharacterAnimation = isPreAnimation
                 ? AO2ViewportAssetResolver.ResolveCharacterPreAnimationDetails(character, message?.PreAnim)
                 : AO2ViewportAssetResolver.ResolveCharacterDialogAnimationDetails(character, emoteName, useTalkingSprite);
@@ -1481,10 +1500,40 @@ namespace OceanyaClient.Features.Viewport
                 DoFlash();
             }
 
+            // Cull: stop any currently playing effect before starting the new one.
+            if (resolvedEffect.Cull && EffectImage.Visibility == Visibility.Visible)
+            {
+                StopAnimation(EffectImage);
+                EffectImage.Visibility = Visibility.Collapsed;
+            }
+
             IAnimationPlayer? effectPlayer = SetAnimatedImage(EffectImage, resolvedEffect.ImagePath, !string.IsNullOrWhiteSpace(resolvedEffect.ImagePath), loop: resolvedEffect.Loop);
             if (effectPlayer != null && !resolvedEffect.Loop)
             {
                 effectPlayer.PlaybackFinished += () => EffectImage.Visibility = Visibility.Collapsed;
+            }
+
+            // MaxDurationMs: auto-stop a looping effect after the configured time.
+            if (resolvedEffect.MaxDurationMs.HasValue && resolvedEffect.Loop)
+            {
+                int sequence = messageSequence;
+                int durationMs = resolvedEffect.MaxDurationMs.Value;
+                DispatcherTimer maxDurationTimer = new DispatcherTimer(DispatcherPriority.Normal, Dispatcher)
+                {
+                    Interval = TimeSpan.FromMilliseconds(durationMs)
+                };
+                maxDurationTimer.Tick += (_, _) =>
+                {
+                    maxDurationTimer.Stop();
+                    if (sequence != messageSequence)
+                    {
+                        return;
+                    }
+
+                    StopAnimation(EffectImage);
+                    EffectImage.Visibility = Visibility.Collapsed;
+                };
+                maxDurationTimer.Start();
             }
 
             EffectImage.Stretch = resolvedEffect.Stretch ? Stretch.Fill : Stretch.Uniform;
@@ -2168,7 +2217,7 @@ namespace OceanyaClient.Features.Viewport
                 TestimonyImage.Source = null;
                 TestimonyImage.Visibility = Visibility.Collapsed;
                 string overlayName = variant == 0 ? "notguilty_bubble" : "guilty_bubble";
-                ShowWtceOverlay(overlayName);
+                ShowWtceOverlay(overlayName, TimeSpan.FromMilliseconds(3000));
             }
         }
 
@@ -2181,6 +2230,7 @@ namespace OceanyaClient.Features.Viewport
                 return;
             }
 
+            audioManager.PlayCourtSfx("testimony1");
             testimonyVisible = true;
             SetAnimatedImage(TestimonyImage, path, true, loop: true);
             TestimonyImage.Visibility = Visibility.Visible;
@@ -2194,13 +2244,25 @@ namespace OceanyaClient.Features.Viewport
             TestimonyImage.Visibility = Visibility.Collapsed;
         }
 
-        private void ShowWtceOverlay(string assetStem)
+        private void ShowWtceOverlay(string assetStem, TimeSpan? staticDuration = null)
         {
             string background = sceneClient?.curBG ?? string.Empty;
             string? path = AO2ViewportAssetResolver.ResolveWtceOverlayImage(assetStem, background);
             if (string.IsNullOrWhiteSpace(path))
             {
                 return;
+            }
+
+            string sfxKey = assetStem switch
+            {
+                "crossexamination_bubble" => "testimony2",
+                "notguilty_bubble" => "notguilty",
+                "guilty_bubble" => "guilty",
+                _ => string.Empty
+            };
+            if (!string.IsNullOrEmpty(sfxKey))
+            {
+                audioManager.PlayCourtSfx(sfxKey);
             }
 
             IAnimationPlayer? player = SetAnimatedImage(WtceImage, path, true, loop: false);
@@ -2211,7 +2273,8 @@ namespace OceanyaClient.Features.Viewport
             }
             else
             {
-                ScheduleContinuation(TimeSpan.FromMilliseconds(1500), () => WtceImage.Visibility = Visibility.Collapsed);
+                TimeSpan fallback = staticDuration ?? TimeSpan.FromMilliseconds(1500);
+                ScheduleContinuation(fallback, () => WtceImage.Visibility = Visibility.Collapsed);
             }
         }
 

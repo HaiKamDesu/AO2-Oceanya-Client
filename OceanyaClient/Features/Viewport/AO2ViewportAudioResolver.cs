@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using Common;
@@ -23,6 +24,54 @@ namespace OceanyaClient.Features.Viewport
                 && (token.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
                     || token.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
                     || token.StartsWith("ftp://", StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>
+        /// Parses a music loop sidecar file (&lt;resolvedAudioPath&gt;.txt), if present.
+        /// Returns the loop start/end and whether the values are in seconds (vs sample frames).
+        /// Returns null when no valid sidecar exists.
+        /// AO2 parity: sidecar path = audio file path + ".txt" (e.g. "song.mp3.txt").
+        /// </summary>
+        public static (bool IsSeconds, double LoopStart, double LoopEnd)? ParseMusicLoopSidecar(string? resolvedAudioPath)
+        {
+            if (string.IsNullOrWhiteSpace(resolvedAudioPath))
+            {
+                return null;
+            }
+
+            string sidecarPath = resolvedAudioPath + ".txt";
+            if (!File.Exists(sidecarPath))
+            {
+                return null;
+            }
+
+            string? startStr = ReadIniValue(sidecarPath, "loop_start");
+            string? endStr = ReadIniValue(sidecarPath, "loop_end");
+            string? lengthStr = ReadIniValue(sidecarPath, "loop_length");
+            string? secondsStr = ReadIniValue(sidecarPath, "seconds");
+
+            bool isSeconds = string.Equals(secondsStr, "true", StringComparison.OrdinalIgnoreCase);
+
+            if (!double.TryParse(startStr, NumberStyles.Any, CultureInfo.InvariantCulture, out double start) || start < 0)
+            {
+                return null;
+            }
+
+            double end;
+            if (double.TryParse(endStr, NumberStyles.Any, CultureInfo.InvariantCulture, out double endVal) && endVal > start)
+            {
+                end = endVal;
+            }
+            else if (double.TryParse(lengthStr, NumberStyles.Any, CultureInfo.InvariantCulture, out double length) && length > 0)
+            {
+                end = start + length;
+            }
+            else
+            {
+                return null;
+            }
+
+            return (isSeconds, start, end);
         }
 
         /// <summary>

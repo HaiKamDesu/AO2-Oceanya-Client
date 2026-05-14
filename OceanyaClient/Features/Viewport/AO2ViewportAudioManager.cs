@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Common;
 using ManagedBass;
 using OceanyaClient;
@@ -18,6 +19,8 @@ namespace OceanyaClient.Features.Viewport
         private readonly AO2BlipPreviewPlayer effectSfxPlayer = new AO2BlipPreviewPlayer();
         private readonly AO2BlipPreviewPlayer shoutSfxPlayer = new AO2BlipPreviewPlayer();
         private readonly AO2BlipPreviewPlayer blipPlayer = new AO2BlipPreviewPlayer();
+        private readonly Dictionary<int, AO2BlipPreviewPlayer> ambientPlayers = new Dictionary<int, AO2BlipPreviewPlayer>();
+        private readonly Dictionary<int, string> ambientCurrentTokens = new Dictionary<int, string>();
         private string currentMusicPath = string.Empty;
         private bool currentMusicLoop = true;
         private string currentSfxPath = string.Empty;
@@ -39,6 +42,11 @@ namespace OceanyaClient.Features.Viewport
             effectSfxPlayer.Volume = (float)AudioSettings.SfxVolume;
             shoutSfxPlayer.Volume = (float)AudioSettings.SfxVolume;
             blipPlayer.Volume = (float)AudioSettings.BlipVolume;
+            foreach (KeyValuePair<int, AO2BlipPreviewPlayer> entry in ambientPlayers)
+            {
+                string? token = ambientCurrentTokens.TryGetValue(entry.Key, out string? t) ? t : null;
+                entry.Value.Volume = (float)AudioSettings.ResolveMusicVolume(token);
+            }
         }
 
         /// <summary>
@@ -54,6 +62,7 @@ namespace OceanyaClient.Features.Viewport
             effectSfxPlayer.Stop();
             shoutSfxPlayer.Stop();
             blipPlayer.Stop();
+            StopAllAmbient();
         }
 
         /// <summary>
@@ -258,6 +267,18 @@ namespace OceanyaClient.Features.Viewport
                 return;
             }
 
+            // Apply loop region from sidecar .txt if present (AO2 parity: song.mp3.txt).
+            var loopSidecar = AO2ViewportAudioResolver.ParseMusicLoopSidecar(path);
+            if (loopSidecar.HasValue)
+            {
+                long startBytes = musicPlayer.ConvertLoopValueToBytes(loopSidecar.Value.IsSeconds, loopSidecar.Value.LoopStart);
+                long endBytes = musicPlayer.ConvertLoopValueToBytes(loopSidecar.Value.IsSeconds, loopSidecar.Value.LoopEnd);
+                if (startBytes >= 0 && endBytes > startBytes)
+                {
+                    musicPlayer.ApplyLoopRegion(startBytes, endBytes);
+                }
+            }
+
             if (synchronizedPosition > 0)
             {
                 musicPlayer.SetStreamPosition(synchronizedPosition);
@@ -306,6 +327,83 @@ namespace OceanyaClient.Features.Viewport
             currentMusicLoop = true;
         }
 
+        /// <summary>
+        /// Plays an AO2 courtroom SFX identified by its courtroom_sounds.ini key (e.g. "testimony1").
+        /// Falls back to resolving the key directly as an SFX token when no ini entry is found.
+        /// </summary>
+        public void PlayCourtSfx(string key)
+        {
+            string? path = AO2ViewportAudioResolver.ResolveCourtSfxPath(key);
+            PlayResolvedSfx(path, key, null, null, null);
+        }
+
+        /// <summary>
+        /// Plays ambient music on the given channel (1+).
+        /// Passing a null or empty song path stops the channel.
+        /// AO2 parity: MC# channel field &gt; 0 routes to ambient layers, independent of channel 0.
+        /// </summary>
+        public void PlayAmbientMusic(int channel, string? songPath, bool loop)
+        {
+            if (channel <= 0)
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(songPath))
+            {
+                StopAmbientChannel(channel);
+                return;
+            }
+
+            string? path = AO2ViewportAudioResolver.ResolveMusicPath(songPath);
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return;
+            }
+
+            if (!ambientPlayers.TryGetValue(channel, out AO2BlipPreviewPlayer? player))
+            {
+                player = new AO2BlipPreviewPlayer(streamCount: 1);
+                ambientPlayers[channel] = player;
+            }
+
+            player.Stop();
+            if (!player.TrySetBlip(path, loop: loop))
+            {
+                return;
+            }
+
+            ambientCurrentTokens[channel] = songPath;
+            player.Volume = (float)AudioSettings.ResolveMusicVolume(songPath);
+            _ = player.PlayBlip();
+        }
+
+        /// <summary>
+        /// Stops playback on the given ambient channel.
+        /// </summary>
+        public void StopAmbientChannel(int channel)
+        {
+            if (ambientPlayers.TryGetValue(channel, out AO2BlipPreviewPlayer? player))
+            {
+                player.Stop();
+            }
+
+            ambientCurrentTokens.Remove(channel);
+        }
+
+        /// <summary>
+        /// Stops all ambient channels.
+        /// </summary>
+        public void StopAllAmbient()
+        {
+            foreach (AO2BlipPreviewPlayer player in ambientPlayers.Values)
+            {
+                player.Stop();
+            }
+
+            ambientCurrentTokens.Clear();
+        }
+
         /// <inheritdoc/>
         public void Dispose()
         {
@@ -321,6 +419,12 @@ namespace OceanyaClient.Features.Viewport
             effectSfxPlayer.Dispose();
             shoutSfxPlayer.Dispose();
             blipPlayer.Dispose();
+            foreach (AO2BlipPreviewPlayer player in ambientPlayers.Values)
+            {
+                player.Dispose();
+            }
+
+            ambientPlayers.Clear();
         }
 
         private void CleanupFadingMusicStreamIfStopped()

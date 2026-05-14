@@ -25,6 +25,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Documentation", "Documentation", "{E2E466CC-4456-49E0-975D-6D4498440A5A}"
 	ProjectSection(SolutionItems) = preProject
+		Documentation\AO2ParityGaps.md = Documentation\AO2ParityGaps.md
+		Documentation\ViewportParityGaps.md = Documentation\ViewportParityGaps.md
 		Documentation\AO2-Chat-Config-Coloring-Guide.md = Documentation\AO2-Chat-Config-Coloring-Guide.md
 		Documentation\AreaNavigator.md = Documentation\AreaNavigator.md
 		Documentation\AO2Viewport.md = Documentation\AO2Viewport.md

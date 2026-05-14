@@ -73,6 +73,14 @@ Use this file as the first stop before broad repository searches. It should poin
 - Main code: `OceanyaClient/App.xaml.cs`, `OceanyaClient/Components/Forms/InitialConfigurationWindow.xaml(.cs)`, `OceanyaClient/ClientAssetRefreshService.cs`, `OceanyaClient/StartupTimingLogger.cs`, `Common/SaveFile.cs`
 - Notes: Phase 1 removed the fake loading screen (optional via checkbox) and deferred the asset-change file scan off the launch critical path. A timing log at `%AppData%\OceanyaClient\startup_timing.log` records per-phase milliseconds every session. See doc for remaining Phase 2+ bottlenecks (parallel client connections, XAML lazy-load, directory-mtime fast filter).
 
+## Viewport Rendering Parity Gaps
+- Doc: `Documentation/ViewportParityGaps.md`
+- Notes: 9 gaps where incoming packets render differently (or not at all) in OceanyaClient vs AO2 reference viewport (2026-05-14, release/6-2). High: HP bars (#1), ambient music channels (#2). Medium: music loop regions (#3), WTCE audio (#4), verdict duration (#5), effects cull/max_duration (#6,#7). Low: talking flag hardcoded (#8), DeskMods 4/5 pair visibility (#9). Does NOT cover send-side gaps (those are in AO2ParityGaps.md).
+
+## AO2 Parity Gaps
+- Doc: `Documentation/AO2ParityGaps.md`
+- Notes: Point-in-time (2026-05-14, branch release/6-2) catalog of every user-facing AO2 feature absent or incomplete in OceanyaClient. Covers 19 gaps with user descriptions, current state, technical specs (packets, files, implementation notes). High-priority gaps: Pairing UI (#1), Evidence management (#2), Judge controls/HP bars (#3). Medium: Timer TI# (#4), Spectator (#5), Typing indicator (#6), Mute (#8), Mod call (#9), RT# sending (#19).
+
 ## UI Automation Tests (Smoke + Online)
 - Doc: `UiAutomationTests/README.md`
 - Main code: `UiAutomationTests/FirstWaveSmokeTests.cs`, `UiAutomationTests/OnlineLaneTests.cs`, `UiAutomationTests/FlaUiSmokeApp.cs`, `UiAutomationTests/SmokeFixturePaths.cs`, `UiAutomationTests/OnlineFixturePaths.cs`

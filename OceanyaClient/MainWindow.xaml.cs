@@ -3551,6 +3551,13 @@ namespace OceanyaClient
             {
                 if (channel != 0)
                 {
+                    Dispatcher.BeginInvoke(() =>
+                    {
+                        if (viewportWindow == null || viewportWindow.Visibility != Visibility.Visible)
+                        {
+                            mainMusicAudioManager.PlayAmbientMusic(channel, songPath, loop);
+                        }
+                    }, DispatcherPriority.Background);
                     return;
                 }
 

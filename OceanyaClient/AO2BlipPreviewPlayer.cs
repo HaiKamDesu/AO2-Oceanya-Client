@@ -22,6 +22,7 @@ namespace OceanyaClient
         private int cycleIndex;
         private bool disposed;
         private float volume = 1.0f;
+        private SyncProcedure? activeLoopSyncProcedure;
 
         public string LastErrorMessage { get; private set; } = string.Empty;
 
@@ -422,6 +423,64 @@ namespace OceanyaClient
             }
         }
 
+        /// <summary>
+        /// Registers a BASS position sync that seeks to <paramref name="loopStartBytes"/> whenever
+        /// playback reaches <paramref name="loopEndBytes"/>, enabling gapless music loop regions.
+        /// Call after <see cref="TrySetBlip"/> while streams are loaded.
+        /// AO2 parity: BASS_SYNC_POS | BASS_SYNC_MIXTIME at loop_end, callback seeks to loop_start.
+        /// </summary>
+        internal void ApplyLoopRegion(long loopStartBytes, long loopEndBytes)
+        {
+            if (loopStartBytes < 0 || loopEndBytes <= loopStartBytes)
+            {
+                return;
+            }
+
+            long capturedStart = loopStartBytes;
+            activeLoopSyncProcedure = (handle, channel, data, user) =>
+                Bass.ChannelSetPosition(channel, capturedStart);
+
+            for (int i = 0; i < streamCount; i++)
+            {
+                if (streams[i] == 0)
+                {
+                    continue;
+                }
+
+                Bass.ChannelSetSync(streams[i], SyncFlags.Position | SyncFlags.Mixtime,
+                    loopEndBytes, activeLoopSyncProcedure, IntPtr.Zero);
+            }
+        }
+
+        /// <summary>
+        /// Converts a loop region value to a BASS byte offset.
+        /// When <paramref name="isSeconds"/> is true, uses the first loaded stream for the conversion.
+        /// When false, uses AO2's fixed formula: sample frames × 4 (stereo 16-bit).
+        /// Returns 0 if conversion fails or no stream is loaded.
+        /// </summary>
+        internal long ConvertLoopValueToBytes(bool isSeconds, double value)
+        {
+            if (value <= 0)
+            {
+                return 0;
+            }
+
+            if (!isSeconds)
+            {
+                // AO2 parity: sample frames for stereo 16-bit PCM = frames * 2 channels * 2 bytes
+                return (long)(value * 4);
+            }
+
+            int stream = streams.FirstOrDefault(s => s != 0);
+            if (stream == 0)
+            {
+                return 0;
+            }
+
+            long bytes = Bass.ChannelSeconds2Bytes(stream, value);
+            return bytes < 0 ? 0 : bytes;
+        }
+
         private void FreeStreams()
         {
             for (int i = 0; i < streamCount; i++)
@@ -435,6 +494,7 @@ namespace OceanyaClient
                 streams[i] = 0;
             }
 
+            activeLoopSyncProcedure = null;
             cycleIndex = 0;
         }
 
