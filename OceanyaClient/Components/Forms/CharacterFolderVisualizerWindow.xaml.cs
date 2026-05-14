@@ -304,6 +304,65 @@ namespace OceanyaClient
             }
         }
 
+        /// <summary>
+        /// Selects the requested character after the visualizer has loaded its folder list.
+        /// </summary>
+        public void SelectCharacterWhenReady(string characterDirectoryOrName)
+        {
+            if (string.IsNullOrWhiteSpace(characterDirectoryOrName))
+            {
+                return;
+            }
+
+            if (hasRaisedFinishedLoading)
+            {
+                TrySelectCharacter(characterDirectoryOrName);
+                return;
+            }
+
+            void OnFinishedLoading()
+            {
+                FinishedLoading -= OnFinishedLoading;
+                TrySelectCharacter(characterDirectoryOrName);
+            }
+
+            FinishedLoading += OnFinishedLoading;
+        }
+
+        private bool TrySelectCharacter(string characterDirectoryOrName)
+        {
+            string target = characterDirectoryOrName.Trim();
+            string normalizedTargetPath = NormalizeFolderOverrideKey(target);
+            FolderVisualizerItem? item = allItems.FirstOrDefault(candidate =>
+                string.Equals(candidate.Name, target, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(
+                    NormalizeFolderOverrideKey(candidate.DirectoryPath),
+                    normalizedTargetPath,
+                    StringComparison.OrdinalIgnoreCase));
+            if (item == null)
+            {
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(searchText) || !string.IsNullOrWhiteSpace(pendingSearchText))
+            {
+                searchDebounceTimer.Stop();
+                searchText = string.Empty;
+                pendingSearchText = string.Empty;
+                SearchTextBox.Text = string.Empty;
+                GetOrCreateItemsView().Refresh();
+                UpdateSummaryText();
+            }
+
+            FolderListView.SelectedItem = item;
+            FolderListView.UpdateLayout();
+            FolderListView.ScrollIntoView(item);
+            FolderListView.Focus();
+            selectedItemForTagging = item;
+            RefreshSelectedFolderTagPanel();
+            return true;
+        }
+
         private void Window_StateChanged(object? sender, EventArgs e)
         {
             ApplyWorkAreaMaxBounds();

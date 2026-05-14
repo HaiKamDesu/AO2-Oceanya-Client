@@ -1110,11 +1110,11 @@ namespace OceanyaClient.Features.Viewport
         {
             if (character == null || string.IsNullOrWhiteSpace(character.configINI.PathToConfigINI))
             {
-                return "default";
+                return string.Empty;
             }
 
             string token = ReadIniSectionValue(character.configINI.PathToConfigINI, "Options", "chat");
-            return string.IsNullOrWhiteSpace(token) ? "default" : token.Trim();
+            return string.IsNullOrWhiteSpace(token) ? string.Empty : token.Trim();
         }
 
         /// <summary>

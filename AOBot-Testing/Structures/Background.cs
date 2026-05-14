@@ -26,13 +26,44 @@ namespace AOBot_Testing.Structures
             {"jud","judgestand"},
             {"hlp","prohelperstand"},
             {"pro","prosecutorempty"},
+            {"jur","jurystand"},
+            {"sea","seancestand"},
             {"wit","witnessempty"},
+        };
+
+        private static readonly string[] DefaultAo2Positions =
+        {
+            "def",
+            "hld",
+            "jud",
+            "hlp",
+            "pro",
+            "wit",
+            "jur",
+            "sea"
+        };
+
+        private static readonly HashSet<string> NonPositionImageStems = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "defensedesk",
+            "helperdesk",
+            "prohelperdesk",
+            "prosecutiondesk",
+            "stand",
+            "judgedesk",
+            "jurydesk",
+            "seancedesk"
         };
 
 
         public string Name { get; set; } = string.Empty;
         public string PathToFile { get; set; } = string.Empty;
         public List<string> bgImages { get; set; } = new List<string>();
+
+        /// <summary>
+        /// A position option resolved for the current background.
+        /// </summary>
+        public sealed record PositionOption(string Name, string ImagePath);
 
         public static Background? FromBGPath(string curBG)
         {
@@ -103,8 +134,7 @@ namespace AOBot_Testing.Structures
                     continue;
                 }
 
-                string folderName = candidates[index].FolderName;
-                if (refreshedBackgrounds.ContainsKey(folderName))
+                if (refreshedBackgrounds.ContainsKey(parsedBackground.Name))
                 {
                     continue;
                 }
@@ -114,7 +144,7 @@ namespace AOBot_Testing.Structures
 
             backgroundsByName = refreshedBackgrounds;
             cacheLoaded = true;
-            SaveToJson(cacheFile, backgroundsByName.Values.ToList());
+            SaveToJson(cacheFile, GetDistinctBackgroundsForCache());
             CustomConsole.Info($"Background list saved to cache. Count: {backgroundsByName.Count}");
         }
 
@@ -139,8 +169,38 @@ namespace AOBot_Testing.Structures
                 EnsureCacheLoaded();
 
                 upsertedBackground = CreateBackgroundFromDirectory(targetDirectory);
+                string effectiveDirectory = targetDirectory;
+                if (!string.IsNullOrWhiteSpace(upsertedBackground.Name)
+                    && TryResolveBackgroundDirectory(upsertedBackground.Name, out string resolvedEffectiveDirectory))
+                {
+                    effectiveDirectory = NormalizePathForCompare(resolvedEffectiveDirectory);
+                    if (!string.Equals(effectiveDirectory, targetDirectory, StringComparison.OrdinalIgnoreCase))
+                    {
+                        upsertedBackground = CreateBackgroundFromDirectory(effectiveDirectory);
+                    }
+                }
+
+                string upsertedName = upsertedBackground.Name;
+                List<string> keysToRemove = backgroundsByName
+                    .Where(pair => string.Equals(
+                        NormalizePathForCompare(pair.Value.PathToFile),
+                        targetDirectory,
+                        StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(
+                            NormalizePathForCompare(pair.Value.PathToFile),
+                            effectiveDirectory,
+                            StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(pair.Key, upsertedName, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(pair.Value.Name, upsertedName, StringComparison.OrdinalIgnoreCase))
+                    .Select(pair => pair.Key)
+                    .ToList();
+                foreach (string key in keysToRemove)
+                {
+                    backgroundsByName.Remove(key);
+                }
+
                 backgroundsByName[upsertedBackground.Name] = upsertedBackground;
-                SaveToJson(cacheFile, backgroundsByName.Values.ToList());
+                SaveToJson(cacheFile, GetDistinctBackgroundsForCache());
                 return true;
             }
             catch (Exception ex)
@@ -188,7 +248,7 @@ namespace AOBot_Testing.Structures
 
                 if (removedAny)
                 {
-                    SaveToJson(cacheFile, backgroundsByName.Values.ToList());
+                    SaveToJson(cacheFile, GetDistinctBackgroundsForCache());
                 }
 
                 return true;
@@ -239,15 +299,78 @@ namespace AOBot_Testing.Structures
                 .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
         }
 
+        /// <summary>
+        /// Gets AO2-style position dropdown entries: default AO2 positions, design.ini positions, then image-backed
+        /// undeclared positions.
+        /// </summary>
+        public IReadOnlyList<PositionOption> GetAo2PositionOptions()
+        {
+            Dictionary<string, string> imageByName = bgImages
+                .GroupBy(file => Path.GetFileNameWithoutExtension(file), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+
+            List<PositionOption> result = new List<PositionOption>();
+            HashSet<string> addedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (string position in DefaultAo2Positions)
+            {
+                AddPositionIfResolvable(position, PathToFile, imageByName, result, addedNames);
+            }
+
+            foreach (string position in GetDesignIniPositions())
+            {
+                AddPositionIfResolvable(position, PathToFile, imageByName, result, addedNames);
+            }
+
+            foreach (string imagePath in bgImages)
+            {
+                string stem = Path.GetFileNameWithoutExtension(imagePath).Trim();
+                if (string.IsNullOrWhiteSpace(stem) || NonPositionImageStems.Contains(stem))
+                {
+                    continue;
+                }
+
+                string? positionName = posToBGName.FirstOrDefault(pair =>
+                    string.Equals(pair.Value, stem, StringComparison.OrdinalIgnoreCase)).Key;
+
+                AddPositionIfResolvable(positionName ?? stem, PathToFile, imageByName, result, addedNames);
+            }
+
+            return result;
+        }
+
         private static Dictionary<string, string> ParsePositionsFromDesignIni(
             string designIniPath,
             Dictionary<string, string> imageByName)
         {
-            List<string> lines = File.ReadAllLines(designIniPath).ToList();
-            bool inGlobalScope = true;
-            string positionsRaw = string.Empty;
+            Dictionary<string, string> result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string configuredPosition in ReadDesignIniPositions(designIniPath))
+            {
+                string realPosition = configuredPosition.Split(':')[0].Trim();
+                if (string.IsNullOrWhiteSpace(realPosition))
+                {
+                    continue;
+                }
 
-            foreach (string rawLine in lines)
+                if (TryResolvePositionImage(realPosition, imageByName, out string imagePath))
+                {
+                    result[configuredPosition] = imagePath;
+                }
+            }
+
+            return result;
+        }
+
+        private static IReadOnlyList<string> ReadDesignIniPositions(string designIniPath)
+        {
+            if (!File.Exists(designIniPath))
+            {
+                return Array.Empty<string>();
+            }
+
+            string positionsRaw = string.Empty;
+            bool inGlobalScope = true;
+            foreach (string rawLine in File.ReadAllLines(designIniPath))
             {
                 string line = rawLine.Trim();
                 if (string.IsNullOrWhiteSpace(line) || line.StartsWith(";") || line.StartsWith("#"))
@@ -273,42 +396,108 @@ namespace AOBot_Testing.Structures
                 }
 
                 string key = line.Substring(0, separator).Trim();
-                if (!string.Equals(key, "positions", StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(key, "positions", StringComparison.OrdinalIgnoreCase))
                 {
-                    continue;
+                    positionsRaw = line.Substring(separator + 1).Trim();
                 }
-
-                positionsRaw = line.Substring(separator + 1).Trim();
             }
 
-            Dictionary<string, string> result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             if (string.IsNullOrWhiteSpace(positionsRaw))
             {
-                return result;
+                return Array.Empty<string>();
             }
 
-            string[] configuredPositions = positionsRaw.Split(',', StringSplitOptions.RemoveEmptyEntries);
-            foreach (string configuredPositionRaw in configuredPositions)
+            return positionsRaw
+                .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(position => position.Trim())
+                .Where(position => !string.IsNullOrWhiteSpace(position))
+                .ToList();
+        }
+
+        private IReadOnlyList<string> GetDesignIniPositions()
+        {
+            string designIniPath = Path.Combine(PathToFile, "design.ini");
+            return ReadDesignIniPositions(designIniPath);
+        }
+
+        private static void AddPositionIfResolvable(
+            string position,
+            string backgroundDirectory,
+            Dictionary<string, string> imageByName,
+            List<PositionOption> result,
+            HashSet<string> addedNames)
+        {
+            string cleanPosition = (position ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(cleanPosition) || !addedNames.Add(cleanPosition))
             {
-                string configuredPosition = configuredPositionRaw.Trim();
-                if (string.IsNullOrWhiteSpace(configuredPosition))
+                return;
+            }
+
+            string realPosition = cleanPosition.Split(':')[0].Trim();
+            if (string.IsNullOrWhiteSpace(realPosition))
+            {
+                return;
+            }
+
+            if (TryResolvePositionImage(realPosition, imageByName, out string imagePath)
+                || TryResolveCourtPositionImage(realPosition, backgroundDirectory, imageByName, out imagePath))
+            {
+                result.Add(new PositionOption(cleanPosition, imagePath));
+            }
+        }
+
+        private static bool TryResolveCourtPositionImage(
+            string realPosition,
+            string backgroundDirectory,
+            Dictionary<string, string> imageByName,
+            out string imagePath)
+        {
+            imagePath = string.Empty;
+            if (!imageByName.TryGetValue("court", out string? courtImagePath)
+                || string.IsNullOrWhiteSpace(courtImagePath))
+            {
+                return false;
+            }
+
+            string designIniPath = Path.Combine(backgroundDirectory, "design.ini");
+            if (string.IsNullOrWhiteSpace(ReadDesignIniValue(designIniPath, "court:" + realPosition + "/origin")))
+            {
+                return false;
+            }
+
+            imagePath = courtImagePath;
+            return true;
+        }
+
+        private static string ReadDesignIniValue(string designIniPath, string key)
+        {
+            if (!File.Exists(designIniPath))
+            {
+                return string.Empty;
+            }
+
+            foreach (string rawLine in File.ReadAllLines(designIniPath))
+            {
+                string line = rawLine.Trim();
+                if (string.IsNullOrWhiteSpace(line) || line.StartsWith(";") || line.StartsWith("#"))
                 {
                     continue;
                 }
 
-                string realPosition = configuredPosition.Split(':')[0].Trim();
-                if (string.IsNullOrWhiteSpace(realPosition))
+                int separator = line.IndexOf('=');
+                if (separator <= 0)
                 {
                     continue;
                 }
 
-                if (TryResolvePositionImage(realPosition, imageByName, out string imagePath))
+                string lineKey = line.Substring(0, separator).Trim();
+                if (string.Equals(lineKey, key, StringComparison.OrdinalIgnoreCase))
                 {
-                    result[configuredPosition] = imagePath;
+                    return line.Substring(separator + 1).Trim();
                 }
             }
 
-            return result;
+            return string.Empty;
         }
 
         private static bool TryResolvePositionImage(
@@ -346,9 +535,16 @@ namespace AOBot_Testing.Structures
             EnsureCacheFilePath();
             if (TryLoadFromJson(cacheFile, out List<Background>? cachedBackgrounds))
             {
-                backgroundsByName = cachedBackgrounds
-                    .Where(background => !string.IsNullOrWhiteSpace(background.Name))
-                    .ToDictionary(background => background.Name, background => background, StringComparer.OrdinalIgnoreCase);
+                backgroundsByName = new Dictionary<string, Background>(StringComparer.OrdinalIgnoreCase);
+                foreach (Background background in cachedBackgrounds.Where(background =>
+                    !string.IsNullOrWhiteSpace(background.Name)))
+                {
+                    if (!backgroundsByName.ContainsKey(background.Name))
+                    {
+                        backgroundsByName.Add(background.Name, background);
+                    }
+                }
+
                 cacheLoaded = true;
                 return;
             }
@@ -434,6 +630,20 @@ namespace AOBot_Testing.Structures
 
             newBackground.bgImages = bgFilesFiltered;
             return newBackground;
+        }
+
+        private static List<Background> GetDistinctBackgroundsForCache()
+        {
+            Dictionary<string, Background> distinct = new Dictionary<string, Background>(StringComparer.OrdinalIgnoreCase);
+            foreach (Background background in backgroundsByName.Values)
+            {
+                if (!string.IsNullOrWhiteSpace(background.Name) && !distinct.ContainsKey(background.Name))
+                {
+                    distinct.Add(background.Name, background);
+                }
+            }
+
+            return distinct.Values.ToList();
         }
 
         private static string NormalizePathForCompare(string path)

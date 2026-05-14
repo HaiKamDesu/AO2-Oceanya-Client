@@ -274,11 +274,26 @@
                                           MouseDoubleClick="ServerListView_MouseDoubleClick">
                                     <ListView.ContextMenu>
                                         <ContextMenu>
+                                            <MenuItem IsEnabled="False" StaysOpenOnClick="True">
+                                                <MenuItem.Header>
+                                                    <TextBlock Text="Refresh" Foreground="Black" FontWeight="Bold" FontSize="11" Margin="4,2,4,1"/>
+                                                </MenuItem.Header>
+                                            </MenuItem>
                                             <MenuItem Header="Refresh Server" Click="RefreshServerMenuItem_Click"/>
                                             <MenuItem Header="Refresh Defaults" Click="RefreshCurrentTabMenuItem_Click"/>
                                             <Separator/>
+                                            <MenuItem IsEnabled="False" StaysOpenOnClick="True">
+                                                <MenuItem.Header>
+                                                    <TextBlock Text="Favorites" Foreground="Black" FontWeight="Bold" FontSize="11" Margin="4,2,4,1"/>
+                                                </MenuItem.Header>
+                                            </MenuItem>
                                             <MenuItem Header="Add To Favorites" Click="AddFavoriteButton_Click"/>
                                             <Separator/>
+                                            <MenuItem IsEnabled="False" StaysOpenOnClick="True">
+                                                <MenuItem.Header>
+                                                    <TextBlock Text="Clipboard" Foreground="Black" FontWeight="Bold" FontSize="11" Margin="4,2,4,1"/>
+                                                </MenuItem.Header>
+                                            </MenuItem>
                                             <MenuItem Header="Copy IP" Click="CopyIpMenuItem_Click"/>
                                         </ContextMenu>
                                     </ListView.ContextMenu>
@@ -307,11 +322,26 @@
                                           MouseDoubleClick="ServerListView_MouseDoubleClick">
                                     <ListView.ContextMenu>
                                         <ContextMenu>
+                                            <MenuItem IsEnabled="False" StaysOpenOnClick="True">
+                                                <MenuItem.Header>
+                                                    <TextBlock Text="Refresh" Foreground="Black" FontWeight="Bold" FontSize="11" Margin="4,2,4,1"/>
+                                                </MenuItem.Header>
+                                            </MenuItem>
                                             <MenuItem Header="Refresh Server" Click="RefreshServerMenuItem_Click"/>
                                             <MenuItem Header="Refresh AO Server Poll" Click="RefreshCurrentTabMenuItem_Click"/>
                                             <Separator/>
+                                            <MenuItem IsEnabled="False" StaysOpenOnClick="True">
+                                                <MenuItem.Header>
+                                                    <TextBlock Text="Favorites" Foreground="Black" FontWeight="Bold" FontSize="11" Margin="4,2,4,1"/>
+                                                </MenuItem.Header>
+                                            </MenuItem>
                                             <MenuItem Header="Add To Favorites" Click="AddFavoriteButton_Click"/>
                                             <Separator/>
+                                            <MenuItem IsEnabled="False" StaysOpenOnClick="True">
+                                                <MenuItem.Header>
+                                                    <TextBlock Text="Clipboard" Foreground="Black" FontWeight="Bold" FontSize="11" Margin="4,2,4,1"/>
+                                                </MenuItem.Header>
+                                            </MenuItem>
                                             <MenuItem Header="Copy IP" Click="CopyIpMenuItem_Click"/>
                                         </ContextMenu>
                                     </ListView.ContextMenu>
@@ -340,15 +370,35 @@
                                           MouseDoubleClick="ServerListView_MouseDoubleClick">
                                     <ListView.ContextMenu>
                                         <ContextMenu>
+                                            <MenuItem IsEnabled="False" StaysOpenOnClick="True">
+                                                <MenuItem.Header>
+                                                    <TextBlock Text="Refresh" Foreground="Black" FontWeight="Bold" FontSize="11" Margin="4,2,4,1"/>
+                                                </MenuItem.Header>
+                                            </MenuItem>
                                             <MenuItem Header="Refresh Server" Click="RefreshServerMenuItem_Click"/>
                                             <MenuItem Header="Refresh Favorites" Click="RefreshCurrentTabMenuItem_Click"/>
                                             <Separator/>
+                                            <MenuItem IsEnabled="False" StaysOpenOnClick="True">
+                                                <MenuItem.Header>
+                                                    <TextBlock Text="Favorites" Foreground="Black" FontWeight="Bold" FontSize="11" Margin="4,2,4,1"/>
+                                                </MenuItem.Header>
+                                            </MenuItem>
                                             <MenuItem Header="Add Favorite" Click="AddFavoriteButton_Click"/>
                                             <MenuItem Header="Edit Favorite" Click="EditFavoriteButton_Click"/>
                                             <MenuItem Header="Duplicate Favorite" Click="DuplicateFavoriteMenuItem_Click"/>
                                             <Separator/>
+                                            <MenuItem IsEnabled="False" StaysOpenOnClick="True">
+                                                <MenuItem.Header>
+                                                    <TextBlock Text="Clipboard" Foreground="Black" FontWeight="Bold" FontSize="11" Margin="4,2,4,1"/>
+                                                </MenuItem.Header>
+                                            </MenuItem>
                                             <MenuItem Header="Copy IP" Click="CopyIpMenuItem_Click"/>
                                             <Separator/>
+                                            <MenuItem IsEnabled="False" StaysOpenOnClick="True">
+                                                <MenuItem.Header>
+                                                    <TextBlock Text="Cleanup" Foreground="Black" FontWeight="Bold" FontSize="11" Margin="4,2,4,1"/>
+                                                </MenuItem.Header>
+                                            </MenuItem>
                                             <MenuItem Header="Remove Favorite" Click="RemoveFavoriteButton_Click"/>
                                         </ContextMenu>
                                     </ListView.ContextMenu>

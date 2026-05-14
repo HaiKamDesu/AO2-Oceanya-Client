@@ -286,11 +286,11 @@ namespace OceanyaClient
         private void ApplyFormattedMessageText(AO2ChatPreviewStyle style, string rawText)
         {
             MessageTextBox.Document.Blocks.Clear();
-            MessageTextBox.Document.PagePadding = new Thickness(0);
+            MessageTextBox.Document.PagePadding = new Thickness(4);
             Paragraph paragraph = new Paragraph
             {
                 Margin = new Thickness(0),
-            TextAlignment = AO2ChatTextFormatter.ResolveMessageAlignment(rawText, out string text)
+                TextAlignment = AO2ChatTextFormatter.ResolveMessageAlignment(rawText, out string text)
             };
 
             foreach (AO2FormattedTextSegment segment in AO2ChatTextFormatter.EnumerateFormattedTextSegments(

@@ -385,6 +385,10 @@ namespace OceanyaClient
             {
                 await RefreshCharacterAssetsAsync(characterName, refreshAllCharacters: false, refreshAllAssets: false);
             };
+            ICMessageSettingsControl.OnRefreshBackgroundRequested += async backgroundName =>
+            {
+                await RefreshBackgroundAssetsAsync(backgroundName);
+            };
             ICMessageSettingsControl.OnRefreshAllAssetsRequested += async () =>
             {
                 await RefreshCharacterAssetsAsync(null, refreshAllCharacters: false, refreshAllAssets: true);
@@ -396,6 +400,18 @@ namespace OceanyaClient
             ICMessageSettingsControl.OnOpenInCharacterEditorRequested += async characterDirectory =>
             {
                 await OpenCharacterInEditorAsync(characterDirectory);
+            };
+            ICMessageSettingsControl.OnDuplicateInCharacterEditorRequested += async characterDirectory =>
+            {
+                await DuplicateCharacterInEditorAsync(characterDirectory);
+            };
+            ICMessageSettingsControl.OnOpenInCharacterEmoteVisualizerRequested += characterDirectory =>
+            {
+                OpenCharacterInEmoteVisualizer(characterDirectory);
+            };
+            ICMessageSettingsControl.OnOpenInCharacterFolderVisualizerRequested += characterDirectory =>
+            {
+                OpenCharacterInFolderVisualizer(characterDirectory);
             };
             ICMessageSettingsControl.OnPositionConfirmed += async (profileClient, position) =>
             {
@@ -4657,6 +4673,7 @@ namespace OceanyaClient
 
                 #region Create Context Menu
                 ContextMenu contextMenu = new ContextMenu();
+                ContextMenuSectionHelper.AddHeader(contextMenu, "Client", addLeadingSeparator: false);
                 MenuItem renameMenuItem = new MenuItem { Header = "Rename Client" };
                 renameMenuItem.Click += (sender, args) => RenameClient(bot);
                 contextMenu.Items.Add(renameMenuItem);
@@ -4742,7 +4759,7 @@ namespace OceanyaClient
                 };
                 contextMenu.Items.Add(manualIniPuppetChange);
 
-                contextMenu.Items.Add(new Separator());
+                ContextMenuSectionHelper.AddHeader(contextMenu, "Order", addLeadingSeparator: true);
                 MenuItem moveUpMenuItem = new MenuItem { Header = "Move UP" };
                 moveUpMenuItem.Click += (sender, args) => MoveClient(bot, -1);
                 contextMenu.Items.Add(moveUpMenuItem);
@@ -4764,7 +4781,7 @@ namespace OceanyaClient
                 contextMenu.Items.Add(reconnectMenuItem);
                 AttachAiContextMenuItems(contextMenu, bot);
 
-                contextMenu.Items.Add(new Separator());
+                ContextMenuSectionHelper.AddHeader(contextMenu, "Connection", addLeadingSeparator: true);
                 MenuItem disconnectMenuItem = new MenuItem { Header = "Disconnect" };
                 disconnectMenuItem.Click += async (sender, args) =>
                 {
@@ -5351,6 +5368,12 @@ namespace OceanyaClient
 
             viewportContent = new AO2ViewportWindowContent();
             viewportContent.UseAsWindowsPreviewChanged += (_, _) => ApplyViewportTaskbarPriority();
+            viewportContent.OpenCharacterInEditorRequested += OpenCharacterInEditorAsync;
+            viewportContent.DuplicateCharacterInEditorRequested += DuplicateCharacterInEditorAsync;
+            viewportContent.OpenCharacterInFolderVisualizerRequested += OpenCharacterInFolderVisualizer;
+            viewportContent.RefreshCharacterRequested += characterName =>
+                RefreshCharacterAssetsAsync(characterName, refreshAllCharacters: false, refreshAllAssets: false);
+            viewportContent.RefreshBackgroundRequested += RefreshBackgroundAssetsAsync;
         }
 
         private Func<ICMessage, bool>? CreateViewportMessageFilter(AOClient profileClient)
@@ -6128,6 +6151,25 @@ namespace OceanyaClient
             visualizerWindow.Show();
         }
 
+        private void OpenCharacterInFolderVisualizer(string characterDirectoryOrName)
+        {
+            if (string.IsNullOrWhiteSpace(characterDirectoryOrName))
+            {
+                return;
+            }
+
+            CharacterFolderVisualizerWindow visualizerWindow = new CharacterFolderVisualizerWindow(
+                OnAssetsRefreshedFromVisualizer,
+                CanSetVisualizerCharacter,
+                SetVisualizerCharacterInClient,
+                suppressInitialLoadWaitForm: false)
+            {
+                Owner = HostWindow
+            };
+            visualizerWindow.SelectCharacterWhenReady(characterDirectoryOrName);
+            visualizerWindow.Show();
+        }
+
         private bool CanSetVisualizerCharacter(FolderVisualizerItem item)
         {
             if (currentClient == null || !ICMessageSettingsControl.IsEnabled)
@@ -6221,6 +6263,29 @@ namespace OceanyaClient
             OnAssetsRefreshedFromVisualizer();
         }
 
+        private async Task RefreshBackgroundAssetsAsync(string? backgroundName)
+        {
+            if (string.IsNullOrWhiteSpace(backgroundName))
+            {
+                return;
+            }
+
+            Window owner = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            if (owner == null)
+            {
+                return;
+            }
+
+            TargetedAssetRefreshPlan plan = new TargetedAssetRefreshPlan();
+            plan.BackgroundNames.Add(backgroundName.Trim());
+            await ClientAssetRefreshService.RefreshTargetedAssetsAsync(owner, plan);
+
+            if (currentClient != null)
+            {
+                SelectClient(currentClient);
+            }
+        }
+
         private async Task OpenCharacterInEditorAsync(string characterDirectory)
         {
             if (string.IsNullOrWhiteSpace(characterDirectory) || !System.IO.Directory.Exists(characterDirectory))
@@ -6265,6 +6330,68 @@ namespace OceanyaClient
             Window editorWindow = OceanyaWindowManager.CreateWindow(creator);
             editorWindow.Owner = owner;
             _ = editorWindow.ShowDialog();
+        }
+
+        private async Task DuplicateCharacterInEditorAsync(string characterDirectory)
+        {
+            if (string.IsNullOrWhiteSpace(characterDirectory) || !System.IO.Directory.Exists(characterDirectory))
+            {
+                OceanyaMessageBox.Show(
+                    HostWindow,
+                    "Character folder was not found on disk.",
+                    "Duplicate Character Folder",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            Window owner = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            await WaitForm.ShowFormAsync("Opening character editor...", owner);
+            AOCharacterFileCreatorWindow creator = new AOCharacterFileCreatorWindow();
+            bool loadedSuccessfully;
+            string errorMessage;
+            try
+            {
+                WaitForm.SetSubtitle("Loading duplicate template...");
+                await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
+                loadedSuccessfully = creator.TryLoadCharacterFolderForDuplication(characterDirectory, out errorMessage);
+            }
+            finally
+            {
+                WaitForm.CloseForm();
+            }
+
+            if (!loadedSuccessfully)
+            {
+                OceanyaMessageBox.Show(
+                    HostWindow,
+                    "Could not load the selected character for duplication.\n"
+                    + (string.IsNullOrWhiteSpace(errorMessage) ? "Unknown error." : errorMessage),
+                    "Duplicate Character Folder",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            Window editorWindow = OceanyaWindowManager.CreateWindow(creator);
+            editorWindow.Owner = owner;
+            _ = editorWindow.ShowDialog();
+        }
+
+        private void OpenCharacterInEmoteVisualizer(string characterDirectory)
+        {
+            CharacterFolder? character = CharacterFolder.FullList.FirstOrDefault(folder =>
+                string.Equals(folder.DirectoryPath, characterDirectory, StringComparison.OrdinalIgnoreCase));
+            if (character == null)
+            {
+                return;
+            }
+
+            CharacterEmoteVisualizerWindow emoteVisualizerWindow = new CharacterEmoteVisualizerWindow(character)
+            {
+                Owner = HostWindow ?? Window.GetWindow(this)
+            };
+            emoteVisualizerWindow.ShowDialog();
         }
 
 

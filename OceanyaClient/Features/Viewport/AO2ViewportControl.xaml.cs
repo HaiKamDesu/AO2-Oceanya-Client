@@ -15,6 +15,7 @@ using AOBot_Testing.Agents;
 using AOBot_Testing.Structures;
 using Common;
 using OceanyaClient.Features.ChatPreview;
+using OceanyaClient.Utilities;
 
 namespace OceanyaClient.Features.Viewport
 {
@@ -58,6 +59,7 @@ namespace OceanyaClient.Features.Viewport
         private readonly TranslateTransform chatShakeTransform = new TranslateTransform();
         private readonly Dictionary<Image, CancellationTokenSource> pendingAsyncLoads = new Dictionary<Image, CancellationTokenSource>();
         private string currentRenderPosition = string.Empty;
+        private CharacterFolder? currentRenderCharacter;
         private bool testimonyVisible;
         private IAnimationPlayer? chatArrowPlayer;
         private const int DefaultChatTextCrawlMilliseconds = 40;
@@ -88,9 +90,28 @@ namespace OceanyaClient.Features.Viewport
             audioManager.RefreshVolumes();
         }
 
+        /// <summary>
+        /// Current background token rendered by this viewport.
+        /// </summary>
+        public string CurrentBackgroundName => sceneClient?.curBG ?? string.Empty;
+
+        /// <summary>
+        /// Current speaker/character folder rendered by this viewport.
+        /// </summary>
+        public CharacterFolder? CurrentCharacter => currentRenderCharacter ?? sceneClient?.currentINI;
+
+        /// <summary>
+        /// Current chatbox token resolved for the rendered character.
+        /// </summary>
+        public string CurrentChatboxName =>
+            !string.IsNullOrWhiteSpace(ChatPreview.ChatToken)
+                ? ChatPreview.ChatToken
+                : AO2ViewportAssetResolver.ResolveCharacterChatToken(CurrentCharacter);
+
         private void InitializeChatBackgroundMenu()
         {
             ContextMenu menu = new ContextMenu();
+            ContextMenuSectionHelper.AddHeader(menu, "Chatbox", addLeadingSeparator: false);
             MenuItem chooseColorItem = new MenuItem { Header = "Set chat background color..." };
             chooseColorItem.Click += (_, _) => PickChatBackgroundColor();
             MenuItem transparentItem = new MenuItem { Header = "Use transparent chat background" };
@@ -506,6 +527,7 @@ namespace OceanyaClient.Features.Viewport
             StopAnimation(EvidenceImage);
             EvidenceImage.Visibility = Visibility.Collapsed;
             currentRenderPosition = string.Empty;
+            currentRenderCharacter = sceneClient.currentINI;
             ChatPreview.PreviewText = string.Empty;
             ChatPreview.Visibility = Visibility.Collapsed;
             additivePreviousText = string.Empty;
@@ -717,6 +739,7 @@ namespace OceanyaClient.Features.Viewport
         {
             AO2ViewportAssetResolver.ViewportDisplayOptions displayOptions =
                 AO2ViewportAssetResolver.ResolveDisplayOptions(backgroundName);
+            currentRenderCharacter = character;
             AO2ViewportAssetResolver.ViewportImagePlacement backgroundPlacement =
                 AO2ViewportAssetResolver.ResolveBackgroundPlacement(backgroundName, position);
             CustomConsole.Debug(
@@ -765,7 +788,7 @@ namespace OceanyaClient.Features.Viewport
                 onPlayerReady: onCharacterPlayerReady);
             CharacterImage.RenderTransformOrigin = new Point(0.5, 0.5);
             CharacterImage.RenderTransform = BuildCharacterTransform(flip, characterShakeTransform);
-            ApplyOffset(CharacterImage, centerAndHidePair ? (0, 0) : message?.SelfOffset ?? (0, 0));
+            ApplyCharacterOffset(CharacterImage, centerAndHidePair ? (0, 0) : message?.SelfOffset ?? (0, 0));
 
             bool shouldShowDesk = isZoom && !isPreAnimation
                 ? false
@@ -941,6 +964,7 @@ namespace OceanyaClient.Features.Viewport
             chatRevealStartedForCurrentMessage = false;
             immediatePreAnimActive = false;
             currentChatBlipToken = string.Empty;
+            currentRenderCharacter = null;
             CharacterImage.Visibility = Visibility.Collapsed;
             PairCharacterImage.Visibility = Visibility.Collapsed;
             DeskImage.Visibility = Visibility.Collapsed;
@@ -1115,6 +1139,7 @@ namespace OceanyaClient.Features.Viewport
             {
                 StopAnimation(image);
                 image.Source = null;
+                ResetCharacterImageGeometry(image);
                 image.Visibility = Visibility.Collapsed;
                 onPlayerReady?.Invoke(null);
                 return;
@@ -1124,6 +1149,11 @@ namespace OceanyaClient.Features.Viewport
             if (string.IsNullOrWhiteSpace(resolvedPath) || !File.Exists(resolvedPath))
             {
                 IAnimationPlayer? syncPlayer = SetAnimatedImage(image, path, visible, loop, onFrameChanged);
+                if (syncPlayer != null)
+                {
+                    syncPlayer.FrameChanged += _ => ApplyHeightBasedCharacterGeometry(image);
+                }
+                ApplyHeightBasedCharacterGeometry(image);
                 onPlayerReady?.Invoke(syncPlayer);
                 return;
             }
@@ -1136,6 +1166,11 @@ namespace OceanyaClient.Features.Viewport
             if (!isAnimated || isCached)
             {
                 IAnimationPlayer? syncPlayer = SetAnimatedImage(image, resolvedPath, visible, loop, onFrameChanged);
+                if (syncPlayer != null)
+                {
+                    syncPlayer.FrameChanged += _ => ApplyHeightBasedCharacterGeometry(image);
+                }
+                ApplyHeightBasedCharacterGeometry(image);
                 onPlayerReady?.Invoke(syncPlayer);
                 return;
             }
@@ -1188,15 +1223,20 @@ namespace OceanyaClient.Features.Viewport
 
                                     StopAnimation(image);
                                     animationPlayers[image] = streamPlayer;
-                                    streamPlayer.FrameChanged += f => image.Source = f;
+                                    streamPlayer.FrameChanged += f =>
+                                    {
+                                        image.Source = f;
+                                        ApplyHeightBasedCharacterGeometry(image);
+                                    };
                                     if (capturedOnFrameChanged != null)
                                     {
                                         streamPlayer.FrameIndexChanged += capturedOnFrameChanged;
                                     }
 
                                     streamPlayer.BeginStreamedPlayback();
-                                    image.Source = streamPlayer.CurrentFrame;
-                                    image.Visibility = Visibility.Visible;
+                            image.Source = streamPlayer.CurrentFrame;
+                            ApplyHeightBasedCharacterGeometry(image);
+                            image.Visibility = Visibility.Visible;
                                     capturedOnFrameChanged?.Invoke(streamPlayer.CurrentFrameIndex);
                                     capturedOnPlayerReady?.Invoke(streamPlayer);
                                 });
@@ -1221,6 +1261,7 @@ namespace OceanyaClient.Features.Viewport
                             // Frame 0 never arrived (file unreadable or single-frame) — fall back to static load.
                             ImageSource? source = AO2ViewportAssetResolver.LoadImage(capturedPath, decodePixelWidth: 0);
                             image.Source = source;
+                            ApplyHeightBasedCharacterGeometry(image);
                             image.Visibility = source != null ? Visibility.Visible : Visibility.Collapsed;
                             capturedOnPlayerReady?.Invoke(null);
                         }
@@ -1263,13 +1304,18 @@ namespace OceanyaClient.Features.Viewport
                         if (player != null)
                         {
                             animationPlayers[image] = player;
-                            player.FrameChanged += frame => image.Source = frame;
+                            player.FrameChanged += frame =>
+                            {
+                                image.Source = frame;
+                                ApplyHeightBasedCharacterGeometry(image);
+                            };
                             if (capturedOnFrameChanged != null)
                             {
                                 player.FrameIndexChanged += capturedOnFrameChanged;
                             }
 
                             image.Source = player.CurrentFrame;
+                            ApplyHeightBasedCharacterGeometry(image);
                             image.Visibility = Visibility.Visible;
                             capturedOnFrameChanged?.Invoke(player.CurrentFrameIndex);
                         }
@@ -1277,6 +1323,7 @@ namespace OceanyaClient.Features.Viewport
                         {
                             ImageSource? source = AO2ViewportAssetResolver.LoadImage(capturedPath, decodePixelWidth: 0);
                             image.Source = source;
+                            ApplyHeightBasedCharacterGeometry(image);
                             image.Visibility = source != null ? Visibility.Visible : Visibility.Collapsed;
                         }
 
@@ -1436,6 +1483,39 @@ namespace OceanyaClient.Features.Viewport
             Canvas.SetTop(image, AO2ViewportAssetResolver.ViewportHeight * offset.Vertical / 100.0);
         }
 
+        private static void ApplyCharacterOffset(Image image, (int Horizontal, int Vertical) offset)
+        {
+            double width = double.IsNaN(image.Width) || image.Width <= 0
+                ? AO2ViewportAssetResolver.ViewportWidth
+                : image.Width;
+            Canvas.SetLeft(
+                image,
+                ((AO2ViewportAssetResolver.ViewportWidth - width) / 2.0)
+                    + AO2ViewportAssetResolver.ViewportWidth * offset.Horizontal / 100.0);
+            Canvas.SetTop(image, AO2ViewportAssetResolver.ViewportHeight * offset.Vertical / 100.0);
+        }
+
+        private static void ApplyHeightBasedCharacterGeometry(Image image)
+        {
+            if (image.Source is not BitmapSource bitmap || bitmap.PixelWidth <= 0 || bitmap.PixelHeight <= 0)
+            {
+                ResetCharacterImageGeometry(image);
+                return;
+            }
+
+            double scale = (double)AO2ViewportAssetResolver.ViewportHeight / bitmap.PixelHeight;
+            image.Width = bitmap.PixelWidth * scale;
+            image.Height = AO2ViewportAssetResolver.ViewportHeight;
+            image.Stretch = Stretch.Fill;
+        }
+
+        private static void ResetCharacterImageGeometry(Image image)
+        {
+            image.Width = AO2ViewportAssetResolver.ViewportWidth;
+            image.Height = AO2ViewportAssetResolver.ViewportHeight;
+            image.Stretch = Stretch.Fill;
+        }
+
         private static Transform BuildCharacterTransform(bool flipped, TranslateTransform shakeTransform)
         {
             TransformGroup group = new TransformGroup();
@@ -1465,7 +1545,7 @@ namespace OceanyaClient.Features.Viewport
             SetCharacterAnimatedImageAsync(PairCharacterImage, pairPath, !string.IsNullOrWhiteSpace(pairPath));
             PairCharacterImage.RenderTransformOrigin = new Point(0.5, 0.5);
             PairCharacterImage.RenderTransform = BuildCharacterTransform(message.OtherFlip, pairCharacterShakeTransform);
-            ApplyOffset(PairCharacterImage, (message.OtherOffset, message.OtherOffsetVertical));
+            ApplyCharacterOffset(PairCharacterImage, (message.OtherOffset, message.OtherOffsetVertical));
 
             bool pairInFront = AO2ViewportAssetResolver.GetPairOrdering(message.OtherCharIdRaw)
                 == AO2ViewportAssetResolver.PairOrdering.PairInFront;

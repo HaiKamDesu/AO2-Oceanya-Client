@@ -96,6 +96,44 @@ public class NetworkTests
     }
 
     [Test]
+    public void SetCharacter_PreservesDefaultPositionMode_WhenPositionIsEmpty()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/")
+        {
+            curPos = string.Empty
+        };
+        CharacterFolder firstCharacter = CreateCharacterFolder("Franziska", "wit");
+        CharacterFolder secondCharacter = CreateCharacterFolder("KamLoremaster", "jud");
+
+        string? side = null;
+        client.OnSideChange += newPos => side = newPos;
+
+        client.SetCharacter(firstCharacter);
+        client.SetCharacter(secondCharacter);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(client.curPos, Is.EqualTo(string.Empty));
+            Assert.That(client.currentINI?.configINI.Side, Is.EqualTo("jud"));
+            Assert.That(side, Is.EqualTo(string.Empty));
+        });
+    }
+
+    [Test]
+    public void SetCharacter_PreservesManualPosition_WhenPositionIsNonEmpty()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/")
+        {
+            curPos = "cage"
+        };
+        CharacterFolder character = CreateCharacterFolder("KamLoremaster", "jud");
+
+        client.SetCharacter(character);
+
+        Assert.That(client.curPos, Is.EqualTo("cage"));
+    }
+
+    [Test]
     public async Task HandleMessage_FaListInfersDefaultCurrentArea_WhenServerSendsNoExplicitArea()
     {
         AOClient client = new AOClient("ws://localhost:10001/");
@@ -110,6 +148,27 @@ public class NetworkTests
             Assert.That(client.CurrentArea, Is.EqualTo("Lobby"));
             Assert.That(currentArea, Is.EqualTo("Lobby"));
         });
+    }
+
+    private static CharacterFolder CreateCharacterFolder(string name, string side)
+    {
+        return new CharacterFolder
+        {
+            Name = name,
+            configINI = new CharacterConfigINI(string.Empty)
+            {
+                Name = name,
+                Side = side,
+                Emotions =
+                {
+                    [1] = new Emote(1)
+                    {
+                        Name = "normal",
+                        Animation = "normal"
+                    }
+                }
+            }
+        };
     }
 
     [Test]

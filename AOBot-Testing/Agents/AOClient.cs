@@ -541,9 +541,13 @@ namespace AOBot_Testing.Agents
             }
 
             CurrentINI = character;
-            if (switchPosWhenChangingINI || string.IsNullOrEmpty(curPos))
+            if (switchPosWhenChangingINI)
             {
                 SetPos(character.configINI.Side);
+            }
+            else if (string.IsNullOrEmpty(curPos))
+            {
+                OnSideChange?.Invoke(string.Empty);
             }
 
 

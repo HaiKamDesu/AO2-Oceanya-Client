@@ -42,6 +42,11 @@
                        Margin="20,20,20,5">
                 <TextBlock.ContextMenu>
                     <ContextMenu>
+                        <MenuItem IsEnabled="False" StaysOpenOnClick="True">
+                            <MenuItem.Header>
+                                <TextBlock Text="Message" Foreground="Black" FontWeight="Bold" FontSize="11" Margin="4,2,4,1"/>
+                            </MenuItem.Header>
+                        </MenuItem>
                         <MenuItem Header="Copy message" Click="CopyMainMessageMenuItem_Click"/>
                     </ContextMenu>
                 </TextBlock.ContextMenu>
@@ -59,6 +64,11 @@
                        Margin="20,0,20,10">
                 <TextBlock.ContextMenu>
                     <ContextMenu>
+                        <MenuItem IsEnabled="False" StaysOpenOnClick="True">
+                            <MenuItem.Header>
+                                <TextBlock Text="Message" Foreground="Black" FontWeight="Bold" FontSize="11" Margin="4,2,4,1"/>
+                            </MenuItem.Header>
+                        </MenuItem>
                         <MenuItem Header="Copy message" Click="CopySubtitleMessageMenuItem_Click"/>
                     </ContextMenu>
                 </TextBlock.ContextMenu>

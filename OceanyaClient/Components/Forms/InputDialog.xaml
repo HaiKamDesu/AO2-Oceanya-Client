@@ -61,6 +61,11 @@
                    TextWrapping="Wrap">
             <TextBlock.ContextMenu>
                 <ContextMenu>
+                    <MenuItem IsEnabled="False" StaysOpenOnClick="True">
+                        <MenuItem.Header>
+                            <TextBlock Text="Prompt" Foreground="Black" FontWeight="Bold" FontSize="11" Margin="4,2,4,1"/>
+                        </MenuItem.Header>
+                    </MenuItem>
                     <MenuItem Header="Copy message" Click="CopyPromptMenuItem_Click"/>
                 </ContextMenu>
             </TextBlock.ContextMenu>

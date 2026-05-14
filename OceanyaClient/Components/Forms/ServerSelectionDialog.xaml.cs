@@ -1060,8 +1060,14 @@ namespace OceanyaClient
                     : $"{uri.Host}:{uri.Port}";
             }
 
-            Clipboard.SetText(textToCopy);
-            StatusTextBlock.Text = $"Copied '{textToCopy}' to clipboard.";
+            if (ClipboardUtilities.TrySetText(textToCopy))
+            {
+                StatusTextBlock.Text = $"Copied '{textToCopy}' to clipboard.";
+            }
+            else
+            {
+                StatusTextBlock.Text = $"Could not copy '{textToCopy}' to clipboard.";
+            }
         }
 
         private IEnumerable<ListView> GetAllListViews()

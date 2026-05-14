@@ -11,7 +11,12 @@ Use this file as the first stop before broad repository searches. It should poin
 - Doc: `Documentation/AO2Viewport.md`
 - Main code: `OceanyaClient/Features/Viewport/*`, `OceanyaClient/MainWindow.xaml`, `OceanyaClient/MainWindow.xaml.cs`
 - AO2 reference: `AO2-Client/src/courtroom.cpp`, `AO2-Client/src/courtroom.h`, `AO2-Client/src/animationlayer.*`
-- Notes: GM multi-client `V` button opens an owned 256x192 AO2 render surface for background, character, desk, effect, and chatbox layers. Each GM profile owns its own hidden/live viewport state; selecting a profile only changes which state is shown.
+- Notes: GM multi-client `V` button opens an owned 256x192 AO2 render surface for background, character, desk, effect, and chatbox layers. Each GM profile owns its own hidden/live viewport state; selecting a profile only changes which state is shown. The viewport right-click menu is dynamically sectioned in `AO2ViewportWindowContent` and exposes viewport, background, character, and chatbox actions. Chatbox art/geometry/font lookup is owned by `AO2ChatPreviewResolver`; it reads selected `config.ini` `theme`/`subtheme`/`theme_scaling_factor` and mirrors AO2 `get_asset_paths(...)` priority. Custom `[Options] chat=<token>` art and config use that AO2 misc/theme priority, while missing/empty `[Options] chat` stays empty and skips `misc/default`; custom art without custom geometry falls back through the active theme chain rather than preferred-theme guesses.
+
+## Custom Context Menus
+- Main code: `OceanyaClient/Utilities/ContextMenuSectionHelper.cs`
+- Examples: `OceanyaClient/Components/Forms/CharacterFolderVisualizerWindow.xaml.cs`, `OceanyaClient/MainWindow.xaml.cs` (`MusicContextMenu_Opened`), `OceanyaClient/Features/Viewport/AO2ViewportWindowContent.xaml.cs`, `OceanyaClient/Components/ICMessageSettings.xaml.cs`
+- Notes: Custom WPF context menus use disabled bold category title rows with separators between categories. New/touched C#-built menus should call `ContextMenuSectionHelper.AddHeader(...)`.
 
 ## GM Multi-Client Snapshot Restore
 - Doc: `Documentation/GmMultiClientSnapshotRestore.md`
@@ -23,6 +28,11 @@ Use this file as the first stop before broad repository searches. It should poin
 - Main code: `OceanyaClient/MainWindow.xaml`, `OceanyaClient/MainWindow.xaml.cs`, `AOBot-Testing/Agents/AOClient.cs`, `AOBot-Testing/Structures/AreaInfo.cs`
 - AO2/server reference: `AO2-Client/src/courtroom.cpp`, `AO2-Client/src/packet_distribution.cpp`, `tsuserver3/server/area_manager.py`, `tsuserver3/server/client_manager.py`, `tsuserverCC/server/area_manager.py`, `tsuserverCC/server/client_manager.py`
 - Notes: `FA`/`SM` define visible area rows; `ARUP` updates player counts/status/CM/lock by current row index. `RM` refreshes `FA` without a fresh ARUP snapshot, so the AO client preserves known row state by area name and treats new area counts as unknown until ARUP, `/getarea`, or `=== Areas ===` OOC data arrives. The popup is dark themed and its dimensions persist across sessions.
+
+## GM Multi-Client Position Dropdown
+- Doc: `Documentation/AO2Viewport.md`
+- Main code: `OceanyaClient/Components/ICMessageSettings.xaml.cs`, `AOBot-Testing/Structures/Background.cs`, `AOBot-Testing/Agents/AOClient.cs`
+- Notes: The IC position dropdown displays `default (<character side>)` as a value-backed empty position, then AO2 default positions, `design.ini` positions, and undeclared image-backed positions. Empty `AOClient.curPos` remains default mode across character changes; manual positions remain manual. Background resolution/cache refresh preserves AO2 mount priority: first matching `Globals.BaseFolders` background name wins when multiple mounts contain the same background folder name.
 
 ## GM Multi-Client Music List
 - Doc: `Documentation/MusicList.md`

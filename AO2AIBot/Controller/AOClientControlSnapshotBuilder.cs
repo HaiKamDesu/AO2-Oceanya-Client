@@ -97,8 +97,8 @@ namespace AO2AIBot.Controller
             Background? background = Background.FromBGPath(effectiveNetworkClient.curBG);
             if (background != null)
             {
-                return background.GetPossiblePositions()
-                    .Keys
+                return background.GetAo2PositionOptions()
+                    .Select(position => position.Name)
                     .Where(position => !string.IsNullOrWhiteSpace(position))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .OrderBy(position => position, StringComparer.OrdinalIgnoreCase)

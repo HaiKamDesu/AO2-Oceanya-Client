@@ -17,6 +17,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
 using System.IO;
+using System.Diagnostics;
 using Path = System.IO.Path;
 using System.ComponentModel;
 using static OceanyaClient.Components.ImageComboBox;
@@ -40,11 +41,16 @@ namespace OceanyaClient.Components
 
         public Action<string>? OnSendICMessage;
         public Action<string>? OnRefreshCharacterRequested;
+        public Action<string>? OnRefreshBackgroundRequested;
         public Action? OnRefreshAllAssetsRequested;
         public Action? OnRefreshAllCharactersRequested;
         public Action<string>? OnOpenInCharacterEditorRequested;
+        public Action<string>? OnDuplicateInCharacterEditorRequested;
+        public Action<string>? OnOpenInCharacterEmoteVisualizerRequested;
+        public Action<string>? OnOpenInCharacterFolderVisualizerRequested;
         public Action<AOClient, string>? OnPositionConfirmed;
         public Action? OnClientStateChanged;
+        private const string DefaultPositionDisplayPrefix = "default";
 
         public ICMessageSettings()
         {
@@ -68,6 +74,7 @@ namespace OceanyaClient.Components
             EmoteDropdown.SetComboBoxReadOnly(true);
 
             PositionDropdown.OnConfirm += PositionDropdown_OnConfirm;
+            PositionDropdown.ContextMenu = BuildPositionDropdownContextMenu();
 
             foreach (var color in Enum.GetValues(typeof(ICMessage.TextColors)).Cast<ICMessage.TextColors>())
             {
@@ -145,6 +152,7 @@ namespace OceanyaClient.Components
         private ContextMenu BuildCharacterDropdownContextMenu()
         {
             ContextMenu contextMenu = new ContextMenu();
+            ContextMenuSectionHelper.AddHeader(contextMenu, "Character", addLeadingSeparator: false);
             MenuItem refreshCurrentCharacterItem = new MenuItem();
             refreshCurrentCharacterItem.Click += (_, _) =>
             {
@@ -177,21 +185,122 @@ namespace OceanyaClient.Components
                 }
             };
 
+            MenuItem duplicateInEditorItem = new MenuItem { Header = "Duplicate and open in Character Editor" };
+            duplicateInEditorItem.Click += (_, _) =>
+            {
+                string characterDirectory = ResolveCurrentCharacterDirectory();
+                if (!string.IsNullOrWhiteSpace(characterDirectory))
+                {
+                    OnDuplicateInCharacterEditorRequested?.Invoke(characterDirectory);
+                }
+            };
+
+            MenuItem openInEmoteVisualizerItem = new MenuItem { Header = "Open in Character Emote Visualizer" };
+            openInEmoteVisualizerItem.Click += (_, _) =>
+            {
+                string characterDirectory = ResolveCurrentCharacterDirectory();
+                if (!string.IsNullOrWhiteSpace(characterDirectory))
+                {
+                    OnOpenInCharacterEmoteVisualizerRequested?.Invoke(characterDirectory);
+                }
+            };
+
+            MenuItem openInFolderVisualizerItem = new MenuItem { Header = "Open in Character Folder Visualizer" };
+            openInFolderVisualizerItem.Click += (_, _) =>
+            {
+                string characterDirectory = ResolveCurrentCharacterDirectory();
+                if (!string.IsNullOrWhiteSpace(characterDirectory))
+                {
+                    OnOpenInCharacterFolderVisualizerRequested?.Invoke(characterDirectory);
+                }
+            };
+
+            MenuItem openExplorerItem = new MenuItem { Header = "Open in file explorer" };
+            openExplorerItem.Click += (_, _) => OpenDirectory(ResolveCurrentCharacterDirectory());
+
+            MenuItem copyNameItem = new MenuItem { Header = "Copy name" };
+            copyNameItem.Click += (_, _) =>
+            {
+                string characterName = ResolveCurrentCharacterName();
+                if (!string.IsNullOrWhiteSpace(characterName))
+                {
+                    ClipboardUtilities.TrySetText(characterName);
+                }
+            };
+
             contextMenu.Items.Add(refreshCurrentCharacterItem);
+            contextMenu.Items.Add(openExplorerItem);
+            contextMenu.Items.Add(copyNameItem);
+            contextMenu.Items.Add(openInEditorItem);
+            contextMenu.Items.Add(duplicateInEditorItem);
+            contextMenu.Items.Add(openInEmoteVisualizerItem);
+            contextMenu.Items.Add(openInFolderVisualizerItem);
+
+            ContextMenuSectionHelper.AddHeader(contextMenu, "Asset cache", addLeadingSeparator: true);
             contextMenu.Items.Add(refreshAllAssetsItem);
             contextMenu.Items.Add(refreshAllCharactersItem);
-            contextMenu.Items.Add(new Separator());
-            contextMenu.Items.Add(openInEditorItem);
             contextMenu.Opened += (_, _) =>
             {
                 string characterName = ResolveCurrentCharacterName();
+                string characterDirectory = ResolveCurrentCharacterDirectory();
                 refreshCurrentCharacterItem.Header = string.IsNullOrWhiteSpace(characterName)
                     ? "Refresh Current Character"
                     : "Refresh " + characterName;
                 refreshCurrentCharacterItem.IsEnabled = !string.IsNullOrWhiteSpace(characterName);
                 refreshAllAssetsItem.IsEnabled = true;
                 refreshAllCharactersItem.IsEnabled = true;
-                openInEditorItem.IsEnabled = !string.IsNullOrWhiteSpace(ResolveCurrentCharacterDirectory());
+                openExplorerItem.IsEnabled = Directory.Exists(characterDirectory);
+                copyNameItem.IsEnabled = !string.IsNullOrWhiteSpace(characterName);
+                openInEditorItem.IsEnabled = Directory.Exists(characterDirectory);
+                duplicateInEditorItem.IsEnabled = Directory.Exists(characterDirectory);
+                openInEmoteVisualizerItem.IsEnabled = Directory.Exists(characterDirectory);
+                openInFolderVisualizerItem.IsEnabled = Directory.Exists(characterDirectory);
+            };
+
+            return contextMenu;
+        }
+
+        private ContextMenu BuildPositionDropdownContextMenu()
+        {
+            ContextMenu contextMenu = new ContextMenu();
+            ContextMenuSectionHelper.AddHeader(contextMenu, "Background", addLeadingSeparator: false);
+
+            MenuItem openExplorerItem = new MenuItem { Header = "Open in file explorer" };
+            openExplorerItem.Click += (_, _) => OpenDirectory(ResolveCurrentBackgroundDirectory());
+            contextMenu.Items.Add(openExplorerItem);
+
+            MenuItem copyNameItem = new MenuItem { Header = "Copy name" };
+            copyNameItem.Click += (_, _) =>
+            {
+                string backgroundName = ResolveCurrentBackgroundName();
+                if (!string.IsNullOrWhiteSpace(backgroundName))
+                {
+                    ClipboardUtilities.TrySetText(backgroundName);
+                }
+            };
+            contextMenu.Items.Add(copyNameItem);
+
+            MenuItem refreshBackgroundItem = new MenuItem();
+            refreshBackgroundItem.Click += (_, _) =>
+            {
+                string backgroundName = ResolveCurrentBackgroundName();
+                if (!string.IsNullOrWhiteSpace(backgroundName))
+                {
+                    OnRefreshBackgroundRequested?.Invoke(backgroundName);
+                }
+            };
+            contextMenu.Items.Add(refreshBackgroundItem);
+
+            contextMenu.Opened += (_, _) =>
+            {
+                string backgroundName = ResolveCurrentBackgroundName();
+                string backgroundDirectory = ResolveCurrentBackgroundDirectory();
+                openExplorerItem.IsEnabled = Directory.Exists(backgroundDirectory);
+                copyNameItem.IsEnabled = !string.IsNullOrWhiteSpace(backgroundName);
+                refreshBackgroundItem.Header = string.IsNullOrWhiteSpace(backgroundName)
+                    ? "Refresh background"
+                    : "Refresh " + backgroundName;
+                refreshBackgroundItem.IsEnabled = !string.IsNullOrWhiteSpace(backgroundName);
             };
 
             return contextMenu;
@@ -216,6 +325,36 @@ namespace OceanyaClient.Components
         private string ResolveCurrentCharacterDirectory()
         {
             return curClient?.currentINI?.DirectoryPath?.Trim() ?? string.Empty;
+        }
+
+        private string ResolveCurrentBackgroundName()
+        {
+            return curClient?.curBG?.Trim() ?? string.Empty;
+        }
+
+        private string ResolveCurrentBackgroundDirectory()
+        {
+            string backgroundName = ResolveCurrentBackgroundName();
+            if (string.IsNullOrWhiteSpace(backgroundName))
+            {
+                return string.Empty;
+            }
+
+            return AOBot_Testing.Structures.Background.FromBGPath(backgroundName)?.PathToFile?.Trim() ?? string.Empty;
+        }
+
+        private static void OpenDirectory(string directory)
+        {
+            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+            {
+                return;
+            }
+
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = directory,
+                UseShellExecute = true
+            });
         }
 
         private void EffectDropdown_OnConfirm(object? sender, string newEffect)
@@ -284,6 +423,7 @@ namespace OceanyaClient.Components
 
                 curClient.SetCharacter(ini);
                 SetINI(ini);
+                UpdatePosDropdown(curClient);
                 OnClientStateChanged?.Invoke();
             }
             else
@@ -357,48 +497,40 @@ namespace OceanyaClient.Components
             {
                 PositionDropdown.Clear();
                 var bg = AOBot_Testing.Structures.Background.FromBGPath(client.curBG);
+                string defaultPos = client.currentINI?.configINI.Side?.Trim() ?? string.Empty;
+                string defaultDisplay = BuildDefaultPositionDisplay(defaultPos);
 
                 if(bg != null)
                 {
-                    var allPos = bg.GetPossiblePositions();
-                    string defaultPos = client.currentINI?.configINI.Side?.Trim() ?? string.Empty;
-                    if (!string.IsNullOrWhiteSpace(defaultPos))
-                    {
-                        string defaultImage = allPos.TryGetValue(defaultPos, out string? imagePath)
-                            ? imagePath
-                            : string.Empty;
-                        PositionDropdown.Add(defaultPos, defaultImage);
-                    }
+                    IReadOnlyList<Background.PositionOption> allPos = bg.GetAo2PositionOptions();
+                    string defaultImage = allPos.FirstOrDefault(pos =>
+                        string.Equals(pos.Name, defaultPos, StringComparison.OrdinalIgnoreCase))?.ImagePath ?? string.Empty;
+                    PositionDropdown.Add(defaultDisplay, defaultImage, string.Empty);
 
                     foreach (var pos in allPos)
                     {
-                        if (string.Equals(pos.Key, defaultPos, StringComparison.OrdinalIgnoreCase))
-                        {
-                            continue;
-                        }
-
-                        PositionDropdown.Add(pos.Key, pos.Value);
+                        PositionDropdown.Add(pos.Name, pos.ImagePath);
                     }
 
-                    if (allPos.ContainsKey(client.curPos))
+                    if (string.IsNullOrWhiteSpace(client.curPos))
+                    {
+                        PositionDropdown.SelectedText = defaultDisplay;
+                    }
+                    else if (allPos.Any(pos => string.Equals(pos.Name, client.curPos, StringComparison.OrdinalIgnoreCase)))
                     {
                         PositionDropdown.SelectedText = client.curPos;
                     }
-                    else if (!string.IsNullOrWhiteSpace(defaultPos))
-                    {
-                        PositionDropdown.SelectedText = defaultPos;
-                    }
                     else
                     {
-                        if(allPos.Count > 0)
-                        {
-                            PositionDropdown.SelectedText = allPos.First().Key;
-                        }
+                        PositionDropdown.SelectedText = client.curPos;
                     }
                 }
                 else
                 {
-                    PositionDropdown.SelectedText = client.currentINI?.configINI.Side ?? string.Empty;
+                    PositionDropdown.Add(defaultDisplay, string.Empty, string.Empty);
+                    PositionDropdown.SelectedText = string.IsNullOrWhiteSpace(client.curPos)
+                        ? defaultDisplay
+                        : client.curPos;
                 }
             });
         }
@@ -412,9 +544,19 @@ namespace OceanyaClient.Components
             PositionDropdown.Dispatcher.Invoke(() =>
             {
                 curClient.OnSideChange -= UpdatePos;
-                PositionDropdown.SelectedText = newPos;
+                PositionDropdown.SelectedText = string.IsNullOrWhiteSpace(newPos)
+                    ? BuildDefaultPositionDisplay(curClient.currentINI?.configINI.Side?.Trim() ?? string.Empty)
+                    : newPos;
                 curClient.OnSideChange += UpdatePos;
             });
+        }
+
+        private static string BuildDefaultPositionDisplay(string defaultPos)
+        {
+            string cleanDefaultPos = defaultPos?.Trim() ?? string.Empty;
+            return string.IsNullOrWhiteSpace(cleanDefaultPos)
+                ? DefaultPositionDisplayPrefix
+                : $"{DefaultPositionDisplayPrefix} ({cleanDefaultPos})";
         }
         private void SetINI(CharacterFolder ini)
         {
@@ -594,6 +736,7 @@ namespace OceanyaClient.Components
         private ContextMenu BuildEmoteButtonContextMenu(Emote emote)
         {
             ContextMenu menu = new ContextMenu();
+            ContextMenuSectionHelper.AddHeader(menu, "Sprite preview", addLeadingSeparator: false);
             bool hasPreAnim = !string.IsNullOrWhiteSpace(emote.PreAnimation)
                 && emote.PreAnimation.Trim() != "-";
 
@@ -616,8 +759,7 @@ namespace OceanyaClient.Components
                 ResolveEmoteSpritePath(EmoteSpriteKind.Talk, emote));
             menu.Items.Add(talkItem);
 
-            menu.Items.Add(new Separator());
-
+            ContextMenuSectionHelper.AddHeader(menu, "Viewport", addLeadingSeparator: true);
             MenuItem viewportItem = new MenuItem { Header = "Preview in Viewport" };
             viewportItem.Click += (_, _) => OpenEmoteViewportPreview(emote);
             menu.Items.Add(viewportItem);

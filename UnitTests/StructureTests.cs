@@ -103,12 +103,14 @@ namespace UnitTests
         // We'll need to mock some file system behavior for testing
         private string _tempDir = string.Empty;
         private List<string> _originalBaseFolders = new List<string>();
+        private string _originalPathToConfigIni = string.Empty;
         
         [SetUp]
         public void SetUp()
         {
             // Store original base folders
             _originalBaseFolders = new List<string>(Globals.BaseFolders);
+            _originalPathToConfigIni = Globals.PathToConfigINI;
             
             // Create a temporary directory for testing
             _tempDir = Path.Combine(Path.GetTempPath(), $"bg_test_{Guid.NewGuid()}");
@@ -116,6 +118,8 @@ namespace UnitTests
             
             // Override base folders to use our test directory
             Globals.BaseFolders = new List<string> { _tempDir };
+            Globals.PathToConfigINI = Path.Combine(_tempDir, "config.ini");
+            File.WriteAllText(Globals.PathToConfigINI, "theme=(714x688) FullChar\nsubtheme=default\n");
             
             // Create a background directory structure
             var bgDir = Path.Combine(_tempDir, "background");
@@ -145,6 +149,7 @@ namespace UnitTests
         {
             // Restore original base folders
             Globals.BaseFolders = _originalBaseFolders;
+            Globals.PathToConfigINI = _originalPathToConfigIni;
             
             // Clean up temporary directory
             try
@@ -287,6 +292,57 @@ namespace UnitTests
         }
 
         [Test]
+        public void Test_Background_UsesFirstMountedBackgroundWhenNamesCollide()
+        {
+            string secondRoot = Path.Combine(Path.GetTempPath(), $"bg_test_mount_{Guid.NewGuid()}");
+            try
+            {
+                string firstBgDir = Path.Combine(_tempDir, "background", "testing");
+                string secondBgDir = Path.Combine(secondRoot, "background", "testing");
+                Directory.CreateDirectory(firstBgDir);
+                Directory.CreateDirectory(secondBgDir);
+                CreateEmptyFile(Path.Combine(firstBgDir, "firstonly.png"));
+                CreateEmptyFile(Path.Combine(secondBgDir, "secondonly.png"));
+
+                Globals.BaseFolders = new List<string> { _tempDir, secondRoot };
+                Background.RefreshCache();
+
+                Background? background = Background.FromBGPath("testing");
+                Assert.That(background, Is.Not.Null);
+                Assert.That(
+                    background!.PathToFile,
+                    Is.EqualTo(firstBgDir).IgnoreCase,
+                    "AO2 resolves same-named backgrounds from the first matching mount path.");
+                Assert.That(background.bgImages.Any(path => path.EndsWith("firstonly.png", StringComparison.OrdinalIgnoreCase)), Is.True);
+                Assert.That(background.bgImages.Any(path => path.EndsWith("secondonly.png", StringComparison.OrdinalIgnoreCase)), Is.False);
+
+                bool upserted = Background.TryUpsertBackgroundInCache(secondBgDir, out Background? refreshed, out string error);
+
+                Assert.That(upserted, Is.True, error);
+                Assert.That(refreshed, Is.Not.Null);
+                Assert.That(
+                    refreshed!.PathToFile,
+                    Is.EqualTo(firstBgDir).IgnoreCase,
+                    "Targeted refresh must not let a lower-priority duplicate mount replace the AO2-selected one.");
+                Assert.That(Background.FromBGPath("testing")!.PathToFile, Is.EqualTo(firstBgDir).IgnoreCase);
+            }
+            finally
+            {
+                try
+                {
+                    if (Directory.Exists(secondRoot))
+                    {
+                        Directory.Delete(secondRoot, true);
+                    }
+                }
+                catch
+                {
+                    // Ignore cleanup errors.
+                }
+            }
+        }
+
+        [Test]
         public void Test_Background_GetPossiblePositions_UsesDesignIniPositionsWhenPresent()
         {
             string testBgDir = Path.Combine(_tempDir, "background", "testbg");
@@ -305,6 +361,48 @@ namespace UnitTests
             Assert.That(positions.ContainsKey("custom:123"), Is.True);
             Assert.That(positions.ContainsKey("hld"), Is.True);
             Assert.That(positions.ContainsKey("wit"), Is.False);
+        }
+
+        [Test]
+        public void Test_Background_GetAo2PositionOptions_IncludesDefaultsDesignAndUndeclaredImages()
+        {
+            string testBgDir = Path.Combine(_tempDir, "background", "testbg");
+            File.WriteAllText(Path.Combine(testBgDir, "design.ini"), "positions=custom:123,hld");
+            CreateEmptyFile(Path.Combine(testBgDir, "custom.png"));
+            CreateEmptyFile(Path.Combine(testBgDir, "cage.png"));
+            Background.RefreshCache();
+
+            var background = Background.FromBGPath("testbg");
+            Assert.That(background, Is.Not.Null);
+
+            var positions = background!.GetAo2PositionOptions().Select(position => position.Name).ToList();
+
+            Assert.That(positions, Does.Contain("def"));
+            Assert.That(positions, Does.Contain("wit"));
+            Assert.That(positions, Does.Contain("pro"));
+            Assert.That(positions, Does.Contain("custom:123"));
+            Assert.That(positions, Does.Contain("cage"));
+            Assert.That(positions.IndexOf("def"), Is.LessThan(positions.IndexOf("custom:123")));
+            Assert.That(positions.IndexOf("custom:123"), Is.LessThan(positions.IndexOf("cage")));
+        }
+
+        [Test]
+        public void Test_Background_GetAo2PositionOptions_IncludesCourtOriginDefaultPositions()
+        {
+            string courtBgDir = Path.Combine(_tempDir, "background", "courtbg");
+            Directory.CreateDirectory(courtBgDir);
+            CreateEmptyFile(Path.Combine(courtBgDir, "court.png"));
+            File.WriteAllText(Path.Combine(courtBgDir, "design.ini"), "court:def/origin=128");
+            Background.RefreshCache();
+
+            var background = Background.FromBGPath("courtbg");
+            Assert.That(background, Is.Not.Null);
+
+            Background.PositionOption? defPosition = background!.GetAo2PositionOptions()
+                .FirstOrDefault(position => position.Name == "def");
+
+            Assert.That(defPosition, Is.Not.Null);
+            Assert.That(defPosition!.ImagePath, Does.EndWith("court.png"));
         }
 
         [Test]
@@ -525,6 +623,182 @@ namespace UnitTests
             Assert.That(
                 AO2ChatPreviewResolver.ResolveSiblingImageVariant(style.ChatboxImagePath, "med"),
                 Is.EqualTo(Path.Combine(viewportThemeDir, "chatmed.png")).IgnoreCase);
+        }
+
+        [Test]
+        public void Test_AO2ChatPreviewResolver_CustomChatboxOverridesThemeDefaultArt()
+        {
+            string viewportThemeDir = Path.Combine(_tempDir, "themes", "(714x688) FullChar");
+            Directory.CreateDirectory(viewportThemeDir);
+            CreateEmptyFile(Path.Combine(viewportThemeDir, "chat.png"));
+
+            string customChatboxDir = Path.Combine(_tempDir, "misc", "P5");
+            Directory.CreateDirectory(customChatboxDir);
+            CreateEmptyFile(Path.Combine(customChatboxDir, "chat.png"));
+            File.WriteAllText(
+                Path.Combine(customChatboxDir, "courtroom_design.ini"),
+                "ao2_chatbox=0,178,256,104\n" +
+                "message=20,21,200,60\n");
+
+            AO2ChatPreviewStyle style = AO2ChatPreviewResolver.Resolve("P5", hasShowname: true, preferViewportTheme: true);
+
+            Assert.That(
+                style.ChatboxImagePath,
+                Is.EqualTo(Path.Combine(customChatboxDir, "chat.png")).IgnoreCase);
+            Assert.That(style.MessageBounds, Is.EqualTo(new AO2ChatPreviewBounds(20, 21, 200, 60)));
+            Assert.That(
+                AO2ChatPreviewResolver.ResolveChatboxDirectoryPath("P5", preferViewportTheme: true),
+                Is.EqualTo(customChatboxDir).IgnoreCase);
+        }
+
+        [Test]
+        public void Test_AO2ChatPreviewResolver_CustomChatboxWithoutGeometryKeepsThemeGeometry()
+        {
+            string viewportThemeDir = Path.Combine(_tempDir, "themes", "(714x688) FullChar");
+            Directory.CreateDirectory(viewportThemeDir);
+            CreateEmptyFile(Path.Combine(viewportThemeDir, "chat.png"));
+            File.WriteAllText(
+                Path.Combine(viewportThemeDir, "courtroom_design.ini"),
+                "ao2_chatbox=0,178,256,104\n" +
+                "showname=1,0,46,15\n" +
+                "message=10,12,242,89\n");
+
+            string defaultChatboxDir = Path.Combine(_tempDir, "misc", "default");
+            Directory.CreateDirectory(defaultChatboxDir);
+            File.WriteAllText(
+                Path.Combine(defaultChatboxDir, "courtroom_design.ini"),
+                "ao2_chatbox=0,178,256,104\n" +
+                "showname=5,6,70,16\n" +
+                "message=30,31,180,40\n");
+
+            string customChatboxDir = Path.Combine(_tempDir, "misc", "P5");
+            Directory.CreateDirectory(customChatboxDir);
+            CreateEmptyFile(Path.Combine(customChatboxDir, "chat.png"));
+
+            AO2ChatPreviewStyle style = AO2ChatPreviewResolver.Resolve("P5", hasShowname: true, preferViewportTheme: true);
+
+            Assert.That(
+                style.ChatboxImagePath,
+                Is.EqualTo(Path.Combine(customChatboxDir, "chat.png")).IgnoreCase);
+            Assert.That(style.ShownameBounds, Is.EqualTo(new AO2ChatPreviewBounds(1, 0, 46, 15)));
+            Assert.That(style.MessageBounds, Is.EqualTo(new AO2ChatPreviewBounds(10, 12, 242, 89)));
+        }
+
+        [Test]
+        public void Test_AO2ChatPreviewResolver_EmptyChatTokenUsesThemeArtNotMiscDefault()
+        {
+            string viewportThemeDir = Path.Combine(_tempDir, "themes", "(714x688) FullChar");
+            Directory.CreateDirectory(viewportThemeDir);
+            CreateEmptyFile(Path.Combine(viewportThemeDir, "chat.png"));
+            File.WriteAllText(
+                Path.Combine(viewportThemeDir, "courtroom_design.ini"),
+                "ao2_chatbox=0,178,256,104\n" +
+                "showname=1,0,46,15\n" +
+                "message=10,12,242,89\n");
+
+            string defaultChatboxDir = Path.Combine(_tempDir, "misc", "default");
+            Directory.CreateDirectory(defaultChatboxDir);
+            CreateEmptyFile(Path.Combine(defaultChatboxDir, "chat.png"));
+            File.WriteAllText(
+                Path.Combine(defaultChatboxDir, "courtroom_design.ini"),
+                "ao2_chatbox=0,178,256,104\n" +
+                "showname=5,6,70,16\n" +
+                "message=30,31,180,40\n");
+            CreateEmptyFile(Path.Combine(_tempDir, "misc", "chat.png"));
+
+            AO2ChatPreviewStyle style = AO2ChatPreviewResolver.Resolve(string.Empty, hasShowname: true, preferViewportTheme: true);
+
+            Assert.That(
+                style.ChatboxImagePath,
+                Is.EqualTo(Path.Combine(viewportThemeDir, "chat.png")).IgnoreCase);
+            Assert.That(style.ShownameBounds, Is.EqualTo(new AO2ChatPreviewBounds(1, 0, 46, 15)));
+            Assert.That(style.MessageBounds, Is.EqualTo(new AO2ChatPreviewBounds(10, 12, 242, 89)));
+        }
+
+        [Test]
+        public void Test_AO2ChatPreviewResolver_ReadsCaseInsensitiveCustomConfigNames()
+        {
+            string viewportThemeDir = Path.Combine(_tempDir, "themes", "(714x688) FullChar");
+            Directory.CreateDirectory(viewportThemeDir);
+            CreateEmptyFile(Path.Combine(viewportThemeDir, "chat.png"));
+
+            string customChatboxDir = Path.Combine(_tempDir, "misc", "P5");
+            Directory.CreateDirectory(customChatboxDir);
+            CreateEmptyFile(Path.Combine(customChatboxDir, "Chat.png"));
+            File.WriteAllText(
+                Path.Combine(customChatboxDir, "Courtroom_Fonts.ini"),
+                "message=12\n" +
+                "message_font=Times New Roman\n" +
+                "showname=9\n");
+
+            AO2ChatPreviewStyle style = AO2ChatPreviewResolver.Resolve("P5", hasShowname: true, preferViewportTheme: true);
+
+            Assert.That(
+                style.ChatboxImagePath,
+                Is.EqualTo(Path.Combine(customChatboxDir, "Chat.png")).IgnoreCase);
+            Assert.That(style.MessageFontFamily, Is.EqualTo("Times New Roman"));
+            Assert.That(style.MessageFontSize, Is.EqualTo(12 * 96d / 72d).Within(0.001d));
+        }
+
+        [Test]
+        public void Test_AO2ChatPreviewResolver_UsesConfiguredThemeInsteadOfPreferredThemeGuess()
+        {
+            File.WriteAllText(Globals.PathToConfigINI, "theme=ActiveTheme\nsubtheme=default\n");
+
+            string activeThemeDir = Path.Combine(_tempDir, "themes", "ActiveTheme");
+            Directory.CreateDirectory(activeThemeDir);
+            CreateEmptyFile(Path.Combine(activeThemeDir, "chat.png"));
+            File.WriteAllText(
+                Path.Combine(activeThemeDir, "courtroom_design.ini"),
+                "ao2_chatbox=0,178,256,104\n" +
+                "showname=3,4,50,16\n" +
+                "message=11,12,213,67\n");
+
+            string nonActivePreferredThemeDir = Path.Combine(_tempDir, "themes", "(714x688) FullChar");
+            Directory.CreateDirectory(nonActivePreferredThemeDir);
+            CreateEmptyFile(Path.Combine(nonActivePreferredThemeDir, "chat.png"));
+            File.WriteAllText(
+                Path.Combine(nonActivePreferredThemeDir, "courtroom_design.ini"),
+                "ao2_chatbox=0,178,256,104\n" +
+                "showname=30,40,50,16\n" +
+                "message=110,120,113,47\n");
+
+            AO2ChatPreviewStyle style = AO2ChatPreviewResolver.Resolve("default", hasShowname: true, preferViewportTheme: true);
+
+            Assert.That(
+                style.ChatboxImagePath,
+                Is.EqualTo(Path.Combine(activeThemeDir, "chat.png")).IgnoreCase);
+            Assert.That(style.ShownameBounds, Is.EqualTo(new AO2ChatPreviewBounds(3, 4, 50, 16)));
+            Assert.That(style.MessageBounds, Is.EqualTo(new AO2ChatPreviewBounds(11, 12, 213, 67)));
+        }
+
+        [Test]
+        public void Test_AO2ChatPreviewResolver_ConfiguredSubthemeOverridesThemeDefault()
+        {
+            File.WriteAllText(Globals.PathToConfigINI, "theme=ActiveTheme\nsubtheme=Thin\n");
+
+            string activeThemeDir = Path.Combine(_tempDir, "themes", "ActiveTheme");
+            Directory.CreateDirectory(activeThemeDir);
+            CreateEmptyFile(Path.Combine(activeThemeDir, "chat.png"));
+            File.WriteAllText(
+                Path.Combine(activeThemeDir, "courtroom_design.ini"),
+                "ao2_chatbox=0,178,256,104\n" +
+                "message=10,12,242,89\n");
+
+            string activeSubthemeDir = Path.Combine(activeThemeDir, "Thin");
+            Directory.CreateDirectory(activeSubthemeDir);
+            CreateEmptyFile(Path.Combine(activeSubthemeDir, "chat.png"));
+            File.WriteAllText(
+                Path.Combine(activeSubthemeDir, "courtroom_design.ini"),
+                "ao2_chatbox=0,178,256,104\n" +
+                "message=20,22,200,55\n");
+
+            AO2ChatPreviewStyle style = AO2ChatPreviewResolver.Resolve("default", hasShowname: true, preferViewportTheme: true);
+
+            Assert.That(
+                style.ChatboxImagePath,
+                Is.EqualTo(Path.Combine(activeSubthemeDir, "chat.png")).IgnoreCase);
+            Assert.That(style.MessageBounds, Is.EqualTo(new AO2ChatPreviewBounds(20, 22, 200, 55)));
         }
 
         [Test]
