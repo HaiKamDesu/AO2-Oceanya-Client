@@ -1162,10 +1162,15 @@ namespace OceanyaClient.Features.Viewport
 
             DateTime lastWriteTimeUtc = File.GetLastWriteTimeUtc(resolvedPath);
             bool isAnimated = Ao2AnimationPreview.IsPotentialAnimatedPath(resolvedPath);
-            bool isCached = isAnimated && Ao2AnimationPreview.IsAnimationCached(resolvedPath, lastWriteTimeUtc);
+            int characterDecodeTargetHeight = AO2ViewportAssetResolver.ViewportHeight;
+            bool isCached = isAnimated && Ao2AnimationPreview.IsAnimationCached(
+                resolvedPath,
+                lastWriteTimeUtc,
+                characterDecodeTargetHeight,
+                cacheDimensionIsTargetHeight: true);
 
-            // Fast path: static image or frames already cached — assign synchronously.
-            if (!isAnimated || isCached)
+            // Fast path: static image or viewport-sized frames already cached — assign synchronously.
+            if (!isAnimated)
             {
                 IAnimationPlayer? syncPlayer = SetAnimatedImage(image, resolvedPath, visible, loop, onFrameChanged);
                 if (syncPlayer != null)
@@ -1175,6 +1180,36 @@ namespace OceanyaClient.Features.Viewport
                 ApplyHeightBasedCharacterGeometry(image);
                 onPlayerReady?.Invoke(syncPlayer);
                 return;
+            }
+
+            if (isCached)
+            {
+                StopAnimation(image);
+                if (Ao2AnimationPreview.TryCreateAnimationPlayerFromCachedTargetHeight(
+                        resolvedPath,
+                        loop,
+                        characterDecodeTargetHeight,
+                        out IAnimationPlayer? cachedPlayer)
+                    && cachedPlayer != null)
+                {
+                    animationPlayers[image] = cachedPlayer;
+                    cachedPlayer.FrameChanged += frame =>
+                    {
+                        image.Source = frame;
+                        ApplyHeightBasedCharacterGeometry(image);
+                    };
+                    if (onFrameChanged != null)
+                    {
+                        cachedPlayer.FrameIndexChanged += onFrameChanged;
+                    }
+
+                    image.Source = cachedPlayer.CurrentFrame;
+                    ApplyHeightBasedCharacterGeometry(image);
+                    image.Visibility = Visibility.Visible;
+                    onFrameChanged?.Invoke(cachedPlayer.CurrentFrameIndex);
+                    onPlayerReady?.Invoke(cachedPlayer);
+                    return;
+                }
             }
 
             // Slow path: animated and not yet decoded.
@@ -1190,61 +1225,71 @@ namespace OceanyaClient.Features.Viewport
             bool capturedLoop = loop;
             Action<int>? capturedOnFrameChanged = onFrameChanged;
             Action<IAnimationPlayer?>? capturedOnPlayerReady = onPlayerReady;
+            int capturedTargetHeight = characterDecodeTargetHeight;
 
             string capturedExt = Path.GetExtension(capturedPath).ToLowerInvariant();
-            if (capturedExt == ".webp")
+            if (capturedExt == ".webp" || capturedExt == ".gif")
             {
-                // Streaming path: show frame 0 the moment it is decoded (~10-50 ms) and add
+                // Streaming path: show frame 0 the moment it is decoded and add
                 // remaining frames incrementally — matches AO2's AnimationLoader behaviour.
                 BitmapFrameAnimationPlayer streamPlayer = BitmapFrameAnimationPlayer.CreateForStreaming(capturedLoop);
                 bool firstFrameDispatched = false;
 
                 Task.Run(() =>
                 {
-                    bool streamSuccess = Ao2AnimationPreview.TryStreamWebPFrames(
-                        capturedPath,
-                        (frame, duration) =>
+                    void HandleFrame(BitmapSource frame, TimeSpan duration)
+                    {
+                        if (cts.Token.IsCancellationRequested)
                         {
-                            if (cts.Token.IsCancellationRequested)
-                            {
-                                return;
-                            }
+                            return;
+                        }
 
-                            streamPlayer.EnqueueStreamedFrame(frame, duration);
+                        streamPlayer.EnqueueStreamedFrame(frame, duration);
 
-                            if (!firstFrameDispatched)
+                        if (!firstFrameDispatched)
+                        {
+                            firstFrameDispatched = true;
+                            Dispatcher.BeginInvoke(() =>
                             {
-                                firstFrameDispatched = true;
-                                Dispatcher.BeginInvoke(() =>
+                                if (!pendingAsyncLoads.TryGetValue(image, out CancellationTokenSource? currentCts)
+                                    || !ReferenceEquals(currentCts, cts))
                                 {
-                                    if (!pendingAsyncLoads.TryGetValue(image, out CancellationTokenSource? currentCts)
-                                        || !ReferenceEquals(currentCts, cts))
-                                    {
-                                        return;
-                                    }
+                                    return;
+                                }
 
-                                    StopAnimation(image);
-                                    animationPlayers[image] = streamPlayer;
-                                    streamPlayer.FrameChanged += f =>
-                                    {
-                                        image.Source = f;
-                                        ApplyHeightBasedCharacterGeometry(image);
-                                    };
-                                    if (capturedOnFrameChanged != null)
-                                    {
-                                        streamPlayer.FrameIndexChanged += capturedOnFrameChanged;
-                                    }
+                                StopAnimation(image);
+                                animationPlayers[image] = streamPlayer;
+                                streamPlayer.FrameChanged += f =>
+                                {
+                                    image.Source = f;
+                                    ApplyHeightBasedCharacterGeometry(image);
+                                };
+                                if (capturedOnFrameChanged != null)
+                                {
+                                    streamPlayer.FrameIndexChanged += capturedOnFrameChanged;
+                                }
 
-                                    streamPlayer.BeginStreamedPlayback();
-                            image.Source = streamPlayer.CurrentFrame;
-                            ApplyHeightBasedCharacterGeometry(image);
-                            image.Visibility = Visibility.Visible;
-                                    capturedOnFrameChanged?.Invoke(streamPlayer.CurrentFrameIndex);
-                                    capturedOnPlayerReady?.Invoke(streamPlayer);
-                                });
-                            }
-                        },
-                        cts.Token);
+                                streamPlayer.BeginStreamedPlayback();
+                                image.Source = streamPlayer.CurrentFrame;
+                                ApplyHeightBasedCharacterGeometry(image);
+                                image.Visibility = Visibility.Visible;
+                                capturedOnFrameChanged?.Invoke(streamPlayer.CurrentFrameIndex);
+                                capturedOnPlayerReady?.Invoke(streamPlayer);
+                            });
+                        }
+                    }
+
+                    _ = capturedExt == ".webp"
+                        ? Ao2AnimationPreview.TryStreamWebPFrames(
+                            capturedPath,
+                            HandleFrame,
+                            cts.Token,
+                            capturedTargetHeight)
+                        : Ao2AnimationPreview.TryStreamGifFrames(
+                            capturedPath,
+                            HandleFrame,
+                            cts.Token,
+                            capturedTargetHeight);
 
                     streamPlayer.SignalStreamingComplete();
 

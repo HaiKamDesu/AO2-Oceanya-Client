@@ -300,7 +300,11 @@ namespace OceanyaClient
         /// and write time. A cache hit means <see cref="TryCreateAnimationPlayer"/> will return
         /// immediately without blocking on disk I/O or decode work.
         /// </summary>
-        public static bool IsAnimationCached(string path, DateTime lastWriteUtc, int maxDimension = MaxAnimatedPreviewDimension)
+        public static bool IsAnimationCached(
+            string path,
+            DateTime lastWriteUtc,
+            int maxDimension = MaxAnimatedPreviewDimension,
+            bool cacheDimensionIsTargetHeight = false)
         {
             string extension = Path.GetExtension(path).ToLowerInvariant();
             bool isApng = IsApngExtensionOrContent(extension, path);
@@ -309,11 +313,36 @@ namespace OceanyaClient
                 return false;
             }
 
-            var cacheKey = (path, lastWriteUtc, Math.Max(1, maxDimension));
+            int dimensionKey = cacheDimensionIsTargetHeight
+                ? BuildTargetHeightCacheKey(maxDimension)
+                : Math.Max(1, maxDimension);
+            var cacheKey = (path, lastWriteUtc, dimensionKey);
             lock (AnimationFrameCacheLock)
             {
                 return AnimationFrameCache.ContainsKey(cacheKey);
             }
+        }
+
+        internal static bool TryCreateAnimationPlayerFromCachedTargetHeight(
+            string path,
+            bool loop,
+            int targetHeight,
+            out IAnimationPlayer? player)
+        {
+            player = null;
+            DateTime lastWriteUtc = File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue;
+            var cacheKey = (path, lastWriteUtc, BuildTargetHeightCacheKey(targetHeight));
+            if (!TryGetCachedAnimationFrames(cacheKey, out List<BitmapSource>? frames, out List<TimeSpan>? durations)
+                || frames == null
+                || durations == null
+                || frames.Count <= 1
+                || frames.Count != durations.Count)
+            {
+                return false;
+            }
+
+            player = BitmapFrameAnimationPlayer.CreateFromFrames(frames, durations, loop);
+            return player != null;
         }
 
         public static bool TryLoadFirstFrame(string path, out ImageSource? initialFrame, out double estimatedDurationMs, int maxDimension = MaxAnimatedPreviewDimension)
@@ -827,7 +856,8 @@ namespace OceanyaClient
         internal static bool TryStreamWebPFrames(
             string path,
             Action<BitmapSource, TimeSpan> frameCallback,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            int targetHeight = 0)
         {
             var allBitmaps = new List<SKBitmap>();
             var allFrames = new List<BitmapSource>();
@@ -876,10 +906,7 @@ namespace OceanyaClient
                     BitmapSource bmpSource = BitmapSource.Create(
                         srcWidth, srcHeight, 96, 96,
                         PixelFormats.Pbgra32, null, pixels, stride);
-                    if (bmpSource.CanFreeze)
-                    {
-                        bmpSource.Freeze();
-                    }
+                    BitmapSource displayFrame = ScaleBitmapToTargetHeight(bmpSource, targetHeight);
 
                     int durationMs = frameInfo[i].Duration;
                     if (durationMs <= 0)
@@ -888,15 +915,18 @@ namespace OceanyaClient
                     }
 
                     TimeSpan duration = TimeSpan.FromMilliseconds(durationMs);
-                    allFrames.Add(bmpSource);
+                    allFrames.Add(displayFrame);
                     allDurations.Add(duration);
-                    frameCallback(bmpSource, duration);
+                    frameCallback(displayFrame, duration);
                 }
 
                 if (allFrames.Count > 1)
                 {
                     DateTime lastWrite = File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue;
-                    var cacheKey = (path, lastWrite, Math.Max(1, MaxAnimatedPreviewDimension));
+                    int dimensionKey = targetHeight > 0
+                        ? BuildTargetHeightCacheKey(targetHeight)
+                        : Math.Max(1, MaxAnimatedPreviewDimension);
+                    var cacheKey = (path, lastWrite, dimensionKey);
                     CacheAnimationFrames(cacheKey, allFrames, allDurations);
                 }
 
@@ -913,6 +943,148 @@ namespace OceanyaClient
                     b.Dispose();
                 }
             }
+        }
+
+        internal static bool TryStreamGifFrames(
+            string path,
+            Action<BitmapSource, TimeSpan> frameCallback,
+            CancellationToken cancellationToken = default,
+            int targetHeight = 0)
+        {
+            var allFrames = new List<BitmapSource>();
+            var allDurations = new List<TimeSpan>();
+            try
+            {
+                using DrawingImage gifImage = DrawingImage.FromFile(path);
+                int frameCount = gifImage.GetFrameCount(DrawingFrameDimension.Time);
+                if (frameCount <= 1)
+                {
+                    return false;
+                }
+
+                List<TimeSpan> frameDelays = ReadGifFrameDelays(gifImage, frameCount);
+                for (int i = 0; i < frameCount; i++)
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        return false;
+                    }
+
+                    gifImage.SelectActiveFrame(DrawingFrameDimension.Time, i);
+                    int sourceWidth = Math.Max(1, gifImage.Width);
+                    int sourceHeight = Math.Max(1, gifImage.Height);
+                    int targetFrameHeight = targetHeight > 0 ? targetHeight : sourceHeight;
+                    int targetFrameWidth = Math.Max(1, (int)Math.Round(sourceWidth * (targetFrameHeight / (double)sourceHeight)));
+
+                    using DrawingBitmap bitmap = new DrawingBitmap(targetFrameWidth, targetFrameHeight, DrawingPixelFormat.Format32bppArgb);
+                    using (DrawingGraphics graphics = DrawingGraphics.FromImage(bitmap))
+                    {
+                        graphics.Clear(System.Drawing.Color.Transparent);
+                        graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Bilinear;
+                        graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
+                        graphics.DrawImage(gifImage, 0, 0, targetFrameWidth, targetFrameHeight);
+                    }
+
+                    IntPtr hBitmap = bitmap.GetHbitmap();
+                    try
+                    {
+                        BitmapSource source = Imaging.CreateBitmapSourceFromHBitmap(
+                            hBitmap,
+                            IntPtr.Zero,
+                            Int32Rect.Empty,
+                            BitmapSizeOptions.FromEmptyOptions());
+                        if (source.CanFreeze)
+                        {
+                            source.Freeze();
+                        }
+
+                        TimeSpan duration = frameDelays[Math.Clamp(i, 0, frameDelays.Count - 1)];
+                        allFrames.Add(source);
+                        allDurations.Add(duration);
+                        frameCallback(source, duration);
+                    }
+                    finally
+                    {
+                        DeleteObject(hBitmap);
+                    }
+                }
+
+                if (allFrames.Count > 1)
+                {
+                    DateTime lastWrite = File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue;
+                    int dimensionKey = targetHeight > 0
+                        ? BuildTargetHeightCacheKey(targetHeight)
+                        : Math.Max(1, MaxAnimatedPreviewDimension);
+                    var cacheKey = (path, lastWrite, dimensionKey);
+                    CacheAnimationFrames(cacheKey, allFrames, allDurations);
+                }
+
+                return allFrames.Count > 1;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static int BuildTargetHeightCacheKey(int targetHeight)
+        {
+            return -Math.Max(1, targetHeight);
+        }
+
+        private static BitmapSource ScaleBitmapToTargetHeight(BitmapSource source, int targetHeight)
+        {
+            if (targetHeight <= 0 || source.PixelHeight <= 0 || source.PixelHeight == targetHeight)
+            {
+                return NormalizeBitmapForUi(source);
+            }
+
+            double scale = targetHeight / (double)source.PixelHeight;
+            TransformedBitmap scaled = new TransformedBitmap();
+            scaled.BeginInit();
+            scaled.Source = source;
+            scaled.Transform = new ScaleTransform(scale, scale);
+            scaled.EndInit();
+            return NormalizeBitmapForUi(scaled);
+        }
+
+        private static List<TimeSpan> ReadGifFrameDelays(DrawingImage image, int frameCount)
+        {
+            List<TimeSpan> delays = new List<TimeSpan>(frameCount);
+            const int PropertyTagFrameDelay = 0x5100;
+            try
+            {
+                System.Drawing.Imaging.PropertyItem? property = null;
+                foreach (System.Drawing.Imaging.PropertyItem candidate in image.PropertyItems)
+                {
+                    if (candidate.Id == PropertyTagFrameDelay)
+                    {
+                        property = candidate;
+                        break;
+                    }
+                }
+
+                if (property?.Value != null && property.Value.Length >= frameCount * 4)
+                {
+                    for (int i = 0; i < frameCount; i++)
+                    {
+                        int delayUnits = BitConverter.ToInt32(property.Value, i * 4);
+                        double milliseconds = Math.Max(0, delayUnits * 10d);
+                        delays.Add(TimeSpan.FromMilliseconds(milliseconds));
+                    }
+                }
+            }
+            catch
+            {
+                // ignored
+            }
+
+            while (delays.Count < frameCount)
+            {
+                delays.Add(TimeSpan.FromMilliseconds(DefaultFrameDelayMilliseconds));
+            }
+
+            return delays;
         }
 
         private static List<int> BuildSelectedFrameIndices(int sourceFrameCount, int maxFrames)
@@ -1350,6 +1522,9 @@ namespace OceanyaClient
                 return new System.Windows.Media.DrawingImage();
             }
         }
+
+        [DllImport("gdi32.dll")]
+        private static extern bool DeleteObject(IntPtr hObject);
     }
 
     public sealed class BitmapFrameAnimationPlayer : IAnimationPlayer
@@ -1415,6 +1590,28 @@ namespace OceanyaClient
             {
                 return false;
             }
+        }
+
+        internal static BitmapFrameAnimationPlayer? CreateFromFrames(
+            IReadOnlyList<BitmapSource> decodedFrames,
+            IReadOnlyList<TimeSpan> decodedDurations,
+            bool loop)
+        {
+            if (decodedFrames.Count <= 1 || decodedFrames.Count != decodedDurations.Count)
+            {
+                return null;
+            }
+
+            BitmapFrameAnimationPlayer candidate = new BitmapFrameAnimationPlayer(loop);
+            for (int i = 0; i < decodedFrames.Count; i++)
+            {
+                candidate.frames.Add(decodedFrames[i]);
+                candidate.frameDurations.Add(decodedDurations[i]);
+            }
+
+            candidate.frameIndex = 0;
+            candidate.StartPlayback();
+            return candidate;
         }
 
         /// <summary>
