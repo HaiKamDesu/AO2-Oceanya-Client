@@ -345,23 +345,39 @@ namespace AOBot_Testing.Structures
                 return false;
             }
 
-            string json = File.ReadAllText(filePath);
-
-            CharacterCacheContainer? container = JsonSerializer.Deserialize<CharacterCacheContainer>(json);
-            if (container != null && IsCacheCompatible(container))
+            try
             {
-                characters = container.Characters ?? new List<CharacterFolder>();
-                return true;
-            }
+                string json = File.ReadAllText(filePath);
 
-            List<CharacterFolder>? legacyCharacters = JsonSerializer.Deserialize<List<CharacterFolder>>(json);
-            if (legacyCharacters != null)
+                CharacterCacheContainer? container = JsonSerializer.Deserialize<CharacterCacheContainer>(json);
+                if (container != null)
+                {
+                    // Cache exists in container format. If incompatible, skip the legacy path — trying to
+                    // deserialize a container-format object as List<CharacterFolder> would throw JsonException.
+                    if (IsCacheCompatible(container))
+                    {
+                        characters = container.Characters ?? new List<CharacterFolder>();
+                        return true;
+                    }
+                    return false;
+                }
+
+                // Fallback: try the legacy bare-list format written by older builds.
+                List<CharacterFolder>? legacyCharacters = JsonSerializer.Deserialize<List<CharacterFolder>>(json);
+                if (legacyCharacters != null)
+                {
+                    characters = legacyCharacters;
+                    return true;
+                }
+
+                return false;
+            }
+            catch (Exception ex)
             {
-                characters = legacyCharacters;
-                return true;
+                CustomConsole.Warning("Character cache could not be loaded; refreshing from disk.");
+                CustomConsole.Error("Cache load error", ex);
+                return false;
             }
-
-            return false;
         }
 
         private static bool IsCacheCompatible(CharacterCacheContainer container)
