@@ -469,6 +469,9 @@ namespace OceanyaClient
         };
         public GmMultiClientSnapshot GMMultiClientSnapshot { get; set; } = new GmMultiClientSnapshot();
         public string GMViewportChatBackgroundColor { get; set; } = string.Empty;
+
+        /// <summary>When true and the viewport is visible, the viewport window takes the taskbar slot instead of the main window.</summary>
+        public bool GMViewportWindowPreviewPriority { get; set; } = true;
         public double CharacterCreatorPreviewVolume { get; set; } = 1.0;
         public double AudioMusicVolume { get; set; } = 0.5;
         public double AudioSfxVolume { get; set; } = 1.0;

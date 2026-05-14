@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Windows;
+using System.Windows.Controls;
 using AOBot_Testing.Agents;
 using AOBot_Testing.Structures;
+using Common;
 
 namespace OceanyaClient.Features.Viewport
 {
@@ -13,6 +15,31 @@ namespace OceanyaClient.Features.Viewport
     {
         private readonly Dictionary<AOClient, AO2ViewportControl> profileControls = new Dictionary<AOClient, AO2ViewportControl>();
         private AOClient? activeClient;
+        private bool _useAsWindowsPreview;
+
+        /// <summary>Fired whenever <see cref="UseAsWindowsPreview"/> changes.</summary>
+        public event EventHandler? UseAsWindowsPreviewChanged;
+
+        /// <summary>
+        /// When <see langword="true"/> and the viewport is visible, the viewport window takes
+        /// the Windows taskbar slot instead of the main window.
+        /// </summary>
+        public bool UseAsWindowsPreview
+        {
+            get => _useAsWindowsPreview;
+            set
+            {
+                if (_useAsWindowsPreview == value)
+                {
+                    return;
+                }
+
+                _useAsWindowsPreview = value;
+                SaveFile.Data.GMViewportWindowPreviewPriority = value;
+                SaveFile.Save();
+                UseAsWindowsPreviewChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AO2ViewportWindowContent"/> class.
@@ -20,8 +47,19 @@ namespace OceanyaClient.Features.Viewport
         public AO2ViewportWindowContent()
         {
             InitializeComponent();
+            _useAsWindowsPreview = SaveFile.Data.GMViewportWindowPreviewPriority;
             MarkAutomationReady();
             Loaded += (_, _) => MarkAutomationReady();
+        }
+
+        private void ViewportContextMenu_Opened(object sender, RoutedEventArgs e)
+        {
+            MenuItemViewportAsPreview.IsChecked = _useAsWindowsPreview;
+        }
+
+        private void MenuItemViewportAsPreview_Click(object sender, RoutedEventArgs e)
+        {
+            UseAsWindowsPreview = !UseAsWindowsPreview;
         }
 
         /// <inheritdoc/>

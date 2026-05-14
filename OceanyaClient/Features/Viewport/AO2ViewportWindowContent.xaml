@@ -8,6 +8,14 @@
                                    ShowInTaskbar="False"
                                    Title="AO2 Viewport">
     <Grid Background="Transparent" ClipToBounds="True">
+        <Grid.ContextMenu>
+            <ContextMenu Opened="ViewportContextMenu_Opened">
+                <MenuItem x:Name="MenuItemViewportAsPreview"
+                          Header="Use viewport as Windows preview"
+                          IsCheckable="True"
+                          Click="MenuItemViewportAsPreview_Click"/>
+            </ContextMenu>
+        </Grid.ContextMenu>
         <Viewbox Stretch="Uniform"
                  StretchDirection="Both"
                  HorizontalAlignment="Center"

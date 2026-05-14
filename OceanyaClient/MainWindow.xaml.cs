@@ -56,6 +56,8 @@ namespace OceanyaClient
         private Window? settingsWindow;
         private AO2ViewportWindowContent? viewportContent;
         private bool isRestoringViewportWindow;
+        private bool isSynchronizingWindowState;
+        private bool isHostWindowHiddenByViewportMinimize;
         private bool isMainWindowClosing;
         private bool hasHookedHostWindowClosing;
         private bool cleanCloseInProgress;
@@ -5108,6 +5110,7 @@ namespace OceanyaClient
                     SaveFile.Save();
                 }
                 viewportWindow.Hide();
+                ApplyViewportTaskbarPriority();
                 return;
             }
 
@@ -5184,6 +5187,7 @@ namespace OceanyaClient
                     SaveFile.Save();
                 }
                 viewportWindow?.Hide();
+                ApplyViewportTaskbarPriority();
             };
             viewportWindow.Closed += (_, _) =>
             {
@@ -5192,6 +5196,8 @@ namespace OceanyaClient
                 viewportWindow.LocationChanged -= ViewportWindow_LocationChanged;
                 viewportWindowSource?.RemoveHook(ViewportWindow_WndProc);
                 viewportWindowSource = null;
+                TeardownViewportSynchronizedMove();
+                TeardownViewportWindowStateSync();
                 viewportWindow = null;
             };
             ShowViewportWindowAfterRestore();
@@ -5211,6 +5217,7 @@ namespace OceanyaClient
                 viewportWindow.Show();
             }
 
+            ApplyViewportTaskbarPriority();
             viewportWindow.Activate();
             Dispatcher.BeginInvoke(
                 new Action(() =>
@@ -5330,7 +5337,13 @@ namespace OceanyaClient
 
         private void EnsureViewportContent()
         {
-            viewportContent ??= new AO2ViewportWindowContent();
+            if (viewportContent != null)
+            {
+                return;
+            }
+
+            viewportContent = new AO2ViewportWindowContent();
+            viewportContent.UseAsWindowsPreviewChanged += (_, _) => ApplyViewportTaskbarPriority();
         }
 
         private Func<ICMessage, bool>? CreateViewportMessageFilter(AOClient profileClient)
@@ -5392,6 +5405,8 @@ namespace OceanyaClient
 
             viewportWindowSource = HwndSource.FromHwnd(new WindowInteropHelper(viewportWindow).Handle);
             viewportWindowSource?.AddHook(ViewportWindow_WndProc);
+            SetupViewportSynchronizedMove();
+            SetupViewportWindowStateSync();
         }
 
         private void ViewportWindow_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -5446,6 +5461,149 @@ namespace OceanyaClient
             }
 
             return IntPtr.Zero;
+        }
+
+        private void SetupViewportSynchronizedMove()
+        {
+            Window hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            if (viewportWindow is GenericOceanyaWindow viewportGenericWindow)
+            {
+                viewportGenericWindow.SynchronizedMovePartner = hostWindow;
+            }
+
+            if (hostWindow is GenericOceanyaWindow hostGenericWindow)
+            {
+                hostGenericWindow.SynchronizedMovePartner = viewportWindow;
+            }
+        }
+
+        private void TeardownViewportSynchronizedMove()
+        {
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this);
+            if (hostWindow is GenericOceanyaWindow hostGenericWindow)
+            {
+                hostGenericWindow.SynchronizedMovePartner = null;
+            }
+
+            if (viewportWindow is GenericOceanyaWindow viewportGenericWindow)
+            {
+                viewportGenericWindow.SynchronizedMovePartner = null;
+            }
+        }
+
+        private void SetupViewportWindowStateSync()
+        {
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this);
+            if (viewportWindow != null)
+            {
+                viewportWindow.StateChanged += ViewportWindow_StateChanged;
+            }
+
+            if (hostWindow != null)
+            {
+                hostWindow.StateChanged += HostWindow_StateChanged;
+            }
+        }
+
+        private void TeardownViewportWindowStateSync()
+        {
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this);
+            if (viewportWindow != null)
+            {
+                viewportWindow.StateChanged -= ViewportWindow_StateChanged;
+            }
+
+            if (hostWindow != null)
+            {
+                hostWindow.StateChanged -= HostWindow_StateChanged;
+            }
+        }
+
+        private void ViewportWindow_StateChanged(object? sender, EventArgs e)
+        {
+            if (isSynchronizingWindowState || viewportWindow == null)
+            {
+                return;
+            }
+
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this);
+            if (hostWindow == null)
+            {
+                return;
+            }
+
+            // Use Hide/Show instead of WindowState = Minimized: setting the owner window to
+            // Minimized causes Windows to automatically hide the owned viewport window, removing
+            // its taskbar icon. Hiding the host avoids that owned-window cascade entirely.
+            isSynchronizingWindowState = true;
+            try
+            {
+                if (viewportWindow.WindowState == WindowState.Minimized)
+                {
+                    if (hostWindow.IsVisible)
+                    {
+                        isHostWindowHiddenByViewportMinimize = true;
+                        hostWindow.Hide();
+                    }
+                }
+                else if (isHostWindowHiddenByViewportMinimize)
+                {
+                    isHostWindowHiddenByViewportMinimize = false;
+                    hostWindow.Show();
+                }
+            }
+            finally
+            {
+                isSynchronizingWindowState = false;
+            }
+        }
+
+        private void HostWindow_StateChanged(object? sender, EventArgs e)
+        {
+            if (isSynchronizingWindowState || viewportWindow?.IsVisible != true)
+            {
+                return;
+            }
+
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this);
+            if (hostWindow == null)
+            {
+                return;
+            }
+
+            isSynchronizingWindowState = true;
+            try
+            {
+                if (hostWindow.WindowState == WindowState.Minimized
+                    && viewportWindow.WindowState != WindowState.Minimized)
+                {
+                    viewportWindow.WindowState = WindowState.Minimized;
+                }
+                else if (hostWindow.WindowState != WindowState.Minimized
+                    && viewportWindow.WindowState == WindowState.Minimized)
+                {
+                    viewportWindow.WindowState = WindowState.Normal;
+                }
+            }
+            finally
+            {
+                isSynchronizingWindowState = false;
+            }
+        }
+
+        private void ApplyViewportTaskbarPriority()
+        {
+            bool useViewport = viewportWindow?.IsVisible == true && viewportContent?.UseAsWindowsPreview == true;
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            if (viewportWindow != null)
+            {
+                viewportWindow.ShowInTaskbar = useViewport;
+            }
+
+            if (hostWindow != null)
+            {
+                hostWindow.ShowInTaskbar = !useViewport;
+            }
         }
 
         private void ApplyViewportMinMaxInfo(IntPtr lParam)
