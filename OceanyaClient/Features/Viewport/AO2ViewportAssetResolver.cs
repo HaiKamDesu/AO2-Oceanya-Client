@@ -1640,21 +1640,100 @@ namespace OceanyaClient.Features.Viewport
             }
 
             string directCandidate = Path.Combine(directory, normalizedStem);
-            if (Path.HasExtension(normalizedStem) && File.Exists(directCandidate))
+            if (Path.HasExtension(normalizedStem))
             {
-                return directCandidate;
+                string? resolvedDirectCandidate = ResolvePathCaseInsensitive(directCandidate);
+                if (!string.IsNullOrWhiteSpace(resolvedDirectCandidate))
+                {
+                    return resolvedDirectCandidate;
+                }
             }
 
             foreach (string extension in ImageExtensions)
             {
                 string candidate = Path.Combine(directory, normalizedStem + extension);
-                if (File.Exists(candidate))
+                string? resolvedCandidate = ResolvePathCaseInsensitive(candidate);
+                if (!string.IsNullOrWhiteSpace(resolvedCandidate))
                 {
-                    return candidate;
+                    return resolvedCandidate;
                 }
             }
 
             return null;
+        }
+
+        private static string? ResolvePathCaseInsensitive(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return null;
+            }
+
+            if (File.Exists(path))
+            {
+                return path;
+            }
+
+            string? directory = Path.GetDirectoryName(path);
+            string fileName = Path.GetFileName(path);
+            if (string.IsNullOrWhiteSpace(directory) || string.IsNullOrWhiteSpace(fileName))
+            {
+                return null;
+            }
+
+            string? resolvedDirectory = ResolveDirectoryCaseInsensitive(directory);
+            if (string.IsNullOrWhiteSpace(resolvedDirectory))
+            {
+                return null;
+            }
+
+            try
+            {
+                return Directory.EnumerateFiles(resolvedDirectory)
+                    .FirstOrDefault(candidate =>
+                        string.Equals(Path.GetFileName(candidate), fileName, StringComparison.OrdinalIgnoreCase));
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string? ResolveDirectoryCaseInsensitive(string directory)
+        {
+            if (string.IsNullOrWhiteSpace(directory))
+            {
+                return null;
+            }
+
+            if (Directory.Exists(directory))
+            {
+                return directory;
+            }
+
+            string? parent = Path.GetDirectoryName(directory);
+            string leaf = Path.GetFileName(directory);
+            if (string.IsNullOrWhiteSpace(parent) || string.IsNullOrWhiteSpace(leaf))
+            {
+                return null;
+            }
+
+            string? resolvedParent = ResolveDirectoryCaseInsensitive(parent);
+            if (string.IsNullOrWhiteSpace(resolvedParent))
+            {
+                return null;
+            }
+
+            try
+            {
+                return Directory.EnumerateDirectories(resolvedParent)
+                    .FirstOrDefault(candidate =>
+                        string.Equals(Path.GetFileName(candidate), leaf, StringComparison.OrdinalIgnoreCase));
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static IEnumerable<string> EnumerateEffectRoots(string baseFolder, string effectFolder)

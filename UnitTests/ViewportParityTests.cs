@@ -409,6 +409,18 @@ public class AO2ViewportParityAssetResolverTests
     }
 
     [Test]
+    public void ResolveChatArrowImage_UsesCustomMiscArrowBeforeThemeArrow()
+    {
+        CreateEmptyFile(Path.Combine(tempDir, "themes", "default", "chat_arrow.png"));
+        CreateEmptyFile(Path.Combine(tempDir, "misc", "p4", "Chat_Arrow.gif"));
+
+        string? result = AO2ViewportAssetResolver.ResolveChatArrowImage("P4");
+
+        Assert.That(result, Is.Not.Null);
+        Assert.That(result, Does.EndWith(Path.Combine("misc", "p4", "Chat_Arrow.gif")).IgnoreCase);
+    }
+
+    [Test]
     public void ResolveChatArrowImage_ReturnsNull_WhenAbsent()
     {
         string? result = AO2ViewportAssetResolver.ResolveChatArrowImage();

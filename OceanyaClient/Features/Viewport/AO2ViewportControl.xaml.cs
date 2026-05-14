@@ -43,6 +43,7 @@ namespace OceanyaClient.Features.Viewport
         private bool chatRevealStartedForCurrentMessage;
         private bool immediatePreAnimActive;
         private string currentChatBlipToken = string.Empty;
+        private string currentChatArrowMiscToken = string.Empty;
         private CharacterFolder? currentChatCharacter;
         private string currentChatEmote = string.Empty;
         private int currentChatSequence;
@@ -535,6 +536,7 @@ namespace OceanyaClient.Features.Viewport
             currentChatAdditive = false;
             chatRevealStartedForCurrentMessage = false;
             currentChatBlipToken = string.Empty;
+            currentChatArrowMiscToken = string.Empty;
         }
 
         private void RenderMessage(ICMessage message)
@@ -1708,6 +1710,7 @@ namespace OceanyaClient.Features.Viewport
             currentChatCharacter = character;
             currentChatEmote = message?.Emote ?? string.Empty;
             currentChatSequence = messageSequence;
+            currentChatArrowMiscToken = ChatPreview.ChatToken;
             chatTextCrawlMilliseconds = AO2ViewportAssetResolver.GetTextCrawlMilliseconds();
             chatBlipRate = AO2ViewportAssetResolver.GetBlipRate();
             chatBlankBlipEnabled = AO2ViewportAssetResolver.GetBlankBlipEnabled();
@@ -1796,7 +1799,7 @@ namespace OceanyaClient.Features.Viewport
         private void CompleteChatTextReveal()
         {
             StopChatTextTimer();
-            ShowChatArrow();
+            ShowChatArrow(currentChatArrowMiscToken);
             additivePreviousText = chatPrefixText + chatFullText;
             chatPrefixText = string.Empty;
             currentChatAdditive = false;
@@ -1805,6 +1808,7 @@ namespace OceanyaClient.Features.Viewport
             currentChatCharacter = null;
             currentChatEmote = string.Empty;
             currentChatSequence = 0;
+            currentChatArrowMiscToken = string.Empty;
         }
 
         private void RenderPostMessageCharacterAnimation(CharacterFolder? character, string emoteName, int sequence)
@@ -2425,14 +2429,14 @@ namespace OceanyaClient.Features.Viewport
             }
         }
 
-        private void ShowChatArrow()
+        private void ShowChatArrow(string? miscToken)
         {
             if (!IsVisible)
             {
                 return;
             }
 
-            string? path = AO2ViewportAssetResolver.ResolveChatArrowImage();
+            string? path = AO2ViewportAssetResolver.ResolveChatArrowImage(miscToken);
             if (string.IsNullOrWhiteSpace(path))
             {
                 return;
