@@ -5598,11 +5598,43 @@ namespace OceanyaClient
             if (viewportWindow != null)
             {
                 viewportWindow.ShowInTaskbar = useViewport;
+                SetWindowAltTabVisible(viewportWindow, useViewport);
             }
 
             if (hostWindow != null)
             {
                 hostWindow.ShowInTaskbar = !useViewport;
+                SetWindowAltTabVisible(hostWindow, !useViewport);
+            }
+        }
+
+        private static void SetWindowAltTabVisible(Window window, bool visible)
+        {
+            IntPtr hwnd = new WindowInteropHelper(window).Handle;
+            if (hwnd == IntPtr.Zero)
+            {
+                return;
+            }
+
+            const int GWL_EXSTYLE = -20;
+            const int WS_EX_TOOLWINDOW = 0x00000080;
+            const int WS_EX_APPWINDOW = 0x00040000;
+            const uint SWP_NOMOVE = 0x0002;
+            const uint SWP_NOSIZE = 0x0001;
+            const uint SWP_NOZORDER = 0x0004;
+            const uint SWP_NOOWNERZORDER = 0x0200;
+            const uint SWP_FRAMECHANGED = 0x0020;
+
+            int exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+            int newExStyle = visible
+                ? (exStyle & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
+                : (exStyle | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW;
+
+            if (newExStyle != exStyle)
+            {
+                SetWindowLong(hwnd, GWL_EXSTYLE, newExStyle);
+                SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
             }
         }
 
@@ -7262,6 +7294,15 @@ namespace OceanyaClient
                 return StrCmpLogicalW(x, y);
             }
         }
+
+        [DllImport("user32.dll")]
+        private static extern int GetWindowLong(IntPtr hwnd, int nIndex);
+
+        [DllImport("user32.dll")]
+        private static extern int SetWindowLong(IntPtr hwnd, int nIndex, int dwNewLong);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
 
         [DllImport("shlwapi.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
         private static extern int StrCmpLogicalW(string psz1, string psz2);
