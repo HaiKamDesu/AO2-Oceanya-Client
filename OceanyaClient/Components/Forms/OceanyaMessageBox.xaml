@@ -52,7 +52,10 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto" Margin="0,6,0,0">
+        <ScrollViewer Grid.Row="0"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled"
+                      Margin="0,6,0,0">
             <TextBlock x:Name="MessageTextBlock"
                        AutomationProperties.AutomationId="MessageBox.Message"
                        Text="Message text goes here"

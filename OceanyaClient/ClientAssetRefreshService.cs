@@ -225,14 +225,19 @@ namespace OceanyaClient
                 return "The saved asset refresh marker uses an older schema.";
             }
 
-            if (!string.Equals(marker.AppVersion, currentAppVersion, StringComparison.OrdinalIgnoreCase))
+            string markerAppVersion = marker.AppVersion?.Trim() ?? string.Empty;
+            string normalizedCurrentAppVersion = currentAppVersion?.Trim() ?? string.Empty;
+            if (!string.Equals(markerAppVersion, normalizedCurrentAppVersion, StringComparison.OrdinalIgnoreCase))
             {
-                return "The Oceanya version changed since the last full asset refresh.";
+                return "the Oceanya version changed since the last full asset refresh"
+                    + $" (previous: {FormatReasonValue(markerAppVersion)}, current: {FormatReasonValue(normalizedCurrentAppVersion)}).";
             }
 
+            string markerConfigIniPath = NormalizePathForComparison(marker.ConfigIniPath);
+            string normalizedCurrentConfigIniPath = NormalizePathForComparison(currentConfigIniPath);
             bool configPathChanged = !string.Equals(
-                NormalizePathForComparison(marker.ConfigIniPath),
-                NormalizePathForComparison(currentConfigIniPath),
+                markerConfigIniPath,
+                normalizedCurrentConfigIniPath,
                 StringComparison.OrdinalIgnoreCase);
             List<string> currentConfiguredBaseFolders = BuildConfiguredBaseFolderSignature(currentConfigIniPath);
             if (IsEquivalentFolderSequence(marker.BaseFolders, currentConfiguredBaseFolders))
@@ -269,10 +274,15 @@ namespace OceanyaClient
 
             if (configPathChanged)
             {
-                return "The configured AO config.ini path changed since the last full asset refresh.";
+                return "the selected AO config.ini path changed and the AO mount/base-folder list no longer matches"
+                    + " the last full asset refresh"
+                    + $" (previous config.ini: {FormatReasonValue(markerConfigIniPath)},"
+                    + $" current config.ini: {FormatReasonValue(normalizedCurrentConfigIniPath)}).";
             }
 
-            return "The AO mount/base-folder configuration changed since the last full asset refresh.";
+            return "the AO mount/base-folder list in config.ini changed since the last full asset refresh"
+                + $" (previous folders: {FormatReasonFolderList(marker.BaseFolders)},"
+                + $" current folders: {FormatReasonFolderList(currentConfiguredBaseFolders)}).";
         }
 
         internal static TargetedAssetRefreshPlan BuildTargetedPlan(GoogleDriveSyncLocalChangeSet localChanges)
@@ -1243,6 +1253,39 @@ namespace OceanyaClient
             }
 
             return normalizedPaths;
+        }
+
+        private static string FormatReasonFolderList(IEnumerable<string>? paths)
+        {
+            List<string> normalizedPaths = NormalizeFolderSequence(paths);
+            if (normalizedPaths.Count == 0)
+            {
+                return "(none recorded)";
+            }
+
+            const int maxDisplayedPaths = 3;
+            List<string> displayedPaths = normalizedPaths
+                .Take(maxDisplayedPaths)
+                .Select(FormatReasonValue)
+                .ToList();
+            int remainingPathCount = normalizedPaths.Count - displayedPaths.Count;
+            if (remainingPathCount > 0)
+            {
+                displayedPaths.Add($"+{remainingPathCount} more");
+            }
+
+            return string.Join(", ", displayedPaths);
+        }
+
+        private static string FormatReasonValue(string? value)
+        {
+            string trimmedValue = value?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(trimmedValue))
+            {
+                return "(not recorded)";
+            }
+
+            return "\"" + trimmedValue + "\"";
         }
 
         private static string NormalizePathForComparison(string? path)

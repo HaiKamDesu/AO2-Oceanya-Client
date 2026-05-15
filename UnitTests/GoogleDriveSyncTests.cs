@@ -2694,6 +2694,132 @@ namespace UnitTests
         }
 
         [Test]
+        public void EvaluateRefreshRequirementReason_ExplainsUnreadableMarker()
+        {
+            string reason = ClientAssetRefreshService.EvaluateRefreshRequirementReason(
+                null!,
+                AppVersionInfo.AssemblyVersion,
+                Path.Combine(configDirectory, "config.ini"),
+                new List<string>(Globals.BaseFolders));
+
+            Assert.That(reason, Does.Contain("could not be read"));
+        }
+
+        [Test]
+        public void EvaluateRefreshRequirementReason_ExplainsOldMarkerSchema()
+        {
+            string configPath = Path.Combine(configDirectory, "config.ini");
+            AssetRefreshMarker marker = new AssetRefreshMarker
+            {
+                SchemaVersion = 0,
+                AppVersion = AppVersionInfo.AssemblyVersion,
+                ConfigIniPath = configPath,
+                BaseFolders = ClientAssetRefreshService.BuildConfiguredBaseFolderSignature(configPath)
+            };
+
+            string reason = ClientAssetRefreshService.EvaluateRefreshRequirementReason(
+                marker,
+                AppVersionInfo.AssemblyVersion,
+                configPath,
+                new List<string>(Globals.BaseFolders));
+
+            Assert.That(reason, Does.Contain("older schema"));
+        }
+
+        [Test]
+        public void EvaluateRefreshRequirementReason_ExplainsAppVersionChange()
+        {
+            string configPath = Path.Combine(configDirectory, "config.ini");
+            AssetRefreshMarker marker = new AssetRefreshMarker
+            {
+                SchemaVersion = 1,
+                AppVersion = "6.1.0.0",
+                ConfigIniPath = configPath,
+                BaseFolders = ClientAssetRefreshService.BuildConfiguredBaseFolderSignature(configPath)
+            };
+
+            string reason = ClientAssetRefreshService.EvaluateRefreshRequirementReason(
+                marker,
+                AppVersionInfo.AssemblyVersion,
+                configPath,
+                new List<string>(Globals.BaseFolders));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(reason, Does.Contain("version changed"));
+                Assert.That(reason, Does.Contain("previous: \"6.1.0.0\""));
+                Assert.That(reason, Does.Contain("current:"));
+            });
+        }
+
+        [Test]
+        public void EvaluateRefreshRequirementReason_ExplainsConfigPathAndMountListChangeTogether()
+        {
+            string oldConfigDirectory = Path.Combine(tempRoot, "old_config_reason");
+            string oldMount = Path.Combine(tempRoot, "old_mount_reason");
+            Directory.CreateDirectory(oldConfigDirectory);
+            Directory.CreateDirectory(oldMount);
+            string oldConfigPath = Path.Combine(oldConfigDirectory, "config.ini");
+            File.WriteAllText(oldConfigPath, "mount_paths=" + oldMount + Environment.NewLine + "log_maximum=20");
+
+            string currentConfigPath = Path.Combine(configDirectory, "config.ini");
+            AssetRefreshMarker marker = new AssetRefreshMarker
+            {
+                SchemaVersion = 1,
+                AppVersion = AppVersionInfo.AssemblyVersion,
+                ConfigIniPath = oldConfigPath,
+                BaseFolders = ClientAssetRefreshService.BuildConfiguredBaseFolderSignature(oldConfigPath)
+            };
+
+            string reason = ClientAssetRefreshService.EvaluateRefreshRequirementReason(
+                marker,
+                AppVersionInfo.AssemblyVersion,
+                currentConfigPath,
+                new List<string>(Globals.BaseFolders));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(reason, Does.Contain("config.ini path changed"));
+                Assert.That(reason, Does.Contain("mount/base-folder list"));
+                Assert.That(reason, Does.Contain("previous config.ini:"));
+                Assert.That(reason, Does.Contain("current config.ini:"));
+            });
+        }
+
+        [Test]
+        public void EvaluateRefreshRequirementReason_ExplainsMountListChangeWithoutBlamingConfigPath()
+        {
+            string configPath = Path.Combine(configDirectory, "config.ini");
+            string oldMount = Path.Combine(tempRoot, "old_mount_same_config");
+            Directory.CreateDirectory(oldMount);
+            AssetRefreshMarker marker = new AssetRefreshMarker
+            {
+                SchemaVersion = 1,
+                AppVersion = AppVersionInfo.AssemblyVersion,
+                ConfigIniPath = configPath,
+                BaseFolders = new List<string>
+                {
+                    oldMount,
+                    configDirectory
+                }
+            };
+
+            string reason = ClientAssetRefreshService.EvaluateRefreshRequirementReason(
+                marker,
+                AppVersionInfo.AssemblyVersion,
+                configPath,
+                new List<string>(Globals.BaseFolders));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(reason, Does.Contain("mount/base-folder list"));
+                Assert.That(reason, Does.Contain("previous folders:"));
+                Assert.That(reason, Does.Contain("current folders:"));
+                Assert.That(reason, Does.Not.Contain("config.ini path changed"));
+            });
+        }
+
+        [Test]
         public void RefreshChangedAssets_UpsertsChangedCharacterAndRemovesDeletedBackground()
         {
             string configPath = Path.Combine(configDirectory, "config.ini");

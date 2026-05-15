@@ -4,6 +4,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
 namespace OceanyaClient
@@ -54,6 +55,16 @@ namespace OceanyaClient
     /// </summary>
     public partial class OceanyaMessageBox : OceanyaWindowContentControl
     {
+        private const double MinContentWidth = 398d;
+        private const double MinContentHeight = 168d;
+        private const double DefaultMaxContentWidth = 900d;
+        private const double DefaultMaxContentHeight = 620d;
+        private const double MaxScreenWidthRatio = 0.72d;
+        private const double MaxScreenHeightRatio = 0.72d;
+        private const double MessageHorizontalChrome = 40d;
+        private const double MessageVerticalChrome = 66d;
+        private const double MessageTextFontSize = 13d;
+
         private MessageBoxResult result = MessageBoxResult.None;
         private string headerText = "MESSAGE";
 
@@ -148,6 +159,102 @@ namespace OceanyaClient
             };
         }
 
+        internal static Size CalculateContentSizeForMessage(
+            string formattedMessage,
+            IReadOnlyList<string> visibleButtonTexts,
+            Size? availableScreenSize = null)
+        {
+            Size screenSize = availableScreenSize ?? ResolveAvailableScreenSize();
+            double maxContentWidth = Clamp(
+                screenSize.Width * MaxScreenWidthRatio,
+                Math.Max(MinContentWidth, 520d),
+                DefaultMaxContentWidth);
+            double maxContentHeight = Clamp(
+                screenSize.Height * MaxScreenHeightRatio,
+                Math.Max(MinContentHeight, 260d),
+                DefaultMaxContentHeight);
+
+            double minimumButtonWidth = MeasureButtonRowWidth(visibleButtonTexts);
+            double minimumContentWidth = Math.Max(MinContentWidth, minimumButtonWidth + MessageHorizontalChrome);
+            maxContentWidth = Math.Max(maxContentWidth, minimumContentWidth);
+
+            double maxMessageWidth = Math.Max(120d, maxContentWidth - MessageHorizontalChrome);
+            TextBlock noWrapTextBlock = CreateMeasurementTextBlock(formattedMessage, TextWrapping.NoWrap);
+            noWrapTextBlock.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+
+            double desiredMessageWidth = Math.Min(maxMessageWidth, Math.Ceiling(noWrapTextBlock.DesiredSize.Width));
+            double contentWidth = Clamp(
+                desiredMessageWidth + MessageHorizontalChrome,
+                minimumContentWidth,
+                maxContentWidth);
+            double wrappedMessageWidth = Math.Max(120d, contentWidth - MessageHorizontalChrome);
+
+            TextBlock wrappingTextBlock = CreateMeasurementTextBlock(formattedMessage, TextWrapping.Wrap);
+            wrappingTextBlock.Measure(new Size(wrappedMessageWidth, double.PositiveInfinity));
+
+            double desiredContentHeight = Math.Ceiling(wrappingTextBlock.DesiredSize.Height)
+                + MessageVerticalChrome;
+            double contentHeight = Clamp(desiredContentHeight, MinContentHeight, maxContentHeight);
+
+            return new Size(Math.Ceiling(contentWidth), Math.Ceiling(contentHeight));
+        }
+
+        private static TextBlock CreateMeasurementTextBlock(string text, TextWrapping wrapping)
+        {
+            return new TextBlock
+            {
+                Text = text ?? string.Empty,
+                FontSize = MessageTextFontSize,
+                TextWrapping = wrapping,
+                TextAlignment = TextAlignment.Center,
+                Margin = new Thickness(0, 10, 0, 0)
+            };
+        }
+
+        private static double MeasureButtonRowWidth(IReadOnlyList<string> visibleButtonTexts)
+        {
+            int buttonCount = visibleButtonTexts?.Count ?? 0;
+            if (buttonCount == 0)
+            {
+                return 0d;
+            }
+
+            double totalWidth = 0d;
+            foreach (string buttonText in visibleButtonTexts ?? Array.Empty<string>())
+            {
+                totalWidth += Math.Max(80d, MeasureButtonTextWidth(buttonText) + 24d) + 10d;
+            }
+
+            return totalWidth;
+        }
+
+        private static double MeasureButtonTextWidth(string buttonText)
+        {
+            TextBlock textBlock = new TextBlock
+            {
+                Text = buttonText ?? string.Empty,
+                FontSize = 12d
+            };
+            textBlock.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            return Math.Ceiling(textBlock.DesiredSize.Width);
+        }
+
+        private static Size ResolveAvailableScreenSize()
+        {
+            Rect workArea = SystemParameters.WorkArea;
+            if (workArea.Width > 0 && workArea.Height > 0)
+            {
+                return new Size(workArea.Width, workArea.Height);
+            }
+
+            return new Size(1280d, 720d);
+        }
+
+        private static double Clamp(double value, double min, double max)
+        {
+            return Math.Max(min, Math.Min(value, max));
+        }
+
         private void OKButton_Click(object sender, RoutedEventArgs e)
         {
             result = MessageBoxResult.OK;
@@ -226,6 +333,15 @@ namespace OceanyaClient
             content.headerText = string.IsNullOrWhiteSpace(caption) ? "MESSAGE" : caption.ToUpperInvariant();
             content.MessageTextBlock.Text = content.FormatMessage(messageBoxText, icon);
             content.ConfigureButtons(buttons);
+            Size contentSize = CalculateContentSizeForMessage(
+                content.MessageTextBlock.Text,
+                GetVisibleButtonTexts(buttons));
+            content.Width = contentSize.Width;
+            content.Height = contentSize.Height;
+            content.MinWidth = MinContentWidth;
+            content.MinHeight = MinContentHeight;
+            content.MaxWidth = Math.Max(contentSize.Width, MinContentWidth);
+            content.MaxHeight = Math.Max(contentSize.Height, MinContentHeight);
 
             content.result = buttons switch
             {
@@ -239,8 +355,8 @@ namespace OceanyaClient
                 Owner = owner,
                 Title = caption,
                 HeaderText = content.headerText,
-                Width = 400,
-                Height = 200,
+                Width = contentSize.Width,
+                Height = contentSize.Height,
                 WindowStartupLocation = owner != null
                     ? WindowStartupLocation.CenterOwner
                     : WindowStartupLocation.CenterScreen,
@@ -288,14 +404,23 @@ namespace OceanyaClient
                 ?? buttonList.FirstOrDefault(button => button.IsDefault)?.Result
                 ?? buttonList[0].Result;
             content.ConfigureCustomButtons(buttonList);
+            Size contentSize = CalculateContentSizeForMessage(
+                content.MessageTextBlock.Text,
+                buttonList.Select(button => button.Text).ToList());
+            content.Width = contentSize.Width;
+            content.Height = contentSize.Height;
+            content.MinWidth = MinContentWidth;
+            content.MinHeight = MinContentHeight;
+            content.MaxWidth = Math.Max(contentSize.Width, MinContentWidth);
+            content.MaxHeight = Math.Max(contentSize.Height, MinContentHeight);
 
             OceanyaWindowPresentationOptions options = new OceanyaWindowPresentationOptions
             {
                 Owner = owner,
                 Title = caption,
                 HeaderText = content.headerText,
-                Width = 440,
-                Height = 210,
+                Width = contentSize.Width,
+                Height = contentSize.Height,
                 WindowStartupLocation = owner != null
                     ? WindowStartupLocation.CenterOwner
                     : WindowStartupLocation.CenterScreen,
@@ -305,6 +430,18 @@ namespace OceanyaClient
 
             _ = OceanyaWindowManager.ShowDialog(content, options);
             return content.result;
+        }
+
+        private static IReadOnlyList<string> GetVisibleButtonTexts(MessageBoxButton buttons)
+        {
+            return buttons switch
+            {
+                MessageBoxButton.OK => new[] { "OK" },
+                MessageBoxButton.OKCancel => new[] { "OK", "CANCEL" },
+                MessageBoxButton.YesNo => new[] { "YES", "NO" },
+                MessageBoxButton.YesNoCancel => new[] { "YES", "NO", "CANCEL" },
+                _ => new[] { "OK" }
+            };
         }
 
         private static Window? ResolveDefaultOwner()

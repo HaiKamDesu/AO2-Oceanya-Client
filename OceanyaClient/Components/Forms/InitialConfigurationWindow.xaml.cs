@@ -782,11 +782,6 @@ namespace OceanyaClient
         private static string BuildForcedRefreshPrompt(string forcedRefreshReason)
         {
             string trimmedReason = forcedRefreshReason?.Trim().TrimEnd('.') ?? string.Empty;
-            if (trimmedReason.Contains("Oceanya version changed", StringComparison.OrdinalIgnoreCase))
-            {
-                return "The Oceanya version changed, and it's necessary to refresh the assets. This may take a long time. Do you want to continue?";
-            }
-
             string normalizedReason = string.IsNullOrWhiteSpace(trimmedReason)
                 ? "something in the asset environment changed"
                 : char.ToLowerInvariant(trimmedReason[0]) + trimmedReason[1..];

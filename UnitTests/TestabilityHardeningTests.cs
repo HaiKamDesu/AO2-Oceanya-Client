@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
@@ -763,6 +764,51 @@ namespace UnitTests
                 Assert.That(GetAutomationId(messageBox, "NoButton"), Is.EqualTo("MessageBox.No"));
                 Assert.That(GetAutomationId(messageBox, "OKButton"), Is.EqualTo("MessageBox.Ok"));
                 Assert.That(GetAutomationId(messageBox, "CancelButton"), Is.EqualTo("MessageBox.Cancel"));
+            });
+        }
+
+        [Test]
+        public void MessageBoxSizing_GrowsForLongTextUntilScreenBoundedMaximum()
+        {
+            string longMessage = string.Join(
+                " ",
+                Enumerable.Repeat("A detailed asset refresh explanation should remain readable inside the popup.", 18));
+            Size shortSize = OceanyaMessageBox.CalculateContentSizeForMessage(
+                "Short message.",
+                new[] { "OK" },
+                new Size(1280, 720));
+            Size longSize = OceanyaMessageBox.CalculateContentSizeForMessage(
+                longMessage,
+                new[] { "YES", "NO" },
+                new Size(1280, 720));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(longSize.Width, Is.GreaterThan(shortSize.Width));
+                Assert.That(longSize.Height, Is.GreaterThan(shortSize.Height));
+                Assert.That(longSize.Width, Is.LessThanOrEqualTo(900));
+                Assert.That(longSize.Height, Is.LessThanOrEqualTo(620));
+            });
+        }
+
+        [Test]
+        public void MessageBoxSizing_ClampsVeryLargeTextToScreenBoundedMaximum()
+        {
+            string hugeMessage = string.Join(
+                Environment.NewLine,
+                Enumerable.Repeat("This line intentionally forces the message box to use overflow scrolling.", 80));
+
+            Size size = OceanyaMessageBox.CalculateContentSizeForMessage(
+                hugeMessage,
+                new[] { "OK", "CANCEL" },
+                new Size(1000, 600));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(size.Width, Is.LessThanOrEqualTo(720));
+                Assert.That(size.Height, Is.LessThanOrEqualTo(432));
+                Assert.That(size.Width, Is.GreaterThanOrEqualTo(398));
+                Assert.That(size.Height, Is.GreaterThanOrEqualTo(168));
             });
         }
 

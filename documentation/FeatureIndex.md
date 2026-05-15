@@ -18,6 +18,11 @@ Use this file as the first stop before broad repository searches. It should poin
 - Examples: `OceanyaClient/Components/Forms/CharacterFolderVisualizerWindow.xaml.cs`, `OceanyaClient/MainWindow.xaml.cs` (`MusicContextMenu_Opened`), `OceanyaClient/Features/Viewport/AO2ViewportWindowContent.xaml.cs`, `OceanyaClient/Components/ICMessageSettings.xaml.cs`
 - Notes: Custom WPF context menus use disabled bold category title rows with separators between categories. New/touched C#-built menus should call `ContextMenuSectionHelper.AddHeader(...)`.
 
+## Custom Message Boxes
+- Main code: `OceanyaClient/Components/Forms/OceanyaMessageBox.xaml(.cs)`, `OceanyaClient/Components/Forms/OceanyaWindowManager.cs`, `OceanyaClient/Components/Forms/GenericOceanyaWindow.xaml(.cs)`
+- Tests: `UnitTests/TestabilityHardeningTests.cs`
+- Notes: `OceanyaMessageBox` is hosted in the shared chrome and computes its content size from wrapped message text plus visible buttons before showing. The dialog grows up to a screen-aware max, then uses the message `ScrollViewer` as overflow fallback.
+
 ## GM Multi-Client Snapshot Restore
 - Doc: `Documentation/GmMultiClientSnapshotRestore.md`
 - Main code: `OceanyaClient/MainWindow.xaml.cs`, `OceanyaClient/Components/ICMessageSettings.xaml.cs`, `OceanyaClient/Components/Forms/CharacterSelectorWindow.xaml.cs`, `OceanyaClient/Components/Forms/OceanyaMessageBox.xaml.cs`, `Common/SaveFile.cs`
@@ -55,6 +60,11 @@ Use this file as the first stop before broad repository searches. It should poin
 - Doc: `Documentation/SaveFileAndUpdatePersistence.md`
 - Main code: `Common/SaveFile.cs`, `OceanyaClient/App.xaml.cs`, `Common/OceanyaTestMode.cs`
 - Notes: Normal builds store user settings in `%APPDATA%/OceanyaClient/savefile.json`, not beside the release executable. Deleting an old release folder and unpacking a new one preserves user state unless the user deletes `%APPDATA%/OceanyaClient`.
+
+## Asset Refresh Cache
+- Main code: `OceanyaClient/ClientAssetRefreshService.cs`, `OceanyaClient/Components/Forms/InitialConfigurationWindow.xaml.cs`
+- Tests: `UnitTests/GoogleDriveSyncTests.cs` (`ClientAssetRefreshServiceTests`)
+- Notes: Startup forced-refresh prompts come from `%APPDATA%/OceanyaClient/cache/asset_refresh_marker.json`. Reasons distinguish missing/unreadable markers, marker schema changes, app version changes, selected `config.ini` plus mount-list changes, and mount/base-folder list changes without blaming `config.ini` when only mounts changed.
 
 ## Character File Creator
 - Doc: `Documentation/CharacterFileCreator.md`
