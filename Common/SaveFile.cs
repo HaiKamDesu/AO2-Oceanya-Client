@@ -592,6 +592,7 @@ namespace OceanyaClient
         private static string saveFilePath = defaultSaveFilePath;
 
         private static SaveData _data = new SaveData();
+        private static string lastLoadDiagnostic = string.Empty;
 
         static SaveFile()
         {
@@ -609,6 +610,8 @@ namespace OceanyaClient
         }
 
         public static string CurrentStoragePath => saveFilePath;
+
+        public static string LastLoadDiagnostic => lastLoadDiagnostic;
 
         public static bool IsUsingDevelopmentStorage =>
             saveFilePath.Contains(
@@ -674,16 +677,20 @@ namespace OceanyaClient
                     var json = File.ReadAllText(saveFilePath);
                     _data = JsonSerializer.Deserialize<SaveData>(json) ?? new SaveData();
                     NormalizeLoadedData(_data);
+                    WriteLoadDiagnostic("loaded");
                 }
                 else
                 {
                     _data = new SaveData();
                     Save();
+                    WriteLoadDiagnostic("missing_created_defaults");
                 }
             }
             catch (Exception ex)
             {
                 _data = new SaveData(); // Defaults if corrupted
+                TryBackupUnreadableSaveFile(ex);
+                WriteLoadDiagnostic("load_failed_defaults", ex);
                 Console.WriteLine($"Error loading savefile: {ex.Message}");
             }
         }
@@ -1855,6 +1862,59 @@ namespace OceanyaClient
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 profileName,
                 "savefile.json");
+        }
+
+        private static void WriteLoadDiagnostic(string outcome, Exception? exception = null)
+        {
+            try
+            {
+                lastLoadDiagnostic = BuildLoadDiagnostic(outcome, exception);
+                string directory = Path.GetDirectoryName(saveFilePath)
+                    ?? Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+                Directory.CreateDirectory(directory);
+                File.WriteAllText(Path.Combine(directory, "savefile_load.log"), lastLoadDiagnostic);
+            }
+            catch
+            {
+                // Diagnostics must never block startup.
+            }
+        }
+
+        private static string BuildLoadDiagnostic(string outcome, Exception? exception)
+        {
+            string? profileEnvironment = Environment.GetEnvironmentVariable("OCEANYA_CLIENT_PROFILE");
+            return string.Join(
+                Environment.NewLine,
+                "Utc=" + DateTime.UtcNow.ToString("O"),
+                "Outcome=" + outcome,
+                "SaveFilePath=" + saveFilePath,
+                "SaveFileExists=" + File.Exists(saveFilePath),
+                "DebuggerIsAttached=" + Debugger.IsAttached,
+                "OCEANYA_CLIENT_PROFILE=" + (profileEnvironment ?? string.Empty),
+                "BaseDirectory=" + AppContext.BaseDirectory,
+                "CurrentDirectory=" + Environment.CurrentDirectory,
+                "Exception=" + (exception?.ToString() ?? string.Empty));
+        }
+
+        private static void TryBackupUnreadableSaveFile(Exception exception)
+        {
+            try
+            {
+                if (!File.Exists(saveFilePath))
+                {
+                    return;
+                }
+
+                string directory = Path.GetDirectoryName(saveFilePath) ?? string.Empty;
+                string timestamp = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+                string backupPath = Path.Combine(directory, "savefile.unreadable." + timestamp + ".json");
+                File.Copy(saveFilePath, backupPath, overwrite: false);
+            }
+            catch
+            {
+                // Best-effort only. The original load exception is reported by WriteLoadDiagnostic.
+                _ = exception;
+            }
         }
 
         private static string NormalizeOptionalColor(string? value)

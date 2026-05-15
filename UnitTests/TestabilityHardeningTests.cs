@@ -131,6 +131,8 @@ namespace UnitTests
             {
                 Assert.That(SaveFile.CurrentStoragePath, Is.EqualTo(isolatedSaveFilePath));
                 Assert.That(File.Exists(isolatedSaveFilePath), Is.True);
+                Assert.That(File.Exists(Path.Combine(tempRoot, "savefile_load.log")), Is.True);
+                Assert.That(SaveFile.LastLoadDiagnostic, Does.Contain("SaveFilePath=" + isolatedSaveFilePath));
             });
 
             SaveFile.ResetForTests(new SaveData { ConfigIniPath = "different.ini" }, persist: true);

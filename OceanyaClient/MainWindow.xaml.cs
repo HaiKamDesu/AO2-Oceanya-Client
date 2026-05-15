@@ -66,6 +66,7 @@ namespace OceanyaClient
         private bool isRestoringSnapshot;
         private bool suppressSnapshotCapture;
         private bool suppressOocShownameTextChanged;
+        private IInputElement? lastMainWindowFocusedElement;
         private readonly bool useSingleInternalClient = SaveFile.Data.UseSingleInternalClient;
         private readonly bool aiModeEnabled;
         private bool debug = false;
@@ -127,7 +128,9 @@ namespace OceanyaClient
         private const double ViewportContentAspectRatio =
             (double)AO2ViewportAssetResolver.ViewportWidth / AO2ViewportAssetResolver.ViewportToolHeight;
         private const int WmGetMinMaxInfo = 0x0024;
+        private const int WmMouseActivate = 0x0021;
         private const int WmSizing = 0x0214;
+        private const int MaNoActivate = 3;
 
         private static Brush CreateFrozenBrush(Color color)
         {
@@ -194,6 +197,7 @@ namespace OceanyaClient
             Title = aiModeEnabled ? "Oceanya Online - AO2 AI Bot" : "Oceanya Online";
             Icon = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/OceanyaO.ico"));
             Loaded += MainWindow_Loaded;
+            AddHandler(Keyboard.GotKeyboardFocusEvent, new KeyboardFocusChangedEventHandler(MainWindow_GotKeyboardFocus), true);
 
             objectionModifiers = new List<ToggleButton> { HoldIt, Objection, TakeThat, Custom };
             // Set grid mode and size
@@ -487,6 +491,58 @@ namespace OceanyaClient
             {
                 suppressOocShownameTextChanged = false;
             }
+        }
+
+        private void MainWindow_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+        {
+            if (e.NewFocus is DependencyObject dependencyObject
+                && IsAncestorOf(dependencyObject)
+                && viewportContent?.IsAncestorOf(dependencyObject) != true)
+            {
+                lastMainWindowFocusedElement = e.NewFocus;
+            }
+        }
+
+        private void FocusMainWindowFromViewportPreview()
+        {
+            if (!IsViewportUsingWindowsPreview())
+            {
+                viewportWindow?.Activate();
+                return;
+            }
+
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            if (hostWindow == null)
+            {
+                return;
+            }
+
+            if (hostWindow.WindowState == WindowState.Minimized)
+            {
+                hostWindow.WindowState = WindowState.Normal;
+            }
+
+            hostWindow.Activate();
+            Dispatcher.BeginInvoke(
+                new Action(() =>
+                {
+                    if (lastMainWindowFocusedElement is UIElement focusedElement
+                        && focusedElement.IsVisible
+                        && focusedElement.IsEnabled
+                        && focusedElement.Focusable)
+                    {
+                        focusedElement.Focus();
+                        Keyboard.Focus(focusedElement);
+                        return;
+                    }
+
+                    if (ICMessageSettingsControl.IsEnabled)
+                    {
+                        ICMessageSettingsControl.txtICMessage.Focus();
+                        Keyboard.Focus(ICMessageSettingsControl.txtICMessage);
+                    }
+                }),
+                DispatcherPriority.Input);
         }
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -5193,6 +5249,7 @@ namespace OceanyaClient
             }
 
             viewportWindow.SourceInitialized += ViewportWindow_SourceInitialized;
+            viewportWindow.Activated += ViewportWindow_Activated;
             viewportWindow.SizeChanged += ViewportWindow_SizeChanged;
             viewportWindow.LocationChanged += ViewportWindow_LocationChanged;
             viewportWindow.Closing += (sender, eventArgs) =>
@@ -5216,6 +5273,7 @@ namespace OceanyaClient
             viewportWindow.Closed += (_, _) =>
             {
                 viewportWindow.SourceInitialized -= ViewportWindow_SourceInitialized;
+                viewportWindow.Activated -= ViewportWindow_Activated;
                 viewportWindow.SizeChanged -= ViewportWindow_SizeChanged;
                 viewportWindow.LocationChanged -= ViewportWindow_LocationChanged;
                 viewportWindowSource?.RemoveHook(ViewportWindow_WndProc);
@@ -5242,7 +5300,7 @@ namespace OceanyaClient
             }
 
             ApplyViewportTaskbarPriority();
-            viewportWindow.Activate();
+            FocusMainWindowFromViewportPreview();
             Dispatcher.BeginInvoke(
                 new Action(() =>
                 {
@@ -5264,7 +5322,7 @@ namespace OceanyaClient
                         if (viewportWindow != null)
                         {
                             viewportWindow.Opacity = 1;
-                            viewportWindow.Activate();
+                            FocusMainWindowFromViewportPreview();
                         }
                     }
                 }),
@@ -5439,6 +5497,11 @@ namespace OceanyaClient
             SetupViewportWindowStateSync();
         }
 
+        private void ViewportWindow_Activated(object? sender, EventArgs e)
+        {
+            FocusMainWindowFromViewportPreview();
+        }
+
         private void ViewportWindow_SizeChanged(object sender, SizeChangedEventArgs e)
         {
             CaptureViewportWindowState();
@@ -5488,6 +5551,12 @@ namespace OceanyaClient
             else if (message == WmSize)
             {
                 CaptureViewportWindowState();
+            }
+            else if (message == WmMouseActivate && IsViewportUsingWindowsPreview())
+            {
+                FocusMainWindowFromViewportPreview();
+                handled = true;
+                return new IntPtr(MaNoActivate);
             }
 
             return IntPtr.Zero;
@@ -5623,12 +5692,13 @@ namespace OceanyaClient
 
         private void ApplyViewportTaskbarPriority()
         {
-            bool useViewport = viewportWindow?.IsVisible == true && viewportContent?.UseAsWindowsPreview == true;
+            bool useViewport = IsViewportUsingWindowsPreview();
             Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
             if (viewportWindow != null)
             {
                 viewportWindow.ShowInTaskbar = useViewport;
                 SetWindowAltTabVisible(viewportWindow, useViewport);
+                SetWindowNoActivate(viewportWindow, useViewport);
             }
 
             if (hostWindow != null)
@@ -5636,6 +5706,16 @@ namespace OceanyaClient
                 hostWindow.ShowInTaskbar = !useViewport;
                 SetWindowAltTabVisible(hostWindow, !useViewport);
             }
+
+            if (useViewport)
+            {
+                FocusMainWindowFromViewportPreview();
+            }
+        }
+
+        private bool IsViewportUsingWindowsPreview()
+        {
+            return viewportWindow?.IsVisible == true && viewportContent?.UseAsWindowsPreview == true;
         }
 
         private static void SetWindowAltTabVisible(Window window, bool visible)
@@ -5659,6 +5739,35 @@ namespace OceanyaClient
             int newExStyle = visible
                 ? (exStyle & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
                 : (exStyle | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW;
+
+            if (newExStyle != exStyle)
+            {
+                SetWindowLong(hwnd, GWL_EXSTYLE, newExStyle);
+                SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+            }
+        }
+
+        private static void SetWindowNoActivate(Window window, bool noActivate)
+        {
+            IntPtr hwnd = new WindowInteropHelper(window).Handle;
+            if (hwnd == IntPtr.Zero)
+            {
+                return;
+            }
+
+            const int GWL_EXSTYLE = -20;
+            const int WS_EX_NOACTIVATE = 0x08000000;
+            const uint SWP_NOMOVE = 0x0002;
+            const uint SWP_NOSIZE = 0x0001;
+            const uint SWP_NOZORDER = 0x0004;
+            const uint SWP_NOOWNERZORDER = 0x0200;
+            const uint SWP_FRAMECHANGED = 0x0020;
+
+            int exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+            int newExStyle = noActivate
+                ? exStyle | WS_EX_NOACTIVATE
+                : exStyle & ~WS_EX_NOACTIVATE;
 
             if (newExStyle != exStyle)
             {

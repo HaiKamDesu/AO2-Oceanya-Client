@@ -34,4 +34,4 @@ There is no explicit integer schema version. Migration is handled by normal JSON
 This is enough for ordinary upgrades where the AppData save file is kept. It does not protect a user who manually deletes `%APPDATA%/OceanyaClient/savefile.json`.
 
 ## Gotchas
-If `ConfigIniPath` points inside a folder the user deletes during update, the app still preserves the save file but will need the user to pick a valid AO `config.ini` again. AO asset caches are allowed to be rebuilt after update.
+If the initial configuration window looks reset after an update even though `%APPDATA%/OceanyaClient/savefile.json` still exists, check `%APPDATA%/OceanyaClient/savefile_load.log`. It records the exact save path, whether the file existed, profile environment variables, debugger state, and any load exception. If a load exception occurs, the original file is copied to `savefile.unreadable.<timestamp>.json` before the app falls back to defaults.
