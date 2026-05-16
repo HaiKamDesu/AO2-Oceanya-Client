@@ -66,6 +66,8 @@ public class NetworkTests
 
         client.OnBGChange += newBg => bg = newBg;
         client.OnSideChange += newPos => side = newPos;
+        string? serverPosition = null;
+        client.OnServerPositionReceived += newPos => serverPosition = newPos;
 
         await client.HandleMessage("BN#Courtroom_bg#%");
         await client.HandleMessage("SP#wit#%");
@@ -74,6 +76,7 @@ public class NetworkTests
         {
             Assert.That(bg, Is.EqualTo("Courtroom_bg"));
             Assert.That(side, Is.EqualTo("wit"));
+            Assert.That(serverPosition, Is.EqualTo("wit"));
         });
     }
 

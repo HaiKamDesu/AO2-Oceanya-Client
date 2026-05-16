@@ -104,6 +104,7 @@ namespace AOBot_Testing.Agents
         public Action<CharacterFolder>? OnChangedCharacter;
         public Action<string>? OnBGChange;
         public Action<string>? OnSideChange;
+        public Action<string>? OnServerPositionReceived;
         public Action? OnINIPuppetChange;
         public Action<int>? OnReconnectionAttempt;
         public Action<int>? OnReconnectionAttemptFailed;
@@ -770,6 +771,7 @@ namespace AOBot_Testing.Agents
                 var newPos = fields[1];
 
                 SetPos(newPos);
+                OnServerPositionReceived?.Invoke(newPos);
             }
             else if (message.StartsWith("BN#"))
             {

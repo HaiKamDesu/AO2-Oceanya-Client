@@ -8,10 +8,11 @@ using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Navigation;
+using OceanyaClient.Components.Forms;
 
 namespace OceanyaClient.Components
 {
-    public partial class OOCLog : UserControl
+    public partial class OOCLog : UserControl, ILogFindTarget
     {
         private sealed class LogState
         {
@@ -30,8 +31,14 @@ namespace OceanyaClient.Components
         public static int OOCShownameLengthLimit = 30;
         public Action<string, string>? OnSendOOCMessage;
         public Func<AOClient, AOClient?>? LogKeyResolver { get; set; }
+        public Func<IReadOnlyList<ILogFindTarget>>? FindTargetsProvider { get; set; }
+        public string FindScopeName => "OOC";
 
         private Dictionary<AOClient, LogState> clientLogs = new Dictionary<AOClient, LogState>();
+        private readonly List<TextRange> activeSearchHighlights = new List<TextRange>();
+        private IReadOnlyList<LogTextMatch> activeSearchMatches = Array.Empty<LogTextMatch>();
+        private int activeSearchMatchIndex = -1;
+        private FindInLogWindow? findWindow;
 
         private AOClient? currentClient = null;
         private ScrollViewer? ScrollViewer;
@@ -469,6 +476,137 @@ namespace OceanyaClient.Components
             return ScrollViewer.VerticalOffset >= ScrollViewer.ScrollableHeight - 10; // 10px tolerance
         }
 
+        public IReadOnlyList<LogTextMatch> FindInCurrentDocument(
+            string searchText,
+            bool matchCase,
+            bool wholeWord,
+            bool useRegex)
+        {
+            if (string.IsNullOrEmpty(searchText))
+            {
+                return Array.Empty<LogTextMatch>();
+            }
+
+            return LogDocumentSearch.Find(LogBox.Document, searchText, matchCase, wholeWord, useRegex);
+        }
+
+        public void HighlightMatches(IReadOnlyList<LogTextMatch> matches, int activeMatchIndex)
+        {
+            if (AreSameMatches(activeSearchMatches, matches))
+            {
+                UpdateActiveHighlight(activeMatchIndex);
+                return;
+            }
+
+            ClearHighlight();
+            activeSearchMatches = matches.ToArray();
+            activeSearchMatchIndex = -1;
+
+            for (int i = 0; i < matches.Count; i++)
+            {
+                try
+                {
+                    TextRange range = new TextRange(matches[i].Start, matches[i].End);
+                    bool isActive = i == activeMatchIndex;
+                    range.ApplyPropertyValue(
+                        TextElement.BackgroundProperty,
+                        isActive ? LogFindHighlightBrushes.ActiveMatch : LogFindHighlightBrushes.Match);
+                    activeSearchHighlights.Add(range);
+
+                    if (isActive)
+                    {
+                        activeSearchMatchIndex = i;
+                        matches[i].Start.Paragraph?.BringIntoView();
+                    }
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        private void UpdateActiveHighlight(int activeMatchIndex)
+        {
+            if (activeSearchMatchIndex == activeMatchIndex)
+            {
+                if (activeMatchIndex >= 0 && activeMatchIndex < activeSearchMatches.Count)
+                {
+                    activeSearchMatches[activeMatchIndex].Start.Paragraph?.BringIntoView();
+                }
+                return;
+            }
+
+            ApplyHighlightBrush(activeSearchMatchIndex, LogFindHighlightBrushes.Match);
+            ApplyHighlightBrush(activeMatchIndex, LogFindHighlightBrushes.ActiveMatch);
+            activeSearchMatchIndex = activeMatchIndex;
+
+            if (activeMatchIndex >= 0 && activeMatchIndex < activeSearchMatches.Count)
+            {
+                activeSearchMatches[activeMatchIndex].Start.Paragraph?.BringIntoView();
+            }
+        }
+
+        private void ApplyHighlightBrush(int index, Brush brush)
+        {
+            if (index < 0 || index >= activeSearchHighlights.Count)
+            {
+                return;
+            }
+
+            try
+            {
+                activeSearchHighlights[index].ApplyPropertyValue(TextElement.BackgroundProperty, brush);
+            }
+            catch
+            {
+            }
+        }
+
+        private static bool AreSameMatches(IReadOnlyList<LogTextMatch> left, IReadOnlyList<LogTextMatch> right)
+        {
+            if (left.Count != right.Count)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < left.Count; i++)
+            {
+                if (left[i].Start.CompareTo(right[i].Start) != 0
+                    || left[i].End.CompareTo(right[i].End) != 0)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        public void ClearHighlight()
+        {
+            foreach (TextRange range in activeSearchHighlights)
+            {
+                try
+                {
+                    range.ApplyPropertyValue(TextElement.BackgroundProperty, null);
+                }
+                catch { }
+            }
+
+            try
+            {
+                TextRange fullDocument = new TextRange(LogBox.Document.ContentStart, LogBox.Document.ContentEnd);
+                fullDocument.ApplyPropertyValue(TextElement.BackgroundProperty, null);
+                LogBox.InvalidateVisual();
+            }
+            catch
+            {
+            }
+
+            activeSearchHighlights.Clear();
+            activeSearchMatches = Array.Empty<LogTextMatch>();
+            activeSearchMatchIndex = -1;
+        }
+
         private void txtOOCMessage_TextChanged(object sender, TextChangedEventArgs e)
         {
             txtOOCMessage_Placeholder.Visibility = string.IsNullOrWhiteSpace(txtOOCMessage.Text) ? Visibility.Visible : Visibility.Collapsed;
@@ -506,6 +644,29 @@ namespace OceanyaClient.Components
         private void btnServerConsole_Click(object sender, RoutedEventArgs e)
         {
             DebugConsoleWindow.ShowWindow();
+        }
+
+        private void MenuItemFindInLog_Click(object sender, RoutedEventArgs e)
+        {
+            if (findWindow?.HostWindow?.IsVisible == true)
+            {
+                findWindow.HostWindow.Activate();
+                return;
+            }
+
+            IReadOnlyList<ILogFindTarget> targets = FindTargetsProvider?.Invoke() ?? new ILogFindTarget[] { this };
+            findWindow = new FindInLogWindow(targets, this);
+            Window hostWindow = OceanyaWindowManager.CreateWindow(findWindow);
+            hostWindow.Owner = Window.GetWindow(this);
+            hostWindow.Closed += (_, _) =>
+            {
+                foreach (ILogFindTarget target in targets)
+                {
+                    target.ClearHighlight();
+                }
+                findWindow = null;
+            };
+            hostWindow.Show();
         }
     }
 }

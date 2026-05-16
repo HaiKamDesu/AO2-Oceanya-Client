@@ -445,6 +445,8 @@ namespace OceanyaClient
 
             OOCLogControl.txtOOCShowname.Text = SaveFile.Data.OOCName;
             OOCLogControl.txtOOCShowname.TextChanged += (_, _) => HandleOocShownameTextChanged();
+            ICLogControl.FindTargetsProvider = GetCurrentLogFindTargets;
+            OOCLogControl.FindTargetsProvider = GetCurrentLogFindTargets;
             chkPosOnIniSwap.IsChecked = SaveFile.Data.SwitchPosOnIniSwap;
             chkSticky.IsChecked = SaveFile.Data.StickyEffect;
             chkInvertLog.IsChecked = SaveFile.Data.InvertICLog;
@@ -773,6 +775,11 @@ namespace OceanyaClient
                 ?? singleInternalClient
                 ?? networkClient
                 ?? profileClient;
+        }
+
+        private IReadOnlyList<ILogFindTarget> GetCurrentLogFindTargets()
+        {
+            return new ILogFindTarget[] { ICLogControl, OOCLogControl };
         }
 
         private AOClientAgentController EnsureAiController(AOClient profileClient)
@@ -1464,7 +1471,10 @@ namespace OceanyaClient
         {
             if (!isSentFromSelf)
             {
-                callwordAudioNotifier.TryNotify(new CallwordNotificationContext(message, showName, sourceMessage));
+                if (callwordAudioNotifier.TryNotify(new CallwordNotificationContext(message, showName, sourceMessage)))
+                {
+                    FlashTaskbar();
+                }
             }
 
             IReadOnlyList<LogMessageActionLink>? nameLinks = null;
@@ -1559,7 +1569,10 @@ namespace OceanyaClient
                 && string.Equals(showName, profileClient.OOCShowname, StringComparison.OrdinalIgnoreCase);
             if (!isSentFromSelf)
             {
-                callwordAudioNotifier.TryNotify(new CallwordNotificationContext(message, showName, null));
+                if (callwordAudioNotifier.TryNotify(new CallwordNotificationContext(message, showName, null)))
+                {
+                    FlashTaskbar();
+                }
             }
 
             IReadOnlyList<LogMessageActionLink>? nameLinks = null;
@@ -3097,6 +3110,15 @@ namespace OceanyaClient
 
         private void RefreshDreddOverlayForCurrentContext(bool promptForUnknownOverlay)
         {
+            if (!isDreddFeatureEnabled)
+            {
+                lastDreddOverlayContextKey = string.Empty;
+                lastUnknownOverlayPromptKey = string.Empty;
+                DreddOverlayListBox.ItemsSource = Array.Empty<DreddOverlaySelectionItem>();
+                DreddOverlaySelectedText.Text = DreddNoneOverlayName;
+                return;
+            }
+
             isLoadingDreddOverlaySelection = true;
             try
             {
@@ -3495,6 +3517,31 @@ namespace OceanyaClient
             profileClient.SetPos(singleInternalClient.curPos);
         }
 
+        private void ApplyServerPositionToAllSingleInternalProfiles(string newPos)
+        {
+            if (!useSingleInternalClient)
+            {
+                return;
+            }
+
+            foreach (AOClient profileClient in clientOrder)
+            {
+                if (ReferenceEquals(profileClient, singleInternalClient))
+                {
+                    continue;
+                }
+
+                profileClient.SetPos(newPos);
+            }
+
+            if (currentClient != null)
+            {
+                ICMessageSettingsControl.SetClient(currentClient);
+            }
+
+            CaptureGmMultiClientSnapshot();
+        }
+
         private void InitializeCommonClientEvents(AOClient profileClient, AOClient networkClient)
         {
             networkClient.OnWebsocketDisconnect += () =>
@@ -3745,6 +3792,14 @@ namespace OceanyaClient
                     }
 
                     targetClient.SetPos(newPos);
+                });
+            };
+
+            singleInternalClient.OnServerPositionReceived += (string newPos) =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    ApplyServerPositionToAllSingleInternalProfiles(newPos);
                 });
             };
 
@@ -7536,6 +7591,47 @@ namespace OceanyaClient
                 if (y is null) return 1;
                 return StrCmpLogicalW(x, y);
             }
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct FLASHWINFO
+        {
+            public uint cbSize;
+            public IntPtr hwnd;
+            public uint dwFlags;
+            public uint uCount;
+            public uint dwTimeout;
+        }
+
+        [DllImport("user32.dll")]
+        private static extern bool FlashWindowEx(ref FLASHWINFO pwfi);
+
+        private void FlashTaskbar()
+        {
+            Window? hostWindow = HostWindow;
+            if (hostWindow == null || hostWindow.IsActive || viewportWindow?.IsActive == true)
+            {
+                return;
+            }
+
+            Window flashWindow = IsViewportUsingWindowsPreview() && viewportWindow != null
+                ? viewportWindow
+                : hostWindow;
+            IntPtr flashHandle = new WindowInteropHelper(flashWindow).Handle;
+            if (flashHandle == IntPtr.Zero)
+            {
+                return;
+            }
+
+            FLASHWINFO fi = new FLASHWINFO
+            {
+                cbSize = (uint)Marshal.SizeOf<FLASHWINFO>(),
+                hwnd = flashHandle,
+                dwFlags = 0x00000002 | 0x0000000C, // FLASHW_TRAY | FLASHW_TIMERNOFG
+                uCount = 5,
+                dwTimeout = 0
+            };
+            FlashWindowEx(ref fi);
         }
 
         [DllImport("user32.dll")]

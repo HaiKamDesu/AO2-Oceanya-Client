@@ -4,8 +4,8 @@ Use this file as the first stop before broad repository searches. It should poin
 
 ## AO2 Chat And Log Behavior
 - Doc: `Documentation/AO2-Chat-Config-Coloring-Guide.md`
-- Main code: `AOBot-Testing/Agents/AOClient.cs`, `AOBot-Testing/Structures/ICMessage.cs`, `OceanyaClient/MainWindow.xaml.cs`, `OceanyaClient/Components/ICLog.xaml.cs`, `OceanyaClient/Features/Chat/Ao2TextLogWriter.cs`
-- Notes: Covers IC/OOC packet handling, log formatting, AO2-facing display behavior, and AO2-compatible text-log files under the selected AO install `logs/<server>/` folder.
+- Main code: `AOBot-Testing/Agents/AOClient.cs`, `AOBot-Testing/Structures/ICMessage.cs`, `OceanyaClient/MainWindow.xaml.cs`, `OceanyaClient/Components/ICLog.xaml.cs`, `OceanyaClient/Components/OOCLog.xaml.cs`, `OceanyaClient/Components/LogDocumentSearch.cs`, `OceanyaClient/Components/Forms/FindInLogWindow.xaml(.cs)`, `OceanyaClient/Features/Chat/Ao2TextLogWriter.cs`
+- Notes: Covers IC/OOC packet handling, log formatting, AO2-facing display behavior, combined IC+OOC find-in-log highlighting, and AO2-compatible text-log files under the selected AO install `logs/<server>/` folder. `LogDocumentSearch` indexes the full visible `FlowDocument` text so case-sensitive, whole-word, and regex searches work across formatted runs; tests live in `UnitTests/LogDocumentSearchTests.cs`.
 
 ## AO2 Viewport
 - Doc: `Documentation/AO2Viewport.md`
@@ -37,7 +37,7 @@ Use this file as the first stop before broad repository searches. It should poin
 ## GM Multi-Client Position Dropdown
 - Doc: `Documentation/AO2Viewport.md`
 - Main code: `OceanyaClient/Components/ICMessageSettings.xaml.cs`, `AOBot-Testing/Structures/Background.cs`, `AOBot-Testing/Agents/AOClient.cs`
-- Notes: The IC position dropdown displays `default (<character side>)` as a value-backed empty position, then AO2 default positions, `design.ini` positions, and undeclared image-backed positions. Empty `AOClient.curPos` remains default mode across character changes; manual positions remain manual. Background resolution/cache refresh preserves AO2 mount priority: first matching `Globals.BaseFolders` background name wins when multiple mounts contain the same background folder name.
+- Notes: The IC position dropdown displays `default (<character side>)` as a value-backed empty position, then AO2 default positions, `design.ini` positions, and undeclared image-backed positions. Empty `AOClient.curPos` remains default mode across character changes; manual positions remain manual. Incoming server `SP#` packets fire `AOClient.OnServerPositionReceived`; in single-internal-client GM mode `MainWindow.ApplyServerPositionToAllSingleInternalProfiles` applies forced server positions to every profile sharing that network client. Background resolution/cache refresh preserves AO2 mount priority: first matching `Globals.BaseFolders` background name wins when multiple mounts contain the same background folder name.
 
 ## GM Multi-Client Music List
 - Doc: `Documentation/MusicList.md`

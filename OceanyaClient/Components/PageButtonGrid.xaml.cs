@@ -35,6 +35,20 @@ namespace OceanyaClient.Components
         }
 
 
+        public int GetCurrentPage() => currentPage;
+
+        public int GetPageCount()
+        {
+            int elementsPerPage = Math.Max(1, rows * columns);
+            return Math.Max(1, (int)Math.Ceiling((double)elements.Count / elementsPerPage));
+        }
+
+        public void SetCurrentPage(int page)
+        {
+            currentPage = Math.Clamp(page, 0, GetPageCount() - 1);
+            UpdateGridContent();
+        }
+
         public void SetPageSize(int rowCount, int columnCount)
         {
             rows = rowCount;
@@ -119,7 +133,8 @@ namespace OceanyaClient.Components
 
             TestingGrid.Children.Clear(); // Clear existing grid items
 
-            int elementsPerPage = rows * columns;
+            currentPage = Math.Clamp(currentPage, 0, GetPageCount() - 1);
+            int elementsPerPage = Math.Max(1, rows * columns);
             int startIndex = currentPage * elementsPerPage;
             int endIndex = Math.Min(startIndex + elementsPerPage, elements.Count);
 

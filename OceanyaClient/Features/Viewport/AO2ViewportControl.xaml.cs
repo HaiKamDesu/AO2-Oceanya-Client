@@ -1530,7 +1530,19 @@ namespace OceanyaClient.Features.Viewport
             Canvas.SetTop(image, AO2ViewportAssetResolver.ViewportHeight * offset.Vertical / 100.0);
         }
 
-        private static void ApplyCharacterOffset(Image image, (int Horizontal, int Vertical) offset)
+        private (int Horizontal, int Vertical) characterPendingOffset = (0, 0);
+        private (int Horizontal, int Vertical) pairCharacterPendingOffset = (0, 0);
+
+        private void ApplyCharacterOffset(Image image, (int Horizontal, int Vertical) offset)
+        {
+            if (ReferenceEquals(image, CharacterImage))
+                characterPendingOffset = offset;
+            else if (ReferenceEquals(image, PairCharacterImage))
+                pairCharacterPendingOffset = offset;
+            ApplyCharacterOffsetNow(image, offset);
+        }
+
+        private static void ApplyCharacterOffsetNow(Image image, (int Horizontal, int Vertical) offset)
         {
             double width = double.IsNaN(image.Width) || image.Width <= 0
                 ? AO2ViewportAssetResolver.ViewportWidth
@@ -1542,11 +1554,20 @@ namespace OceanyaClient.Features.Viewport
             Canvas.SetTop(image, AO2ViewportAssetResolver.ViewportHeight * offset.Vertical / 100.0);
         }
 
-        private static void ApplyHeightBasedCharacterGeometry(Image image)
+        private void ReapplyStoredCharacterOffset(Image image)
+        {
+            if (ReferenceEquals(image, CharacterImage))
+                ApplyCharacterOffsetNow(image, characterPendingOffset);
+            else if (ReferenceEquals(image, PairCharacterImage))
+                ApplyCharacterOffsetNow(image, pairCharacterPendingOffset);
+        }
+
+        private void ApplyHeightBasedCharacterGeometry(Image image)
         {
             if (image.Source is not BitmapSource bitmap || bitmap.PixelWidth <= 0 || bitmap.PixelHeight <= 0)
             {
                 ResetCharacterImageGeometry(image);
+                ReapplyStoredCharacterOffset(image);
                 return;
             }
 
@@ -1554,6 +1575,7 @@ namespace OceanyaClient.Features.Viewport
             image.Width = bitmap.PixelWidth * scale;
             image.Height = AO2ViewportAssetResolver.ViewportHeight;
             image.Stretch = Stretch.Fill;
+            ReapplyStoredCharacterOffset(image);
         }
 
         private static void ResetCharacterImageGeometry(Image image)

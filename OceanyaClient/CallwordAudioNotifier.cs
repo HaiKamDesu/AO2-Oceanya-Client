@@ -14,12 +14,12 @@ namespace OceanyaClient
         private readonly AO2BlipPreviewPlayer player = new AO2BlipPreviewPlayer();
         private string currentPath = string.Empty;
 
-        public void TryNotify(string message)
+        public bool TryNotify(string message)
         {
-            TryNotify(new CallwordNotificationContext(message, string.Empty, null));
+            return TryNotify(new CallwordNotificationContext(message, string.Empty, null));
         }
 
-        public void TryNotify(CallwordNotificationContext context)
+        public bool TryNotify(CallwordNotificationContext context)
         {
             foreach (CallwordRule rule in SaveFile.Data.CallwordRules)
             {
@@ -28,9 +28,10 @@ namespace OceanyaClient
                     continue;
                 }
 
-                PlayRule(rule);
-                return;
+                return PlayRule(rule);
             }
+
+            return false;
         }
 
         private static bool RuleMatches(CallwordRule rule, CallwordNotificationContext context)
@@ -52,19 +53,19 @@ namespace OceanyaClient
             };
         }
 
-        private void PlayRule(CallwordRule rule)
+        private bool PlayRule(CallwordRule rule)
         {
             string? path = ResolveRulePath(rule);
             if (string.IsNullOrWhiteSpace(path))
             {
-                return;
+                return true;
             }
 
             if (!string.Equals(currentPath, path, StringComparison.OrdinalIgnoreCase))
             {
                 if (!player.TrySetBlip(path))
                 {
-                    return;
+                    return true;
                 }
 
                 currentPath = path;
@@ -72,6 +73,7 @@ namespace OceanyaClient
 
             player.Volume = (float)(AudioSettings.SfxVolume * rule.VolumePercent / 100.0);
             _ = player.PlayBlip();
+            return true;
         }
 
         private static string? ResolveRulePath(CallwordRule rule)

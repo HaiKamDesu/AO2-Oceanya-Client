@@ -67,7 +67,7 @@
                                      Focusable="False"
                                      HorizontalContentAlignment="Left"
                                      VerticalContentAlignment="Top"
-                                     ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                     ScrollViewer.VerticalScrollBarVisibility="Hidden"
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                      TextOptions.TextFormattingMode="Display"
                                      TextOptions.TextRenderingMode="Aliased"/>

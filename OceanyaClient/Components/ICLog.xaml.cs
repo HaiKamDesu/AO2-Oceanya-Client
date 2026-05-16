@@ -7,11 +7,12 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Media;
+using OceanyaClient.Components.Forms;
 using OceanyaClient.Features.ChatPreview;
 
 namespace OceanyaClient.Components
 {
-    public partial class ICLog : UserControl
+    public partial class ICLog : UserControl, ILogFindTarget
     {
         private sealed class LogState
         {
@@ -53,6 +54,14 @@ namespace OceanyaClient.Components
 
             public bool Remove { get; set; }
         }
+
+        private TextRange? activeHighlight;
+        private FindInLogWindow? findWindow;
+        private readonly List<TextRange> activeSearchHighlights = new List<TextRange>();
+        private IReadOnlyList<LogTextMatch> activeSearchMatches = Array.Empty<LogTextMatch>();
+        private int activeSearchMatchIndex = -1;
+        public Func<IReadOnlyList<ILogFindTarget>>? FindTargetsProvider { get; set; }
+        public string FindScopeName => "IC";
 
         public ICLog()
         {
@@ -723,6 +732,167 @@ namespace OceanyaClient.Components
         private static Color ToMediaColor(System.Drawing.Color color)
         {
             return Color.FromArgb(color.A, color.R, color.G, color.B);
+        }
+
+        public IReadOnlyList<LogTextMatch> FindInCurrentDocument(
+            string searchText, bool matchCase, bool wholeWord, bool useRegex)
+        {
+            if (string.IsNullOrEmpty(searchText))
+            {
+                return Array.Empty<LogTextMatch>();
+            }
+
+            return LogDocumentSearch.Find(LogBox.Document, searchText, matchCase, wholeWord, useRegex);
+        }
+
+        internal void ScrollAndHighlightRange(TextPointer start, TextPointer end)
+        {
+            HighlightMatches(new[] { new LogTextMatch(start, end) }, 0);
+        }
+
+        public void HighlightMatches(IReadOnlyList<LogTextMatch> matches, int activeMatchIndex)
+        {
+            if (AreSameMatches(activeSearchMatches, matches))
+            {
+                UpdateActiveHighlight(activeMatchIndex);
+                return;
+            }
+
+            ClearHighlight();
+            activeSearchMatches = matches.ToArray();
+            activeSearchMatchIndex = -1;
+
+            for (int i = 0; i < matches.Count; i++)
+            {
+                try
+                {
+                    TextRange range = new TextRange(matches[i].Start, matches[i].End);
+                    bool isActive = i == activeMatchIndex;
+                    range.ApplyPropertyValue(
+                        TextElement.BackgroundProperty,
+                        isActive ? LogFindHighlightBrushes.ActiveMatch : LogFindHighlightBrushes.Match);
+                    activeSearchHighlights.Add(range);
+
+                    if (isActive)
+                    {
+                        activeHighlight = range;
+                        activeSearchMatchIndex = i;
+                        matches[i].Start.Paragraph?.BringIntoView();
+                    }
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        private void UpdateActiveHighlight(int activeMatchIndex)
+        {
+            if (activeSearchMatchIndex == activeMatchIndex)
+            {
+                if (activeMatchIndex >= 0 && activeMatchIndex < activeSearchMatches.Count)
+                {
+                    activeSearchMatches[activeMatchIndex].Start.Paragraph?.BringIntoView();
+                }
+                return;
+            }
+
+            ApplyHighlightBrush(activeSearchMatchIndex, LogFindHighlightBrushes.Match);
+            ApplyHighlightBrush(activeMatchIndex, LogFindHighlightBrushes.ActiveMatch);
+            activeSearchMatchIndex = activeMatchIndex;
+            activeHighlight = activeMatchIndex >= 0 && activeMatchIndex < activeSearchHighlights.Count
+                ? activeSearchHighlights[activeMatchIndex]
+                : null;
+
+            if (activeMatchIndex >= 0 && activeMatchIndex < activeSearchMatches.Count)
+            {
+                activeSearchMatches[activeMatchIndex].Start.Paragraph?.BringIntoView();
+            }
+        }
+
+        private void ApplyHighlightBrush(int index, Brush brush)
+        {
+            if (index < 0 || index >= activeSearchHighlights.Count)
+            {
+                return;
+            }
+
+            try
+            {
+                activeSearchHighlights[index].ApplyPropertyValue(TextElement.BackgroundProperty, brush);
+            }
+            catch
+            {
+            }
+        }
+
+        private static bool AreSameMatches(IReadOnlyList<LogTextMatch> left, IReadOnlyList<LogTextMatch> right)
+        {
+            if (left.Count != right.Count)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < left.Count; i++)
+            {
+                if (left[i].Start.CompareTo(right[i].Start) != 0
+                    || left[i].End.CompareTo(right[i].End) != 0)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        public void ClearHighlight()
+        {
+            foreach (TextRange range in activeSearchHighlights)
+            {
+                try
+                {
+                    range.ApplyPropertyValue(TextElement.BackgroundProperty, null);
+                }
+                catch { }
+            }
+
+            try
+            {
+                TextRange fullDocument = new TextRange(LogBox.Document.ContentStart, LogBox.Document.ContentEnd);
+                fullDocument.ApplyPropertyValue(TextElement.BackgroundProperty, null);
+                LogBox.InvalidateVisual();
+            }
+            catch
+            {
+            }
+
+            activeSearchHighlights.Clear();
+            activeSearchMatches = Array.Empty<LogTextMatch>();
+            activeSearchMatchIndex = -1;
+            activeHighlight = null;
+        }
+
+        private void MenuItemFindInLog_Click(object sender, RoutedEventArgs e)
+        {
+            if (findWindow?.HostWindow?.IsVisible == true)
+            {
+                findWindow.HostWindow.Activate();
+                return;
+            }
+
+            IReadOnlyList<ILogFindTarget> targets = FindTargetsProvider?.Invoke() ?? new ILogFindTarget[] { this };
+            findWindow = new FindInLogWindow(targets, this);
+            Window hostWindow = OceanyaWindowManager.CreateWindow(findWindow);
+            hostWindow.Owner = Window.GetWindow(this);
+            hostWindow.Closed += (_, _) =>
+            {
+                foreach (ILogFindTarget target in targets)
+                {
+                    target.ClearHighlight();
+                }
+                findWindow = null;
+            };
+            hostWindow.Show();
         }
     }
 }

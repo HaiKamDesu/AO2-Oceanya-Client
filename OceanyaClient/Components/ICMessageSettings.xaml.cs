@@ -37,6 +37,7 @@ namespace OceanyaClient.Components
         public static int ICMessageMaxLength = 256;
         Dictionary<Emote, ToggleButton> emotes = new();
         AOClient? curClient;
+        readonly Dictionary<AOClient, int> clientEmotePages = new();
         public bool stickyEffects;
 
         public Action<string>? OnSendICMessage;
@@ -442,10 +443,12 @@ namespace OceanyaClient.Components
                 return;
             }
 
-            if (this.curClient != null)
+            AOClient? previousClient = this.curClient;
+            if (previousClient != null)
             {
                 curClient.OnSideChange -= UpdatePos;
                 curClient.OnBGChange -= EventHandler_ClientOnBgChange;
+                clientEmotePages[previousClient] = EmoteGrid.GetCurrentPage();
             }
 
             this.curClient = client;
@@ -464,6 +467,9 @@ namespace OceanyaClient.Components
             }
 
             SetINI(iniToUse);
+            if (clientEmotePages.TryGetValue(client, out int savedEmotePage))
+                EmoteGrid.SetCurrentPage(savedEmotePage);
+
             txtICShowname.Text = client.ICShowname;
 
             chkPreanim.IsChecked = client.PreanimEnabled;

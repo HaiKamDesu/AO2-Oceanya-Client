@@ -65,6 +65,11 @@
                  FontSize="11"
                  Padding="2"
                  IsDocumentEnabled="True">
+                    <RichTextBox.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="Find in log..." Click="MenuItemFindInLog_Click"/>
+                        </ContextMenu>
+                    </RichTextBox.ContextMenu>
                     <FlowDocument PagePadding="0">
                         <Paragraph TextAlignment="Left"/>
                     </FlowDocument>
