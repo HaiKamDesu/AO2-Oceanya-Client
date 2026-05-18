@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Documents;
 using System.Windows.Media;
 
@@ -16,7 +18,18 @@ namespace OceanyaClient.Components
             bool wholeWord,
             bool useRegex);
 
+        LogDocumentSearch.DocumentTextIndex CreateFindIndex();
+
+        IReadOnlyList<LogTextMatch> ResolveFindMatches(
+            LogDocumentSearch.DocumentTextIndex index,
+            IReadOnlyList<LogTextOffsetMatch> matches);
+
         void HighlightMatches(IReadOnlyList<LogTextMatch> matches, int activeMatchIndex);
+
+        Task HighlightMatchesAsync(
+            IReadOnlyList<LogTextMatch> matches,
+            int activeMatchIndex,
+            CancellationToken cancellationToken);
 
         void ClearHighlight();
     }

@@ -2,8 +2,8 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:OceanyaClient"
-        Width="370" Height="58"
-        MinWidth="370"
+        Width="465" Height="58"
+        MinWidth="465"
         MinHeight="58"
         PreviewKeyDown="FindWindow_PreviewKeyDown"
         ShowInTaskbar="False">
@@ -52,7 +52,7 @@
                      Grid.Column="0"
                      VerticalContentAlignment="Center"
                      Style="{StaticResource FindDarkTextBox}"
-                     ToolTip="Type to search IC and OOC logs"
+                     ToolTip="Type to search selected logs"
                      KeyDown="TxtSearch_KeyDown"/>
 
             <Button x:Name="BtnPrev"
@@ -84,6 +84,20 @@
         </Grid>
 
         <StackPanel Grid.Row="1" Orientation="Horizontal">
+            <CheckBox x:Name="ChkSearchIC"
+                      Content="Search IC"
+                      Style="{StaticResource FindDarkCheckBox}"
+                      Margin="0,0,12,0"
+                      ToolTip="Include IC log matches"
+                      Checked="SearchOptions_Changed"
+                      Unchecked="SearchOptions_Changed"/>
+            <CheckBox x:Name="ChkSearchOOC"
+                      Content="Search OOC"
+                      Style="{StaticResource FindDarkCheckBox}"
+                      Margin="0,0,18,0"
+                      ToolTip="Include OOC log matches"
+                      Checked="SearchOptions_Changed"
+                      Unchecked="SearchOptions_Changed"/>
             <CheckBox x:Name="ChkMatchCase"
                       Content="Case"
                       Style="{StaticResource FindDarkCheckBox}"

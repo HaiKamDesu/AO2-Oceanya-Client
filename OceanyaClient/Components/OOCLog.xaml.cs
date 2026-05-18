@@ -2,12 +2,15 @@
 using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Navigation;
+using System.Windows.Threading;
 using OceanyaClient.Components.Forms;
 
 namespace OceanyaClient.Components
@@ -490,6 +493,18 @@ namespace OceanyaClient.Components
             return LogDocumentSearch.Find(LogBox.Document, searchText, matchCase, wholeWord, useRegex);
         }
 
+        public LogDocumentSearch.DocumentTextIndex CreateFindIndex()
+        {
+            return LogDocumentSearch.CreateIndex(LogBox.Document);
+        }
+
+        public IReadOnlyList<LogTextMatch> ResolveFindMatches(
+            LogDocumentSearch.DocumentTextIndex index,
+            IReadOnlyList<LogTextOffsetMatch> matches)
+        {
+            return LogDocumentSearch.ResolveMatches(index, matches);
+        }
+
         public void HighlightMatches(IReadOnlyList<LogTextMatch> matches, int activeMatchIndex)
         {
             if (AreSameMatches(activeSearchMatches, matches))
@@ -521,6 +536,50 @@ namespace OceanyaClient.Components
                 }
                 catch
                 {
+                }
+            }
+        }
+
+        public async Task HighlightMatchesAsync(
+            IReadOnlyList<LogTextMatch> matches,
+            int activeMatchIndex,
+            CancellationToken cancellationToken)
+        {
+            if (AreSameMatches(activeSearchMatches, matches))
+            {
+                UpdateActiveHighlight(activeMatchIndex);
+                return;
+            }
+
+            ClearHighlight();
+            activeSearchMatches = matches.ToArray();
+            activeSearchMatchIndex = -1;
+
+            for (int i = 0; i < matches.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    TextRange range = new TextRange(matches[i].Start, matches[i].End);
+                    bool isActive = i == activeMatchIndex;
+                    range.ApplyPropertyValue(
+                        TextElement.BackgroundProperty,
+                        isActive ? LogFindHighlightBrushes.ActiveMatch : LogFindHighlightBrushes.Match);
+                    activeSearchHighlights.Add(range);
+
+                    if (isActive)
+                    {
+                        activeSearchMatchIndex = i;
+                        matches[i].Start.Paragraph?.BringIntoView();
+                    }
+                }
+                catch
+                {
+                }
+
+                if ((i + 1) % 50 == 0)
+                {
+                    await Dispatcher.Yield(DispatcherPriority.Background);
                 }
             }
         }
@@ -590,16 +649,6 @@ namespace OceanyaClient.Components
                     range.ApplyPropertyValue(TextElement.BackgroundProperty, null);
                 }
                 catch { }
-            }
-
-            try
-            {
-                TextRange fullDocument = new TextRange(LogBox.Document.ContentStart, LogBox.Document.ContentEnd);
-                fullDocument.ApplyPropertyValue(TextElement.BackgroundProperty, null);
-                LogBox.InvalidateVisual();
-            }
-            catch
-            {
             }
 
             activeSearchHighlights.Clear();

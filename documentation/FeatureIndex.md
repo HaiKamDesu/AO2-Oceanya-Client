@@ -5,7 +5,7 @@ Use this file as the first stop before broad repository searches. It should poin
 ## AO2 Chat And Log Behavior
 - Doc: `Documentation/AO2-Chat-Config-Coloring-Guide.md`
 - Main code: `AOBot-Testing/Agents/AOClient.cs`, `AOBot-Testing/Structures/ICMessage.cs`, `OceanyaClient/MainWindow.xaml.cs`, `OceanyaClient/Components/ICLog.xaml.cs`, `OceanyaClient/Components/OOCLog.xaml.cs`, `OceanyaClient/Components/LogDocumentSearch.cs`, `OceanyaClient/Components/Forms/FindInLogWindow.xaml(.cs)`, `OceanyaClient/Features/Chat/Ao2TextLogWriter.cs`
-- Notes: Covers IC/OOC packet handling, log formatting, AO2-facing display behavior, combined IC+OOC find-in-log highlighting, and AO2-compatible text-log files under the selected AO install `logs/<server>/` folder. `LogDocumentSearch` indexes the full visible `FlowDocument` text so case-sensitive, whole-word, and regex searches work across formatted runs; tests live in `UnitTests/LogDocumentSearchTests.cs`.
+- Notes: Covers IC/OOC packet handling, log formatting, AO2-facing display behavior, combined IC+OOC find-in-log highlighting, and AO2-compatible text-log files under the selected AO install `logs/<server>/` folder. `FindInLogWindow` has Search IC/Search OOC scope toggles, cancels in-flight searches on text/options changes, `LogDocumentSearch.FindOffsets(...)` runs matching on plain text off the UI thread, and IC/OOC highlight application is batched/cancellable on the dispatcher. Tests live in `UnitTests/LogDocumentSearchTests.cs`; `Find_TenThousandLineManualBenchmark` is `[Explicit]` and skipped by normal runs.
 
 ## AO2 Viewport
 - Doc: `Documentation/AO2Viewport.md`

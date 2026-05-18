@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
@@ -30,6 +32,8 @@ namespace OceanyaClient.Components.Forms
         private IReadOnlyList<SearchMatch> currentMatches = Array.Empty<SearchMatch>();
         private int currentMatchIndex = -1;
         private readonly DispatcherTimer searchRefreshTimer;
+        private CancellationTokenSource? searchCancellation;
+        private int searchGeneration;
 
         public override string HeaderText => "Find in Log";
 
@@ -51,13 +55,17 @@ namespace OceanyaClient.Components.Forms
             searchRefreshTimer.Tick += (_, _) =>
             {
                 searchRefreshTimer.Stop();
-                RunSearch();
+                _ = RunSearchAsync();
             };
+
+            ChkSearchIC.IsChecked = true;
+            ChkSearchOOC.IsChecked = true;
 
             TxtSearch.TextChanged += (_, _) => ScheduleSearchRefresh();
             Closed += (_, _) =>
             {
                 searchRefreshTimer.Stop();
+                CancelActiveSearch();
                 ClearAllHighlights();
             };
             Loaded += (_, _) => TxtSearch.Focus();
@@ -65,6 +73,7 @@ namespace OceanyaClient.Components.Forms
 
         private void ScheduleSearchRefresh()
         {
+            CancelActiveSearch();
             currentMatches = Array.Empty<SearchMatch>();
             currentMatchIndex = -1;
             ClearAllHighlights();
@@ -74,8 +83,14 @@ namespace OceanyaClient.Components.Forms
             searchRefreshTimer.Start();
         }
 
-        private void RunSearch()
+        private async Task RunSearchAsync()
         {
+            CancelActiveSearch();
+            CancellationTokenSource cancellation = new CancellationTokenSource();
+            searchCancellation = cancellation;
+            int generation = ++searchGeneration;
+            CancellationToken cancellationToken = cancellation.Token;
+
             string searchText = TxtSearch.Text ?? string.Empty;
             bool matchCase = ChkMatchCase.IsChecked == true;
             bool wholeWord = ChkWholeWord.IsChecked == true;
@@ -86,33 +101,99 @@ namespace OceanyaClient.Components.Forms
             currentMatches = Array.Empty<SearchMatch>();
             currentMatchIndex = -1;
 
-            if (!string.IsNullOrEmpty(searchText))
+            try
             {
-                List<SearchMatch> matches = new List<SearchMatch>();
-                foreach (ILogFindTarget target in targets)
+                if (!string.IsNullOrEmpty(searchText))
                 {
-                    IReadOnlyList<LogTextMatch> targetMatches;
-                    try
+                    IReadOnlyList<ILogFindTarget> activeTargets = GetActiveTargets();
+                    List<(ILogFindTarget Target, LogDocumentSearch.DocumentTextIndex Index)> indexes = new();
+                    foreach (ILogFindTarget target in activeTargets)
                     {
-                        targetMatches = target.FindInCurrentDocument(searchText, matchCase, wholeWord, useRegex);
-                    }
-                    catch
-                    {
-                        targetMatches = Array.Empty<LogTextMatch>();
+                        cancellationToken.ThrowIfCancellationRequested();
+                        indexes.Add((target, target.CreateFindIndex()));
                     }
 
-                    matches.AddRange(targetMatches.Select(match => new SearchMatch(target, match)));
+                    var targetMatches = await Task.Run(() =>
+                    {
+                        List<(ILogFindTarget Target, LogDocumentSearch.DocumentTextIndex Index, IReadOnlyList<LogTextOffsetMatch> Matches)> results = new();
+                        foreach ((ILogFindTarget target, LogDocumentSearch.DocumentTextIndex index) in indexes)
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            IReadOnlyList<LogTextOffsetMatch> matches;
+                            try
+                            {
+                                matches = LogDocumentSearch.FindOffsets(
+                                    index,
+                                    searchText,
+                                    matchCase,
+                                    wholeWord,
+                                    useRegex,
+                                    cancellationToken);
+                            }
+                            catch
+                            {
+                                matches = Array.Empty<LogTextOffsetMatch>();
+                            }
+
+                            results.Add((target, index, matches));
+                        }
+
+                        return results;
+                    }, cancellationToken);
+
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (generation != searchGeneration)
+                    {
+                        return;
+                    }
+
+                    List<SearchMatch> matchesForUi = new List<SearchMatch>();
+                    foreach ((ILogFindTarget target, LogDocumentSearch.DocumentTextIndex index, IReadOnlyList<LogTextOffsetMatch> offsetMatches) in targetMatches)
+                    {
+                        IReadOnlyList<LogTextMatch> resolvedMatches;
+                        try
+                        {
+                            resolvedMatches = target.ResolveFindMatches(index, offsetMatches);
+                        }
+                        catch
+                        {
+                            resolvedMatches = Array.Empty<LogTextMatch>();
+                        }
+
+                        matchesForUi.AddRange(resolvedMatches.Select(match => new SearchMatch(target, match)));
+                    }
+
+                    currentMatches = matchesForUi;
+                    if (currentMatches.Count > 0)
+                    {
+                        currentMatchIndex = 0;
+                    }
                 }
 
-                currentMatches = matches;
-                if (currentMatches.Count > 0)
+                await ApplyHighlightsAsync(cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (generation == searchGeneration)
                 {
-                    currentMatchIndex = 0;
+                    UpdateUI();
                 }
             }
+            catch (OperationCanceledException)
+            {
+            }
+            finally
+            {
+                if (ReferenceEquals(searchCancellation, cancellation))
+                {
+                    searchCancellation = null;
+                }
 
-            ApplyHighlights();
-            UpdateUI();
+                cancellation.Dispose();
+            }
+        }
+
+        private void CancelActiveSearch()
+        {
+            searchCancellation?.Cancel();
         }
 
         private void NavigateTo(int index)
@@ -120,7 +201,8 @@ namespace OceanyaClient.Components.Forms
             searchRefreshTimer.Stop();
             if (!string.IsNullOrEmpty(TxtSearch.Text) && currentMatches.Count == 0)
             {
-                RunSearch();
+                _ = RunSearchAsync();
+                return;
             }
 
             if (currentMatches.Count == 0)
@@ -143,6 +225,7 @@ namespace OceanyaClient.Components.Forms
 
         private void ApplyHighlights()
         {
+            IReadOnlyList<ILogFindTarget> activeTargets = GetActiveTargets();
             foreach (ILogFindTarget target in targets)
             {
                 List<LogTextMatch> targetMatches = currentMatches
@@ -161,8 +244,59 @@ namespace OceanyaClient.Components.Forms
                     }
                 }
 
-                target.HighlightMatches(targetMatches, activeTargetIndex);
+                if (activeTargets.Contains(target))
+                {
+                    target.HighlightMatches(targetMatches, activeTargetIndex);
+                }
+                else
+                {
+                    target.ClearHighlight();
+                }
             }
+        }
+
+        private async Task ApplyHighlightsAsync(CancellationToken cancellationToken)
+        {
+            IReadOnlyList<ILogFindTarget> activeTargets = GetActiveTargets();
+            foreach (ILogFindTarget target in targets)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                List<LogTextMatch> targetMatches = currentMatches
+                    .Where(match => ReferenceEquals(match.Target, target))
+                    .Select(match => match.Match)
+                    .ToList();
+                int activeTargetIndex = -1;
+                if (currentMatchIndex >= 0 && currentMatchIndex < currentMatches.Count)
+                {
+                    SearchMatch activeMatch = currentMatches[currentMatchIndex];
+                    if (ReferenceEquals(activeMatch.Target, target))
+                    {
+                        activeTargetIndex = targetMatches.FindIndex(match =>
+                            match.Start.CompareTo(activeMatch.Match.Start) == 0
+                            && match.End.CompareTo(activeMatch.Match.End) == 0);
+                    }
+                }
+
+                if (activeTargets.Contains(target))
+                {
+                    await target.HighlightMatchesAsync(targetMatches, activeTargetIndex, cancellationToken);
+                }
+                else
+                {
+                    target.ClearHighlight();
+                }
+            }
+        }
+
+        private IReadOnlyList<ILogFindTarget> GetActiveTargets()
+        {
+            bool includeIc = ChkSearchIC.IsChecked == true;
+            bool includeOoc = ChkSearchOOC.IsChecked == true;
+            return targets
+                .Where(target =>
+                    (includeIc && string.Equals(target.FindScopeName, "IC", StringComparison.OrdinalIgnoreCase))
+                    || (includeOoc && string.Equals(target.FindScopeName, "OOC", StringComparison.OrdinalIgnoreCase)))
+                .ToList();
         }
 
         private void UpdateUI()
@@ -172,7 +306,9 @@ namespace OceanyaClient.Components.Forms
             BtnNext.IsEnabled = hasResults;
             TxtResultCount.Text = hasResults
                 ? $"{currentMatchIndex + 1} of {currentMatches.Count} ({currentMatches[currentMatchIndex].Target.FindScopeName})"
-                : string.IsNullOrEmpty(TxtSearch.Text) ? string.Empty : "No results";
+                : string.IsNullOrEmpty(TxtSearch.Text)
+                    ? string.Empty
+                    : GetActiveTargets().Count == 0 ? "No log selected" : "No results";
         }
 
         private void BtnPrev_Click(object sender, RoutedEventArgs e)

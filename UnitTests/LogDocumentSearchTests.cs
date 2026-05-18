@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Windows;
@@ -80,6 +81,38 @@ public class LogDocumentSearchTests
         var matches = LogDocumentSearch.Find(document, "[", matchCase: false, wholeWord: false, useRegex: true);
 
         Assert.That(matches, Is.Empty);
+    }
+
+    [Test]
+    [Explicit("Manual log find benchmark; intentionally excluded from normal verification.")]
+    [Category("ManualBenchmark")]
+    public void Find_TenThousandLineManualBenchmark()
+    {
+        FlowDocument document = new FlowDocument();
+        for (int i = 0; i < 10_000; i++)
+        {
+            Paragraph paragraph = new Paragraph();
+            paragraph.Inlines.Add(new Run($"[{i:00000}] Alpha witness testimony line "));
+            paragraph.Inlines.Add(new Run(i % 10 == 0 ? "needle " : "filler "));
+            paragraph.Inlines.Add(new Run("with formatted runs and repeated courtroom text."));
+            document.Blocks.Add(paragraph);
+        }
+
+        Stopwatch indexTimer = Stopwatch.StartNew();
+        LogDocumentSearch.DocumentTextIndex index = LogDocumentSearch.CreateIndex(document);
+        indexTimer.Stop();
+
+        Stopwatch plainTimer = Stopwatch.StartNew();
+        var offsets = LogDocumentSearch.FindOffsets(index, "needle", matchCase: false, wholeWord: true, useRegex: false);
+        plainTimer.Stop();
+
+        Stopwatch resolveTimer = Stopwatch.StartNew();
+        var resolved = LogDocumentSearch.ResolveMatches(index, offsets);
+        resolveTimer.Stop();
+
+        TestContext.WriteLine($"10k log lines: index={indexTimer.ElapsedMilliseconds}ms, search={plainTimer.ElapsedMilliseconds}ms, resolve={resolveTimer.ElapsedMilliseconds}ms, matches={resolved.Count}");
+
+        Assert.That(resolved, Has.Count.EqualTo(1_000));
     }
 
     private static FlowDocument BuildDocument(params Inline[] inlines)
