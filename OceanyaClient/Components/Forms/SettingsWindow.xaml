@@ -342,7 +342,10 @@
                             </StackPanel>
                             <CheckBox x:Name="AutomaticTextLoggingCheckBox" Content="Write text log files" Foreground="White" Margin="0,0,0,10" ToolTip="Saved to config.ini as automatic_logging_enabled. When enabled, received IC and OOC messages append to the AO2-style .log file."/>
                             <CheckBox x:Name="DemoLoggingCheckBox" Content="Create AO2 log session on connect" Foreground="White" Margin="0,0,0,10" ToolTip="Saved to config.ini as demo_logging_enabled. AO2 uses this to create the per-server log file path when joining a server."/>
-                            <Button Content="Open Log Folder" Width="140" HorizontalAlignment="Left" Style="{StaticResource ModernButton}" Click="OpenLogFolderButton_Click"/>
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="Open Log Folder" Width="140" HorizontalAlignment="Left" Style="{StaticResource ModernButton}" Click="OpenLogFolderButton_Click"/>
+                                <Button Content="Find in all Logs..." Width="150" Margin="8,0,0,0" HorizontalAlignment="Left" Style="{StaticResource ModernButton}" Click="FindInAllLogsButton_Click"/>
+                            </StackPanel>
                             <TextBlock x:Name="LogFolderPathTextBlock" Style="{StaticResource SubText}" Margin="0,8,0,0"/>
                         </StackPanel>
 

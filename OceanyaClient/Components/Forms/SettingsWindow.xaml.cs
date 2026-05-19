@@ -10,6 +10,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media.Imaging;
 using Common;
+using OceanyaClient.Components.Forms;
 using OceanyaClient.Features.Chat;
 
 namespace OceanyaClient
@@ -312,6 +313,21 @@ namespace OceanyaClient
             {
                 OceanyaMessageBox.Show("Could not open the log folder:\n" + ex.Message);
             }
+        }
+
+        private void FindInAllLogsButton_Click(object sender, RoutedEventArgs e)
+        {
+            string logRoot = Ao2TextLogWriter.ResolveLogRootDirectory();
+            if (string.IsNullOrWhiteSpace(logRoot))
+            {
+                OceanyaMessageBox.Show("No log folder can be resolved until a config.ini is selected.");
+                return;
+            }
+
+            FindInAllLogsWindow finder = new FindInAllLogsWindow(logRoot) { Owner = HostWindow };
+            Window finderWindow = OceanyaWindowManager.CreateWindow(finder);
+            finderWindow.Show();
+            finderWindow.Activate();
         }
 
         private void SaveButton_Click(object sender, RoutedEventArgs e)

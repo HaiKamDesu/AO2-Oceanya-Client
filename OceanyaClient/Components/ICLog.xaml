@@ -6,6 +6,7 @@
             <RichTextBox.ContextMenu>
                 <ContextMenu>
                     <MenuItem Header="Find in log..." Click="MenuItemFindInLog_Click"/>
+                    <MenuItem Header="Find in log folder..." Click="MenuItemFindInLogFolder_Click"/>
                 </ContextMenu>
             </RichTextBox.ContextMenu>
         </RichTextBox>

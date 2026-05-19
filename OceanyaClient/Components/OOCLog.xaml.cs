@@ -12,6 +12,7 @@ using System.Windows.Media;
 using System.Windows.Navigation;
 using System.Windows.Threading;
 using OceanyaClient.Components.Forms;
+using OceanyaClient.Features.Chat;
 
 namespace OceanyaClient.Components
 {
@@ -33,6 +34,7 @@ namespace OceanyaClient.Components
 
         public static int OOCShownameLengthLimit = 30;
         public Action<string, string>? OnSendOOCMessage;
+        private FindInAllLogsWindow? findInAllLogsWindow;
         public Func<AOClient, AOClient?>? LogKeyResolver { get; set; }
         public Func<IReadOnlyList<ILogFindTarget>>? FindTargetsProvider { get; set; }
         public string FindScopeName => "OOC";
@@ -715,6 +717,28 @@ namespace OceanyaClient.Components
                 }
                 findWindow = null;
             };
+            hostWindow.Show();
+        }
+
+        private void MenuItemFindInLogFolder_Click(object sender, RoutedEventArgs e)
+        {
+            if (findInAllLogsWindow?.HostWindow?.IsVisible == true)
+            {
+                findInAllLogsWindow.HostWindow.Activate();
+                return;
+            }
+
+            string logRoot = Ao2TextLogWriter.ResolveLogRootDirectory();
+            if (string.IsNullOrWhiteSpace(logRoot))
+            {
+                OceanyaMessageBox.Show(Window.GetWindow(this), "No log folder can be resolved until a config.ini is selected.");
+                return;
+            }
+
+            findInAllLogsWindow = new FindInAllLogsWindow(logRoot);
+            Window hostWindow = OceanyaWindowManager.CreateWindow(findInAllLogsWindow);
+            hostWindow.Owner = Window.GetWindow(this);
+            hostWindow.Closed += (_, _) => findInAllLogsWindow = null;
             hostWindow.Show();
         }
     }

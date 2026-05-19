@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Text;
-using System.Text.RegularExpressions;
 using System.Windows.Documents;
 
 namespace OceanyaClient.Components
@@ -11,8 +10,6 @@ namespace OceanyaClient.Components
 
     public static class LogDocumentSearch
     {
-        private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(250);
-
         internal sealed class TextSegment
         {
             public TextSegment(int start, int length, TextPointer pointer)
@@ -46,9 +43,8 @@ namespace OceanyaClient.Components
                 return Array.Empty<LogTextMatch>();
             }
 
-            return useRegex
-                ? FindRegex(index, searchText, matchCase, wholeWord)
-                : FindPlainText(index, searchText, matchCase, wholeWord);
+            IReadOnlyList<LogTextOffsetMatch> offsetMatches = FindOffsets(index, searchText, matchCase, wholeWord, useRegex);
+            return ResolveMatches(index, offsetMatches);
         }
 
         public static IReadOnlyList<LogTextOffsetMatch> FindOffsets(
@@ -64,9 +60,25 @@ namespace OceanyaClient.Components
                 return Array.Empty<LogTextOffsetMatch>();
             }
 
-            return useRegex
-                ? FindRegexOffsets(index.Text, searchText, matchCase, wholeWord, cancellationToken)
-                : FindPlainTextOffsets(index.Text, searchText, matchCase, wholeWord, cancellationToken);
+            return FindOffsetsInText(index.Text, searchText, matchCase, wholeWord, useRegex, cancellationToken);
+        }
+
+        public static IReadOnlyList<LogTextOffsetMatch> FindOffsetsInText(
+            string text,
+            string searchText,
+            bool matchCase,
+            bool wholeWord,
+            bool useRegex,
+            CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(searchText))
+            {
+                return Array.Empty<LogTextOffsetMatch>();
+            }
+
+            return LogTextMatcher
+                .Create(searchText, matchCase, wholeWord, useRegex)
+                .FindOffsets(text, cancellationToken);
         }
 
         public static DocumentTextIndex CreateIndex(FlowDocument document)
@@ -87,160 +99,6 @@ namespace OceanyaClient.Components
             foreach (LogTextOffsetMatch match in matches)
             {
                 AddResult(index, match.StartIndex, match.Length, results);
-            }
-
-            return results;
-        }
-
-        private static IReadOnlyList<LogTextMatch> FindPlainText(
-            DocumentTextIndex index,
-            string searchText,
-            bool matchCase,
-            bool wholeWord)
-        {
-            List<LogTextMatch> results = new List<LogTextMatch>();
-            StringComparison comparison = matchCase ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
-            int cursor = 0;
-
-            while (cursor < index.Text.Length)
-            {
-                int matchIndex = index.Text.IndexOf(searchText, cursor, comparison);
-                if (matchIndex < 0)
-                {
-                    break;
-                }
-
-                if (!wholeWord || IsWholeWordMatch(index.Text, matchIndex, searchText.Length))
-                {
-                    AddResult(index, matchIndex, searchText.Length, results);
-                }
-
-                cursor = matchIndex + Math.Max(1, searchText.Length);
-            }
-
-            return results;
-        }
-
-        private static IReadOnlyList<LogTextOffsetMatch> FindPlainTextOffsets(
-            string text,
-            string searchText,
-            bool matchCase,
-            bool wholeWord,
-            CancellationToken cancellationToken)
-        {
-            List<LogTextOffsetMatch> results = new List<LogTextOffsetMatch>();
-            StringComparison comparison = matchCase ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
-            int cursor = 0;
-
-            while (cursor < text.Length)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                int matchIndex = text.IndexOf(searchText, cursor, comparison);
-                if (matchIndex < 0)
-                {
-                    break;
-                }
-
-                if (!wholeWord || IsWholeWordMatch(text, matchIndex, searchText.Length))
-                {
-                    results.Add(new LogTextOffsetMatch(matchIndex, searchText.Length));
-                }
-
-                cursor = matchIndex + Math.Max(1, searchText.Length);
-            }
-
-            return results;
-        }
-
-        private static IReadOnlyList<LogTextMatch> FindRegex(
-            DocumentTextIndex index,
-            string pattern,
-            bool matchCase,
-            bool wholeWord)
-        {
-            List<LogTextMatch> results = new List<LogTextMatch>();
-            RegexOptions options = RegexOptions.CultureInvariant | RegexOptions.Compiled;
-            if (!matchCase)
-            {
-                options |= RegexOptions.IgnoreCase;
-            }
-
-            Regex regex;
-            try
-            {
-                regex = new Regex(pattern, options, RegexTimeout);
-            }
-            catch
-            {
-                return results;
-            }
-
-            try
-            {
-                foreach (Match match in regex.Matches(index.Text))
-                {
-                    if (!match.Success || match.Length == 0)
-                    {
-                        continue;
-                    }
-
-                    if (!wholeWord || IsWholeWordMatch(index.Text, match.Index, match.Length))
-                    {
-                        AddResult(index, match.Index, match.Length, results);
-                    }
-                }
-            }
-            catch (RegexMatchTimeoutException)
-            {
-                return results;
-            }
-
-            return results;
-        }
-
-        private static IReadOnlyList<LogTextOffsetMatch> FindRegexOffsets(
-            string text,
-            string pattern,
-            bool matchCase,
-            bool wholeWord,
-            CancellationToken cancellationToken)
-        {
-            List<LogTextOffsetMatch> results = new List<LogTextOffsetMatch>();
-            RegexOptions options = RegexOptions.CultureInvariant | RegexOptions.Compiled;
-            if (!matchCase)
-            {
-                options |= RegexOptions.IgnoreCase;
-            }
-
-            Regex regex;
-            try
-            {
-                regex = new Regex(pattern, options, RegexTimeout);
-            }
-            catch
-            {
-                return results;
-            }
-
-            try
-            {
-                foreach (Match match in regex.Matches(text))
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    if (!match.Success || match.Length == 0)
-                    {
-                        continue;
-                    }
-
-                    if (!wholeWord || IsWholeWordMatch(text, match.Index, match.Length))
-                    {
-                        results.Add(new LogTextOffsetMatch(match.Index, match.Length));
-                    }
-                }
-            }
-            catch (RegexMatchTimeoutException)
-            {
-                return results;
             }
 
             return results;
@@ -283,19 +141,6 @@ namespace OceanyaClient.Components
             {
                 results.Add(new LogTextMatch(start, end));
             }
-        }
-
-        private static bool IsWholeWordMatch(string text, int index, int length)
-        {
-            bool beforeOk = index == 0 || !IsWordCharacter(text[index - 1]);
-            int afterIndex = index + length;
-            bool afterOk = afterIndex >= text.Length || !IsWordCharacter(text[afterIndex]);
-            return beforeOk && afterOk;
-        }
-
-        private static bool IsWordCharacter(char value)
-        {
-            return char.IsLetterOrDigit(value) || value == '_';
         }
 
         public sealed class DocumentTextIndex
