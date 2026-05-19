@@ -12,6 +12,8 @@ When a debugger is attached, or `OCEANYA_CLIENT_PROFILE=Dev` / `Development` is 
 
 `%APPDATA%/OceanyaClientDev/savefile.json`
 
+Unit tests do not use the productive AppData path. `Common/SaveFile.cs` detects NUnit/testhost processes before its first load and uses a temp path under `OceanyaClientUnitTests` so test setup/teardown cannot overwrite `%APPDATA%/OceanyaClient/savefile.json`. UI automation and other explicit test launches that pass `--test-savefile=<path>` use that path immediately, including during `SaveFile` static initialization.
+
 The release folder itself is not the default save location. If a user deletes `Oceanya Client v6.1` and unzips a new release folder, their normal save file remains in AppData.
 
 ## Preserved User State
@@ -35,3 +37,5 @@ This is enough for ordinary upgrades where the AppData save file is kept. It doe
 
 ## Gotchas
 If the initial configuration window looks reset after an update even though `%APPDATA%/OceanyaClient/savefile.json` still exists, check `%APPDATA%/OceanyaClient/savefile_load.log`. It records the exact save path, whether the file existed, profile environment variables, debugger state, and any load exception. If a load exception occurs, the original file is copied to `savefile.unreadable.<timestamp>.json` before the app falls back to defaults.
+
+If a release-folder replacement leaves `ConfigIniPath` pointing inside the deleted old folder, startup tries to heal the common layout by checking the current app folder for `config.ini`, `<same parent folder name>/config.ini`, and `base/config.ini`. If none exist, the user still needs to select the new `config.ini` path manually. That should not erase unrelated AppData save state; it only means the old AO install path no longer exists.

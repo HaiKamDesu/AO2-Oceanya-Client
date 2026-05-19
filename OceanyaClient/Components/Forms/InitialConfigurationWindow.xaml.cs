@@ -472,7 +472,17 @@ namespace OceanyaClient
         {
             try
             {
-                ConfigINIPathTextBox.Text = SaveFile.Data.ConfigIniPath;
+                string configIniPath = ResolveMovedConfigIniPathForCurrentInstall(
+                    SaveFile.Data.ConfigIniPath,
+                    AppContext.BaseDirectory,
+                    Environment.CurrentDirectory);
+                if (!string.Equals(configIniPath, SaveFile.Data.ConfigIniPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    SaveFile.Data.ConfigIniPath = configIniPath;
+                    SaveFile.Save();
+                }
+
+                ConfigINIPathTextBox.Text = configIniPath;
                 UseSingleClientCheckBox.IsChecked = SaveFile.Data.UseSingleInternalClient;
                 SkipLoadingScreenCheckBox.IsChecked = SaveFile.Data.SkipLoadingScreen;
                 CleanupLegacyCustomServerData();
@@ -496,6 +506,77 @@ namespace OceanyaClient
                     "Error",
                     MessageBoxButton.OK,
                     MessageBoxImage.Error);
+            }
+        }
+
+        private static string ResolveMovedConfigIniPathForCurrentInstall(
+            string? savedConfigIniPath,
+            string? appBaseDirectory,
+            string? currentDirectory)
+        {
+            string savedPath = savedConfigIniPath?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(savedPath) || File.Exists(savedPath))
+            {
+                return savedPath;
+            }
+
+            if (!string.Equals(Path.GetFileName(savedPath), "config.ini", StringComparison.OrdinalIgnoreCase))
+            {
+                return savedPath;
+            }
+
+            string parentName = Path.GetFileName(Path.GetDirectoryName(savedPath) ?? string.Empty);
+            List<string> candidateDirectories = new List<string>();
+            AddCandidateDirectory(candidateDirectories, appBaseDirectory);
+            AddCandidateDirectory(candidateDirectories, currentDirectory);
+
+            foreach (string candidateDirectory in candidateDirectories)
+            {
+                string directCandidate = Path.Combine(candidateDirectory, "config.ini");
+                if (File.Exists(directCandidate))
+                {
+                    return directCandidate;
+                }
+
+                if (!string.IsNullOrWhiteSpace(parentName))
+                {
+                    string sameParentNameCandidate = Path.Combine(candidateDirectory, parentName, "config.ini");
+                    if (File.Exists(sameParentNameCandidate))
+                    {
+                        return sameParentNameCandidate;
+                    }
+                }
+
+                string baseCandidate = Path.Combine(candidateDirectory, "base", "config.ini");
+                if (File.Exists(baseCandidate))
+                {
+                    return baseCandidate;
+                }
+            }
+
+            return savedPath;
+        }
+
+        private static void AddCandidateDirectory(List<string> candidateDirectories, string? path)
+        {
+            string candidate = path?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(candidate))
+            {
+                return;
+            }
+
+            try
+            {
+                candidate = Path.GetFullPath(candidate);
+            }
+            catch
+            {
+                return;
+            }
+
+            if (!candidateDirectories.Contains(candidate, StringComparer.OrdinalIgnoreCase))
+            {
+                candidateDirectories.Add(candidate);
             }
         }
 

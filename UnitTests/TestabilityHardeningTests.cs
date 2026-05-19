@@ -142,6 +142,48 @@ namespace UnitTests
         }
 
         [Test]
+        public void SaveFile_DefaultStoragePathForUnitTests_DoesNotUseProductiveAppData()
+        {
+            string productivePath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "OceanyaClient",
+                "savefile.json");
+
+            Assert.That(
+                string.Equals(
+                    SaveFile.DefaultStoragePathForDiagnostics,
+                    productivePath,
+                    StringComparison.OrdinalIgnoreCase),
+                Is.False);
+            Assert.That(
+                SaveFile.DefaultStoragePathForDiagnostics,
+                Does.Contain("OceanyaClientUnitTests").IgnoreCase);
+        }
+
+        [Test]
+        public void InitialConfigurationWindow_ResolveMovedConfigIniPath_UsesCurrentInstallBaseConfig()
+        {
+            string oldConfigPath = Path.Combine(
+                tempRoot,
+                "Oceanya Client v6.1",
+                "base",
+                "config.ini");
+            string currentInstallRoot = Path.Combine(tempRoot, "Oceanya Client v6.2");
+            string currentBaseConfigPath = Path.Combine(currentInstallRoot, "base", "config.ini");
+            Directory.CreateDirectory(Path.GetDirectoryName(currentBaseConfigPath)!);
+            File.WriteAllText(currentBaseConfigPath, "log_maximum=100" + Environment.NewLine);
+
+            string resolvedPath = InvokeNonPublicStaticMethod<string>(
+                typeof(InitialConfigurationWindow),
+                "ResolveMovedConfigIniPathForCurrentInstall",
+                oldConfigPath,
+                currentInstallRoot,
+                string.Empty);
+
+            Assert.That(resolvedPath, Is.EqualTo(currentBaseConfigPath).IgnoreCase);
+        }
+
+        [Test]
         public void SaveFile_NormalizesAudioVolumes()
         {
             SaveFile.ResetForTests(
@@ -1072,6 +1114,16 @@ namespace UnitTests
             object? result = method!.Invoke(target, parameters);
             Assert.That(result, Is.AssignableTo<Task>(), $"Expected '{methodName}' to return a Task.");
             await (Task)result!;
+        }
+
+        private static T InvokeNonPublicStaticMethod<T>(Type declaringType, string methodName, params object[] parameters)
+        {
+            MethodInfo? method = declaringType.GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.That(method, Is.Not.Null, $"Expected static method '{methodName}' on {declaringType.Name}.");
+
+            object? result = method!.Invoke(null, parameters);
+            Assert.That(result, Is.AssignableTo<T>(), $"Expected '{methodName}' to return {typeof(T).Name}.");
+            return (T)result!;
         }
 
         private static void SetNonPublicStaticField(Type declaringType, string fieldName, object? value)

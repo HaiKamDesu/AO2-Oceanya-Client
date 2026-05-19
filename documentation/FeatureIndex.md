@@ -59,8 +59,8 @@ Use this file as the first stop before broad repository searches. It should poin
 
 ## Save File And Update Persistence
 - Doc: `Documentation/SaveFileAndUpdatePersistence.md`
-- Main code: `Common/SaveFile.cs`, `OceanyaClient/App.xaml.cs`, `Common/OceanyaTestMode.cs`
-- Notes: Normal builds store user settings in `%APPDATA%/OceanyaClient/savefile.json`, not beside the release executable. Save load diagnostics are written to `%APPDATA%/OceanyaClient/savefile_load.log`; unreadable files are copied to `savefile.unreadable.<timestamp>.json` before falling back to defaults.
+- Main code: `Common/SaveFile.cs`, `OceanyaClient/App.xaml.cs`, `Common/OceanyaTestMode.cs`, `OceanyaClient/Components/Forms/InitialConfigurationWindow.xaml.cs`
+- Notes: Normal builds store user settings in `%APPDATA%/OceanyaClient/savefile.json`, not beside the release executable. Debugger/dev-profile launches use `%APPDATA%/OceanyaClientDev/savefile.json`; NUnit/testhost processes use a temp `OceanyaClientUnitTests` path; explicit `--test-savefile=...` launches use that path before first load. Initial configuration startup can remap a missing saved `config.ini` from a deleted release folder to the current app folder's `config.ini` or `base/config.ini`. Save load diagnostics are written beside the active savefile; unreadable files are copied to `savefile.unreadable.<timestamp>.json` before falling back to defaults.
 
 ## Asset Refresh Cache
 - Main code: `OceanyaClient/ClientAssetRefreshService.cs`, `OceanyaClient/Components/Forms/InitialConfigurationWindow.xaml.cs`

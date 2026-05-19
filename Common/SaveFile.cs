@@ -611,6 +611,8 @@ namespace OceanyaClient
 
         public static string CurrentStoragePath => saveFilePath;
 
+        public static string DefaultStoragePathForDiagnostics => defaultSaveFilePath;
+
         public static string LastLoadDiagnostic => lastLoadDiagnostic;
 
         public static bool IsUsingDevelopmentStorage =>
@@ -1846,6 +1848,20 @@ namespace OceanyaClient
 
         private static string ResolveDefaultSaveFilePath()
         {
+            if (TryGetCommandLineTestSaveFilePath(out string testSaveFilePath))
+            {
+                return testSaveFilePath;
+            }
+
+            if (IsUnitTestProcess())
+            {
+                return Path.Combine(
+                    Path.GetTempPath(),
+                    "OceanyaClientUnitTests",
+                    Process.GetCurrentProcess().Id.ToString(),
+                    "savefile.json");
+            }
+
             string profileName = Debugger.IsAttached
                 || string.Equals(
                     Environment.GetEnvironmentVariable("OCEANYA_CLIENT_PROFILE"),
@@ -1862,6 +1878,62 @@ namespace OceanyaClient
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 profileName,
                 "savefile.json");
+        }
+
+        private static bool TryGetCommandLineTestSaveFilePath(out string saveFilePathOverride)
+        {
+            try
+            {
+                foreach (string rawArg in Environment.GetCommandLineArgs())
+                {
+                    string arg = (rawArg ?? string.Empty).Trim().Trim('"');
+                    const string prefix = "--test-savefile=";
+                    if (!arg.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    string value = arg.Substring(prefix.Length).Trim().Trim('"');
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        saveFilePathOverride = value;
+                        return true;
+                    }
+                }
+            }
+            catch
+            {
+                // Fall through to the normal profile path.
+            }
+
+            saveFilePathOverride = string.Empty;
+            return false;
+        }
+
+        private static bool IsUnitTestProcess()
+        {
+            try
+            {
+                string processName = Process.GetCurrentProcess().ProcessName;
+                if (processName.Contains("testhost", StringComparison.OrdinalIgnoreCase)
+                    || processName.Contains("vstest", StringComparison.OrdinalIgnoreCase)
+                    || processName.Contains("nunit", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                return AppDomain.CurrentDomain.GetAssemblies().Any(assembly =>
+                {
+                    string name = assembly.GetName().Name ?? string.Empty;
+                    return name.StartsWith("nunit.", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(name, "nunit.framework", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(name, "UnitTests", StringComparison.OrdinalIgnoreCase);
+                });
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static void WriteLoadDiagnostic(string outcome, Exception? exception = null)
@@ -1891,6 +1963,7 @@ namespace OceanyaClient
                 "SaveFileExists=" + File.Exists(saveFilePath),
                 "DebuggerIsAttached=" + Debugger.IsAttached,
                 "OCEANYA_CLIENT_PROFILE=" + (profileEnvironment ?? string.Empty),
+                "UnitTestProcess=" + IsUnitTestProcess(),
                 "BaseDirectory=" + AppContext.BaseDirectory,
                 "CurrentDirectory=" + Environment.CurrentDirectory,
                 "Exception=" + (exception?.ToString() ?? string.Empty));
