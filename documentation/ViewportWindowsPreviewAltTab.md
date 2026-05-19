@@ -528,6 +528,39 @@ Result:
 
 Outcome: pending manual verification.
 
+### 25. Foreground Viewport Shell Representative And Proxy Focus Visual
+Approach:
+- keep attempt 24's non-activating main visual restore
+- add `EnsureViewportIsForegroundShellRepresentative(reason)`:
+  - runs when preview mode is applied, on viewport activation/return, after main visual restack, and when main IC/OOC fields receive real focus or mouse target tracking
+  - only moves foreground back to the viewport when the current foreground HWND already belongs to Oceanya, so it does not steal focus from external apps
+  - uses `SetForegroundWindow(viewportHwnd)` and `SetActiveWindow(viewportHwnd)`, temporarily clearing viewport `WS_EX_NOACTIVATE` only when that style is present
+  - never calls `SetForegroundWindow`, `Activate`, or `Focus` on the main GM HWND in preview mode
+- keep the focused input target logical:
+  - main IC/OOC clicks and keyboard focus update the proxy target
+  - the shell representative is immediately returned to the viewport so Windows Alt-Tab MRU sees the viewport as current
+- add `ProxyKeyboardFocusVisual.IsProxyKeyboardFocusTarget` for proxied main input fields:
+  - applies a focused accent border while the viewport input proxy targets the field
+  - adds a lightweight blinking caret adorner at the TextBox caret index while the control lacks real keyboard focus
+  - clears the visual when preview mode is disabled, the target changes, proxy routing fails, or an external app becomes foreground
+- expand `[VPT-ALT]` diagnostics with foreground, active, shell representative, main/viewport foreground-active booleans, proxy visual target, and Alt-Tab preparation state
+
+Expected:
+- with main + viewport visible and IC selected, pressing Alt shows the viewport/Oceanya shell entry as the current item in native Alt-Tab
+- one Alt-Tab leaves Oceanya and one Alt-Tab returns
+- after return, the viewport remains the active shell HWND while IC/OOC typing routes through the proxy
+- the logical IC/OOC input visibly looks focused with accent border and blinking caret
+- no custom DWM thumbnail path and no low-level hook/reinjection path are reintroduced
+
+Risk:
+- WPF caret geometry from `TextBox.GetRectFromCharacterIndex` may need tuning for horizontal scroll edge cases
+- Windows can still reject `SetForegroundWindow` in some shell-policy cases, but the method only runs while Oceanya is already foreground
+
+Result:
+- implementation complete; requires manual Windows verification against the regression checklist
+
+Outcome: pending manual verification.
+
 ## DWM Notes
 `DwmSetIconicThumbnail` and `WM_DWMSENDICONICTHUMBNAIL` are useful for replacing the thumbnail bitmap of a specific HWND, but they do not change which HWND owns the shell preview. When the main window owns the taskbar entry, Windows still applies shell preview behavior around the main HWND. This is why custom viewport bitmaps on the main HWND produced pillarboxing/stretching.
 

@@ -74,6 +74,7 @@ namespace OceanyaClient
         private bool isMainWindowClosing;
         private bool viewportPreviewInputProxyActive;
         private bool viewportPreviewInputProxyFailureLogged;
+        private TextBox? viewportPreviewProxyVisualTarget;
         private bool hasHookedHostWindowClosing;
         private bool cleanCloseInProgress;
         private bool hasAppliedMainWindowState;
@@ -541,6 +542,17 @@ namespace OceanyaClient
                 && viewportContent?.IsAncestorOf(dependencyObject) != true)
             {
                 lastMainWindowFocusedElement = e.NewFocus;
+                if (IsViewportUsingWindowsPreview())
+                {
+                    if (e.NewFocus is TextBox textBox && IsProxyEligibleMainInput(textBox))
+                    {
+                        SetViewportPreviewInputProxyTarget(textBox, "main keyboard focus target");
+                    }
+
+                    Dispatcher.BeginInvoke(
+                        new Action(() => EnsureViewportIsForegroundShellRepresentative("main keyboard focus returned to viewport shell")),
+                        DispatcherPriority.Input);
+                }
             }
         }
 
@@ -556,7 +568,10 @@ namespace OceanyaClient
                 TextBox? textBox = FindAncestor<TextBox>(source);
                 if (IsProxyEligibleMainInput(textBox))
                 {
-                    lastMainWindowFocusedElement = textBox;
+                    SetViewportPreviewInputProxyTarget(textBox, "main mouse target");
+                    Dispatcher.BeginInvoke(
+                        new Action(() => EnsureViewportIsForegroundShellRepresentative("main mouse target returned to viewport shell")),
+                        DispatcherPriority.Input);
                     LogViewportPreviewState("main mouse target=" + textBox!.Name);
                 }
             }
@@ -573,6 +588,17 @@ namespace OceanyaClient
             // Attempts 19-22 used WndProc/timer based Alt-Tab handoff.  The input-proxy
             // architecture intentionally leaves native Alt-Tab alone so Windows starts from
             // the real foreground shell HWND.
+            if (!IsViewportUsingWindowsPreview()
+                || (message != WmKeyDown && message != WmSysKeyDown))
+            {
+                return;
+            }
+
+            int virtualKey = wParam.ToInt32();
+            if (virtualKey == VkMenu || (virtualKey == VkTab && IsAltKeyDown()))
+            {
+                EnsureViewportIsForegroundShellRepresentative("alt-tab key preparation");
+            }
         }
 
         private bool TryHandleMainWindowAltTabQuickSwitch(int message, IntPtr wParam)
@@ -675,6 +701,8 @@ namespace OceanyaClient
             }
 
             viewportPreviewInputProxyActive = true;
+            UpdateViewportPreviewProxyVisual("input proxy active");
+            EnsureViewportIsForegroundShellRepresentative("main focus restore skipped; viewport shell retained");
             LogViewportPreviewState("main focus restore skipped; input proxy active");
         }
 
@@ -5767,6 +5795,8 @@ namespace OceanyaClient
             {
                 RestoreMainWindowVisualForViewportReturn();
                 viewportPreviewInputProxyActive = true;
+                UpdateViewportPreviewProxyVisual("viewport activated");
+                EnsureViewportIsForegroundShellRepresentative("viewport activated");
                 LogViewportPreviewState("viewport activated; main visual restored and input proxy active");
             }
         }
@@ -5827,6 +5857,7 @@ namespace OceanyaClient
             {
                 StopViewportAltTabFocusRedirectTimer();
                 viewportPreviewInputProxyActive = true;
+                UpdateViewportPreviewProxyVisual("viewport mouse activation");
                 LogViewportPreviewState("viewport WM_MOUSEACTIVATE default activation");
             }
 
@@ -5977,6 +6008,7 @@ namespace OceanyaClient
                 UninstallViewportAltTabKeyboardHook();
                 lastViewportPreviewExternalForegroundHwnd = IntPtr.Zero;
                 viewportPreviewInputProxyActive = false;
+                SetViewportPreviewProxyVisualTarget(null, "viewport preview disabled");
                 viewportPreviewInputProxyFailureLogged = false;
                 if (hostWindow != null && isHostWindowHiddenByViewportAltTabExit && !hostWindow.IsVisible)
                 {
@@ -6009,6 +6041,8 @@ namespace OceanyaClient
             {
                 StartViewportExternalForegroundTrackingTimer();
                 viewportPreviewInputProxyActive = true;
+                UpdateViewportPreviewProxyVisual("viewport preview shell mode applied");
+                EnsureViewportIsForegroundShellRepresentative("viewport preview shell mode applied");
                 LogViewportPreviewState("viewport preview shell mode applied");
             }
         }
@@ -6140,6 +6174,8 @@ namespace OceanyaClient
             }
 
             viewportPreviewInputProxyActive = true;
+            SetViewportPreviewInputProxyTarget(target, "main visual return restore");
+            EnsureViewportIsForegroundShellRepresentative("main visual return restore");
             LogViewportPreviewState(
                 $"main visual return restore: hiddenForAltTab={wasHiddenForAltTab} mainVisibleBefore={hostVisibleBefore} mainMinimizedBefore={hostMinimizedBefore} mainCloakedBefore={hostCloakedBefore} viewportVisibleBefore={viewportVisibleBefore} showResult={showResult} restackResult={restackResult} viewportTopResult={viewportTopResult} target={target?.Name ?? "(none)"}");
         }
@@ -6173,6 +6209,7 @@ namespace OceanyaClient
                     return;
                 }
 
+                SetViewportPreviewInputProxyTarget(target, "text route target");
                 InsertTextIntoTextBox(target, e.Text);
                 e.Handled = true;
                 LogViewportPreviewState("input proxy text routed target=" + target.Name + " length=" + e.Text.Length);
@@ -6206,10 +6243,12 @@ namespace OceanyaClient
                     return false;
                 }
 
+                SetViewportPreviewInputProxyTarget(target, "key route target");
                 bool routed = RouteViewportPreviewKeyToTextBox(target, key);
                 if (routed)
                 {
                     e.Handled = true;
+                    UpdateViewportPreviewProxyVisual("input proxy key routed");
                     LogViewportPreviewState("input proxy key routed target=" + target.Name + " key=" + key);
                 }
 
@@ -6417,6 +6456,7 @@ namespace OceanyaClient
                         ? OOCLogControl.txtOOCShowname
                         : ICMessageSettingsControl.txtICShowname;
             lastMainWindowFocusedElement = next;
+            SetViewportPreviewInputProxyTarget(next, "tab target switch");
             next.CaretIndex = next.Text?.Length ?? 0;
         }
 
@@ -6448,9 +6488,54 @@ namespace OceanyaClient
             }
         }
 
+        private void SetViewportPreviewInputProxyTarget(TextBox? target, string reason)
+        {
+            if (target != null)
+            {
+                lastMainWindowFocusedElement = target;
+            }
+
+            UpdateViewportPreviewProxyVisual(reason);
+        }
+
+        private void UpdateViewportPreviewProxyVisual(string reason)
+        {
+            TextBox? target = null;
+            if (viewportPreviewInputProxyActive
+                && IsViewportUsingWindowsPreview()
+                && IsForegroundOwnedByCurrentProcess())
+            {
+                target = GetViewportPreviewInputProxyTarget();
+            }
+
+            SetViewportPreviewProxyVisualTarget(target, reason);
+        }
+
+        private void SetViewportPreviewProxyVisualTarget(TextBox? target, string reason)
+        {
+            if (ReferenceEquals(viewportPreviewProxyVisualTarget, target))
+            {
+                return;
+            }
+
+            if (viewportPreviewProxyVisualTarget != null)
+            {
+                ProxyKeyboardFocusVisual.SetIsProxyKeyboardFocusTarget(viewportPreviewProxyVisualTarget, false);
+            }
+
+            viewportPreviewProxyVisualTarget = target;
+            if (viewportPreviewProxyVisualTarget != null)
+            {
+                ProxyKeyboardFocusVisual.SetIsProxyKeyboardFocusTarget(viewportPreviewProxyVisualTarget, true);
+            }
+
+            LogViewportPreviewState("proxy visual target=" + (target?.Name ?? "(none)") + " reason=" + reason);
+        }
+
         private void DisableViewportPreviewInputProxyAfterFailure(string reason, Exception ex)
         {
             viewportPreviewInputProxyActive = false;
+            SetViewportPreviewProxyVisualTarget(null, "input proxy disabled after failure");
             if (!viewportPreviewInputProxyFailureLogged)
             {
                 viewportPreviewInputProxyFailureLogged = true;
@@ -6465,6 +6550,67 @@ namespace OceanyaClient
                 viewportPreviewInputProxyFailureLogged = true;
                 CustomConsole.Warning("[VPT-ALT] Viewport preview input proxy could not route: " + reason, category: CustomConsole.LogCategory.Viewport);
             }
+        }
+
+        private void EnsureViewportIsForegroundShellRepresentative(string reason)
+        {
+            if (!IsViewportUsingWindowsPreview() || viewportWindow == null)
+            {
+                return;
+            }
+
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            IntPtr hostHwnd = hostWindow == null ? IntPtr.Zero : new WindowInteropHelper(hostWindow).Handle;
+            IntPtr viewportHwnd = new WindowInteropHelper(viewportWindow).Handle;
+            if (viewportHwnd == IntPtr.Zero)
+            {
+                return;
+            }
+
+            IntPtr foregroundHwnd = GetForegroundWindow();
+            if (foregroundHwnd != IntPtr.Zero)
+            {
+                _ = GetWindowThreadProcessId(foregroundHwnd, out int foregroundProcessId);
+                if (foregroundProcessId != Process.GetCurrentProcess().Id)
+                {
+                    UpdateViewportPreviewProxyVisual("external foreground during shell representative ensure");
+                    LogViewportPreviewState("viewport shell representative skipped external foreground reason=" + reason);
+                    return;
+                }
+            }
+
+            const int GWL_EXSTYLE = -20;
+            const int WS_EX_NOACTIVATE = 0x08000000;
+            int viewportStyleBefore = GetWindowLong(viewportHwnd, GWL_EXSTYLE);
+            bool restoreNoActivate = (viewportStyleBefore & WS_EX_NOACTIVATE) != 0;
+            bool setForegroundResult = true;
+            IntPtr activeResult = IntPtr.Zero;
+
+            try
+            {
+                if (restoreNoActivate)
+                {
+                    SetWindowNoActivate(viewportWindow, noActivate: false);
+                }
+
+                if (GetForegroundWindow() != viewportHwnd)
+                {
+                    setForegroundResult = SetForegroundWindow(viewportHwnd);
+                }
+
+                activeResult = SetActiveWindow(viewportHwnd);
+            }
+            finally
+            {
+                if (restoreNoActivate)
+                {
+                    SetWindowNoActivate(viewportWindow, noActivate: true);
+                }
+            }
+
+            UpdateViewportPreviewProxyVisual("viewport foreground shell representative ensured");
+            LogViewportPreviewState(
+                $"viewport shell representative ensured reason={reason} setForeground={setForegroundResult} setActivePrevious=0x{activeResult.ToInt64():X} mainHwnd=0x{hostHwnd.ToInt64():X} restoreNoActivate={restoreNoActivate}");
         }
 
         private void LogViewportPreviewState(string reason)
@@ -6486,8 +6632,18 @@ namespace OceanyaClient
             bool hostMinimized = hostHwnd != IntPtr.Zero && IsIconic(hostHwnd);
             bool hostCloaked = hostHwnd != IntPtr.Zero && IsWindowCloaked(hostHwnd);
             bool viewportVisible = viewportHwnd != IntPtr.Zero && IsWindowVisible(viewportHwnd);
+            IntPtr shellRepresentativeHwnd = viewportHwnd != IntPtr.Zero && foregroundHwnd == viewportHwnd
+                ? viewportHwnd
+                : foregroundHwnd;
+            bool mainForeground = hostHwnd != IntPtr.Zero && foregroundHwnd == hostHwnd;
+            bool mainActive = hostHwnd != IntPtr.Zero && activeHwnd == hostHwnd;
+            bool viewportForeground = viewportHwnd != IntPtr.Zero && foregroundHwnd == viewportHwnd;
+            bool viewportActive = viewportHwnd != IntPtr.Zero && activeHwnd == viewportHwnd;
+            bool altTabPreparationActive = viewportAltTabExitPreparationTimer != null
+                || viewportAltTabHeldReinjectTimer != null
+                || IsAltKeyDown();
             CustomConsole.Debug(
-                $"[VPT-ALT] {reason}; foreground=0x{foregroundHwnd.ToInt64():X} active=0x{activeHwnd.ToInt64():X} main=0x{hostHwnd.ToInt64():X}/ex=0x{hostStyle:X8}/visible={hostVisible}/minimized={hostMinimized}/cloaked={hostCloaked} viewport=0x{viewportHwnd.ToInt64():X}/ex=0x{viewportStyle:X8}/visible={viewportVisible} proxy={viewportPreviewInputProxyActive}",
+                $"[VPT-ALT] {reason}; foreground=0x{foregroundHwnd.ToInt64():X} active=0x{activeHwnd.ToInt64():X} shell=0x{shellRepresentativeHwnd.ToInt64():X} main=0x{hostHwnd.ToInt64():X}/ex=0x{hostStyle:X8}/visible={hostVisible}/minimized={hostMinimized}/cloaked={hostCloaked}/foreground={mainForeground}/active={mainActive} viewport=0x{viewportHwnd.ToInt64():X}/ex=0x{viewportStyle:X8}/visible={viewportVisible}/foreground={viewportForeground}/active={viewportActive} proxy={viewportPreviewInputProxyActive} proxyVisual={viewportPreviewProxyVisualTarget?.Name ?? "(none)"} altTabPrep={altTabPreparationActive}",
                 CustomConsole.LogCategory.Viewport);
         }
 
@@ -6630,6 +6786,13 @@ namespace OceanyaClient
             if (IsEligibleAltTabSwitchTarget(foregroundHwnd, hostHwnd, viewportHwnd, currentProcessId))
             {
                 lastViewportPreviewExternalForegroundHwnd = foregroundHwnd;
+                SetViewportPreviewProxyVisualTarget(null, "external foreground");
+                return;
+            }
+
+            if (IsForegroundOwnedByCurrentProcess())
+            {
+                UpdateViewportPreviewProxyVisual("foreground tracking current process");
             }
         }
 
@@ -8764,6 +8927,9 @@ namespace OceanyaClient
 
         [DllImport("user32.dll")]
         private static extern IntPtr GetActiveWindow();
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr SetActiveWindow(IntPtr hWnd);
 
         [DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(IntPtr hWnd);
