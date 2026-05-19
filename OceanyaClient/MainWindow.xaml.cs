@@ -52,13 +52,28 @@ namespace OceanyaClient
         private AOClient? singleInternalClient;
         private AOClient? boundSingleClientProfile;
         private Window? viewportWindow;
+        private HwndSource? hostWindowSource;
         private HwndSource? viewportWindowSource;
+        private DispatcherTimer? viewportTaskbarPreviewRefreshTimer;
+        private DispatcherTimer? viewportAltTabFocusRedirectTimer;
+        private DispatcherTimer? viewportAltTabExitPreparationTimer;
+        private DispatcherTimer? viewportExternalForegroundTrackingTimer;
+        private DispatcherTimer? viewportAltTabHeldReinjectTimer;
+        private DateTime? viewportAltTabExitAltReleasedAt;
         private Window? settingsWindow;
         private AO2ViewportWindowContent? viewportContent;
+        private IntPtr viewportAltTabKeyboardHook;
+        private IntPtr lastViewportPreviewExternalForegroundHwnd;
+        private LowLevelKeyboardProc? viewportAltTabKeyboardHookProc;
+        private bool viewportAltTabHookPendingSuppressedQuickSwitch;
+        private bool viewportAltTabHeldPreActivated;
         private bool isRestoringViewportWindow;
         private bool isSynchronizingWindowState;
         private bool isHostWindowHiddenByViewportMinimize;
+        private bool isHostWindowHiddenByViewportAltTabExit;
         private bool isMainWindowClosing;
+        private bool viewportPreviewInputProxyActive;
+        private bool viewportPreviewInputProxyFailureLogged;
         private bool hasHookedHostWindowClosing;
         private bool cleanCloseInProgress;
         private bool hasAppliedMainWindowState;
@@ -130,7 +145,28 @@ namespace OceanyaClient
         private const int WmGetMinMaxInfo = 0x0024;
         private const int WmMouseActivate = 0x0021;
         private const int WmSizing = 0x0214;
+        private const int WmDwmSendIconicThumbnail = 0x0323;
+        private const int WmDwmSendIconicLivePreviewBitmap = 0x0326;
+        private const int WmKeyDown = 0x0100;
+        private const int WmKeyUp = 0x0101;
+        private const int WmSysKeyDown = 0x0104;
+        private const int WmSysKeyUp = 0x0105;
+        private const int VkTab = 0x09;
+        private const int VkShift = 0x10;
+        private const int VkMenu = 0x12;
+        private const int WhKeyboardLl = 13;
+        private const int LlkHfInjected = 0x10;
+        private const uint KeyEventFKeyUp = 0x0002;
+        private const uint GwOwner = 4;
+        private const uint GwHwndNext = 2;
+        private const int SwRestore = 9;
+        private const int SwShownoactivate = 4;
         private const int MaNoActivate = 3;
+        private static readonly IntPtr HwndTop = IntPtr.Zero;
+        private const uint SwpNosize = 0x0001;
+        private const uint SwpNomove = 0x0002;
+        private const uint SwpNoactivate = 0x0010;
+        private const uint SwpShowwindow = 0x0040;
 
         private static Brush CreateFrozenBrush(Color color)
         {
@@ -196,8 +232,11 @@ namespace OceanyaClient
             InitializeComponent();
             Title = aiModeEnabled ? "Oceanya Online - AO2 AI Bot" : "Oceanya Online";
             Icon = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/OceanyaO.ico"));
+            SourceInitialized += MainWindow_SourceInitialized;
+            Closed += MainWindow_Closed;
             Loaded += MainWindow_Loaded;
             AddHandler(Keyboard.GotKeyboardFocusEvent, new KeyboardFocusChangedEventHandler(MainWindow_GotKeyboardFocus), true);
+            AddHandler(Mouse.PreviewMouseDownEvent, new MouseButtonEventHandler(MainWindow_PreviewMouseDown), true);
 
             objectionModifiers = new List<ToggleButton> { HoldIt, Objection, TakeThat, Custom };
             // Set grid mode and size
@@ -505,6 +544,128 @@ namespace OceanyaClient
             }
         }
 
+        private void MainWindow_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+        {
+            try
+            {
+                if (e.OriginalSource is not DependencyObject source)
+                {
+                    return;
+                }
+
+                TextBox? textBox = FindAncestor<TextBox>(source);
+                if (IsProxyEligibleMainInput(textBox))
+                {
+                    lastMainWindowFocusedElement = textBox;
+                    LogViewportPreviewState("main mouse target=" + textBox!.Name);
+                }
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Debug(
+                    "[VPT-ALT] main mouse target tracking skipped: " + ex.Message,
+                    CustomConsole.LogCategory.Viewport);
+            }
+        }
+
+        private void MarkViewportAltTabKeyIfNeeded(int message, IntPtr wParam)
+        {
+            // Attempts 19-22 used WndProc/timer based Alt-Tab handoff.  The input-proxy
+            // architecture intentionally leaves native Alt-Tab alone so Windows starts from
+            // the real foreground shell HWND.
+        }
+
+        private bool TryHandleMainWindowAltTabQuickSwitch(int message, IntPtr wParam)
+        {
+            return false;
+        }
+
+        private bool TryActivatePreviousExternalTopLevelWindow()
+        {
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            IntPtr hostHwnd = hostWindow == null ? IntPtr.Zero : new WindowInteropHelper(hostWindow).Handle;
+            IntPtr viewportHwnd = viewportWindow == null ? IntPtr.Zero : new WindowInteropHelper(viewportWindow).Handle;
+            int currentProcessId = Process.GetCurrentProcess().Id;
+
+            for (IntPtr hwnd = GetTopWindow(IntPtr.Zero);
+                 hwnd != IntPtr.Zero;
+                 hwnd = GetWindow(hwnd, GwHwndNext))
+            {
+                if (!IsEligibleAltTabSwitchTarget(hwnd, hostHwnd, viewportHwnd, currentProcessId))
+                {
+                    continue;
+                }
+
+                return RestoreAndActivateWindow(hwnd);
+            }
+
+            return false;
+        }
+
+        private static bool RestoreAndActivateWindow(IntPtr hwnd)
+        {
+            if (IsIconic(hwnd))
+            {
+                ShowWindow(hwnd, SwRestore);
+            }
+
+            return SetForegroundWindow(hwnd);
+        }
+
+        private static bool IsEligibleAltTabSwitchTarget(
+            IntPtr hwnd,
+            IntPtr hostHwnd,
+            IntPtr viewportHwnd,
+            int currentProcessId)
+        {
+            if (hwnd == IntPtr.Zero || hwnd == hostHwnd || hwnd == viewportHwnd || !IsWindowVisible(hwnd))
+            {
+                return false;
+            }
+
+            _ = GetWindowThreadProcessId(hwnd, out int processId);
+            if (processId == currentProcessId)
+            {
+                return false;
+            }
+
+            if (IsWindowCloaked(hwnd))
+            {
+                return false;
+            }
+
+            const int GWL_EXSTYLE = -20;
+            const int WS_EX_TOOLWINDOW = 0x00000080;
+            const int WS_EX_APPWINDOW = 0x00040000;
+            int exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+            bool isToolWindow = (exStyle & WS_EX_TOOLWINDOW) != 0;
+            bool isAppWindow = (exStyle & WS_EX_APPWINDOW) != 0;
+            if (isToolWindow && !isAppWindow)
+            {
+                return false;
+            }
+
+            IntPtr owner = GetWindow(hwnd, GwOwner);
+            return owner == IntPtr.Zero || isAppWindow;
+        }
+
+        private static bool IsWindowCloaked(IntPtr hwnd)
+        {
+            const int DWMWA_CLOAKED = 14;
+            return DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, out int cloaked, Marshal.SizeOf<int>()) == 0
+                && cloaked != 0;
+        }
+
+        private void HideHostWindowForViewportAltTabExit()
+        {
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            if (hostWindow?.IsVisible == true)
+            {
+                isHostWindowHiddenByViewportAltTabExit = true;
+                hostWindow.Hide();
+            }
+        }
+
         private void FocusMainWindowFromViewportPreview()
         {
             if (!IsViewportUsingWindowsPreview())
@@ -513,38 +674,20 @@ namespace OceanyaClient
                 return;
             }
 
-            Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
-            if (hostWindow == null)
+            viewportPreviewInputProxyActive = true;
+            LogViewportPreviewState("main focus restore skipped; input proxy active");
+        }
+
+        private static void SetWindowOwner(Window window, IntPtr ownerHwnd)
+        {
+            IntPtr hwnd = new WindowInteropHelper(window).Handle;
+            if (hwnd == IntPtr.Zero)
             {
                 return;
             }
 
-            if (hostWindow.WindowState == WindowState.Minimized)
-            {
-                hostWindow.WindowState = WindowState.Normal;
-            }
-
-            hostWindow.Activate();
-            Dispatcher.BeginInvoke(
-                new Action(() =>
-                {
-                    if (lastMainWindowFocusedElement is UIElement focusedElement
-                        && focusedElement.IsVisible
-                        && focusedElement.IsEnabled
-                        && focusedElement.Focusable)
-                    {
-                        focusedElement.Focus();
-                        Keyboard.Focus(focusedElement);
-                        return;
-                    }
-
-                    if (ICMessageSettingsControl.IsEnabled)
-                    {
-                        ICMessageSettingsControl.txtICMessage.Focus();
-                        Keyboard.Focus(ICMessageSettingsControl.txtICMessage);
-                    }
-                }),
-                DispatcherPriority.Input);
+            const int GWLP_HWNDPARENT = -8;
+            SetWindowLongPtr(hwnd, GWLP_HWNDPARENT, ownerHwnd);
         }
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -573,6 +716,68 @@ namespace OceanyaClient
             }
 
             FinishedLoading?.Invoke();
+        }
+
+        private void MainWindow_SourceInitialized(object? sender, EventArgs e)
+        {
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            IntPtr hwnd = hostWindow == null ? IntPtr.Zero : new WindowInteropHelper(hostWindow).Handle;
+            if (hwnd == IntPtr.Zero)
+            {
+                return;
+            }
+
+            hostWindowSource = HwndSource.FromHwnd(hwnd);
+            hostWindowSource?.AddHook(MainWindowHost_WndProc);
+            ApplyViewportTaskbarPriority();
+        }
+
+        private void MainWindow_Closed(object? sender, EventArgs e)
+        {
+            StopViewportTaskbarPreviewRefreshTimer();
+            StopViewportAltTabFocusRedirectTimer();
+            StopViewportAltTabExitPreparationTimer(restoreNoActivate: false);
+            StopViewportExternalForegroundTrackingTimer();
+            UninstallViewportAltTabKeyboardHook();
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            IntPtr hwnd = hostWindow == null ? IntPtr.Zero : new WindowInteropHelper(hostWindow).Handle;
+            if (hwnd != IntPtr.Zero)
+            {
+                ViewportThumbnailCompositor.Deactivate(hwnd);
+            }
+
+            hostWindowSource?.RemoveHook(MainWindowHost_WndProc);
+            hostWindowSource = null;
+        }
+
+        private IntPtr MainWindowHost_WndProc(
+            IntPtr hwnd,
+            int message,
+            IntPtr wParam,
+            IntPtr lParam,
+            ref bool handled)
+        {
+            if (!IsViewportUsingWindowsPreview())
+            {
+                return IntPtr.Zero;
+            }
+
+            if (TryHandleMainWindowAltTabQuickSwitch(message, wParam))
+            {
+                handled = true;
+                return IntPtr.Zero;
+            }
+
+            MarkViewportAltTabKeyIfNeeded(message, wParam);
+
+            if (message == WmMouseActivate)
+            {
+                LogViewportPreviewState("main WM_MOUSEACTIVATE no-activate");
+                handled = true;
+                return new IntPtr(MaNoActivate);
+            }
+
+            return IntPtr.Zero;
         }
 
         private void HookHostWindowClosing()
@@ -5281,7 +5486,7 @@ namespace OceanyaClient
                 viewportContent!,
                 new OceanyaWindowPresentationOptions
                 {
-                    Owner = owner,
+                    Owner = null,
                     Title = "AO2 Viewport",
                     HeaderText = "Viewport",
                     Width = initialWidth,
@@ -5292,9 +5497,7 @@ namespace OceanyaClient
                     IsUserResizeEnabled = true,
                     IsUserMoveEnabled = true,
                     IsCloseButtonVisible = true,
-                    WindowStartupLocation = restoredLeft.HasValue && restoredTop.HasValue
-                        ? WindowStartupLocation.Manual
-                        : WindowStartupLocation.CenterOwner
+                    WindowStartupLocation = WindowStartupLocation.Manual
                 });
 
             if (restoredLeft.HasValue && restoredTop.HasValue)
@@ -5302,9 +5505,15 @@ namespace OceanyaClient
                 viewportWindow.Left = restoredLeft.Value;
                 viewportWindow.Top = restoredTop.Value;
             }
+            else
+            {
+                CenterViewportWindowNearOwner(owner, initialWidth, initialHeight);
+            }
 
             viewportWindow.SourceInitialized += ViewportWindow_SourceInitialized;
             viewportWindow.Activated += ViewportWindow_Activated;
+            viewportWindow.PreviewKeyDown += ViewportWindow_PreviewKeyDown;
+            viewportWindow.TextInput += ViewportWindow_TextInput;
             viewportWindow.SizeChanged += ViewportWindow_SizeChanged;
             viewportWindow.LocationChanged += ViewportWindow_LocationChanged;
             viewportWindow.Closing += (sender, eventArgs) =>
@@ -5329,6 +5538,8 @@ namespace OceanyaClient
             {
                 viewportWindow.SourceInitialized -= ViewportWindow_SourceInitialized;
                 viewportWindow.Activated -= ViewportWindow_Activated;
+                viewportWindow.PreviewKeyDown -= ViewportWindow_PreviewKeyDown;
+                viewportWindow.TextInput -= ViewportWindow_TextInput;
                 viewportWindow.SizeChanged -= ViewportWindow_SizeChanged;
                 viewportWindow.LocationChanged -= ViewportWindow_LocationChanged;
                 viewportWindowSource?.RemoveHook(ViewportWindow_WndProc);
@@ -5355,7 +5566,6 @@ namespace OceanyaClient
             }
 
             ApplyViewportTaskbarPriority();
-            FocusMainWindowFromViewportPreview();
             Dispatcher.BeginInvoke(
                 new Action(() =>
                 {
@@ -5373,14 +5583,13 @@ namespace OceanyaClient
                     }
                     finally
                     {
-                        isRestoringViewportWindow = false;
-                        if (viewportWindow != null)
-                        {
-                            viewportWindow.Opacity = 1;
-                            FocusMainWindowFromViewportPreview();
-                        }
+                    isRestoringViewportWindow = false;
+                    if (viewportWindow != null)
+                    {
+                        viewportWindow.Opacity = 1;
                     }
-                }),
+                }
+            }),
                 System.Windows.Threading.DispatcherPriority.Loaded);
         }
 
@@ -5554,7 +5763,12 @@ namespace OceanyaClient
 
         private void ViewportWindow_Activated(object? sender, EventArgs e)
         {
-            FocusMainWindowFromViewportPreview();
+            if (IsViewportUsingWindowsPreview())
+            {
+                RestoreMainWindowVisualForViewportReturn();
+                viewportPreviewInputProxyActive = true;
+                LogViewportPreviewState("viewport activated; main visual restored and input proxy active");
+            }
         }
 
         private void ViewportWindow_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -5593,6 +5807,8 @@ namespace OceanyaClient
             IntPtr lParam,
             ref bool handled)
         {
+            MarkViewportAltTabKeyIfNeeded(message, wParam);
+
             if (message == WmGetMinMaxInfo)
             {
                 ApplyViewportMinMaxInfo(lParam);
@@ -5609,9 +5825,9 @@ namespace OceanyaClient
             }
             else if (message == WmMouseActivate && IsViewportUsingWindowsPreview())
             {
-                FocusMainWindowFromViewportPreview();
-                handled = true;
-                return new IntPtr(MaNoActivate);
+                StopViewportAltTabFocusRedirectTimer();
+                viewportPreviewInputProxyActive = true;
+                LogViewportPreviewState("viewport WM_MOUSEACTIVATE default activation");
             }
 
             return IntPtr.Zero;
@@ -5749,22 +5965,51 @@ namespace OceanyaClient
         {
             bool useViewport = IsViewportUsingWindowsPreview();
             Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            IntPtr hostHwnd = hostWindow == null ? IntPtr.Zero : new WindowInteropHelper(hostWindow).Handle;
+            IntPtr viewportHwnd = viewportWindow == null ? IntPtr.Zero : new WindowInteropHelper(viewportWindow).Handle;
+
+            StopViewportTaskbarPreviewRefreshTimer();
+            if (!useViewport)
+            {
+                StopViewportAltTabFocusRedirectTimer();
+                StopViewportAltTabExitPreparationTimer(restoreNoActivate: true);
+                StopViewportExternalForegroundTrackingTimer();
+                UninstallViewportAltTabKeyboardHook();
+                lastViewportPreviewExternalForegroundHwnd = IntPtr.Zero;
+                viewportPreviewInputProxyActive = false;
+                viewportPreviewInputProxyFailureLogged = false;
+                if (hostWindow != null && isHostWindowHiddenByViewportAltTabExit && !hostWindow.IsVisible)
+                {
+                    isHostWindowHiddenByViewportAltTabExit = false;
+                    hostWindow.Show();
+                }
+            }
+
+            if (hostHwnd != IntPtr.Zero)
+            {
+                ViewportThumbnailCompositor.Deactivate(hostHwnd);
+            }
+
             if (viewportWindow != null)
             {
                 viewportWindow.ShowInTaskbar = useViewport;
-                SetWindowAltTabVisible(viewportWindow, useViewport);
-                SetWindowNoActivate(viewportWindow, useViewport);
+                SetWindowShellVisibility(viewportWindow, forceTaskbar: useViewport, showInAltTab: useViewport);
+                SetWindowNoActivate(viewportWindow, noActivate: false);
             }
 
             if (hostWindow != null)
             {
+                SetWindowOwner(hostWindow, IntPtr.Zero);
                 hostWindow.ShowInTaskbar = !useViewport;
-                SetWindowAltTabVisible(hostWindow, !useViewport);
+                SetWindowShellVisibility(hostWindow, forceTaskbar: !useViewport, showInAltTab: !useViewport);
+                SetWindowNoActivate(hostWindow, useViewport);
             }
 
             if (useViewport)
             {
-                FocusMainWindowFromViewportPreview();
+                StartViewportExternalForegroundTrackingTimer();
+                viewportPreviewInputProxyActive = true;
+                LogViewportPreviewState("viewport preview shell mode applied");
             }
         }
 
@@ -5773,7 +6018,863 @@ namespace OceanyaClient
             return viewportWindow?.IsVisible == true && viewportContent?.UseAsWindowsPreview == true;
         }
 
-        private static void SetWindowAltTabVisible(Window window, bool visible)
+        private void CenterViewportWindowNearOwner(Window owner, double initialWidth, double initialHeight)
+        {
+            if (viewportWindow == null)
+            {
+                return;
+            }
+
+            double ownerWidth = IsFinite(owner.ActualWidth) && owner.ActualWidth > 0 ? owner.ActualWidth : owner.Width;
+            double ownerHeight = IsFinite(owner.ActualHeight) && owner.ActualHeight > 0 ? owner.ActualHeight : owner.Height;
+            if (!IsFinite(owner.Left) || !IsFinite(owner.Top) || !IsFinite(ownerWidth) || !IsFinite(ownerHeight))
+            {
+                Rect workArea = SystemParameters.WorkArea;
+                viewportWindow.Left = workArea.Left + Math.Max(0, (workArea.Width - initialWidth) / 2);
+                viewportWindow.Top = workArea.Top + Math.Max(0, (workArea.Height - initialHeight) / 2);
+                return;
+            }
+
+            viewportWindow.Left = owner.Left + ((ownerWidth - initialWidth) / 2);
+            viewportWindow.Top = owner.Top + ((ownerHeight - initialHeight) / 2);
+        }
+
+        private void StartViewportTaskbarPreviewRefreshTimer(IntPtr hostHwnd)
+        {
+            if (viewportTaskbarPreviewRefreshTimer != null)
+            {
+                return;
+            }
+
+            viewportTaskbarPreviewRefreshTimer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromMilliseconds(50)
+            };
+            viewportTaskbarPreviewRefreshTimer.Tick += (_, _) =>
+            {
+                if (!IsViewportUsingWindowsPreview())
+                {
+                    StopViewportTaskbarPreviewRefreshTimer();
+                    return;
+                }
+
+                ViewportThumbnailCompositor.Invalidate(hostHwnd);
+            };
+            viewportTaskbarPreviewRefreshTimer.Start();
+        }
+
+        private void StopViewportTaskbarPreviewRefreshTimer()
+        {
+            if (viewportTaskbarPreviewRefreshTimer == null)
+            {
+                return;
+            }
+
+            viewportTaskbarPreviewRefreshTimer.Stop();
+            viewportTaskbarPreviewRefreshTimer = null;
+        }
+
+        private void RestoreMainWindowVisualForViewportReturn()
+        {
+            if (!IsViewportUsingWindowsPreview())
+            {
+                return;
+            }
+
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            if (hostWindow == null || viewportWindow == null)
+            {
+                return;
+            }
+
+            IntPtr hostHwnd = new WindowInteropHelper(hostWindow).Handle;
+            IntPtr viewportHwnd = new WindowInteropHelper(viewportWindow).Handle;
+            if (hostHwnd == IntPtr.Zero || viewportHwnd == IntPtr.Zero)
+            {
+                return;
+            }
+
+            bool wasHiddenForAltTab = isHostWindowHiddenByViewportAltTabExit;
+            if (wasHiddenForAltTab)
+            {
+                isHostWindowHiddenByViewportAltTabExit = false;
+            }
+
+            bool hostVisibleBefore = IsWindowVisible(hostHwnd);
+            bool hostMinimizedBefore = IsIconic(hostHwnd);
+            bool hostCloakedBefore = IsWindowCloaked(hostHwnd);
+            bool viewportVisibleBefore = IsWindowVisible(viewportHwnd);
+            bool showResult = true;
+            bool restackResult = true;
+            bool viewportTopResult = true;
+
+            try
+            {
+                SetWindowNoActivate(hostWindow, noActivate: true);
+                if (!hostWindow.IsVisible)
+                {
+                    hostWindow.Show();
+                }
+
+                if (hostMinimizedBefore || !hostVisibleBefore || hostCloakedBefore || wasHiddenForAltTab)
+                {
+                    showResult = ShowWindow(hostHwnd, SwShownoactivate);
+                }
+
+                SetWindowShellVisibility(hostWindow, forceTaskbar: false, showInAltTab: false);
+
+                const uint restoreFlags = SwpNomove | SwpNosize | SwpNoactivate | SwpShowwindow;
+                restackResult = SetWindowPos(hostHwnd, viewportHwnd, 0, 0, 0, 0, restoreFlags);
+                viewportTopResult = SetWindowPos(viewportHwnd, HwndTop, 0, 0, 0, 0, restoreFlags);
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Warning("[VPT-ALT] Failed to restore main GM visual without activation.", ex, CustomConsole.LogCategory.Viewport);
+                return;
+            }
+
+            TextBox? target = GetViewportPreviewInputProxyTarget();
+            if (target != null)
+            {
+                lastMainWindowFocusedElement = target;
+            }
+
+            viewportPreviewInputProxyActive = true;
+            LogViewportPreviewState(
+                $"main visual return restore: hiddenForAltTab={wasHiddenForAltTab} mainVisibleBefore={hostVisibleBefore} mainMinimizedBefore={hostMinimizedBefore} mainCloakedBefore={hostCloakedBefore} viewportVisibleBefore={viewportVisibleBefore} showResult={showResult} restackResult={restackResult} viewportTopResult={viewportTopResult} target={target?.Name ?? "(none)"}");
+        }
+
+        private void ViewportWindow_PreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            if (!TryRouteViewportPreviewKey(e))
+            {
+                LogViewportPreviewState("input proxy key not routed key=" + (e.Key == Key.System ? e.SystemKey : e.Key));
+            }
+        }
+
+        private void ViewportWindow_TextInput(object sender, TextCompositionEventArgs e)
+        {
+            if (!viewportPreviewInputProxyActive || !IsViewportUsingWindowsPreview())
+            {
+                return;
+            }
+
+            if (string.IsNullOrEmpty(e.Text) || e.Text.Any(char.IsControl))
+            {
+                return;
+            }
+
+            try
+            {
+                TextBox? target = GetViewportPreviewInputProxyTarget();
+                if (target == null)
+                {
+                    LogViewportPreviewInputProxyFailure("text target missing");
+                    return;
+                }
+
+                InsertTextIntoTextBox(target, e.Text);
+                e.Handled = true;
+                LogViewportPreviewState("input proxy text routed target=" + target.Name + " length=" + e.Text.Length);
+            }
+            catch (Exception ex)
+            {
+                DisableViewportPreviewInputProxyAfterFailure("text route failed", ex);
+            }
+        }
+
+        private bool TryRouteViewportPreviewKey(KeyEventArgs e)
+        {
+            if (!viewportPreviewInputProxyActive || !IsViewportUsingWindowsPreview())
+            {
+                return false;
+            }
+
+            Key key = e.Key == Key.System ? e.SystemKey : e.Key;
+            if (key is Key.LeftAlt or Key.RightAlt or Key.System
+                || (Keyboard.Modifiers & ModifierKeys.Alt) == ModifierKeys.Alt)
+            {
+                return false;
+            }
+
+            try
+            {
+                TextBox? target = GetViewportPreviewInputProxyTarget();
+                if (target == null)
+                {
+                    LogViewportPreviewInputProxyFailure("key target missing");
+                    return false;
+                }
+
+                bool routed = RouteViewportPreviewKeyToTextBox(target, key);
+                if (routed)
+                {
+                    e.Handled = true;
+                    LogViewportPreviewState("input proxy key routed target=" + target.Name + " key=" + key);
+                }
+
+                return routed;
+            }
+            catch (Exception ex)
+            {
+                DisableViewportPreviewInputProxyAfterFailure("key route failed", ex);
+                return false;
+            }
+        }
+
+        private TextBox? GetViewportPreviewInputProxyTarget()
+        {
+            if (lastMainWindowFocusedElement is TextBox focusedTextBox
+                && IsProxyEligibleMainInput(focusedTextBox))
+            {
+                return focusedTextBox;
+            }
+
+            if (ICMessageSettingsControl?.txtICMessage?.IsEnabled == true)
+            {
+                lastMainWindowFocusedElement = ICMessageSettingsControl.txtICMessage;
+                return ICMessageSettingsControl.txtICMessage;
+            }
+
+            if (OOCLogControl?.txtOOCMessage?.IsEnabled == true)
+            {
+                lastMainWindowFocusedElement = OOCLogControl.txtOOCMessage;
+                return OOCLogControl.txtOOCMessage;
+            }
+
+            return null;
+        }
+
+        private bool IsProxyEligibleMainInput(TextBox? textBox)
+        {
+            return textBox != null
+                && textBox.IsEnabled
+                && !textBox.IsReadOnly
+                && (ReferenceEquals(textBox, ICMessageSettingsControl?.txtICMessage)
+                    || ReferenceEquals(textBox, OOCLogControl?.txtOOCMessage)
+                    || ReferenceEquals(textBox, ICMessageSettingsControl?.txtICShowname)
+                    || ReferenceEquals(textBox, OOCLogControl?.txtOOCShowname));
+        }
+
+        private bool RouteViewportPreviewKeyToTextBox(TextBox target, Key key)
+        {
+            ModifierKeys modifiers = Keyboard.Modifiers;
+            bool control = (modifiers & ModifierKeys.Control) == ModifierKeys.Control;
+            bool shift = (modifiers & ModifierKeys.Shift) == ModifierKeys.Shift;
+
+            if (control)
+            {
+                return RouteViewportPreviewControlShortcut(target, key);
+            }
+
+            switch (key)
+            {
+                case Key.Back:
+                    BackspaceTextBox(target);
+                    return true;
+                case Key.Delete:
+                    DeleteTextBoxSelectionOrNextChar(target);
+                    return true;
+                case Key.Enter:
+                    SubmitViewportPreviewTextBox(target);
+                    return true;
+                case Key.Tab:
+                    SelectNextViewportPreviewInputTarget(target);
+                    return true;
+                case Key.Left:
+                    MoveTextBoxCaret(target, -1, shift);
+                    return true;
+                case Key.Right:
+                    MoveTextBoxCaret(target, 1, shift);
+                    return true;
+                case Key.Home:
+                    SetTextBoxCaret(target, 0, shift);
+                    return true;
+                case Key.End:
+                    SetTextBoxCaret(target, target.Text?.Length ?? 0, shift);
+                    return true;
+                case Key.Escape:
+                    return false;
+                default:
+                    return false;
+            }
+        }
+
+        private bool RouteViewportPreviewControlShortcut(TextBox target, Key key)
+        {
+            switch (key)
+            {
+                case Key.A:
+                    target.SelectAll();
+                    return true;
+                case Key.C:
+                    if (!string.IsNullOrEmpty(target.SelectedText))
+                    {
+                        ClipboardUtilities.TrySetText(target.SelectedText);
+                    }
+                    return true;
+                case Key.X:
+                    if (!string.IsNullOrEmpty(target.SelectedText) && ClipboardUtilities.TrySetText(target.SelectedText))
+                    {
+                        target.SelectedText = string.Empty;
+                    }
+                    return true;
+                case Key.V:
+                    if (ClipboardUtilities.TryGetText(out string text))
+                    {
+                        InsertTextIntoTextBox(target, text);
+                    }
+                    return true;
+                case Key.Z:
+                    if (target.CanUndo)
+                    {
+                        target.Undo();
+                    }
+                    return true;
+                case Key.Y:
+                    if (ApplicationCommands.Redo.CanExecute(null, target))
+                    {
+                        ApplicationCommands.Redo.Execute(null, target);
+                    }
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static void InsertTextIntoTextBox(TextBox target, string text)
+        {
+            int insertionStart = target.SelectionStart;
+            target.SelectedText = text;
+            target.CaretIndex = Math.Min((target.Text?.Length ?? 0), insertionStart + text.Length);
+        }
+
+        private static void BackspaceTextBox(TextBox target)
+        {
+            if (target.SelectionLength > 0)
+            {
+                target.SelectedText = string.Empty;
+                return;
+            }
+
+            if (target.CaretIndex <= 0)
+            {
+                return;
+            }
+
+            int index = target.CaretIndex - 1;
+            target.Text = target.Text.Remove(index, 1);
+            target.CaretIndex = index;
+        }
+
+        private static void DeleteTextBoxSelectionOrNextChar(TextBox target)
+        {
+            if (target.SelectionLength > 0)
+            {
+                target.SelectedText = string.Empty;
+                return;
+            }
+
+            if (target.CaretIndex >= target.Text.Length)
+            {
+                return;
+            }
+
+            int index = target.CaretIndex;
+            target.Text = target.Text.Remove(index, 1);
+            target.CaretIndex = index;
+        }
+
+        private static void MoveTextBoxCaret(TextBox target, int delta, bool extendSelection)
+        {
+            int next = Math.Clamp(target.CaretIndex + delta, 0, target.Text.Length);
+            SetTextBoxCaret(target, next, extendSelection);
+        }
+
+        private static void SetTextBoxCaret(TextBox target, int next, bool extendSelection)
+        {
+            next = Math.Clamp(next, 0, target.Text.Length);
+            if (!extendSelection)
+            {
+                target.CaretIndex = next;
+                target.SelectionLength = 0;
+                return;
+            }
+
+            int anchor = target.SelectionLength > 0 ? target.SelectionStart : target.CaretIndex;
+            int start = Math.Min(anchor, next);
+            int length = Math.Abs(next - anchor);
+            target.Select(start, length);
+        }
+
+        private void SelectNextViewportPreviewInputTarget(TextBox current)
+        {
+            TextBox next = ReferenceEquals(current, ICMessageSettingsControl.txtICMessage)
+                ? OOCLogControl.txtOOCMessage
+                : ReferenceEquals(current, OOCLogControl.txtOOCMessage)
+                    ? ICMessageSettingsControl.txtICMessage
+                    : ReferenceEquals(current, ICMessageSettingsControl.txtICShowname)
+                        ? OOCLogControl.txtOOCShowname
+                        : ICMessageSettingsControl.txtICShowname;
+            lastMainWindowFocusedElement = next;
+            next.CaretIndex = next.Text?.Length ?? 0;
+        }
+
+        private void SubmitViewportPreviewTextBox(TextBox target)
+        {
+            if (ReferenceEquals(target, ICMessageSettingsControl.txtICMessage))
+            {
+                ICMessageSettingsControl.OnSendICMessage?.Invoke(target.Text);
+                return;
+            }
+
+            if (ReferenceEquals(target, OOCLogControl.txtOOCMessage))
+            {
+                if (string.IsNullOrWhiteSpace(OOCLogControl.txtOOCShowname.Text))
+                {
+                    OOCLogControl.AddMessage(currentClient, "Oceanya Client", "You must set a showname before sending a message!", true);
+                    return;
+                }
+
+                if (currentClient == null)
+                {
+                    OOCLogControl.AddMessage(currentClient, "Oceanya Client", "No client selected. Please select a client first.", true);
+                    return;
+                }
+
+                string message = target.Text;
+                target.Clear();
+                OOCLogControl.OnSendOOCMessage?.Invoke(OOCLogControl.txtOOCShowname.Text, message);
+            }
+        }
+
+        private void DisableViewportPreviewInputProxyAfterFailure(string reason, Exception ex)
+        {
+            viewportPreviewInputProxyActive = false;
+            if (!viewportPreviewInputProxyFailureLogged)
+            {
+                viewportPreviewInputProxyFailureLogged = true;
+                CustomConsole.Warning("[VPT-ALT] Disabled viewport preview input proxy: " + reason, ex, CustomConsole.LogCategory.Viewport);
+            }
+        }
+
+        private void LogViewportPreviewInputProxyFailure(string reason)
+        {
+            if (!viewportPreviewInputProxyFailureLogged)
+            {
+                viewportPreviewInputProxyFailureLogged = true;
+                CustomConsole.Warning("[VPT-ALT] Viewport preview input proxy could not route: " + reason, category: CustomConsole.LogCategory.Viewport);
+            }
+        }
+
+        private void LogViewportPreviewState(string reason)
+        {
+            if (!IsViewportUsingWindowsPreview())
+            {
+                return;
+            }
+
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            IntPtr hostHwnd = hostWindow == null ? IntPtr.Zero : new WindowInteropHelper(hostWindow).Handle;
+            IntPtr viewportHwnd = viewportWindow == null ? IntPtr.Zero : new WindowInteropHelper(viewportWindow).Handle;
+            IntPtr foregroundHwnd = GetForegroundWindow();
+            IntPtr activeHwnd = GetActiveWindow();
+            const int GWL_EXSTYLE = -20;
+            int hostStyle = hostHwnd == IntPtr.Zero ? 0 : GetWindowLong(hostHwnd, GWL_EXSTYLE);
+            int viewportStyle = viewportHwnd == IntPtr.Zero ? 0 : GetWindowLong(viewportHwnd, GWL_EXSTYLE);
+            bool hostVisible = hostHwnd != IntPtr.Zero && IsWindowVisible(hostHwnd);
+            bool hostMinimized = hostHwnd != IntPtr.Zero && IsIconic(hostHwnd);
+            bool hostCloaked = hostHwnd != IntPtr.Zero && IsWindowCloaked(hostHwnd);
+            bool viewportVisible = viewportHwnd != IntPtr.Zero && IsWindowVisible(viewportHwnd);
+            CustomConsole.Debug(
+                $"[VPT-ALT] {reason}; foreground=0x{foregroundHwnd.ToInt64():X} active=0x{activeHwnd.ToInt64():X} main=0x{hostHwnd.ToInt64():X}/ex=0x{hostStyle:X8}/visible={hostVisible}/minimized={hostMinimized}/cloaked={hostCloaked} viewport=0x{viewportHwnd.ToInt64():X}/ex=0x{viewportStyle:X8}/visible={viewportVisible} proxy={viewportPreviewInputProxyActive}",
+                CustomConsole.LogCategory.Viewport);
+        }
+
+        private static T? FindAncestor<T>(DependencyObject? source) where T : DependencyObject
+        {
+            while (source != null)
+            {
+                if (source is T match)
+                {
+                    return match;
+                }
+
+                source = GetDependencyObjectParent(source);
+            }
+
+            return null;
+        }
+
+        private static DependencyObject? GetDependencyObjectParent(DependencyObject source)
+        {
+            if (source is Visual || source is System.Windows.Media.Media3D.Visual3D)
+            {
+                return VisualTreeHelper.GetParent(source) ?? LogicalTreeHelper.GetParent(source);
+            }
+
+            if (source is FrameworkContentElement contentElement)
+            {
+                return contentElement.Parent ?? LogicalTreeHelper.GetParent(contentElement);
+            }
+
+            if (source is FrameworkElement frameworkElement)
+            {
+                return frameworkElement.Parent ?? LogicalTreeHelper.GetParent(frameworkElement);
+            }
+
+            return LogicalTreeHelper.GetParent(source);
+        }
+
+        private void StartViewportExternalForegroundTrackingTimer()
+        {
+            if (viewportExternalForegroundTrackingTimer != null)
+            {
+                return;
+            }
+
+            viewportExternalForegroundTrackingTimer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromMilliseconds(100)
+            };
+            viewportExternalForegroundTrackingTimer.Tick += (_, _) =>
+            {
+                if (!IsViewportUsingWindowsPreview())
+                {
+                    StopViewportExternalForegroundTrackingTimer();
+                    return;
+                }
+
+                RememberExternalForegroundWindow();
+            };
+            viewportExternalForegroundTrackingTimer.Start();
+            RememberExternalForegroundWindow();
+        }
+
+        private void StopViewportExternalForegroundTrackingTimer()
+        {
+            if (viewportExternalForegroundTrackingTimer == null)
+            {
+                return;
+            }
+
+            viewportExternalForegroundTrackingTimer.Stop();
+            viewportExternalForegroundTrackingTimer = null;
+        }
+
+        private void StartViewportAltTabHeldReinjectTimer()
+        {
+            if (viewportAltTabHeldReinjectTimer != null)
+            {
+                return;
+            }
+
+            viewportAltTabHeldReinjectTimer = new DispatcherTimer(DispatcherPriority.Input)
+            {
+                Interval = TimeSpan.FromMilliseconds(160)
+            };
+            viewportAltTabHeldReinjectTimer.Tick += (_, _) =>
+            {
+                StopViewportAltTabHeldReinjectTimer();
+                if (!viewportAltTabHookPendingSuppressedQuickSwitch || !IsAltKeyDown())
+                {
+                    return;
+                }
+
+                viewportAltTabHookPendingSuppressedQuickSwitch = false;
+
+                // Pre-activate the viewport so the injected Tab fires from the viewport HWND.
+                // Without this, the main window (WS_EX_TOOLWINDOW, hidden from Alt-Tab) is
+                // still foreground and Windows cycles through the viewport as the current
+                // Oceanya entry before reaching the external app, producing a double switch.
+                if (viewportWindow != null && IsViewportUsingWindowsPreview())
+                {
+                    IntPtr viewportHwnd = new WindowInteropHelper(viewportWindow).Handle;
+                    if (viewportHwnd != IntPtr.Zero)
+                    {
+                        viewportAltTabHeldPreActivated = true;
+                        SetWindowNoActivate(viewportWindow, noActivate: false);
+                        SetForegroundWindow(viewportHwnd);
+                    }
+                }
+
+                keybd_event((byte)VkTab, 0, 0, UIntPtr.Zero);
+                keybd_event((byte)VkTab, 0, KeyEventFKeyUp, UIntPtr.Zero);
+            };
+            viewportAltTabHeldReinjectTimer.Start();
+        }
+
+        private void StopViewportAltTabHeldReinjectTimer()
+        {
+            if (viewportAltTabHeldReinjectTimer == null)
+            {
+                return;
+            }
+
+            viewportAltTabHeldReinjectTimer.Stop();
+            viewportAltTabHeldReinjectTimer = null;
+        }
+
+        private void RememberExternalForegroundWindow()
+        {
+            IntPtr foregroundHwnd = GetForegroundWindow();
+            if (foregroundHwnd == IntPtr.Zero)
+            {
+                return;
+            }
+
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            IntPtr hostHwnd = hostWindow == null ? IntPtr.Zero : new WindowInteropHelper(hostWindow).Handle;
+            IntPtr viewportHwnd = viewportWindow == null ? IntPtr.Zero : new WindowInteropHelper(viewportWindow).Handle;
+            int currentProcessId = Process.GetCurrentProcess().Id;
+            if (IsEligibleAltTabSwitchTarget(foregroundHwnd, hostHwnd, viewportHwnd, currentProcessId))
+            {
+                lastViewportPreviewExternalForegroundHwnd = foregroundHwnd;
+            }
+        }
+
+        private void InstallViewportAltTabKeyboardHook()
+        {
+            if (viewportAltTabKeyboardHook != IntPtr.Zero)
+            {
+                return;
+            }
+
+            viewportAltTabKeyboardHookProc = ViewportAltTabKeyboardHookCallback;
+            viewportAltTabKeyboardHook = SetWindowsHookEx(
+                WhKeyboardLl,
+                viewportAltTabKeyboardHookProc,
+                GetModuleHandle(null),
+                0);
+        }
+
+        private void UninstallViewportAltTabKeyboardHook()
+        {
+            if (viewportAltTabKeyboardHook == IntPtr.Zero)
+            {
+                return;
+            }
+
+            StopViewportAltTabHeldReinjectTimer();
+            UnhookWindowsHookEx(viewportAltTabKeyboardHook);
+            viewportAltTabKeyboardHook = IntPtr.Zero;
+            viewportAltTabKeyboardHookProc = null;
+            viewportAltTabHookPendingSuppressedQuickSwitch = false;
+            viewportAltTabHeldPreActivated = false;
+        }
+
+        private IntPtr ViewportAltTabKeyboardHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+        {
+            if (nCode >= 0 && IsViewportUsingWindowsPreview())
+            {
+                int message = wParam.ToInt32();
+                int vkCode = Marshal.ReadInt32(lParam);
+                int flags = Marshal.ReadInt32(lParam, 8);
+                bool isInjected = (flags & LlkHfInjected) != 0;
+                if ((message == WmKeyDown || message == WmSysKeyDown)
+                    && vkCode == VkTab
+                    && IsAltKeyDown()
+                    && !IsShiftKeyDown()
+                    && IsForegroundOwnedByCurrentProcess()
+                    && !isInjected)
+                {
+                    viewportAltTabHookPendingSuppressedQuickSwitch = true;
+                    Dispatcher.BeginInvoke(
+                        new Action(StartViewportAltTabHeldReinjectTimer),
+                        DispatcherPriority.Input);
+                    return new IntPtr(1);
+                }
+                else if ((message == WmKeyUp || message == WmSysKeyUp) && vkCode == VkMenu)
+                {
+                    bool shouldCorrectQuickSwitch = viewportAltTabHookPendingSuppressedQuickSwitch
+                        && IsForegroundOwnedByCurrentProcess();
+                    viewportAltTabHookPendingSuppressedQuickSwitch = false;
+                    bool wasHeldPreActivated = viewportAltTabHeldPreActivated;
+                    viewportAltTabHeldPreActivated = false;
+                    Dispatcher.BeginInvoke(
+                        new Action(StopViewportAltTabHeldReinjectTimer),
+                        DispatcherPriority.Input);
+                    if (wasHeldPreActivated && IsViewportUsingWindowsPreview() && viewportWindow != null)
+                    {
+                        // Restore NoActivate that the held-reinject path removed.
+                        // Also clear the activation redirect suppress so the next return
+                        // to Oceanya via the viewport is handled normally.
+                        SetWindowNoActivate(viewportWindow, noActivate: true);
+                    }
+
+                    if (shouldCorrectQuickSwitch && TryActivateRememberedExternalForegroundWindow())
+                    {
+                        return new IntPtr(1);
+                    }
+                }
+            }
+
+            return CallNextHookEx(viewportAltTabKeyboardHook, nCode, wParam, lParam);
+        }
+
+        private static bool IsForegroundOwnedByCurrentProcess()
+        {
+            IntPtr foregroundHwnd = GetForegroundWindow();
+            if (foregroundHwnd == IntPtr.Zero)
+            {
+                return false;
+            }
+
+            _ = GetWindowThreadProcessId(foregroundHwnd, out int processId);
+            return processId == Process.GetCurrentProcess().Id;
+        }
+
+        private bool TryActivateRememberedExternalForegroundWindow()
+        {
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            IntPtr hostHwnd = hostWindow == null ? IntPtr.Zero : new WindowInteropHelper(hostWindow).Handle;
+            IntPtr viewportHwnd = viewportWindow == null ? IntPtr.Zero : new WindowInteropHelper(viewportWindow).Handle;
+            int currentProcessId = Process.GetCurrentProcess().Id;
+            if (IsEligibleAltTabSwitchTarget(
+                    lastViewportPreviewExternalForegroundHwnd,
+                    hostHwnd,
+                    viewportHwnd,
+                    currentProcessId))
+            {
+                return RestoreAndActivateWindow(lastViewportPreviewExternalForegroundHwnd);
+            }
+
+            return TryActivatePreviousExternalTopLevelWindow();
+        }
+
+        private void ScheduleViewportAltTabFocusRedirect()
+        {
+            if (viewportAltTabFocusRedirectTimer != null)
+            {
+                return;
+            }
+
+            viewportAltTabFocusRedirectTimer = new DispatcherTimer(DispatcherPriority.Input)
+            {
+                Interval = TimeSpan.FromMilliseconds(15)
+            };
+            viewportAltTabFocusRedirectTimer.Tick += (_, _) =>
+            {
+                if (!IsViewportUsingWindowsPreview())
+                {
+                    StopViewportAltTabFocusRedirectTimer();
+                    return;
+                }
+
+                if (IsAltKeyDown())
+                {
+                    return;
+                }
+
+                StopViewportAltTabFocusRedirectTimer();
+                FocusMainWindowFromViewportPreview();
+            };
+            viewportAltTabFocusRedirectTimer.Start();
+        }
+
+        private void StopViewportAltTabFocusRedirectTimer()
+        {
+            if (viewportAltTabFocusRedirectTimer == null)
+            {
+                return;
+            }
+
+            viewportAltTabFocusRedirectTimer.Stop();
+            viewportAltTabFocusRedirectTimer = null;
+        }
+
+        private void PrepareViewportForAltTabExit()
+        {
+            if (!IsViewportUsingWindowsPreview() || viewportWindow == null)
+            {
+                return;
+            }
+
+            IntPtr viewportHwnd = new WindowInteropHelper(viewportWindow).Handle;
+            if (viewportHwnd == IntPtr.Zero || GetForegroundWindow() == viewportHwnd)
+            {
+                return;
+            }
+
+            viewportAltTabExitAltReleasedAt = null;
+            StopViewportAltTabFocusRedirectTimer();
+            SetWindowNoActivate(viewportWindow, noActivate: false);
+            SetForegroundWindow(viewportHwnd);
+
+            StartViewportAltTabExitPreparationTimer(viewportHwnd);
+        }
+
+        private void StartViewportAltTabExitPreparationTimer(IntPtr viewportHwnd)
+        {
+            if (viewportAltTabExitPreparationTimer != null)
+            {
+                return;
+            }
+
+            viewportAltTabExitPreparationTimer = new DispatcherTimer(DispatcherPriority.Input)
+            {
+                Interval = TimeSpan.FromMilliseconds(15)
+            };
+            viewportAltTabExitPreparationTimer.Tick += (_, _) =>
+            {
+                if (IsAltKeyDown())
+                {
+                    if (IsTabKeyDown())
+                    {
+                        HideHostWindowForViewportAltTabExit();
+                    }
+
+                    viewportAltTabExitAltReleasedAt = null;
+                    return;
+                }
+
+                viewportAltTabExitAltReleasedAt ??= DateTime.UtcNow;
+                if ((DateTime.UtcNow - viewportAltTabExitAltReleasedAt.Value).TotalMilliseconds < 75)
+                {
+                    return;
+                }
+
+                bool isStillForeground = GetForegroundWindow() == viewportHwnd;
+                StopViewportAltTabExitPreparationTimer(restoreNoActivate: true);
+                if (isStillForeground && IsViewportUsingWindowsPreview())
+                {
+                    FocusMainWindowFromViewportPreview();
+                }
+            };
+            viewportAltTabExitPreparationTimer.Start();
+        }
+
+        private void StopViewportAltTabExitPreparationTimer(bool restoreNoActivate)
+        {
+            if (viewportAltTabExitPreparationTimer != null)
+            {
+                viewportAltTabExitPreparationTimer.Stop();
+                viewportAltTabExitPreparationTimer = null;
+            }
+
+            viewportAltTabExitAltReleasedAt = null;
+            if (restoreNoActivate && IsViewportUsingWindowsPreview() && viewportWindow != null)
+            {
+                SetWindowNoActivate(viewportWindow, noActivate: true);
+            }
+        }
+
+        private static bool IsAltKeyDown()
+        {
+            return (GetAsyncKeyState(VkMenu) & 0x8000) != 0;
+        }
+
+        private static bool IsTabKeyDown()
+        {
+            return (GetAsyncKeyState(VkTab) & 0x8000) != 0;
+        }
+
+        private static bool IsShiftKeyDown()
+        {
+            return (GetAsyncKeyState(VkShift) & 0x8000) != 0;
+        }
+
+        private static void SetWindowShellVisibility(Window window, bool forceTaskbar, bool showInAltTab)
         {
             IntPtr hwnd = new WindowInteropHelper(window).Handle;
             if (hwnd == IntPtr.Zero)
@@ -5791,9 +6892,12 @@ namespace OceanyaClient
             const uint SWP_FRAMECHANGED = 0x0020;
 
             int exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
-            int newExStyle = visible
-                ? (exStyle & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
-                : (exStyle | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW;
+            int newExStyle = forceTaskbar
+                ? exStyle | WS_EX_APPWINDOW
+                : exStyle & ~WS_EX_APPWINDOW;
+            newExStyle = showInAltTab
+                ? newExStyle & ~WS_EX_TOOLWINDOW
+                : newExStyle | WS_EX_TOOLWINDOW;
 
             if (newExStyle != exStyle)
             {
@@ -7634,11 +8738,75 @@ namespace OceanyaClient
             FlashWindowEx(ref fi);
         }
 
+        private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+
         [DllImport("user32.dll")]
         private static extern int GetWindowLong(IntPtr hwnd, int nIndex);
 
         [DllImport("user32.dll")]
         private static extern int SetWindowLong(IntPtr hwnd, int nIndex, int dwNewLong);
+
+        private static IntPtr SetWindowLongPtr(IntPtr hwnd, int nIndex, IntPtr dwNewLong)
+        {
+            return IntPtr.Size == 8
+                ? SetWindowLongPtr64(hwnd, nIndex, dwNewLong)
+                : new IntPtr(SetWindowLong(hwnd, nIndex, dwNewLong.ToInt32()));
+        }
+
+        [DllImport("user32.dll", EntryPoint = "SetWindowLongPtr", SetLastError = true)]
+        private static extern IntPtr SetWindowLongPtr64(IntPtr hwnd, int nIndex, IntPtr dwNewLong);
+
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int vKey);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetActiveWindow();
+
+        [DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetTopWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsWindowVisible(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsIconic(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out int processId);
+
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out int pvAttribute, int cbAttribute);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern IntPtr SetWindowsHookEx(
+            int idHook,
+            LowLevelKeyboardProc lpfn,
+            IntPtr hMod,
+            uint dwThreadId);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        private static extern IntPtr GetModuleHandle(string? lpModuleName);
+
+        [DllImport("user32.dll")]
+        private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
 
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
@@ -7659,7 +8827,7 @@ namespace OceanyaClient
             // Determine if AltGr is active either because our flag is set
             // or because the RightAlt key is physically down.
             bool isAltGrActive = _altGrActive || ((Keyboard.GetKeyStates(Key.RightAlt) & KeyStates.Down) == KeyStates.Down);
-
+            Key normalizedKey = e.Key == Key.System ? e.SystemKey : e.Key;
             // If the Control modifier is pressed but AltGr is active, skip processing.
             if ((Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control && !isAltGrActive)
             {

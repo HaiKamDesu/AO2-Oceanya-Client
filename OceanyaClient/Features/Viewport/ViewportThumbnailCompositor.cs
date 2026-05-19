@@ -2,19 +2,19 @@ using System;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 
 namespace OceanyaClient.Features.Viewport
 {
     /// <summary>
-    /// Manages DWM custom iconic thumbnail bitmaps that composite the main and viewport
-    /// windows into a single taskbar preview image.
+    /// Manages DWM custom iconic thumbnail bitmaps that let the main window keep the
+    /// shell slot while the viewport supplies its taskbar and Alt-Tab preview image.
     /// </summary>
     internal static class ViewportThumbnailCompositor
     {
         private const int DwmwaForceIconicRepresentation = 7;
         private const int DwmwaHasIconicBitmap = 10;
-        private const uint Srccopy = 0x00CC0020;
-        private const uint Blackness = 0x00000042;
         private const uint DibRgbColors = 0;
 
         /// <summary>Enables custom iconic thumbnail for the specified HWND.</summary>
@@ -23,6 +23,7 @@ namespace OceanyaClient.Features.Viewport
             int enabled = 1;
             DwmSetWindowAttribute(hwnd, DwmwaForceIconicRepresentation, ref enabled, sizeof(int));
             DwmSetWindowAttribute(hwnd, DwmwaHasIconicBitmap, ref enabled, sizeof(int));
+            DwmInvalidateIconicBitmaps(hwnd);
         }
 
         /// <summary>Disables custom iconic thumbnail for the specified HWND.</summary>
@@ -31,15 +32,25 @@ namespace OceanyaClient.Features.Viewport
             int disabled = 0;
             DwmSetWindowAttribute(hwnd, DwmwaForceIconicRepresentation, ref disabled, sizeof(int));
             DwmSetWindowAttribute(hwnd, DwmwaHasIconicBitmap, ref disabled, sizeof(int));
+            DwmInvalidateIconicBitmaps(hwnd);
+        }
+
+        /// <summary>Requests that DWM discard cached thumbnails and ask for a fresh bitmap.</summary>
+        internal static void Invalidate(IntPtr hwnd)
+        {
+            if (hwnd != IntPtr.Zero)
+            {
+                DwmInvalidateIconicBitmaps(hwnd);
+            }
         }
 
         /// <summary>
-        /// Proactively captures and submits a composite thumbnail to DWM. Call this after
+        /// Proactively captures and submits a viewport thumbnail to DWM. Call this after
         /// <see cref="Activate"/> so the loading spinner is replaced immediately.
         /// </summary>
         internal static void SubmitIconicThumbnail(IntPtr hwnd, Window? mainWindow, Window? viewportWindow)
         {
-            IntPtr hBitmap = CreateScreenshotComposite(mainWindow, viewportWindow, 800, 600, scale: true);
+            IntPtr hBitmap = CreateScreenshotComposite(mainWindow, viewportWindow, 0, 0, scale: false);
             if (hBitmap == IntPtr.Zero)
             {
                 return;
@@ -56,7 +67,7 @@ namespace OceanyaClient.Features.Viewport
         }
 
         /// <summary>
-        /// Handles <c>WM_DWMSENDICONICTHUMBNAIL</c>: captures the composite screenshot and submits it.
+        /// Handles <c>WM_DWMSENDICONICTHUMBNAIL</c>: captures the viewport preview and submits it.
         /// </summary>
         internal static void HandleSendIconicThumbnail(
             IntPtr mainHwnd,
@@ -64,8 +75,8 @@ namespace OceanyaClient.Features.Viewport
             Window? viewportWindow,
             IntPtr wParam)
         {
-            int maxWidth = Math.Max(100, (int)((long)wParam & 0xFFFF));
-            int maxHeight = Math.Max(100, (int)(((long)wParam >> 16) & 0xFFFF));
+            int maxWidth = Math.Max(100, (int)(((long)wParam >> 16) & 0xFFFF));
+            int maxHeight = Math.Max(100, (int)((long)wParam & 0xFFFF));
 
             IntPtr hBitmap = CreateScreenshotComposite(mainWindow, viewportWindow, maxWidth, maxHeight, scale: true);
             if (hBitmap == IntPtr.Zero)
@@ -108,9 +119,8 @@ namespace OceanyaClient.Features.Viewport
         }
 
         /// <summary>
-        /// Captures the combined bounding box of both windows from the screen using a 32-bit DIB section.
-        /// The alpha channel is explicitly set to 255 on all pixels because GDI does not write alpha
-        /// during StretchBlt, and DWM treats zero-alpha pixels as fully transparent (invisible).
+        /// Renders the viewport window into a 32-bit DIB section.
+        /// Falls back to the main window when the viewport is unavailable.
         /// </summary>
         private static IntPtr CreateScreenshotComposite(
             Window? mainWindow,
@@ -130,46 +140,41 @@ namespace OceanyaClient.Features.Viewport
                 return IntPtr.Zero;
             }
 
-            bool hasViewport = viewportWindow?.IsVisible == true;
-            IntPtr viewportHwnd = hasViewport ? new WindowInteropHelper(viewportWindow!).Handle : IntPtr.Zero;
+            Window previewWindow = viewportWindow?.IsVisible == true ? viewportWindow! : mainWindow;
+            FrameworkElement previewVisual = ResolvePreviewVisual(previewWindow);
+            double sourceWidth = Math.Max(1d, previewVisual.ActualWidth);
+            double sourceHeight = Math.Max(1d, previewVisual.ActualHeight);
 
-            if (!GetWindowRect(mainHwnd, out NativeRect mainRect))
+            int destW;
+            int destH;
+            int drawX = 0;
+            int drawY = 0;
+            int drawW;
+            int drawH;
+            if (scale && maxWidth > 0 && maxHeight > 0)
+            {
+                double ratio = Math.Min(maxWidth / sourceWidth, maxHeight / sourceHeight);
+                destW = maxWidth;
+                destH = maxHeight;
+                drawW = Math.Max(1, (int)(sourceWidth * ratio));
+                drawH = Math.Max(1, (int)(sourceHeight * ratio));
+                drawX = (destW - drawW) / 2;
+                drawY = (destH - drawH) / 2;
+            }
+            else
+            {
+                destW = Math.Max(1, (int)Math.Ceiling(sourceWidth));
+                destH = Math.Max(1, (int)Math.Ceiling(sourceHeight));
+                drawW = destW;
+                drawH = destH;
+            }
+
+            byte[] pixels = RenderPreviewPixels(previewVisual, destW, destH, drawX, drawY, drawW, drawH);
+            if (pixels.Length == 0)
             {
                 return IntPtr.Zero;
             }
 
-            NativeRect viewportRect = mainRect;
-            if (hasViewport && !GetWindowRect(viewportHwnd, out viewportRect))
-            {
-                hasViewport = false;
-                viewportRect = mainRect;
-            }
-
-            int left = hasViewport ? Math.Min(mainRect.Left, viewportRect.Left) : mainRect.Left;
-            int top = hasViewport ? Math.Min(mainRect.Top, viewportRect.Top) : mainRect.Top;
-            int right = hasViewport ? Math.Max(mainRect.Right, viewportRect.Right) : mainRect.Right;
-            int bottom = hasViewport ? Math.Max(mainRect.Bottom, viewportRect.Bottom) : mainRect.Bottom;
-
-            int srcW = Math.Max(1, right - left);
-            int srcH = Math.Max(1, bottom - top);
-
-            int destW;
-            int destH;
-            if (scale && maxWidth > 0 && maxHeight > 0)
-            {
-                double ratio = Math.Min((double)maxWidth / srcW, (double)maxHeight / srcH);
-                destW = Math.Max(1, (int)(srcW * ratio));
-                destH = Math.Max(1, (int)(srcH * ratio));
-            }
-            else
-            {
-                destW = srcW;
-                destH = srcH;
-            }
-
-            // CreateDIBSection gives us direct access to the pixel buffer so we can fix the alpha channel.
-            // DWM requires 32bpp BGRA with pre-multiplied alpha; since the content is fully opaque,
-            // setting alpha=255 everywhere is correct and no RGB pre-multiplication is needed.
             BitmapInfoHeader bmi = new BitmapInfoHeader
             {
                 BiSize = (uint)Marshal.SizeOf<BitmapInfoHeader>(),
@@ -186,65 +191,64 @@ namespace OceanyaClient.Features.Viewport
                 return IntPtr.Zero;
             }
 
-            IntPtr screenDC = IntPtr.Zero;
-            IntPtr memDC = IntPtr.Zero;
-            IntPtr oldObj = IntPtr.Zero;
-            bool success = false;
-
             try
             {
-                screenDC = GetDC(IntPtr.Zero);
-                if (screenDC == IntPtr.Zero)
-                {
-                    return IntPtr.Zero;
-                }
-
-                memDC = CreateCompatibleDC(screenDC);
-                oldObj = SelectObject(memDC, bitmap);
-
-                PatBlt(memDC, 0, 0, destW, destH, Blackness);
-                StretchBlt(memDC, 0, 0, destW, destH, screenDC, left, top, srcW, srcH, Srccopy);
-
-                // Force alpha=255 on every pixel so DWM sees fully-opaque content.
-                int byteCount = destW * destH * 4;
-                byte[] pixels = new byte[byteCount];
-                Marshal.Copy(pvBits, pixels, 0, byteCount);
-                for (int i = 3; i < byteCount; i += 4)
-                {
-                    pixels[i] = 255;
-                }
-
-                Marshal.Copy(pixels, 0, pvBits, byteCount);
-
-                success = true;
+                Marshal.Copy(pixels, 0, pvBits, pixels.Length);
                 return bitmap;
             }
             catch
             {
+                DeleteObject(bitmap);
                 return IntPtr.Zero;
             }
-            finally
+        }
+
+        private static byte[] RenderPreviewPixels(
+            FrameworkElement previewVisual,
+            int destW,
+            int destH,
+            int drawX,
+            int drawY,
+            int drawW,
+            int drawH)
+        {
+            try
             {
-                if (oldObj != IntPtr.Zero && memDC != IntPtr.Zero)
+                DrawingVisual visual = new DrawingVisual();
+                using (DrawingContext context = visual.RenderOpen())
                 {
-                    SelectObject(memDC, oldObj);
+                    context.DrawRectangle(Brushes.Black, null, new Rect(0, 0, destW, destH));
+                    VisualBrush brush = new VisualBrush(previewVisual)
+                    {
+                        Stretch = Stretch.Fill,
+                        ViewboxUnits = BrushMappingMode.Absolute,
+                        Viewbox = new Rect(0, 0, previewVisual.ActualWidth, previewVisual.ActualHeight)
+                    };
+                    context.DrawRectangle(brush, null, new Rect(drawX, drawY, drawW, drawH));
                 }
 
-                if (memDC != IntPtr.Zero)
-                {
-                    DeleteDC(memDC);
-                }
+                RenderTargetBitmap renderTarget = new RenderTargetBitmap(
+                    destW,
+                    destH,
+                    96,
+                    96,
+                    PixelFormats.Pbgra32);
+                renderTarget.Render(visual);
 
-                if (screenDC != IntPtr.Zero)
-                {
-                    ReleaseDC(IntPtr.Zero, screenDC);
-                }
-
-                if (!success && bitmap != IntPtr.Zero)
-                {
-                    DeleteObject(bitmap);
-                }
+                int stride = destW * 4;
+                byte[] pixels = new byte[stride * destH];
+                renderTarget.CopyPixels(pixels, stride, 0);
+                return pixels;
             }
+            catch
+            {
+                return Array.Empty<byte>();
+            }
+        }
+
+        private static FrameworkElement ResolvePreviewVisual(Window previewWindow)
+        {
+            return previewWindow;
         }
 
         [DllImport("dwmapi.dll")]
@@ -256,47 +260,15 @@ namespace OceanyaClient.Features.Viewport
         [DllImport("dwmapi.dll")]
         private static extern int DwmSetIconicLivePreviewBitmap(IntPtr hwnd, IntPtr hbmp, IntPtr pptClient, uint dwSITFlags);
 
-        [DllImport("gdi32.dll")]
-        private static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmInvalidateIconicBitmaps(IntPtr hwnd);
 
         [DllImport("gdi32.dll")]
         private static extern IntPtr CreateDIBSection(
             IntPtr hdc, ref BitmapInfoHeader pbmi, uint usage, out IntPtr ppvBits, IntPtr hSection, uint dwOffset);
 
         [DllImport("gdi32.dll")]
-        private static extern IntPtr SelectObject(IntPtr hdc, IntPtr hgdiobj);
-
-        [DllImport("gdi32.dll")]
         private static extern bool DeleteObject(IntPtr hObject);
-
-        [DllImport("gdi32.dll")]
-        private static extern bool DeleteDC(IntPtr hdc);
-
-        [DllImport("gdi32.dll")]
-        private static extern bool StretchBlt(
-            IntPtr hdcDest, int xDest, int yDest, int wDest, int hDest,
-            IntPtr hdcSrc, int xSrc, int ySrc, int wSrc, int hSrc, uint rop);
-
-        [DllImport("gdi32.dll")]
-        private static extern bool PatBlt(IntPtr hdc, int nXLeft, int nYTop, int nWidth, int nHeight, uint dwRop);
-
-        [DllImport("user32.dll")]
-        private static extern IntPtr GetDC(IntPtr hWnd);
-
-        [DllImport("user32.dll")]
-        private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
-
-        [DllImport("user32.dll")]
-        private static extern bool GetWindowRect(IntPtr hWnd, out NativeRect lpRect);
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct NativeRect
-        {
-            public int Left;
-            public int Top;
-            public int Right;
-            public int Bottom;
-        }
 
         [StructLayout(LayoutKind.Sequential)]
         private struct BitmapInfoHeader

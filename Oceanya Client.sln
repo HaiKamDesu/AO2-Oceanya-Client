@@ -43,6 +43,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Documentation", "Documentat
 		Documentation\TaggingCharacters\CharacterTaggingMigrationGuide.md = Documentation\TaggingCharacters\CharacterTaggingMigrationGuide.md
 		Documentation\TaggingCharacters\character_folder_tags_backup_20260222_135533.json = Documentation\TaggingCharacters\character_folder_tags_backup_20260222_135533.json
 		Documentation\TaggingCharacters\TaggingForWindowsTags.md = Documentation\TaggingCharacters\TaggingForWindowsTags.md
+		Documentation\ViewportWindowsPreviewAltTab.md = Documentation\ViewportWindowsPreviewAltTab.md
 	EndProjectSection
 EndProject
 Global
