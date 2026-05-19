@@ -203,11 +203,20 @@ namespace OceanyaClient.Utilities
             {
                 base.OnRender(drawingContext);
 
-                if (!showCaret
-                    || textBox.SelectionLength > 0
-                    || !GetIsProxyKeyboardFocusTarget(textBox)
+                if (!GetIsProxyKeyboardFocusTarget(textBox)
                     || !textBox.IsVisible
                     || !textBox.IsEnabled)
+                {
+                    return;
+                }
+
+                if (textBox.SelectionLength > 0)
+                {
+                    DrawSelectionHighlight(drawingContext);
+                    return;
+                }
+
+                if (!showCaret)
                 {
                     return;
                 }
@@ -224,21 +233,73 @@ namespace OceanyaClient.Utilities
                 drawingContext.DrawRectangle(caretBrush, null, drawRect);
             }
 
+            private void DrawSelectionHighlight(DrawingContext drawingContext)
+            {
+                int textLength = textBox.Text?.Length ?? 0;
+                int selectionStart = Math.Clamp(textBox.SelectionStart, 0, textLength);
+                int selectionEnd = Math.Clamp(selectionStart + textBox.SelectionLength, 0, textLength);
+                if (selectionStart >= selectionEnd)
+                {
+                    return;
+                }
+
+                Brush selectionBrush = textBox.SelectionBrush ?? SystemColors.HighlightBrush;
+                drawingContext.PushOpacity(Math.Clamp(textBox.SelectionOpacity, 0.25, 0.75));
+                try
+                {
+                    Rect? currentRun = null;
+                    for (int index = selectionStart; index < selectionEnd; index++)
+                    {
+                        Rect rect = GetCharacterSelectionRect(index);
+                        if (rect.IsEmpty || rect.Width <= 0 || rect.Height <= 0)
+                        {
+                            continue;
+                        }
+
+                        if (currentRun.HasValue && Math.Abs(currentRun.Value.Y - rect.Y) < 1.0)
+                        {
+                            currentRun = Rect.Union(currentRun.Value, rect);
+                            continue;
+                        }
+
+                        if (currentRun.HasValue)
+                        {
+                            drawingContext.DrawRectangle(selectionBrush, null, currentRun.Value);
+                        }
+
+                        currentRun = rect;
+                    }
+
+                    if (currentRun.HasValue)
+                    {
+                        drawingContext.DrawRectangle(selectionBrush, null, currentRun.Value);
+                    }
+                }
+                finally
+                {
+                    drawingContext.Pop();
+                }
+            }
+
             private Rect GetCaretRect()
             {
                 int textLength = textBox.Text?.Length ?? 0;
                 int caretIndex = Math.Clamp(textBox.CaretIndex, 0, textLength);
                 try
                 {
-                    Rect rect = textBox.GetRectFromCharacterIndex(caretIndex, true);
-                    if (!rect.IsEmpty)
-                    {
-                        return rect;
-                    }
-
                     if (caretIndex > 0)
                     {
-                        return textBox.GetRectFromCharacterIndex(caretIndex - 1, true);
+                        Rect trailingPrevious = textBox.GetRectFromCharacterIndex(caretIndex - 1, true);
+                        if (!trailingPrevious.IsEmpty)
+                        {
+                            return trailingPrevious;
+                        }
+                    }
+
+                    Rect leadingCurrent = textBox.GetRectFromCharacterIndex(caretIndex, false);
+                    if (!leadingCurrent.IsEmpty)
+                    {
+                        return leadingCurrent;
                     }
                 }
                 catch (ArgumentOutOfRangeException)
@@ -246,6 +307,38 @@ namespace OceanyaClient.Utilities
                 }
 
                 return Rect.Empty;
+            }
+
+            private Rect GetCharacterSelectionRect(int characterIndex)
+            {
+                try
+                {
+                    Rect leading = textBox.GetRectFromCharacterIndex(characterIndex, false);
+                    Rect trailing = textBox.GetRectFromCharacterIndex(characterIndex, true);
+                    if (leading.IsEmpty || trailing.IsEmpty)
+                    {
+                        return Rect.Empty;
+                    }
+
+                    double x = Math.Min(leading.X, trailing.X);
+                    double width = Math.Abs(trailing.X - leading.X);
+                    if (width < 1)
+                    {
+                        width = Math.Max(1, textBox.FontSize * 0.5);
+                    }
+
+                    double height = Math.Max(leading.Height, trailing.Height);
+                    if (height <= 0)
+                    {
+                        height = Math.Max(1, textBox.FontSize + 2);
+                    }
+
+                    return new Rect(x, leading.Y, width, height);
+                }
+                catch (ArgumentOutOfRangeException)
+                {
+                    return Rect.Empty;
+                }
             }
 
             private void ResetBlink()
