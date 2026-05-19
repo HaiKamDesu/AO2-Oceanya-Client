@@ -1,13 +1,16 @@
 using System;
 using System.Collections.ObjectModel;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media.Imaging;
 using Common;
+using OceanyaClient.Features.Chat;
 
 namespace OceanyaClient
 {
@@ -80,6 +83,9 @@ namespace OceanyaClient
             StickyEffectsCheckBox.IsChecked = SaveFile.Data.StickyEffect;
             SwitchPosOnIniSwapCheckBox.IsChecked = SaveFile.Data.SwitchPosOnIniSwap;
             InvertIcLogsCheckBox.IsChecked = SaveFile.Data.InvertICLog;
+            AutomaticTextLoggingCheckBox.IsChecked = Ao2ConfigIniSettings.GetBool(configValues, "automatic_logging_enabled", true);
+            DemoLoggingCheckBox.IsChecked = Ao2ConfigIniSettings.GetBool(configValues, "demo_logging_enabled", true);
+            RefreshLogFolderPathText();
 
             ConfigPathTextBlock.Text = string.IsNullOrWhiteSpace(Ao2ConfigIniSettings.ConfigPath)
                 ? "No config.ini selected."
@@ -90,7 +96,7 @@ namespace OceanyaClient
             BlipRateTextBox.Text = Ao2ConfigIniSettings.GetInt(configValues, "blip_rate", 2).ToString(CultureInfo.InvariantCulture);
             ChatRateLimitTextBox.Text = Ao2ConfigIniSettings.GetInt(configValues, "chat_ratelimit", 0).ToString(CultureInfo.InvariantCulture);
             StayTimeTextBox.Text = Ao2ConfigIniSettings.GetInt(configValues, "stay_time", 200).ToString(CultureInfo.InvariantCulture);
-            LogMaximumTextBox.Text = Ao2ConfigIniSettings.GetInt(configValues, "log_maximum", 0).ToString(CultureInfo.InvariantCulture);
+            LogMaximumTextBox.Text = Ao2ConfigIniSettings.GetInt(configValues, "log_maximum", 200).ToString(CultureInfo.InvariantCulture);
 
             callwordRules.Clear();
             HashSet<string> seenCallwords = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -140,6 +146,7 @@ namespace OceanyaClient
 
             AudioPage.Visibility = AudioPageButton.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
             ClientPage.Visibility = ClientPageButton.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+            LoggingPage.Visibility = LoggingPageButton.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
             ConfigPage.Visibility = ConfigPageButton.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
             CallwordsPage.Visibility = CallwordsPageButton.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         }
@@ -268,8 +275,43 @@ namespace OceanyaClient
             BlipRateTextBox.Text = Ao2ConfigIniSettings.GetInt(configValues, "blip_rate", 2).ToString(CultureInfo.InvariantCulture);
             ChatRateLimitTextBox.Text = Ao2ConfigIniSettings.GetInt(configValues, "chat_ratelimit", 0).ToString(CultureInfo.InvariantCulture);
             StayTimeTextBox.Text = Ao2ConfigIniSettings.GetInt(configValues, "stay_time", 200).ToString(CultureInfo.InvariantCulture);
-            LogMaximumTextBox.Text = Ao2ConfigIniSettings.GetInt(configValues, "log_maximum", 0).ToString(CultureInfo.InvariantCulture);
+            LogMaximumTextBox.Text = Ao2ConfigIniSettings.GetInt(configValues, "log_maximum", 200).ToString(CultureInfo.InvariantCulture);
+            AutomaticTextLoggingCheckBox.IsChecked = Ao2ConfigIniSettings.GetBool(configValues, "automatic_logging_enabled", true);
+            DemoLoggingCheckBox.IsChecked = Ao2ConfigIniSettings.GetBool(configValues, "demo_logging_enabled", true);
+            RefreshLogFolderPathText();
             RefreshValueText();
+        }
+
+        private void RefreshLogFolderPathText()
+        {
+            string logRoot = Ao2TextLogWriter.ResolveLogRootDirectory();
+            LogFolderPathTextBlock.Text = string.IsNullOrWhiteSpace(logRoot)
+                ? "No log folder can be resolved until a config.ini is selected."
+                : logRoot;
+        }
+
+        private void OpenLogFolderButton_Click(object sender, RoutedEventArgs e)
+        {
+            string logRoot = Ao2TextLogWriter.ResolveLogRootDirectory();
+            if (string.IsNullOrWhiteSpace(logRoot))
+            {
+                OceanyaMessageBox.Show("No log folder can be resolved until a config.ini is selected.");
+                return;
+            }
+
+            try
+            {
+                Directory.CreateDirectory(logRoot);
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = logRoot,
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                OceanyaMessageBox.Show("Could not open the log folder:\n" + ex.Message);
+            }
         }
 
         private void SaveButton_Click(object sender, RoutedEventArgs e)
@@ -303,7 +345,9 @@ namespace OceanyaClient
             configValues["blip_rate"] = TryParseInt(BlipRateTextBox.Text, 2).ToString(CultureInfo.InvariantCulture);
             configValues["chat_ratelimit"] = TryParseInt(ChatRateLimitTextBox.Text, 0).ToString(CultureInfo.InvariantCulture);
             configValues["stay_time"] = TryParseInt(StayTimeTextBox.Text, 200).ToString(CultureInfo.InvariantCulture);
-            configValues["log_maximum"] = TryParseInt(LogMaximumTextBox.Text, 0).ToString(CultureInfo.InvariantCulture);
+            configValues["log_maximum"] = TryParseInt(LogMaximumTextBox.Text, 200).ToString(CultureInfo.InvariantCulture);
+            configValues["automatic_logging_enabled"] = (AutomaticTextLoggingCheckBox.IsChecked == true).ToString().ToLowerInvariant();
+            configValues["demo_logging_enabled"] = (DemoLoggingCheckBox.IsChecked == true).ToString().ToLowerInvariant();
             configValues["callwords"] = string.Join(
                 ", ",
                 callwordRules

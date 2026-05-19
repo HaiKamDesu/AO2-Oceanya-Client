@@ -229,6 +229,7 @@
             <StackPanel Grid.Column="0" Margin="0,0,12,0">
                 <RadioButton x:Name="AudioPageButton" Content="Audio" IsChecked="True" Style="{StaticResource PageButton}" Checked="PageButton_Checked"/>
                 <RadioButton x:Name="ClientPageButton" Content="Client" Style="{StaticResource PageButton}" Checked="PageButton_Checked"/>
+                <RadioButton x:Name="LoggingPageButton" Content="Logging" Style="{StaticResource PageButton}" Checked="PageButton_Checked"/>
                 <RadioButton x:Name="ConfigPageButton" Content="AO2 Config" Style="{StaticResource PageButton}" Checked="PageButton_Checked"/>
                 <RadioButton x:Name="CallwordsPageButton" Content="Callwords" Style="{StaticResource PageButton}" Checked="PageButton_Checked"/>
             </StackPanel>
@@ -318,7 +319,31 @@
                             <TextBlock Text="Client" Foreground="White" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10"/>
                             <CheckBox x:Name="StickyEffectsCheckBox" Content="Sticky effects" Foreground="White" Margin="0,0,0,10" ToolTip="Keep selected effects around instead of clearing them after send."/>
                             <CheckBox x:Name="SwitchPosOnIniSwapCheckBox" Content="Switch position on INI swap" Foreground="White" Margin="0,0,0,10" ToolTip="When changing character INI, also switch to that character's preferred side/position when known."/>
-                            <CheckBox x:Name="InvertIcLogsCheckBox" Content="Invert IC logs" Foreground="White" Margin="0,0,0,10" ToolTip="Show newest IC log messages at the opposite end of the log."/>
+                        </StackPanel>
+
+                        <StackPanel x:Name="LoggingPage" Visibility="Collapsed">
+                            <TextBlock Text="Logging" Foreground="White" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <TextBlock Text="IC and OOC Logs" Foreground="White" FontWeight="SemiBold"/>
+                                <TextBlock Style="{StaticResource HelpGlyph}" ToolTip="Controls the in-window chat logs. Log maximum is saved to config.ini as log_maximum and is shared with AO2."/>
+                            </StackPanel>
+                            <CheckBox x:Name="InvertIcLogsCheckBox" Content="Invert IC logs" Foreground="White" Margin="0,0,0,10" ToolTip="Show newest IC log messages at the opposite end of the IC log."/>
+                            <StackPanel Margin="0,0,0,16">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Log maximum" Style="{StaticResource LabelText}"/>
+                                    <TextBlock Style="{StaticResource HelpGlyph}" ToolTip="Maximum visible IC log entries. AO2 default is 200; 0 keeps all entries."/>
+                                </StackPanel>
+                                <TextBox x:Name="LogMaximumTextBox" Style="{StaticResource DarkTextBox}" Width="140" HorizontalAlignment="Left"/>
+                            </StackPanel>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <TextBlock Text="AO2 File Logging" Foreground="White" FontWeight="SemiBold"/>
+                                <TextBlock Style="{StaticResource HelpGlyph}" ToolTip="Writes AO2-compatible text logs under logs/server name beside the selected config.ini. These are the same config.ini switches AO2 uses."/>
+                            </StackPanel>
+                            <CheckBox x:Name="AutomaticTextLoggingCheckBox" Content="Write text log files" Foreground="White" Margin="0,0,0,10" ToolTip="Saved to config.ini as automatic_logging_enabled. When enabled, received IC and OOC messages append to the AO2-style .log file."/>
+                            <CheckBox x:Name="DemoLoggingCheckBox" Content="Create AO2 log session on connect" Foreground="White" Margin="0,0,0,10" ToolTip="Saved to config.ini as demo_logging_enabled. AO2 uses this to create the per-server log file path when joining a server."/>
+                            <Button Content="Open Log Folder" Width="140" HorizontalAlignment="Left" Style="{StaticResource ModernButton}" Click="OpenLogFolderButton_Click"/>
+                            <TextBlock x:Name="LogFolderPathTextBlock" Style="{StaticResource SubText}" Margin="0,8,0,0"/>
                         </StackPanel>
 
                         <StackPanel x:Name="ConfigPage" Visibility="Collapsed">
@@ -333,7 +358,6 @@
                                 <StackPanel Margin="0,0,0,10"><StackPanel Orientation="Horizontal"><TextBlock Text="Blip rate" Style="{StaticResource LabelText}"/><TextBlock Style="{StaticResource HelpGlyph}" ToolTip="How often blip sounds play while message text appears."/></StackPanel><TextBox x:Name="BlipRateTextBox" Style="{StaticResource DarkTextBox}"/></StackPanel>
                                 <StackPanel Margin="0,0,10,10"><StackPanel Orientation="Horizontal"><TextBlock Text="Chat rate limit" Style="{StaticResource LabelText}"/><TextBlock Style="{StaticResource HelpGlyph}" ToolTip="Delay/rate limit for outgoing chat. 0 means no local limit."/></StackPanel><TextBox x:Name="ChatRateLimitTextBox" Style="{StaticResource DarkTextBox}"/></StackPanel>
                                 <StackPanel Margin="0,0,0,10"><StackPanel Orientation="Horizontal"><TextBlock Text="Stay time" Style="{StaticResource LabelText}"/><TextBlock Style="{StaticResource HelpGlyph}" ToolTip="How long temporary courtroom elements stay visible before clearing."/></StackPanel><TextBox x:Name="StayTimeTextBox" Style="{StaticResource DarkTextBox}"/></StackPanel>
-                                <StackPanel Margin="0,0,10,10"><StackPanel Orientation="Horizontal"><TextBlock Text="Log maximum" Style="{StaticResource LabelText}"/><TextBlock Style="{StaticResource HelpGlyph}" ToolTip="Maximum saved log entries. 0 keeps current AO2 default behavior."/></StackPanel><TextBox x:Name="LogMaximumTextBox" Style="{StaticResource DarkTextBox}"/></StackPanel>
                             </UniformGrid>
                             <TextBlock Text="All config.ini keys" Foreground="White" FontWeight="SemiBold" Margin="0,8,0,8"/>
                             <ListBox x:Name="ConfigEntriesListBox"

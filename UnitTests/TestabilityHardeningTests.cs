@@ -306,7 +306,112 @@ namespace UnitTests
                 Assert.That(logText, Does.Contain("Joined server TestServer hosted on address ws://127.0.0.1:27016 on "));
                 Assert.That(logText, Does.Contain("] Nick (Phoenix): Hello"));
                 Assert.That(logText, Does.Contain("] Nick shouts: OBJECTION!"));
-                Assert.That(logText, Does.Contain("Judge: Court is now in session."));
+                Assert.That(logText, Does.Contain("[OOC]["));
+                Assert.That(logText, Does.Contain("] Judge: Court is now in session."));
+            });
+        }
+
+        [Test]
+        public void Ao2TextLogWriter_AppendsWhileAnotherClientHasLogOpen()
+        {
+            string aoRoot = Path.Combine(tempRoot, "ao-shared");
+            Directory.CreateDirectory(aoRoot);
+            string configPath = Path.Combine(aoRoot, "config.ini");
+            File.WriteAllLines(
+                configPath,
+                new[]
+                {
+                    "automatic_logging_enabled=true",
+                    "demo_logging_enabled=true"
+                });
+            SaveFile.Data.ConfigIniPath = configPath;
+            SaveFile.Data.SelectedServerName = "Shared Server";
+            Globals.PathToConfigINI = configPath;
+            Globals.SetSelectedServerEndpoint("127.0.0.1:27016");
+
+            Ao2TextLogWriter writer = new Ao2TextLogWriter();
+            writer.RefreshSession();
+
+            string logRoot = Path.Combine(aoRoot, "logs", "Shared Server");
+            string logFile = Directory.GetFiles(logRoot, "*.log").Single();
+            using FileStream heldOpenStream = new FileStream(
+                logFile,
+                FileMode.Open,
+                FileAccess.ReadWrite,
+                FileShare.ReadWrite | FileShare.Delete);
+
+            writer.AppendServerMessage("Judge", "Concurrent write.");
+
+            heldOpenStream.Dispose();
+            string logText = File.ReadAllText(logFile);
+            Assert.That(logText, Does.Contain("] Judge: Concurrent write."));
+        }
+
+        [Test]
+        public void Ao2TextLogWriter_CreatesTextLogOnAppendWhenDemoLoggingDisabled()
+        {
+            string aoRoot = Path.Combine(tempRoot, "ao-text-only");
+            Directory.CreateDirectory(aoRoot);
+            string configPath = Path.Combine(aoRoot, "config.ini");
+            File.WriteAllLines(
+                configPath,
+                new[]
+                {
+                    "automatic_logging_enabled=true",
+                    "demo_logging_enabled=false"
+                });
+            SaveFile.Data.ConfigIniPath = configPath;
+            SaveFile.Data.SelectedServerName = "LocalHost WS 50001";
+            Globals.PathToConfigINI = configPath;
+            Globals.SetSelectedServerEndpoint("ws://127.0.0.1:50001");
+
+            Ao2TextLogWriter writer = new Ao2TextLogWriter();
+            writer.AppendIcMessage(
+                new ICMessage { Character = "Phoenix", ShowName = "Nick", Message = "Ping" },
+                "Nick",
+                "Ping");
+
+            string logRoot = Path.Combine(aoRoot, "logs", "LocalHost WS 50001");
+            string logFile = Directory.GetFiles(logRoot, "*.log").Single();
+            string logText = File.ReadAllText(logFile);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(logText, Does.Contain("Joined server LocalHost WS 50001 hosted on address ws://127.0.0.1:50001 on "));
+                Assert.That(logText, Does.Contain("] Nick (Phoenix): Ping"));
+            });
+        }
+
+        [Test]
+        public void Ao2TextLogWriter_ResolvesLogsBesideAoRootWhenConfigIniIsInBase()
+        {
+            string aoRoot = Path.Combine(tempRoot, "ao-root");
+            string baseRoot = Path.Combine(aoRoot, "base");
+            Directory.CreateDirectory(baseRoot);
+            string configPath = Path.Combine(baseRoot, "config.ini");
+            File.WriteAllLines(
+                configPath,
+                new[]
+                {
+                    "automatic_logging_enabled=true",
+                    "demo_logging_enabled=true"
+                });
+            SaveFile.Data.ConfigIniPath = configPath;
+            SaveFile.Data.SelectedServerName = "LocalHost WS 50001";
+            Globals.PathToConfigINI = configPath;
+            Globals.SetSelectedServerEndpoint("ws://127.0.0.1:50001");
+
+            Ao2TextLogWriter writer = new Ao2TextLogWriter();
+            writer.RefreshSession();
+
+            string expectedLogRoot = Path.Combine(aoRoot, "logs");
+            string unexpectedBaseLogRoot = Path.Combine(baseRoot, "logs");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(Ao2TextLogWriter.ResolveLogRootDirectory(), Is.EqualTo(expectedLogRoot));
+                Assert.That(Directory.Exists(Path.Combine(expectedLogRoot, "LocalHost WS 50001")), Is.True);
+                Assert.That(Directory.Exists(unexpectedBaseLogRoot), Is.False);
             });
         }
 

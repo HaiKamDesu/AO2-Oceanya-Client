@@ -183,12 +183,16 @@ Each of these settings has predefined integer values. **If a change is requested
     {
         PathToConfigINI = pathToConfigINI;
         BaseFolders = GetBaseFolders(pathToConfigINI);
+        LogMaxMessages = 200;
 
         foreach (string line in File.ReadLines(Globals.PathToConfigINI))
         {
             if (line.StartsWith("log_maximum="))
             {
-               LogMaxMessages = int.Parse(line.Substring("log_maximum=".Length).Trim());
+                if (int.TryParse(line.Substring("log_maximum=".Length).Trim(), out int parsedLogMaximum))
+                {
+                    LogMaxMessages = parsedLogMaximum;
+                }
             }
         }
     }

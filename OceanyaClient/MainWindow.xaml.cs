@@ -800,7 +800,8 @@ namespace OceanyaClient
 
             if (message == WmMouseActivate)
             {
-                LogViewportPreviewState("main WM_MOUSEACTIVATE no-activate");
+                RestoreMainWindowVisualForViewportReturn(forceForegroundRepresentative: true);
+                LogViewportPreviewState("main WM_MOUSEACTIVATE no-activate; viewport shell foreground requested");
                 handled = true;
                 return new IntPtr(MaNoActivate);
             }
@@ -6108,7 +6109,7 @@ namespace OceanyaClient
             viewportTaskbarPreviewRefreshTimer = null;
         }
 
-        private void RestoreMainWindowVisualForViewportReturn()
+        private void RestoreMainWindowVisualForViewportReturn(bool forceForegroundRepresentative = false)
         {
             if (!IsViewportUsingWindowsPreview())
             {
@@ -6175,7 +6176,11 @@ namespace OceanyaClient
 
             viewportPreviewInputProxyActive = true;
             SetViewportPreviewInputProxyTarget(target, "main visual return restore");
-            EnsureViewportIsForegroundShellRepresentative("main visual return restore");
+            EnsureViewportIsForegroundShellRepresentative(
+                forceForegroundRepresentative
+                    ? "main visual return restore from main mouse activation"
+                    : "main visual return restore",
+                allowExternalForegroundOverride: forceForegroundRepresentative);
             LogViewportPreviewState(
                 $"main visual return restore: hiddenForAltTab={wasHiddenForAltTab} mainVisibleBefore={hostVisibleBefore} mainMinimizedBefore={hostMinimizedBefore} mainCloakedBefore={hostCloakedBefore} viewportVisibleBefore={viewportVisibleBefore} showResult={showResult} restackResult={restackResult} viewportTopResult={viewportTopResult} target={target?.Name ?? "(none)"}");
         }
@@ -6552,7 +6557,7 @@ namespace OceanyaClient
             }
         }
 
-        private void EnsureViewportIsForegroundShellRepresentative(string reason)
+        private void EnsureViewportIsForegroundShellRepresentative(string reason, bool allowExternalForegroundOverride = false)
         {
             if (!IsViewportUsingWindowsPreview() || viewportWindow == null)
             {
@@ -6571,7 +6576,7 @@ namespace OceanyaClient
             if (foregroundHwnd != IntPtr.Zero)
             {
                 _ = GetWindowThreadProcessId(foregroundHwnd, out int foregroundProcessId);
-                if (foregroundProcessId != Process.GetCurrentProcess().Id)
+                if (foregroundProcessId != Process.GetCurrentProcess().Id && !allowExternalForegroundOverride)
                 {
                     UpdateViewportPreviewProxyVisual("external foreground during shell representative ensure");
                     LogViewportPreviewState("viewport shell representative skipped external foreground reason=" + reason);

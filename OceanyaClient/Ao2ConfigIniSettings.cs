@@ -24,7 +24,7 @@ namespace OceanyaClient
             ["shake"] = "true",
             ["chat_ratelimit"] = "0",
             ["stay_time"] = "200",
-            ["log_maximum"] = "0",
+            ["log_maximum"] = "200",
             ["automatic_logging_enabled"] = "true",
             ["demo_logging_enabled"] = "true"
         };

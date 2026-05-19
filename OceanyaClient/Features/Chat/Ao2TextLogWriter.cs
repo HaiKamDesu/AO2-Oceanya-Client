@@ -29,7 +29,9 @@ namespace OceanyaClient.Features.Chat
         public void RefreshSession()
         {
             Dictionary<string, string> configValues = Ao2ConfigIniSettings.Load();
-            if (!Ao2ConfigIniSettings.GetBool(configValues, "demo_logging_enabled", true))
+            bool textLoggingEnabled = Ao2ConfigIniSettings.GetBool(configValues, "automatic_logging_enabled", true);
+            bool demoLoggingEnabled = Ao2ConfigIniSettings.GetBool(configValues, "demo_logging_enabled", true);
+            if (!textLoggingEnabled && !demoLoggingEnabled)
             {
                 ResetSession();
                 return;
@@ -79,6 +81,14 @@ namespace OceanyaClient.Features.Chat
             }
         }
 
+        public static string ResolveLogRootDirectory()
+        {
+            string baseDirectory = ResolveAoBaseDirectory();
+            return string.IsNullOrWhiteSpace(baseDirectory)
+                ? string.Empty
+                : Path.Combine(baseDirectory, "logs");
+        }
+
         public void AppendIcMessage(ICMessage? sourceMessage, string showName, string message)
         {
             AppendChatLogPiece(sourceMessage?.Character ?? showName, showName, message, string.Empty);
@@ -91,7 +101,7 @@ namespace OceanyaClient.Features.Chat
 
         public void AppendServerMessage(string showName, string message)
         {
-            AppendLine(MaybeUnknown(showName) + ": " + MaybeUnknown(message));
+            AppendLine("[OOC][" + FormatQtUtcTextDate(DateTime.UtcNow) + "] " + MaybeUnknown(showName) + ": " + MaybeUnknown(message));
         }
 
         private void AppendChatLogPiece(string character, string characterName, string message, string action)
@@ -143,14 +153,20 @@ namespace OceanyaClient.Features.Chat
                 Directory.CreateDirectory(directory);
             }
 
-            if (File.Exists(logFilePath))
+            using FileStream stream = new FileStream(
+                logFilePath,
+                FileMode.OpenOrCreate,
+                FileAccess.Write,
+                FileShare.ReadWrite | FileShare.Delete);
+            bool fileExists = stream.Length > 0;
+            stream.Seek(0, SeekOrigin.End);
+            using StreamWriter writer = new StreamWriter(stream, new UTF8Encoding(false));
+            if (fileExists)
             {
-                File.AppendAllText(logFilePath, "\r\n" + text, new UTF8Encoding(false));
+                writer.Write("\r\n");
             }
-            else
-            {
-                File.WriteAllText(logFilePath, text, new UTF8Encoding(false));
-            }
+
+            writer.Write(text);
         }
 
         private static string ResolveAoBaseDirectory()
@@ -161,6 +177,18 @@ namespace OceanyaClient.Features.Chat
                 string? directory = Path.GetDirectoryName(configPath);
                 if (!string.IsNullOrWhiteSpace(directory))
                 {
+                    string? directoryName = Path.GetFileName(
+                        directory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                    if (string.Equals(directoryName, "base", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string? parent = Path.GetDirectoryName(
+                            directory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                        if (!string.IsNullOrWhiteSpace(parent))
+                        {
+                            return parent;
+                        }
+                    }
+
                     return directory;
                 }
             }

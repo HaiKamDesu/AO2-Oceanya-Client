@@ -17,13 +17,13 @@ bolded by the log row, but it must not parse IC color markers; a song title such
 instead of treating `~ Extasis` as red IC text.
 
 ## AO2-compatible text logs in Oceanya
-Oceanya writes AO2-style text logs through `OceanyaClient/Features/Chat/Ao2TextLogWriter.cs`. It reads the selected AO `config.ini` with `Ao2ConfigIniSettings`, honors `automatic_logging_enabled` for writes, and uses `demo_logging_enabled` to decide whether to create the session log path, matching AO2's `log_filename` behavior.
+Oceanya writes AO2-style text logs through `OceanyaClient/Features/Chat/Ao2TextLogWriter.cs`. It reads the selected AO `config.ini` with `Ao2ConfigIniSettings`, honors `automatic_logging_enabled` for writes, and creates the text-log session path when either `automatic_logging_enabled` or `demo_logging_enabled` is true. This keeps AO2's `log_filename` behavior when demo logging is enabled while still allowing Oceanya text logging to create a log on the first received message.
 
-Logs are written beside the selected AO install:
+Logs are written beside the selected AO install. If the selected `config.ini` is under the normal AO2 `base` folder, Oceanya writes beside `base` like AO2 does, not inside it:
 
 `<AO install>/logs/<sanitized server name>/<UTC yyyy-MM-dd HH-mm-ss UTC>.log`
 
-The first line is AO2's joined-server line. IC messages use the `ChatLogPiece::toString()` shape: `[timestamp] showname (character): message` when the local character name differs from the display name. IC actions add the action before the colon, and OOC/server messages use `name: message`.
+The first line is AO2's joined-server line. IC messages use the `ChatLogPiece::toString()` shape: `[timestamp] showname (character): message` when the local character name differs from the display name. IC actions add the action before the colon, and OOC/server messages use AO2's text-log prefix shape: `[OOC][timestamp] name: message`. The writer opens log files with read/write sharing so a normal AO2 client and Oceanya can append while the same log file is visible to other readers.
 
 ## Where `chat_config.ini` is loaded from
 Color config values are read through:
