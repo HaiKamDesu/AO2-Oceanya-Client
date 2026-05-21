@@ -60,7 +60,12 @@ Use this file as the first stop before broad repository searches. It should poin
 ## Save File And Update Persistence
 - Doc: `Documentation/SaveFileAndUpdatePersistence.md`
 - Main code: `Common/SaveFile.cs`, `OceanyaClient/App.xaml.cs`, `Common/OceanyaTestMode.cs`, `OceanyaClient/Components/Forms/InitialConfigurationWindow.xaml.cs`
-- Notes: Normal builds store user settings in `%APPDATA%/OceanyaClient/savefile.json`, not beside the release executable. Debugger/dev-profile launches use `%APPDATA%/OceanyaClientDev/savefile.json`; NUnit/testhost processes use a temp `OceanyaClientUnitTests` path; explicit `--test-savefile=...` launches use that path before first load. Initial configuration startup can remap a missing saved `config.ini` from a deleted release folder to the current app folder's `config.ini` or `base/config.ini`. Save load diagnostics are written beside the active savefile; unreadable files are copied to `savefile.unreadable.<timestamp>.json` before falling back to defaults.
+- Notes: Normal builds store user settings in `%APPDATA%/OceanyaClient/savefile.json`, not beside the release executable. Debugger/dev-profile launches use `%APPDATA%/OceanyaClientDev/savefile.json`; NUnit/testhost processes use a temp `OceanyaClientUnitTests` path; explicit `--test-savefile=...` launches use that path before first load. Initial configuration startup can remap a missing saved `config.ini` from a deleted release folder to the current app folder's `config.ini` or `base/config.ini`. Save load diagnostics are written beside the active savefile; unreadable files are copied to `savefile.unreadable.<timestamp>.json` before falling back to defaults. `SaveFile.Data.Updater.Stable` and `.Test` store channel-specific GitHub release updater state such as skipped release tag/version, last seen release, and last check/failure timestamps.
+
+## GitHub Releases Auto-Updater
+- Main code: `OceanyaClient/Features/Updates/*`, `OceanyaClient/Components/Forms/UpdateAvailableWindow.xaml(.cs)`, `OceanyaClient/Components/Forms/InitialConfigurationWindow.xaml(.cs)`, `OceanyaUpdater/Program.cs`
+- Tests: `UnitTests/AutoUpdaterTests.cs`
+- Notes: Startup checks run asynchronously after `InitialConfigurationWindow` loads. `UpdateEnvironment` selects Stable for Release/public binaries and Test for Debug/developer binaries; Release ignores developer channel overrides. Automatic updates require public GitHub release `update-manifest.json` for `HaiKamDesu/AO2-Oceanya-Client`, matching channel (`stable` or `test`), `win`/`x64`, recognized channel-specific asset name, SHA-256, and a newer strict numeric version. Stable accepts only non-prerelease releases; Test accepts GitHub prereleases because unauthenticated clients cannot read drafts. Downloads stage under `%LOCALAPPDATA%/OceanyaClient/Updates` for Stable and `%LOCALAPPDATA%/OceanyaClientDev/Updates` for Test; zip extraction rejects traversal/absolute/ADS/symlink/reparse paths. `OceanyaUpdater.exe` is the external replace-on-restart process and handles Hivemind stop signaling, backup, rollback, logging, and relaunch.
 
 ## Asset Refresh Cache
 - Main code: `OceanyaClient/ClientAssetRefreshService.cs`, `OceanyaClient/Components/Forms/InitialConfigurationWindow.xaml.cs`
@@ -81,8 +86,8 @@ Use this file as the first stop before broad repository searches. It should poin
 
 ## Release Packaging
 - Doc: `Documentation/ReleasePackaging.md`
-- Main code: `Directory.Build.props`, `OceanyaHivemindAgent/OceanyaHivemindAgent.csproj`, `OceanyaClient/OceanyaClient.csproj`
-- Notes: Release builds package the client output as `Oceanya Client v<version>` and the zip now preserves that outer folder.
+- Main code: `Directory.Build.props`, `OceanyaHivemindAgent/OceanyaHivemindAgent.csproj`, `OceanyaClient/OceanyaClient.csproj`, `OceanyaUpdater/OceanyaUpdater.csproj`, `.github/workflows/release.yml`
+- Notes: Release builds emit `OceanyaClient/bin/Release/Github Release/Oceanya Client <version>/` with `Oceanya.Client.win-x64.v<version>.zip`, `.sha256`, and stable `update-manifest.json`. Debug builds emit `OceanyaClient/bin/Debug/Github Release Test/Oceanya Client <version>-test/` with `Oceanya.Client.win-x64.test-v<version>.zip`, `.sha256`, and test `update-manifest.json`. The release workflow consumes those generated assets and publishes GitHub provenance attestation.
 
 ## File Hivemind
 - Doc: `Documentation/AgentDocumentationWorkflow.md`

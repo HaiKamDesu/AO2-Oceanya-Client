@@ -16,6 +16,11 @@ Unit tests do not use the productive AppData path. `Common/SaveFile.cs` detects 
 
 The release folder itself is not the default save location. If a user deletes `Oceanya Client v6.1` and unzips a new release folder, their normal save file remains in AppData.
 
+Updater downloads and logs follow the same profile split, but under LocalAppData:
+
+- Stable/Release updates: `%LOCALAPPDATA%/OceanyaClient/Updates`
+- Debug/Test updates: `%LOCALAPPDATA%/OceanyaClientDev/Updates`
+
 ## Preserved User State
 `Common/SaveFile.cs` persists and normalizes the state users are likely to care about, including:
 
@@ -24,6 +29,7 @@ The release folder itself is not the default save location. If a user deletes `O
 - area/music popup sizes, music collapsed categories, custom music commands, custom music names, frequently used music, and music section order
 - callword rules, extra audio rules, audio volumes, viewport/chat state, visualizer settings, character tags, creator presets, and window states
 - File Hivemind, Google Drive sync, AI bot, and advanced-feature settings
+- updater state under `SaveFile.Data.Updater.Stable` and `SaveFile.Data.Updater.Test`, including skipped release tag/version and last seen/check/failure timestamps
 
 ## Migration Behavior
 There is no explicit integer schema version. Migration is handled by normal JSON deserialization plus `NormalizeLoadedData`:

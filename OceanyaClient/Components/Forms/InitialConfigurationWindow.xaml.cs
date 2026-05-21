@@ -1,10 +1,12 @@
 ﻿using Microsoft.Win32;
 using AOBot_Testing.Structures;
 using Common;
+using OceanyaClient.Features.Updates;
 using OceanyaClient.Features.Startup;
 using OceanyaClient.Utilities;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -31,6 +33,9 @@ namespace OceanyaClient
         private ServerEndpointDefinition? selectedServer;
         private bool ignoreStartupFunctionalitySelectionChanged;
         private bool autoLaunchQueued;
+        private bool updateCheckStarted;
+        private readonly UpdateCheckService updateCheckService = new UpdateCheckService();
+        private UpdateRelease? availableUpdate;
 
         public InitialConfigurationWindow()
         {
@@ -738,6 +743,7 @@ namespace OceanyaClient
         {
             ApplySelectedFunctionalityUi(animate: false);
             MarkAutomationReady();
+            StartUpdateCheckOnce();
 
             if (!autoLaunchQueued && OceanyaTestMode.Current.IsEnabled && OceanyaTestMode.Current.AutoLaunchStartupFunctionality)
             {
@@ -746,6 +752,186 @@ namespace OceanyaClient
                     DispatcherPriority.Background,
                     new Action(() => OkButton_Click(OkButton, new RoutedEventArgs(Button.ClickEvent, OkButton))));
             }
+        }
+
+        private void StartUpdateCheckOnce()
+        {
+            if (updateCheckStarted || OceanyaTestMode.Current.IsEnabled)
+            {
+                return;
+            }
+
+            updateCheckStarted = true;
+            _ = CheckForUpdatesAfterStartupAsync();
+        }
+
+        private async Task CheckForUpdatesAfterStartupAsync()
+        {
+            UpdateRelease? release = await updateCheckService.CheckForUpdateAsync(interactive: false, CancellationToken.None);
+            if (release == null)
+            {
+                return;
+            }
+
+            await Dispatcher.InvokeAsync(() =>
+            {
+                availableUpdate = release;
+                UpdateAvailableLinkTextBlock.Text = BuildUpdateLinkText(release);
+                UpdateAvailableLinkTextBlock.Visibility = Visibility.Visible;
+            });
+
+            if (!updateCheckService.IsSkipped(release))
+            {
+                await Dispatcher.InvokeAsync(() => ShowUpdatePrompt(release, explicitUserAction: false));
+            }
+        }
+
+        private void UpdateAvailableLinkText_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (availableUpdate != null)
+            {
+                ShowUpdatePrompt(availableUpdate, explicitUserAction: true);
+                return;
+            }
+
+            _ = CheckForUpdatesFromLinkAsync();
+        }
+
+        private async Task CheckForUpdatesFromLinkAsync()
+        {
+            try
+            {
+                UpdateRelease? release = await updateCheckService.CheckForUpdateAsync(interactive: true, CancellationToken.None);
+                if (release == null)
+                {
+                    OceanyaMessageBox.Show(
+                        HostWindow,
+                        $"No newer {updateCheckService.Environment.ChannelName} update is available.",
+                        "Update Check",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                    return;
+                }
+
+                availableUpdate = release;
+                UpdateAvailableLinkTextBlock.Text = BuildUpdateLinkText(release);
+                UpdateAvailableLinkTextBlock.Visibility = Visibility.Visible;
+                ShowUpdatePrompt(release, explicitUserAction: true);
+            }
+            catch (Exception ex)
+            {
+                OceanyaMessageBox.Show(
+                    HostWindow,
+                    "Could not check for updates:\n" + ex.Message,
+                    "Update Check Failed",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+        }
+
+        private void ShowUpdatePrompt(UpdateRelease release, bool explicitUserAction)
+        {
+            UpdateAvailableDialogResult result = UpdateAvailableWindow.Show(HostWindow, release);
+            if (result == UpdateAvailableDialogResult.Skip)
+            {
+                updateCheckService.Skip(release);
+                return;
+            }
+
+            if (result == UpdateAvailableDialogResult.Update)
+            {
+                _ = StartUpdateAsync(release, explicitUserAction);
+            }
+        }
+
+        private static string BuildUpdateLinkText(UpdateRelease release)
+        {
+            bool isTest = string.Equals(release.Manifest.Channel, "test", StringComparison.OrdinalIgnoreCase);
+            return isTest
+                ? "Test update to " + release.Manifest.Tag
+                : "Update to " + release.Manifest.Tag;
+        }
+
+        private async Task StartUpdateAsync(UpdateRelease release, bool explicitUserAction)
+        {
+            Window? owner = HostWindow ?? Window.GetWindow(this) ?? Application.Current?.MainWindow;
+            try
+            {
+                if (owner != null && !OceanyaTestMode.Current.DisableWaitForms)
+                {
+                    await WaitForm.ShowFormAsync("Downloading update...", owner);
+                    WaitForm.SetSubtitle("Starting download...");
+                }
+
+                Progress<double> progress = new Progress<double>(value =>
+                {
+                    int percent = (int)Math.Round(Math.Clamp(value, 0d, 1d) * 100d);
+                    WaitForm.SetSubtitle($"Downloading update... {percent}%");
+                });
+                UpdateStagingResult staging = await updateCheckService.StageUpdateAsync(
+                    release,
+                    progress,
+                    CancellationToken.None);
+
+                if (owner != null && !OceanyaTestMode.Current.DisableWaitForms)
+                {
+                    WaitForm.SetSubtitle("Launching updater...");
+                    await WaitForm.CloseFormAsync();
+                }
+
+                updateCheckService.LaunchUpdaterAndExit(release, staging);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                if (owner != null && !OceanyaTestMode.Current.DisableWaitForms)
+                {
+                    await WaitForm.CloseFormAsync();
+                }
+
+                MessageBoxResult openDecision = OceanyaMessageBox.Show(
+                    owner,
+                    ex.Message + "\n\nOpen the GitHub release page for a manual update?",
+                    "Manual Update Required",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+                if (openDecision == MessageBoxResult.Yes)
+                {
+                    OpenReleasePage(release.HtmlUrl);
+                }
+            }
+            catch (Exception ex)
+            {
+                if (owner != null && !OceanyaTestMode.Current.DisableWaitForms)
+                {
+                    await WaitForm.CloseFormAsync();
+                }
+
+                if (explicitUserAction)
+                {
+                    OceanyaMessageBox.Show(
+                        owner,
+                        "Update failed:\n" + ex.Message,
+                        "Update Failed",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
+                }
+            }
+        }
+
+        private static void OpenReleasePage(string url)
+        {
+            if (!Uri.TryCreate(url, UriKind.Absolute, out Uri? uri)
+                || !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = uri.ToString(),
+                UseShellExecute = true
+            });
         }
 
         private void ApplyTestStartupOverrides()

@@ -425,6 +425,30 @@ namespace OceanyaClient
             };
     }
 
+    public class UpdaterSettings
+    {
+        public UpdaterChannelSettings Stable { get; set; } = new UpdaterChannelSettings();
+        public UpdaterChannelSettings Test { get; set; } = new UpdaterChannelSettings();
+
+        // Legacy stable fields kept for migration from the first updater implementation.
+        public string SkippedReleaseTag { get; set; } = string.Empty;
+        public string SkippedReleaseVersion { get; set; } = string.Empty;
+        public string LastSeenReleaseTag { get; set; } = string.Empty;
+        public string LastSeenReleaseVersion { get; set; } = string.Empty;
+        public DateTimeOffset? LastCheckUtc { get; set; }
+        public DateTimeOffset? LastFailureUtc { get; set; }
+    }
+
+    public class UpdaterChannelSettings
+    {
+        public string SkippedReleaseTag { get; set; } = string.Empty;
+        public string SkippedReleaseVersion { get; set; } = string.Empty;
+        public string LastSeenReleaseTag { get; set; } = string.Empty;
+        public string LastSeenReleaseVersion { get; set; } = string.Empty;
+        public DateTimeOffset? LastCheckUtc { get; set; }
+        public DateTimeOffset? LastFailureUtc { get; set; }
+    }
+
     public class SaveData
     {
         //Initial Configuration
@@ -444,6 +468,7 @@ namespace OceanyaClient
         public AO2AiBotSettings AO2AiBot { get; set; } = new AO2AiBotSettings();
         public FileHivemindSettings FileHivemind { get; set; } = new FileHivemindSettings();
         public GoogleDriveSyncSettings GoogleDriveSync { get; set; } = new GoogleDriveSyncSettings();
+        public UpdaterSettings Updater { get; set; } = new UpdaterSettings();
 
 
         public string OOCName { get; set; } = "";
@@ -740,6 +765,8 @@ namespace OceanyaClient
             data.AO2AiBot ??= new AO2AiBotSettings();
             data.FileHivemind ??= new FileHivemindSettings();
             data.GoogleDriveSync ??= new GoogleDriveSyncSettings();
+            data.Updater ??= new UpdaterSettings();
+            NormalizeUpdaterSettings(data.Updater);
             data.DreddBackgroundOverlayOverride.OverlayDatabase ??= new List<DreddOverlayEntry>();
             data.DreddBackgroundOverlayOverride.MutationCache ??= new List<DreddOverlayMutationRecord>();
             data.DreddBackgroundOverlayOverride.SelectedOverlayName ??= string.Empty;
@@ -999,6 +1026,51 @@ namespace OceanyaClient
                     string.Equals(p.Id, data.EmoteVisualizer.SelectedPresetId, StringComparison.OrdinalIgnoreCase));
                 data.EmoteVisualizer.SelectedPresetName = selected.Name;
             }
+        }
+
+        private static void NormalizeUpdaterSettings(UpdaterSettings settings)
+        {
+            settings.Stable ??= new UpdaterChannelSettings();
+            settings.Test ??= new UpdaterChannelSettings();
+
+            settings.SkippedReleaseTag = settings.SkippedReleaseTag?.Trim() ?? string.Empty;
+            settings.SkippedReleaseVersion = settings.SkippedReleaseVersion?.Trim() ?? string.Empty;
+            settings.LastSeenReleaseTag = settings.LastSeenReleaseTag?.Trim() ?? string.Empty;
+            settings.LastSeenReleaseVersion = settings.LastSeenReleaseVersion?.Trim() ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(settings.Stable.SkippedReleaseTag))
+            {
+                settings.Stable.SkippedReleaseTag = settings.SkippedReleaseTag;
+            }
+
+            if (string.IsNullOrWhiteSpace(settings.Stable.SkippedReleaseVersion))
+            {
+                settings.Stable.SkippedReleaseVersion = settings.SkippedReleaseVersion;
+            }
+
+            if (string.IsNullOrWhiteSpace(settings.Stable.LastSeenReleaseTag))
+            {
+                settings.Stable.LastSeenReleaseTag = settings.LastSeenReleaseTag;
+            }
+
+            if (string.IsNullOrWhiteSpace(settings.Stable.LastSeenReleaseVersion))
+            {
+                settings.Stable.LastSeenReleaseVersion = settings.LastSeenReleaseVersion;
+            }
+
+            settings.Stable.LastCheckUtc ??= settings.LastCheckUtc;
+            settings.Stable.LastFailureUtc ??= settings.LastFailureUtc;
+
+            NormalizeUpdaterChannelSettings(settings.Stable);
+            NormalizeUpdaterChannelSettings(settings.Test);
+        }
+
+        private static void NormalizeUpdaterChannelSettings(UpdaterChannelSettings settings)
+        {
+            settings.SkippedReleaseTag = settings.SkippedReleaseTag?.Trim() ?? string.Empty;
+            settings.SkippedReleaseVersion = settings.SkippedReleaseVersion?.Trim() ?? string.Empty;
+            settings.LastSeenReleaseTag = settings.LastSeenReleaseTag?.Trim() ?? string.Empty;
+            settings.LastSeenReleaseVersion = settings.LastSeenReleaseVersion?.Trim() ?? string.Empty;
         }
 
         private static void NormalizeAO2AiBotSettings(AO2AiBotSettings settings)

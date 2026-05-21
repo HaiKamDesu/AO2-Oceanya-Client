@@ -17,6 +17,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AO2 AI Bot", "AO2AIBot\AO2A
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UiAutomationTests", "UiAutomationTests\UiAutomationTests.csproj", "{9A3C0D8D-4C17-4D2B-9B49-57DF7FE6D0ED}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OceanyaUpdater", "OceanyaUpdater\OceanyaUpdater.csproj", "{2F4C1827-1998-41B0-96F1-A36E69C9C996}"
+EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{6F313B9C-030C-4ABC-86D0-457D68A84AEA}"
 	ProjectSection(SolutionItems) = preProject
 		Directory.Build.props = Directory.Build.props
@@ -80,6 +82,10 @@ Global
 		{9A3C0D8D-4C17-4D2B-9B49-57DF7FE6D0ED}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{9A3C0D8D-4C17-4D2B-9B49-57DF7FE6D0ED}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{9A3C0D8D-4C17-4D2B-9B49-57DF7FE6D0ED}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2F4C1827-1998-41B0-96F1-A36E69C9C996}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2F4C1827-1998-41B0-96F1-A36E69C9C996}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2F4C1827-1998-41B0-96F1-A36E69C9C996}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2F4C1827-1998-41B0-96F1-A36E69C9C996}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -1,0 +1,169 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 'Release channel to publish'
+        required: true
+        default: 'stable'
+        type: choice
+        options:
+          - stable
+          - test
+  push:
+    tags:
+      - 'v*'
+      - 'test-v*'
+
+permissions:
+  contents: write
+  attestations: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          [xml]$props = Get-Content Directory.Build.props
+          $version = $props.Project.PropertyGroup.OceanyaAppVersion
+          $channel = "${{ github.event.inputs.channel }}"
+          if ([string]::IsNullOrWhiteSpace($channel)) { $channel = "stable" }
+          if ($env:GITHUB_REF_TYPE -eq "tag" -and $env:GITHUB_REF_NAME.StartsWith("test-v")) {
+            $channel = "test"
+          }
+          $tag = if ($channel -eq "test") { "test-v$version" } else { "v$version" }
+          if ($env:GITHUB_REF_TYPE -eq "tag" -and $env:GITHUB_REF_NAME -ne $tag) {
+            throw "Tag $env:GITHUB_REF_NAME does not match OceanyaAppVersion $version"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "channel=$channel" >> $env:GITHUB_OUTPUT
+
+      - name: Build solution (stable)
+        if: steps.version.outputs.channel == 'stable'
+        run: dotnet build "Oceanya Client.sln" --configuration Release
+
+      - name: Build solution (test)
+        if: steps.version.outputs.channel == 'test'
+        run: dotnet build "Oceanya Client.sln" --configuration Debug
+
+      - name: Run unit tests (stable)
+        if: steps.version.outputs.channel == 'stable'
+        run: >
+          dotnet test UnitTests/UnitTests.csproj
+          --configuration Release
+          --no-build
+          --filter "Category!=RequiresConnection&Category!=RequiresCredentials"
+          --logger "trx;LogFileName=unit-test-results.trx"
+          --results-directory TestResults/UnitTests
+
+      - name: Run unit tests (test)
+        if: steps.version.outputs.channel == 'test'
+        run: >
+          dotnet test UnitTests/UnitTests.csproj
+          --configuration Debug
+          --no-build
+          --filter "Category!=RequiresConnection&Category!=RequiresCredentials"
+          --logger "trx;LogFileName=unit-test-results.trx"
+          --results-directory TestResults/UnitTests
+
+      - name: Prepare release assets
+        id: assets
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $tag = "${{ steps.version.outputs.tag }}"
+          $channel = "${{ steps.version.outputs.channel }}"
+          if ($channel -eq "test") {
+            $assetDir = "OceanyaClient/bin/Debug/Github Release Test/Oceanya Client $version-test"
+          } else {
+            $assetDir = "OceanyaClient/bin/Release/Github Release/Oceanya Client $version"
+          }
+          if (!(Test-Path $assetDir)) {
+            throw "Expected generated release asset folder not found: $assetDir"
+          }
+          $manifestPath = Join-Path $assetDir "update-manifest.json"
+          $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+          $assetName = $manifest.assetName
+          $assetPath = Join-Path $assetDir $assetName
+          if (!(Test-Path $assetPath)) {
+            throw "Expected package asset not found: $assetPath"
+          }
+          $sha256 = (Get-FileHash $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($sha256 -ne $manifest.sha256) {
+            throw "Generated manifest hash does not match package hash."
+          }
+
+          "assetName=$assetName" >> $env:GITHUB_OUTPUT
+          "assetPath=$assetPath" >> $env:GITHUB_OUTPUT
+          "manifestPath=$manifestPath" >> $env:GITHUB_OUTPUT
+          "shaPath=$assetPath.sha256" >> $env:GITHUB_OUTPUT
+          "sha256=$sha256" >> $env:GITHUB_OUTPUT
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ steps.assets.outputs.assetPath }}
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ steps.version.outputs.tag }}"
+          $channel = "${{ steps.version.outputs.channel }}"
+          $title = if ($channel -eq "test") { "Oceanya Client Test $tag" } else { "Oceanya Client $tag" }
+          $notesFile = "documentation/ReleaseNotes/OceanyaClient-$tag.md"
+          if (!(Test-Path $notesFile)) {
+            "Automated release for $tag." | Set-Content release-notes.generated.md -Encoding UTF8
+            $notesFile = "release-notes.generated.md"
+          }
+
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag `
+              "${{ steps.assets.outputs.assetPath }}" `
+              "${{ steps.assets.outputs.shaPath }}" `
+              "${{ steps.assets.outputs.manifestPath }}" `
+              --clobber
+          } elseif ($channel -eq "test") {
+            gh release create $tag `
+              "${{ steps.assets.outputs.assetPath }}" `
+              "${{ steps.assets.outputs.shaPath }}" `
+              "${{ steps.assets.outputs.manifestPath }}" `
+              --title $title `
+              --notes-file $notesFile `
+              --prerelease
+          } else {
+            gh release create $tag `
+              "${{ steps.assets.outputs.assetPath }}" `
+              "${{ steps.assets.outputs.shaPath }}" `
+              "${{ steps.assets.outputs.manifestPath }}" `
+              --title $title `
+              --notes-file $notesFile
+          }
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-unit-test-results
+          path: TestResults/UnitTests/*.trx
+          if-no-files-found: warn

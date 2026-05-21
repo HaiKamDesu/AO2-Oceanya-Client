@@ -21,6 +21,7 @@
 	  <ProjectReference Include="..\AOBot-Testing\AO2.csproj" />
 	  <ProjectReference Include="..\Common\Common.csproj" />
 	  <ProjectReference Include="..\OceanyaClient\OceanyaClient.csproj" />
+	  <ProjectReference Include="..\OceanyaUpdater\OceanyaUpdater.csproj" />
 	</ItemGroup>
 
 </Project>

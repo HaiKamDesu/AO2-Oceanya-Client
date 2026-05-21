@@ -8,14 +8,25 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationIcon>..\OceanyaClient\Resources\OceanyaO.ico</ApplicationIcon>
     <ClientOutputDir>..\OceanyaClient\bin\$(Configuration)\net8.0-windows\</ClientOutputDir>
-    <ReleasePackageName>Oceanya Client v$(OceanyaAppVersion)</ReleasePackageName>
+    <UpdatePackageChannel Condition="'$(Configuration)' == 'Debug'">test</UpdatePackageChannel>
+    <UpdatePackageChannel Condition="'$(UpdatePackageChannel)' == ''">stable</UpdatePackageChannel>
+    <UpdatePackageTag Condition="'$(UpdatePackageChannel)' == 'test'">test-v$(OceanyaAppVersion)</UpdatePackageTag>
+    <UpdatePackageTag Condition="'$(UpdatePackageTag)' == ''">v$(OceanyaAppVersion)</UpdatePackageTag>
+    <UpdatePackageFolderName Condition="'$(UpdatePackageChannel)' == 'test'">Oceanya Client $(OceanyaAppVersion)-test</UpdatePackageFolderName>
+    <UpdatePackageFolderName Condition="'$(UpdatePackageFolderName)' == ''">Oceanya Client $(OceanyaAppVersion)</UpdatePackageFolderName>
+    <GithubReleaseRoot Condition="'$(UpdatePackageChannel)' == 'test'">..\OceanyaClient\bin\$(Configuration)\Github Release Test\</GithubReleaseRoot>
+    <GithubReleaseRoot Condition="'$(GithubReleaseRoot)' == ''">..\OceanyaClient\bin\$(Configuration)\Github Release\</GithubReleaseRoot>
+    <GithubReleaseDir>$(GithubReleaseRoot)$(UpdatePackageFolderName)\</GithubReleaseDir>
     <ReleasePackageStagingDir>..\OceanyaClient\bin\$(Configuration)\ReleaseZipStaging\</ReleasePackageStagingDir>
-    <ReleasePackageDir>..\OceanyaClient\bin\$(Configuration)\$(ReleasePackageName)\</ReleasePackageDir>
-    <ReleasePackageZipPath>..\OceanyaClient\bin\$(Configuration)\$(ReleasePackageName).zip</ReleasePackageZipPath>
+    <ReleasePackageDir>..\OceanyaClient\bin\$(Configuration)\PackagedApp\$(UpdatePackageFolderName)\</ReleasePackageDir>
+    <ReleasePackageAssetName>Oceanya.Client.win-x64.$(UpdatePackageTag).zip</ReleasePackageAssetName>
+    <ReleasePackageZipPath>$(GithubReleaseDir)$(ReleasePackageAssetName)</ReleasePackageZipPath>
+    <ReleaseManifestPath>$(GithubReleaseDir)update-manifest.json</ReleaseManifestPath>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\OceanyaClient\OceanyaClient.csproj" />
+    <ProjectReference Include="..\OceanyaUpdater\OceanyaUpdater.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -34,6 +45,9 @@
       <HivemindFilesToCopy Include="$(TargetDir)$(AssemblyName).runtimeconfig.json" Condition="Exists('$(TargetDir)$(AssemblyName).runtimeconfig.json')" />
       <HivemindFilesToCopy Include="$(TargetDir)$(AssemblyName).pdb" Condition="Exists('$(TargetDir)$(AssemblyName).pdb')" />
       <HivemindFilesToCopy Include="$(TargetDir)Resources\**\*" Condition="Exists('$(TargetDir)Resources')" />
+      <HivemindFilesToCopy Include="..\OceanyaUpdater\bin\$(Configuration)\net8.0-windows\OceanyaUpdater.exe" Condition="Exists('..\OceanyaUpdater\bin\$(Configuration)\net8.0-windows\OceanyaUpdater.exe')" />
+      <HivemindFilesToCopy Include="..\OceanyaUpdater\bin\$(Configuration)\net8.0-windows\OceanyaUpdater.deps.json" Condition="Exists('..\OceanyaUpdater\bin\$(Configuration)\net8.0-windows\OceanyaUpdater.deps.json')" />
+      <HivemindFilesToCopy Include="..\OceanyaUpdater\bin\$(Configuration)\net8.0-windows\OceanyaUpdater.runtimeconfig.json" Condition="Exists('..\OceanyaUpdater\bin\$(Configuration)\net8.0-windows\OceanyaUpdater.runtimeconfig.json')" />
     </ItemGroup>
 
     <Copy
@@ -43,15 +57,18 @@
       OverwriteReadOnlyFiles="true" />
   </Target>
 
-  <Target Name="CreateReleasePackageZip" AfterTargets="CopyHivemindAgentIntoClientOutput" Condition="'$(Configuration)' == 'Release'">
+  <Target Name="CreateReleasePackageZip" AfterTargets="CopyHivemindAgentIntoClientOutput" Condition="'$(Configuration)' == 'Release' Or '$(Configuration)' == 'Debug'">
     <RemoveDir Directories="$(ReleasePackageDir)" Condition="Exists('$(ReleasePackageDir)')" />
     <Delete Files="$(ReleasePackageZipPath)" Condition="Exists('$(ReleasePackageZipPath)')" />
     <RemoveDir Directories="$(ReleasePackageStagingDir)" Condition="Exists('$(ReleasePackageStagingDir)')" />
+    <MakeDir Directories="$(GithubReleaseDir)" />
     <MakeDir Directories="$(ReleasePackageDir)" />
-    <MakeDir Directories="$(ReleasePackageStagingDir)\$(ReleasePackageName)" />
+    <MakeDir Directories="$(ReleasePackageStagingDir)\$(UpdatePackageFolderName)" />
 
     <ItemGroup>
-      <ClientReleaseFiles Include="$(ClientOutputDir)**\*" />
+      <ClientReleaseFiles
+        Include="$(ClientOutputDir)**\*"
+        Exclude="$(ClientOutputDir)OceanyaClient.exe.WebView2\**\*;$(ClientOutputDir)win-x64\**\*" />
     </ItemGroup>
 
     <Copy
@@ -66,12 +83,32 @@
 
     <Copy
       SourceFiles="@(ReleasePackageStageFiles)"
-      DestinationFiles="@(ReleasePackageStageFiles->'$(ReleasePackageStagingDir)\$(ReleasePackageName)\%(RecursiveDir)%(Filename)%(Extension)')"
+      DestinationFiles="@(ReleasePackageStageFiles->'$(ReleasePackageStagingDir)\$(UpdatePackageFolderName)\%(RecursiveDir)%(Filename)%(Extension)')"
       SkipUnchangedFiles="false"
       OverwriteReadOnlyFiles="true" />
 
     <ZipDirectory SourceDirectory="$(ReleasePackageStagingDir)" DestinationFile="$(ReleasePackageZipPath)" />
+    <GetFileHash Files="$(ReleasePackageZipPath)" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="ReleasePackageHash" />
+    </GetFileHash>
+    <ItemGroup>
+      <ReleaseManifestLines Include="{" />
+      <ReleaseManifestLines Include="  &quot;version&quot;: &quot;$(OceanyaAppVersion)&quot;," />
+      <ReleaseManifestLines Include="  &quot;tag&quot;: &quot;$(UpdatePackageTag)&quot;," />
+      <ReleaseManifestLines Include="  &quot;channel&quot;: &quot;$(UpdatePackageChannel)&quot;," />
+      <ReleaseManifestLines Include="  &quot;os&quot;: &quot;win&quot;," />
+      <ReleaseManifestLines Include="  &quot;arch&quot;: &quot;x64&quot;," />
+      <ReleaseManifestLines Include="  &quot;assetName&quot;: &quot;$(ReleasePackageAssetName)&quot;," />
+      <ReleaseManifestLines Include="  &quot;sha256&quot;: &quot;%(ReleasePackageHash.FileHash)&quot;," />
+      <ReleaseManifestLines Include="  &quot;minimumSupportedVersion&quot;: &quot;&quot;," />
+      <ReleaseManifestLines Include="  &quot;entryExe&quot;: &quot;OceanyaClient.exe&quot;," />
+      <ReleaseManifestLines Include="  &quot;releaseNotesSource&quot;: &quot;github_release_body&quot;" />
+      <ReleaseManifestLines Include="}" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(ReleaseManifestPath)" Lines="@(ReleaseManifestLines)" Overwrite="true" Encoding="UTF-8" />
+    <WriteLinesToFile File="$(ReleasePackageZipPath).sha256" Lines="%(ReleasePackageHash.FileHash)  $(ReleasePackageAssetName)" Overwrite="true" Encoding="ASCII" />
     <RemoveDir Directories="$(ReleasePackageStagingDir)" Condition="Exists('$(ReleasePackageStagingDir)')" />
+    <Message Importance="high" Text="Created $(UpdatePackageChannel) GitHub release assets in $(GithubReleaseDir)" />
   </Target>
 
 </Project>

@@ -344,12 +344,23 @@
                         HorizontalAlignment="Center"
                         Click="OkButton_Click"/>
 
-                <TextBlock Text="Advanced feature flagging"
-                           Foreground="#FFB8B8B8"
-                           FontSize="11"
-                           Margin="0,10,0,0"
-                           HorizontalAlignment="Right"
-                           Cursor="Hand"
-                           MouseLeftButtonDown="AdvancedFeatureFlaggingText_MouseLeftButtonDown"/>
+                <DockPanel Margin="0,10,0,0" LastChildFill="False">
+                    <TextBlock x:Name="UpdateAvailableLinkTextBlock"
+                               AutomationProperties.AutomationId="InitialConfig.UpdateAvailableLink"
+                               Text=""
+                               Foreground="#FF9A9A9A"
+                               FontSize="11"
+                               HorizontalAlignment="Left"
+                               Cursor="Hand"
+                               Visibility="Collapsed"
+                               MouseLeftButtonDown="UpdateAvailableLinkText_MouseLeftButtonDown"/>
+                    <TextBlock Text="Advanced feature flagging"
+                               Foreground="#FFB8B8B8"
+                               FontSize="11"
+                               HorizontalAlignment="Right"
+                               Cursor="Hand"
+                               DockPanel.Dock="Right"
+                               MouseLeftButtonDown="AdvancedFeatureFlaggingText_MouseLeftButtonDown"/>
+                </DockPanel>
     </StackPanel>
 </local:OceanyaWindowContentControl>
