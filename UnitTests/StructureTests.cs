@@ -716,6 +716,27 @@ namespace UnitTests
         }
 
         [Test]
+        public void Test_AO2ViewportAssetResolver_ChatDefaultTokenUsesThemeDefaultException()
+        {
+            string characterDirectory = Path.Combine(_tempDir, "characters", "LesbianGf");
+            Directory.CreateDirectory(characterDirectory);
+            string iniPath = Path.Combine(characterDirectory, "char.ini");
+            File.WriteAllText(
+                iniPath,
+                "[Options]\n" +
+                "name=LesbianGf\n" +
+                "showname=Lesbian GF\n" +
+                "chat=default\n" +
+                "[Emotions]\n" +
+                "number=1\n" +
+                "1=normal#-#normal#0#1\n");
+
+            CharacterFolder character = CharacterFolder.Create(iniPath);
+
+            Assert.That(AO2ViewportAssetResolver.ResolveCharacterChatToken(character), Is.EqualTo(string.Empty));
+        }
+
+        [Test]
         public void Test_AO2ChatPreviewResolver_ReadsCaseInsensitiveCustomConfigNames()
         {
             string viewportThemeDir = Path.Combine(_tempDir, "themes", "(714x688) FullChar");

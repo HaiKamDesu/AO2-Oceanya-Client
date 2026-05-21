@@ -77,7 +77,6 @@ namespace OceanyaClient.Features.Viewport
             BackgroundImage.RenderTransform = backgroundShakeTransform;
             ChatPreview.RenderTransform = chatShakeTransform;
             audioManager.RefreshVolumes();
-            InitializeChatBackgroundMenu();
             ApplySavedChatBackground();
             IsVisibleChanged += OnIsVisibleChanged;
             Unloaded += (_, _) => audioManager.Dispose();
@@ -109,160 +108,15 @@ namespace OceanyaClient.Features.Viewport
                 ? ChatPreview.ChatToken
                 : AO2ViewportAssetResolver.ResolveCharacterChatToken(CurrentCharacter);
 
-        private void InitializeChatBackgroundMenu()
-        {
-            ContextMenu menu = new ContextMenu();
-            ContextMenuSectionHelper.AddHeader(menu, "Chatbox", addLeadingSeparator: false);
-            MenuItem chooseColorItem = new MenuItem { Header = "Set chat background color..." };
-            chooseColorItem.Click += (_, _) => PickChatBackgroundColor();
-            MenuItem transparentItem = new MenuItem { Header = "Use transparent chat background" };
-            transparentItem.Click += (_, _) => SetChatBackgroundColor(null);
-            menu.Items.Add(chooseColorItem);
-            menu.Items.Add(transparentItem);
-            ChatPreview.ContextMenu = menu;
-        }
-
-        private void PickChatBackgroundColor()
+        internal void PickChatBackgroundColor()
         {
             Color initialColor = TryParseSavedChatBackgroundColor(SaveFile.Data.GMViewportChatBackgroundColor)
                 ?? Color.FromArgb(180, 0, 0, 0);
 
-            Color? selected = ShowChatBackgroundColorDialog(initialColor);
+            Color? selected = AOCharacterFileCreatorWindow.ShowSolidColorPickerDialog(Window.GetWindow(this), initialColor);
             if (selected.HasValue)
             {
                 SetChatBackgroundColor(selected.Value);
-            }
-        }
-
-        private Color? ShowChatBackgroundColorDialog(Color initialColor)
-        {
-            ChatBackgroundColorPickerContent content = new ChatBackgroundColorPickerContent(initialColor);
-            OceanyaWindowPresentationOptions options = new OceanyaWindowPresentationOptions
-            {
-                Owner = Window.GetWindow(this),
-                Title = "Chat Background Color",
-                HeaderText = "Chat Background Color",
-                Width = 360,
-                Height = 270,
-                MinWidth = 360,
-                MinHeight = 270,
-                ShowInTaskbar = false,
-                WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                IsUserResizeEnabled = false,
-                BodyMargin = new Thickness(0)
-            };
-
-            return OceanyaWindowManager.ShowDialog(content, options) == true
-                ? content.SelectedColor
-                : null;
-        }
-
-        private static Slider CreateColorSlider(byte value)
-        {
-            return new Slider
-            {
-                Minimum = 0,
-                Maximum = 255,
-                Value = value,
-                TickFrequency = 1,
-                IsSnapToTickEnabled = true
-            };
-        }
-
-        private static Grid BuildColorSliderRow(string label, Slider slider, int row)
-        {
-            Grid grid = new Grid { Margin = new Thickness(0, 0, 0, 8) };
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.Children.Add(new TextBlock
-            {
-                Text = label,
-                Foreground = Brushes.White,
-                VerticalAlignment = VerticalAlignment.Center
-            });
-            Grid.SetColumn(slider, 1);
-            grid.Children.Add(slider);
-            Grid.SetRow(grid, row);
-            return grid;
-        }
-
-        private sealed class ChatBackgroundColorPickerContent : OceanyaWindowContentControl
-        {
-            private readonly Border preview;
-            private readonly Slider redSlider;
-            private readonly Slider greenSlider;
-            private readonly Slider blueSlider;
-
-            public ChatBackgroundColorPickerContent(Color initialColor)
-            {
-                Width = 358;
-                Height = 238;
-                Background = new SolidColorBrush(Color.FromRgb(30, 36, 45));
-
-                Grid root = new Grid { Margin = new Thickness(16) };
-                root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-                root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-                root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-                root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-                root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-                preview = new Border
-                {
-                    Height = 44,
-                    Margin = new Thickness(0, 0, 0, 14),
-                    CornerRadius = new CornerRadius(4),
-                    BorderBrush = new SolidColorBrush(Color.FromRgb(80, 95, 116)),
-                    BorderThickness = new Thickness(1)
-                };
-                Grid.SetRow(preview, 0);
-                root.Children.Add(preview);
-
-                redSlider = CreateColorSlider(initialColor.R);
-                greenSlider = CreateColorSlider(initialColor.G);
-                blueSlider = CreateColorSlider(initialColor.B);
-                root.Children.Add(BuildColorSliderRow("R", redSlider, 1));
-                root.Children.Add(BuildColorSliderRow("G", greenSlider, 2));
-                root.Children.Add(BuildColorSliderRow("B", blueSlider, 3));
-
-                redSlider.ValueChanged += (_, _) => RefreshPreview();
-                greenSlider.ValueChanged += (_, _) => RefreshPreview();
-                blueSlider.ValueChanged += (_, _) => RefreshPreview();
-
-                StackPanel buttons = new StackPanel
-                {
-                    Orientation = Orientation.Horizontal,
-                    HorizontalAlignment = HorizontalAlignment.Right,
-                    Margin = new Thickness(0, 14, 0, 0)
-                };
-                Button cancelButton = new Button
-                {
-                    Content = "Cancel",
-                    MinWidth = 78,
-                    Margin = new Thickness(0, 0, 8, 0)
-                };
-                Button okButton = new Button { Content = "OK", MinWidth = 78, IsDefault = true };
-                cancelButton.Click += (_, _) => RequestHostClose(false);
-                okButton.Click += (_, _) => RequestHostClose(true);
-                buttons.Children.Add(cancelButton);
-                buttons.Children.Add(okButton);
-                Grid.SetRow(buttons, 4);
-                root.Children.Add(buttons);
-
-                Content = root;
-                RefreshPreview();
-            }
-
-            public Color SelectedColor { get; private set; }
-
-            public override string HeaderText => "Chat Background Color";
-
-            private void RefreshPreview()
-            {
-                SelectedColor = Color.FromRgb(
-                    (byte)redSlider.Value,
-                    (byte)greenSlider.Value,
-                    (byte)blueSlider.Value);
-                preview.Background = new SolidColorBrush(SelectedColor);
             }
         }
 
@@ -271,7 +125,7 @@ namespace OceanyaClient.Features.Viewport
             SetChatBackgroundBrush(TryParseSavedChatBackgroundColor(SaveFile.Data.GMViewportChatBackgroundColor));
         }
 
-        private void SetChatBackgroundColor(Color? color)
+        internal void SetChatBackgroundColor(Color? color)
         {
             SaveFile.Data.GMViewportChatBackgroundColor = color.HasValue
                 ? $"#{color.Value.A:X2}{color.Value.R:X2}{color.Value.G:X2}{color.Value.B:X2}"
@@ -286,6 +140,30 @@ namespace OceanyaClient.Features.Viewport
                 ? new SolidColorBrush(color.Value)
                 : Brushes.Transparent;
             ChatPreview.RefreshPreview();
+        }
+
+        internal void ReleaseCharacterAssetsForDeletedFolder(string normalizedCharacterDirectory)
+        {
+            CharacterFolder? character = CurrentCharacter;
+            if (character == null || !IsSameDirectory(character.DirectoryPath, normalizedCharacterDirectory))
+            {
+                return;
+            }
+
+            ClearScene();
+        }
+
+        private static bool IsSameDirectory(string? candidatePath, string normalizedTarget)
+        {
+            if (string.IsNullOrWhiteSpace(candidatePath))
+            {
+                return false;
+            }
+
+            return string.Equals(
+                Path.GetFullPath(candidatePath.Trim()),
+                normalizedTarget,
+                StringComparison.OrdinalIgnoreCase);
         }
 
         private static Color? TryParseSavedChatBackgroundColor(string? value)

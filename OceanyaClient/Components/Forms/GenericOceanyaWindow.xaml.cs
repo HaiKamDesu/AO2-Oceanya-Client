@@ -441,13 +441,14 @@ namespace OceanyaClient
         /// </summary>
         public Window? SynchronizedMovePartner { get; set; }
 
-        private (int X, int Y)? _lastSyncedMoveOrigin;
-        private bool _isSynchronizingMove;
+        private GenericRect? synchronizedMoveStartRect;
+        private GenericRect? synchronizedMovePartnerStartRect;
 
         private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
             const int WM_GETMINMAXINFO = 0x0024;
             const int WM_MOVING = 0x0216;
+            const int WM_ENTERSIZEMOVE = 0x0231;
             const int WM_EXITSIZEMOVE = 0x0232;
 
             if (msg == WM_GETMINMAXINFO)
@@ -459,9 +460,13 @@ namespace OceanyaClient
             {
                 HandleWindowMovingSynchronize(lParam);
             }
+            else if (msg == WM_ENTERSIZEMOVE)
+            {
+                ResetSynchronizedMoveTracking();
+            }
             else if (msg == WM_EXITSIZEMOVE)
             {
-                _lastSyncedMoveOrigin = null;
+                ResetSynchronizedMoveTracking();
             }
 
             return IntPtr.Zero;
@@ -469,44 +474,54 @@ namespace OceanyaClient
 
         private void HandleWindowMovingSynchronize(IntPtr lParam)
         {
-            if (SynchronizedMovePartner == null || _isSynchronizingMove)
+            if (SynchronizedMovePartner == null)
             {
                 return;
             }
 
             if (!Keyboard.IsKeyDown(Key.LeftCtrl) && !Keyboard.IsKeyDown(Key.RightCtrl))
             {
-                _lastSyncedMoveOrigin = null;
+                ResetSynchronizedMoveTracking();
                 return;
             }
 
             GenericRect rect = Marshal.PtrToStructure<GenericRect>(lParam);
-
-            if (_lastSyncedMoveOrigin.HasValue)
+            WindowInteropHelper partnerInterop = new WindowInteropHelper(SynchronizedMovePartner);
+            IntPtr partnerHandle = partnerInterop.Handle;
+            if (partnerHandle == IntPtr.Zero)
             {
-                int dx = rect.left - _lastSyncedMoveOrigin.Value.X;
-                int dy = rect.top - _lastSyncedMoveOrigin.Value.Y;
-
-                if (dx != 0 || dy != 0)
-                {
-                    PresentationSource? source = PresentationSource.FromVisual(SynchronizedMovePartner);
-                    double scaleX = source?.CompositionTarget?.TransformToDevice.M11 ?? 1.0;
-                    double scaleY = source?.CompositionTarget?.TransformToDevice.M22 ?? 1.0;
-
-                    _isSynchronizingMove = true;
-                    try
-                    {
-                        SynchronizedMovePartner.Left += dx / scaleX;
-                        SynchronizedMovePartner.Top += dy / scaleY;
-                    }
-                    finally
-                    {
-                        _isSynchronizingMove = false;
-                    }
-                }
+                return;
             }
 
-            _lastSyncedMoveOrigin = (rect.left, rect.top);
+            if (!synchronizedMoveStartRect.HasValue || !synchronizedMovePartnerStartRect.HasValue)
+            {
+                synchronizedMoveStartRect = rect;
+                if (!GetWindowRect(partnerHandle, out GenericRect partnerRect))
+                {
+                    ResetSynchronizedMoveTracking();
+                    return;
+                }
+
+                synchronizedMovePartnerStartRect = partnerRect;
+            }
+
+            int dx = rect.left - synchronizedMoveStartRect.Value.left;
+            int dy = rect.top - synchronizedMoveStartRect.Value.top;
+            GenericRect partnerStart = synchronizedMovePartnerStartRect.Value;
+            SetWindowPos(
+                partnerHandle,
+                IntPtr.Zero,
+                partnerStart.left + dx,
+                partnerStart.top + dy,
+                0,
+                0,
+                SetWindowPosFlags.NoSize | SetWindowPosFlags.NoZOrder | SetWindowPosFlags.NoActivate | SetWindowPosFlags.NoOwnerZOrder);
+        }
+
+        private void ResetSynchronizedMoveTracking()
+        {
+            synchronizedMoveStartRect = null;
+            synchronizedMovePartnerStartRect = null;
         }
 
         private static void WmGetMinMaxInfo(IntPtr hwnd, IntPtr lParam)
@@ -543,6 +558,19 @@ namespace OceanyaClient
         [DllImport("user32.dll")]
         private static extern IntPtr MonitorFromWindow(IntPtr handle, int flags);
 
+        [DllImport("user32.dll")]
+        private static extern bool GetWindowRect(IntPtr hwnd, out GenericRect lpRect);
+
+        [DllImport("user32.dll")]
+        private static extern bool SetWindowPos(
+            IntPtr hwnd,
+            IntPtr hWndInsertAfter,
+            int x,
+            int y,
+            int cx,
+            int cy,
+            SetWindowPosFlags flags);
+
         [StructLayout(LayoutKind.Sequential)]
         private struct GenericPoint
         {
@@ -557,6 +585,15 @@ namespace OceanyaClient
             public int top;
             public int right;
             public int bottom;
+        }
+
+        [Flags]
+        private enum SetWindowPosFlags : uint
+        {
+            NoSize = 0x0001,
+            NoZOrder = 0x0004,
+            NoActivate = 0x0010,
+            NoOwnerZOrder = 0x0200
         }
 
         [StructLayout(LayoutKind.Sequential)]

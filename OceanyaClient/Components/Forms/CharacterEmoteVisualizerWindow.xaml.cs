@@ -20,6 +20,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using AOBot_Testing.Structures;
 using Common;
+using OceanyaClient.Utilities;
 
 namespace OceanyaClient
 {
@@ -105,6 +106,10 @@ namespace OceanyaClient
 
         public static readonly DependencyProperty TileMarginProperty = DependencyProperty.Register(
             nameof(TileMargin), typeof(Thickness), typeof(CharacterEmoteVisualizerWindow), new PropertyMetadata(new Thickness(4)));
+        public static readonly DependencyProperty VirtualizingTileWidthProperty = DependencyProperty.Register(
+            nameof(VirtualizingTileWidth), typeof(double), typeof(CharacterEmoteVisualizerWindow), new PropertyMetadata(243d));
+        public static readonly DependencyProperty VirtualizingTileHeightProperty = DependencyProperty.Register(
+            nameof(VirtualizingTileHeight), typeof(double), typeof(CharacterEmoteVisualizerWindow), new PropertyMetadata(218d));
         public static readonly DependencyProperty DetailsRowHeightProperty = DependencyProperty.Register(
             nameof(DetailsRowHeight), typeof(double), typeof(CharacterEmoteVisualizerWindow), new PropertyMetadata(58d));
 
@@ -148,6 +153,18 @@ namespace OceanyaClient
         {
             get => (Thickness)GetValue(TileMarginProperty);
             set => SetValue(TileMarginProperty, value);
+        }
+
+        public double VirtualizingTileWidth
+        {
+            get => (double)GetValue(VirtualizingTileWidthProperty);
+            set => SetValue(VirtualizingTileWidthProperty, value);
+        }
+
+        public double VirtualizingTileHeight
+        {
+            get => (double)GetValue(VirtualizingTileHeightProperty);
+            set => SetValue(VirtualizingTileHeightProperty, value);
         }
 
         public double DetailsRowHeight
@@ -343,9 +360,6 @@ namespace OceanyaClient
                 allItems.AddRange(BuildEmoteItems(character));
                 integrityReport = await Task.Run(() => CharacterIntegrityVerifier.RunAndPersist(character));
                 ApplyIntegrityReportToEmoteItems();
-                WaitForm.SetSubtitle("Loading emote images...");
-                await PreloadAllEmoteImagesAsync();
-
                 itemsView = null;
                 SummaryText.Text = $"{character.Name} - Emotes indexed: {allItems.Count}";
                 UpdateTopButtonsAvailability();
@@ -471,6 +485,8 @@ namespace OceanyaClient
             normalScrollWheelStep = normal.ScrollWheelStep;
             TilePadding = new Thickness(normal.TilePadding);
             TileMargin = new Thickness(normal.TileMargin);
+            VirtualizingTileWidth = TileWidth + TileMargin.Left + TileMargin.Right;
+            VirtualizingTileHeight = TileHeight + TileMargin.Top + TileMargin.Bottom;
 
             EmoteListView.FontSize = normal.NameFontSize;
             EmoteListView.View = null;
@@ -1331,6 +1347,8 @@ namespace OceanyaClient
                 retainedViewportEmoteIds.Add(id);
             }
 
+            StartViewportPreviewLoading(retainedItems, retainedIds);
+
             foreach (EmoteVisualizerItem item in allItems)
             {
                 if (retainedIds.Contains(item.Id))
@@ -1341,9 +1359,10 @@ namespace OceanyaClient
 
                 StopAnimationPlayer(item, isPreAnimation: true);
                 StopAnimationPlayer(item, isPreAnimation: false);
+                item.IconImage = FallbackImage;
+                item.PreAnimationImage = item.HasPreAnimation ? FallbackImage : TransparentImage;
+                item.AnimationImage = FallbackImage;
             }
-
-            // Images are fully preloaded at startup; residency only controls animation player lifetime.
         }
 
         private FolderVisualizerLayoutMode GetCurrentLayoutMode()
@@ -2009,41 +2028,7 @@ namespace OceanyaClient
         {
             ContextMenu menu = new ContextMenu();
 
-            AddContextCategoryHeader(menu, "Character", addLeadingSeparator: false);
-
-            MenuItem refreshCharacterItem = new MenuItem
-            {
-                Header = "Refresh Character",
-                IsEnabled = RefreshCharacterButton.IsEnabled
-            };
-            refreshCharacterItem.Click += (_, _) => RefreshCharacterButton_Click(RefreshCharacterButton, new RoutedEventArgs(Button.ClickEvent));
-            menu.Items.Add(refreshCharacterItem);
-
-            MenuItem openCharIniItem = new MenuItem
-            {
-                Header = "Open char.ini",
-                IsEnabled = OpenCharacterIniButton.IsEnabled
-            };
-            openCharIniItem.Click += (_, _) => OpenCharacterIniButton_Click(OpenCharacterIniButton, new RoutedEventArgs(Button.ClickEvent));
-            menu.Items.Add(openCharIniItem);
-
-            MenuItem openReadmeItem = new MenuItem
-            {
-                Header = "Open readme",
-                IsEnabled = OpenReadmeButton.IsEnabled
-            };
-            openReadmeItem.Click += (_, _) => OpenReadmeButton_Click(OpenReadmeButton, new RoutedEventArgs(Button.ClickEvent));
-            menu.Items.Add(openReadmeItem);
-
-            MenuItem openInExplorerItem = new MenuItem
-            {
-                Header = "Open in explorer",
-                IsEnabled = Directory.Exists(character.DirectoryPath ?? string.Empty)
-            };
-            openInExplorerItem.Click += (_, _) => ShowInExplorer(character.DirectoryPath ?? string.Empty);
-            menu.Items.Add(openInExplorerItem);
-
-            AddContextCategoryHeader(menu, "Emote", addLeadingSeparator: true);
+            AddContextCategoryHeader(menu, "Emote", addLeadingSeparator: false);
 
             MenuItem setAsFolderDisplayItem = new MenuItem
             {
@@ -2058,25 +2043,44 @@ namespace OceanyaClient
             };
             menu.Items.Add(setAsFolderDisplayItem);
 
-            AddContextCategoryHeader(menu, "Integrity verifier", addLeadingSeparator: true);
-
-            MenuItem runVerifierItem = new MenuItem
-            {
-                Header = "Run Verifier",
-                IsEnabled = Directory.Exists(character.DirectoryPath ?? string.Empty)
-            };
-            runVerifierItem.Click += async (_, _) => await RunIntegrityVerifierAsync(openResultsAfterRun: false);
-            menu.Items.Add(runVerifierItem);
-
-            MenuItem viewResultsItem = new MenuItem
-            {
-                Header = "View Results",
-                IsEnabled = Directory.Exists(character.DirectoryPath ?? string.Empty)
-            };
-            viewResultsItem.Click += async (_, _) => await OpenIntegrityVerifierResultsAsync();
-            menu.Items.Add(viewResultsItem);
-
+            CharacterContextMenuBuilder.Populate(menu, BuildCharacterContextMenuOptions(), addLeadingSeparator: true);
             return menu;
+        }
+
+        private CharacterContextMenuOptions BuildCharacterContextMenuOptions()
+        {
+            string directoryPath = character.DirectoryPath?.Trim() ?? string.Empty;
+            string characterName = character.Name?.Trim() ?? string.Empty;
+            string readmePath = ResolveCharacterReadmePath(directoryPath);
+            return new CharacterContextMenuOptions
+            {
+                CharacterName = characterName,
+                DirectoryPath = directoryPath,
+                CharIniPath = character.PathToConfigIni?.Trim() ?? Path.Combine(directoryPath, "char.ini"),
+                ReadmePath = readmePath,
+                Owner = this,
+                HasReadme = !string.IsNullOrWhiteSpace(readmePath),
+                RefreshCharacterAsync = async () =>
+                {
+                    character = EnsureCharacterLoaded(character);
+                    await LoadEmoteItemsAsync();
+                },
+                RefreshAllCharactersAsync = async () =>
+                {
+                    await ClientAssetRefreshService.RefreshAllCharactersAsync(this);
+                    character = EnsureCharacterLoaded(character);
+                    await LoadEmoteItemsAsync();
+                },
+                RunIntegrityVerifierAsync = () => RunIntegrityVerifierAsync(openResultsAfterRun: false),
+                ViewIntegrityVerifierResultsAsync = OpenIntegrityVerifierResultsAsync,
+                DeleteCharacterFolderAsync = DeleteCharacterFolderFromContextAsync,
+                AfterCharacterChangedAsync = async () =>
+                {
+                    await ClientAssetRefreshService.RefreshCharacterAsync(this, characterName);
+                    character = EnsureCharacterLoaded(character);
+                    await LoadEmoteItemsAsync();
+                }
+            };
         }
 
         private static void AddContextCategoryHeader(ContextMenu menu, string text, bool addLeadingSeparator)
@@ -2276,6 +2280,65 @@ namespace OceanyaClient
             {
                 CustomConsole.Error($"Failed to open explorer at '{safePath}'.", ex);
             }
+        }
+
+        private async Task DeleteCharacterFolderFromContextAsync()
+        {
+            string targetPath = character.DirectoryPath?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(targetPath) || !Directory.Exists(targetPath))
+            {
+                OceanyaMessageBox.Show(this,
+                    "Character folder was not found on disk.",
+                    "Delete Character Folder",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            string characterName = string.IsNullOrWhiteSpace(character.Name) ? Path.GetFileName(targetPath) : character.Name;
+            MessageBoxResult confirmationResult = OceanyaMessageBox.Show(
+                this,
+                "You are about to permanently delete this character folder:\n\n"
+                + characterName + "\n" + targetPath
+                + "\n\nThis cannot be undone. Do you want to continue?",
+                "Delete Character Folder",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            if (confirmationResult != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            await WaitForm.ShowFormAsync("Deleting character folder...", this);
+            bool deleted = false;
+            try
+            {
+                WaitForm.SetSubtitle("Deleting folder: " + characterName);
+                await Task.Run(() => Directory.Delete(targetPath, true));
+                deleted = true;
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Error("Failed to delete character folder.", ex);
+                OceanyaMessageBox.Show(
+                    this,
+                    "An error occurred while deleting the character folder:\n" + ex.Message,
+                    "Delete Character Folder",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+            finally
+            {
+                WaitForm.CloseForm();
+            }
+
+            if (!deleted)
+            {
+                return;
+            }
+
+            await ClientAssetRefreshService.RefreshCharacterAsync(this, characterName);
+            Close();
         }
 
         private static string GetImageDimensionsText(string path)

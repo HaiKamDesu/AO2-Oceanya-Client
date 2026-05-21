@@ -25,6 +25,7 @@ using System.Windows.Threading;
 using AOBot_Testing.Structures;
 using Common;
 using OceanyaClient.Features.Startup;
+using OceanyaClient.Utilities;
 
 namespace OceanyaClient
 {
@@ -139,6 +140,10 @@ namespace OceanyaClient
 
         public static readonly DependencyProperty TileMarginProperty = DependencyProperty.Register(
             nameof(TileMargin), typeof(Thickness), typeof(CharacterFolderVisualizerWindow), new PropertyMetadata(new Thickness(4)));
+        public static readonly DependencyProperty VirtualizingTileWidthProperty = DependencyProperty.Register(
+            nameof(VirtualizingTileWidth), typeof(double), typeof(CharacterFolderVisualizerWindow), new PropertyMetadata(178d));
+        public static readonly DependencyProperty VirtualizingTileHeightProperty = DependencyProperty.Register(
+            nameof(VirtualizingTileHeight), typeof(double), typeof(CharacterFolderVisualizerWindow), new PropertyMetadata(190d));
         public static readonly DependencyProperty ShowIntegrityVerifierResultsProperty = DependencyProperty.Register(
             nameof(ShowIntegrityVerifierResults), typeof(bool), typeof(CharacterFolderVisualizerWindow), new PropertyMetadata(false));
         public static readonly DependencyProperty DetailsRowHeightProperty = DependencyProperty.Register(
@@ -184,6 +189,18 @@ namespace OceanyaClient
         {
             get => (Thickness)GetValue(TileMarginProperty);
             set => SetValue(TileMarginProperty, value);
+        }
+
+        public double VirtualizingTileWidth
+        {
+            get => (double)GetValue(VirtualizingTileWidthProperty);
+            set => SetValue(VirtualizingTileWidthProperty, value);
+        }
+
+        public double VirtualizingTileHeight
+        {
+            get => (double)GetValue(VirtualizingTileHeightProperty);
+            set => SetValue(VirtualizingTileHeightProperty, value);
         }
 
         public bool ShowIntegrityVerifierResults
@@ -1059,6 +1076,8 @@ namespace OceanyaClient
             normalScrollWheelStep = normal.ScrollWheelStep;
             TilePadding = new Thickness(normal.TilePadding);
             TileMargin = new Thickness(normal.TileMargin);
+            VirtualizingTileWidth = TileWidth + TileMargin.Left + TileMargin.Right;
+            VirtualizingTileHeight = TileHeight + TileMargin.Top + TileMargin.Bottom;
 
             FolderListView.FontSize = normal.NameFontSize;
             FolderListView.View = null;
@@ -3088,114 +3107,66 @@ namespace OceanyaClient
 
         private ContextMenu BuildContextMenuForItem(FolderVisualizerItem item)
         {
-            ContextMenu menu = new ContextMenu();
-
-            AddContextCategoryHeader(menu, "Oceanya Client", addLeadingSeparator: false);
-
-            if (characterSelectionMode)
+            CharacterContextMenuOptions options = new CharacterContextMenuOptions
             {
-                MenuItem selectCharacterMenuItem = new MenuItem
+                CharacterName = item.Name,
+                DirectoryPath = item.DirectoryPath,
+                CharIniPath = item.CharIniPath,
+                ReadmePath = item.ReadmePath,
+                Owner = this,
+                HasReadme = item.HasReadme,
+                CanSetCharacterInClient = canSetCharacterInClient?.Invoke(item) == true,
+                SetCharacterInClient = () => setCharacterInClient?.Invoke(item),
+                SelectCharacterAsync = characterSelectionMode
+                    ? () =>
+                    {
+                        AcceptCharacterSelection(item);
+                        return Task.CompletedTask;
+                    }
+                    : null,
+                RefreshCharacterAsync = async () =>
                 {
-                    Header = "Select this character"
-                };
-                selectCharacterMenuItem.Click += (_, _) => AcceptCharacterSelection(item);
-                menu.Items.Add(selectCharacterMenuItem);
-                return menu;
-            }
+                    await ClientAssetRefreshService.RefreshCharacterAsync(this, item.Name);
+                    await UpsertCharacterItemAsync(item.DirectoryPath, previousDirectoryPath: null);
+                    onAssetsRefreshed?.Invoke();
+                },
+                RefreshAllAssetsAsync = async () =>
+                {
+                    await ClientAssetRefreshService.RefreshCharactersAndBackgroundsAsync(this);
+                    InvalidateCachedItems();
+                    await LoadCharacterItemsAsync(forceRebuild: true);
+                    onAssetsRefreshed?.Invoke();
+                },
+                RefreshAllCharactersAsync = async () =>
+                {
+                    await ClientAssetRefreshService.RefreshAllCharactersAsync(this);
+                    InvalidateCachedItems();
+                    await LoadCharacterItemsAsync(forceRebuild: true);
+                    onAssetsRefreshed?.Invoke();
+                },
+                NewCharacterFolderAsync = OpenCharacterFolderCreatorAsync,
+                EditCharacterFolderAsync = () => OpenCharacterFolderInCreatorAsync(item),
+                DuplicateCharacterFolderAsync = () => OpenCharacterFolderDuplicateInCreatorAsync(item),
+                OpenCharacterEmoteVisualizer = () =>
+                {
+                    CharacterFolder? character = ResolveCharacterFolderForItem(item);
+                    if (character == null)
+                    {
+                        return;
+                    }
 
-            MenuItem setCharacterMenuItem = new MenuItem
-            {
-                Header = "Set character in client",
-                IsEnabled = canSetCharacterInClient?.Invoke(item) == true
+                    CharacterEmoteVisualizerWindow emoteVisualizerWindow = new CharacterEmoteVisualizerWindow(character)
+                    {
+                        Owner = this
+                    };
+                    emoteVisualizerWindow.ShowDialog();
+                },
+                RunIntegrityVerifierAsync = () => RunIntegrityVerifierForItemAsync(item, openResultsAfterRun: false),
+                ViewIntegrityVerifierResultsAsync = () => OpenIntegrityVerifierResultsAsync(item),
+                DeleteCharacterFolderAsync = () => DeleteCharacterFolderAsync(item)
             };
-            setCharacterMenuItem.Click += (_, _) => setCharacterInClient?.Invoke(item);
-            menu.Items.Add(setCharacterMenuItem);
 
-            bool canOpenCharacterFolderInEditor =
-                !string.IsNullOrWhiteSpace(item.DirectoryPath)
-                && Directory.Exists(item.DirectoryPath)
-                && File.Exists(item.CharIniPath);
-
-            AddContextCategoryHeader(menu, "Oceanya Editor", addLeadingSeparator: true);
-
-            MenuItem newCharacterFolderMenuItem = new MenuItem
-            {
-                Header = "New Character Folder"
-            };
-            newCharacterFolderMenuItem.Click += async (_, _) => await OpenCharacterFolderCreatorAsync();
-            menu.Items.Add(newCharacterFolderMenuItem);
-
-            MenuItem editCharacterFolderMenuItem = new MenuItem
-            {
-                Header = "Edit Character Folder",
-                IsEnabled = canOpenCharacterFolderInEditor
-            };
-            editCharacterFolderMenuItem.Click += async (_, _) => await OpenCharacterFolderInCreatorAsync(item);
-            menu.Items.Add(editCharacterFolderMenuItem);
-
-            MenuItem duplicateCharacterFolderMenuItem = new MenuItem
-            {
-                Header = "Duplicate Character Folder",
-                IsEnabled = canOpenCharacterFolderInEditor
-            };
-            duplicateCharacterFolderMenuItem.Click += async (_, _) => await OpenCharacterFolderDuplicateInCreatorAsync(item);
-            menu.Items.Add(duplicateCharacterFolderMenuItem);
-
-            AddContextCategoryHeader(menu, "Character View", addLeadingSeparator: true);
-
-            MenuItem openCharIniMenuItem = new MenuItem
-            {
-                Header = "Open Char.ini",
-                IsEnabled = !string.IsNullOrWhiteSpace(item.CharIniPath) && File.Exists(item.CharIniPath)
-            };
-            openCharIniMenuItem.Click += (_, _) => TryOpenPath(item.CharIniPath);
-            menu.Items.Add(openCharIniMenuItem);
-
-            MenuItem openReadmeMenuItem = new MenuItem
-            {
-                Header = "Open Readme",
-                IsEnabled = item.HasReadme && !string.IsNullOrWhiteSpace(item.ReadmePath) && File.Exists(item.ReadmePath)
-            };
-            openReadmeMenuItem.Click += (_, _) => TryOpenPath(item.ReadmePath);
-            menu.Items.Add(openReadmeMenuItem);
-
-            MenuItem showInExplorerMenuItem = new MenuItem
-            {
-                Header = "Show in explorer",
-                IsEnabled = !string.IsNullOrWhiteSpace(item.DirectoryPath) && Directory.Exists(item.DirectoryPath)
-            };
-            showInExplorerMenuItem.Click += (_, _) => ShowInExplorer(item.DirectoryPath);
-            menu.Items.Add(showInExplorerMenuItem);
-
-            AddContextCategoryHeader(menu, "Integrity verifier", addLeadingSeparator: true);
-
-            MenuItem runVerifierMenuItem = new MenuItem
-            {
-                Header = "Run Verifier",
-                IsEnabled = !string.IsNullOrWhiteSpace(item.DirectoryPath) && Directory.Exists(item.DirectoryPath)
-            };
-            runVerifierMenuItem.Click += async (_, _) => await RunIntegrityVerifierForItemAsync(item, openResultsAfterRun: false);
-            menu.Items.Add(runVerifierMenuItem);
-
-            MenuItem viewVerifierResultsMenuItem = new MenuItem
-            {
-                Header = "View Results",
-                IsEnabled = !string.IsNullOrWhiteSpace(item.DirectoryPath) && Directory.Exists(item.DirectoryPath)
-            };
-            viewVerifierResultsMenuItem.Click += async (_, _) => await OpenIntegrityVerifierResultsAsync(item);
-            menu.Items.Add(viewVerifierResultsMenuItem);
-
-            AddContextCategoryHeader(menu, "Attorney Online", addLeadingSeparator: true);
-
-            MenuItem deleteCharacterFolderMenuItem = new MenuItem
-            {
-                Header = "Delete character folder",
-                IsEnabled = !string.IsNullOrWhiteSpace(item.DirectoryPath) && Directory.Exists(item.DirectoryPath)
-            };
-            deleteCharacterFolderMenuItem.Click += async (_, _) => await DeleteCharacterFolderAsync(item);
-            menu.Items.Add(deleteCharacterFolderMenuItem);
-
-            return menu;
+            return CharacterContextMenuBuilder.Build(options);
         }
 
         private async Task OpenCharacterFolderInCreatorAsync(FolderVisualizerItem item)
@@ -3673,23 +3644,13 @@ namespace OceanyaClient
                 return;
             }
 
+            bool deleted = false;
             await WaitForm.ShowFormAsync("Deleting character folder...", this);
             try
             {
                 WaitForm.SetSubtitle("Deleting folder: " + item.Name);
                 await Task.Run(() => Directory.Delete(targetPath, true));
-
-                WaitForm.SetSubtitle("Refreshing character index...");
-                await Task.Run(() =>
-                    CharacterFolder.RefreshCharacterList(
-                        onParsedCharacter: character => WaitForm.SetSubtitle("Parsed Folder: " + character.Name),
-                        onChangedMountPath: path => WaitForm.SetSubtitle("Changed mount path: " + path)));
-
-                InvalidateCachedItems();
-                itemsView = null;
-
-                await LoadCharacterItemsAsync(forceRebuild: true);
-                onAssetsRefreshed?.Invoke();
+                deleted = true;
             }
             catch (Exception ex)
             {
@@ -3705,6 +3666,15 @@ namespace OceanyaClient
             {
                 WaitForm.CloseForm();
             }
+
+            if (!deleted)
+            {
+                return;
+            }
+
+            await ClientAssetRefreshService.RefreshCharacterAsync(this, item.Name);
+            await UpsertCharacterItemAsync(targetPath, previousDirectoryPath: null);
+            onAssetsRefreshed?.Invoke();
         }
 
         internal static string ResolveFirstCharacterIdleSpritePath(CharacterFolder folder)

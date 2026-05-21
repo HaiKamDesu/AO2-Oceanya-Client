@@ -4,12 +4,14 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using AOBot_Testing.Structures;
 using Common;
 using NUnit.Framework;
 using OceanyaClient;
+using OceanyaClient.Utilities;
 
 namespace UnitTests
 {
@@ -190,6 +192,92 @@ namespace UnitTests
         }
 
         [Test]
+        public void StandardCharacterContextMenu_IncludesSharedCharacterActions()
+        {
+            string charDir = Path.Combine(tempRoot, "characters", "Phoenix");
+            Directory.CreateDirectory(charDir);
+            string charIni = Path.Combine(charDir, "char.ini");
+            string readme = Path.Combine(charDir, "readme.txt");
+            File.WriteAllText(charIni, "[Options]\nshowname=Phoenix\n");
+            File.WriteAllText(readme, "readme");
+
+            ContextMenu menu = CharacterContextMenuBuilder.Build(new CharacterContextMenuOptions
+            {
+                CharacterName = "Phoenix",
+                DirectoryPath = charDir,
+                CharIniPath = charIni,
+                ReadmePath = readme,
+                HasReadme = true,
+                CanSetCharacterInClient = true,
+                SetCharacterInClient = () => { },
+                RefreshCharacterAsync = () => Task.CompletedTask,
+                RefreshAllAssetsAsync = () => Task.CompletedTask,
+                RefreshAllCharactersAsync = () => Task.CompletedTask,
+                NewCharacterFolderAsync = () => Task.CompletedTask,
+                EditCharacterFolderAsync = () => Task.CompletedTask,
+                DuplicateCharacterFolderAsync = () => Task.CompletedTask,
+                RunIntegrityVerifierAsync = () => Task.CompletedTask,
+                ViewIntegrityVerifierResultsAsync = () => Task.CompletedTask,
+                DeleteCharacterFolderAsync = () => Task.CompletedTask
+            });
+
+            List<string> headers = ExtractMenuHeaders(menu).ToList();
+            Assert.That(headers, Does.Contain("Oceanya Client"));
+            Assert.That(headers, Does.Contain("Refresh Phoenix"));
+            Assert.That(headers, Does.Contain("Refresh All Assets"));
+            Assert.That(headers, Does.Contain("Refresh All Characters"));
+            Assert.That(headers, Does.Contain("Oceanya Editor"));
+            Assert.That(headers, Does.Contain("Character View"));
+            Assert.That(headers, Does.Contain("Copy name"));
+            Assert.That(headers, Does.Contain("Integrity verifier"));
+            Assert.That(headers, Does.Contain("Attorney Online"));
+        }
+
+        [Test]
+        public void StandardCharacterSubmenu_UsesSectionHeaderFormatting()
+        {
+            MenuItem submenu = CharacterContextMenuBuilder.BuildSubmenu(
+                "Character (Phoenix)",
+                new CharacterContextMenuOptions
+                {
+                    CharacterName = "Phoenix",
+                    DirectoryPath = tempRoot
+                });
+
+            Assert.That(submenu.Header, Is.TypeOf<TextBlock>());
+            TextBlock header = (TextBlock)submenu.Header;
+            Assert.That(header.Text, Is.EqualTo("Character (Phoenix)"));
+            Assert.That(header.FontWeight, Is.EqualTo(FontWeights.Bold));
+        }
+
+        [Test]
+        public void NormalView_UsesVirtualizingWrapPanel()
+        {
+            BuildCharacterFolder(
+                name: "Franziska",
+                createCharIcon: true,
+                createIdleSprite: true,
+                out _,
+                out _);
+            RefreshCharactersFromTempRoot();
+
+            CharacterFolderVisualizerWindow window = new CharacterFolderVisualizerWindow(null);
+            window.LoadCharacterItemsForTests();
+
+            ComboBox? viewModeCombo = window.FindName("ViewModeCombo") as ComboBox;
+            Assert.That(viewModeCombo, Is.Not.Null);
+            FolderVisualizerViewPreset? normalPreset = viewModeCombo!.Items
+                .OfType<FolderVisualizerViewPreset>()
+                .FirstOrDefault(preset => preset.Mode == FolderVisualizerLayoutMode.Normal);
+            Assert.That(normalPreset, Is.Not.Null);
+
+            viewModeCombo.SelectedItem = normalPreset;
+            ItemsPanelTemplate template = (ItemsPanelTemplate)window.FindResource("IconItemsPanelTemplate");
+            Assert.That(template.LoadContent(), Is.TypeOf<VirtualizingWrapPanel>());
+            window.Close();
+        }
+
+        [Test]
         public void ViewModeCombo_NullSelection_DoesNotResetSavedPreset()
         {
             BuildCharacterFolder(
@@ -328,6 +416,24 @@ namespace UnitTests
                 catch
                 {
                     // Ignore cleanup errors in tests.
+                }
+            }
+        }
+
+        private static IEnumerable<string> ExtractMenuHeaders(ItemsControl menu)
+        {
+            foreach (object item in menu.Items)
+            {
+                if (item is MenuItem menuItem)
+                {
+                    if (menuItem.Header is TextBlock textBlock)
+                    {
+                        yield return textBlock.Text;
+                    }
+                    else if (menuItem.Header is string text)
+                    {
+                        yield return text;
+                    }
                 }
             }
         }

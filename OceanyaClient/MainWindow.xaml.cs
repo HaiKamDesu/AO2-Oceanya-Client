@@ -441,6 +441,10 @@ namespace OceanyaClient
             {
                 await RefreshCharacterAssetsAsync(null, refreshAllCharacters: true, refreshAllAssets: false);
             };
+            ICMessageSettingsControl.OnNewCharacterFolderRequested += async () =>
+            {
+                await OpenNewCharacterInEditorAsync();
+            };
             ICMessageSettingsControl.OnOpenInCharacterEditorRequested += async characterDirectory =>
             {
                 await OpenCharacterInEditorAsync(characterDirectory);
@@ -457,6 +461,7 @@ namespace OceanyaClient
             {
                 OpenCharacterInFolderVisualizer(characterDirectory);
             };
+            ICMessageSettingsControl.OnDeleteCharacterFolderRequested += DeleteCharacterFolderFromContextAsync;
             ICMessageSettingsControl.OnPositionConfirmed += async (profileClient, position) =>
             {
                 AOClient? networkClient = GetTargetClientForNetwork(profileClient);
@@ -5157,7 +5162,7 @@ namespace OceanyaClient
                             imageFactory.Name = "ButtonImage";
                             imageFactory.SetValue(Image.WidthProperty, 40.0);
                             imageFactory.SetValue(Image.HeightProperty, 40.0);
-                            imageFactory.SetValue(Image.SourceProperty, new BitmapImage(new Uri(normalImagePath, UriKind.Absolute)));
+                            imageFactory.SetValue(Image.SourceProperty, BitmapFileLoader.LoadFrozen(normalImagePath));
 
                             gridFactory.AppendChild(imageFactory);
                             template.VisualTree = gridFactory;
@@ -5168,7 +5173,7 @@ namespace OceanyaClient
                             {
                                 Property = Image.SourceProperty,
                                 TargetName = "ButtonImage",
-                                Value = new BitmapImage(new Uri(selectedImagePath, UriKind.Absolute))
+                                Value = BitmapFileLoader.LoadFrozen(selectedImagePath)
                             });
                             trigger.Setters.Add(new Setter
                             {
@@ -5719,11 +5724,17 @@ namespace OceanyaClient
 
             viewportContent = new AO2ViewportWindowContent();
             viewportContent.UseAsWindowsPreviewChanged += (_, _) => ApplyViewportTaskbarPriority();
+            viewportContent.NewCharacterFolderRequested += OpenNewCharacterInEditorAsync;
             viewportContent.OpenCharacterInEditorRequested += OpenCharacterInEditorAsync;
             viewportContent.DuplicateCharacterInEditorRequested += DuplicateCharacterInEditorAsync;
             viewportContent.OpenCharacterInFolderVisualizerRequested += OpenCharacterInFolderVisualizer;
+            viewportContent.DeleteCharacterFolderRequested += DeleteCharacterFolderFromContextAsync;
             viewportContent.RefreshCharacterRequested += characterName =>
                 RefreshCharacterAssetsAsync(characterName, refreshAllCharacters: false, refreshAllAssets: false);
+            viewportContent.RefreshAllAssetsRequested += () =>
+                RefreshCharacterAssetsAsync(null, refreshAllCharacters: false, refreshAllAssets: true);
+            viewportContent.RefreshAllCharactersRequested += () =>
+                RefreshCharacterAssetsAsync(null, refreshAllCharacters: true, refreshAllAssets: false);
             viewportContent.RefreshBackgroundRequested += RefreshBackgroundAssetsAsync;
         }
 
@@ -7766,6 +7777,132 @@ namespace OceanyaClient
             Window editorWindow = OceanyaWindowManager.CreateWindow(creator);
             editorWindow.Owner = owner;
             _ = editorWindow.ShowDialog();
+        }
+
+        private async Task DeleteCharacterFolderFromContextAsync(string characterName, string characterDirectory)
+        {
+            string targetPath = characterDirectory?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(targetPath) || !System.IO.Directory.Exists(targetPath))
+            {
+                OceanyaMessageBox.Show(
+                    HostWindow,
+                    "Character folder was not found on disk.",
+                    "Delete Character Folder",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            string displayName = string.IsNullOrWhiteSpace(characterName)
+                ? System.IO.Path.GetFileName(targetPath)
+                : characterName.Trim();
+            MessageBoxResult confirmationResult = OceanyaMessageBox.Show(
+                HostWindow,
+                "Are you sure you want to delete " + displayName + " from your AO?\n\n"
+                + targetPath
+                + "\n\nThis process is not reversible.",
+                "Delete Character Folder",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            if (confirmationResult != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            Window owner = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            await WaitForm.ShowFormAsync("Deleting character folder...", owner);
+            bool deleted = false;
+            try
+            {
+                WaitForm.SetSubtitle("Releasing character from active views...");
+                ReleaseCharacterFolderBeforeDelete(targetPath);
+                await Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+
+                WaitForm.SetSubtitle("Deleting folder: " + displayName);
+                await Task.Run(() => System.IO.Directory.Delete(targetPath, true));
+                deleted = true;
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Error("Failed to delete character folder.", ex);
+                OceanyaMessageBox.Show(
+                    HostWindow,
+                    "Could not delete the character folder:\n\n"
+                    + ex.Message
+                    + "\n\nOceanya released its own active references first. If this keeps happening, another program may still be using files in that folder.",
+                    "Delete Character Folder",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+            finally
+            {
+                WaitForm.CloseForm();
+            }
+
+            if (deleted)
+            {
+                await RefreshCharacterAssetsAsync(displayName, refreshAllCharacters: false, refreshAllAssets: false);
+            }
+        }
+
+        private void ReleaseCharacterFolderBeforeDelete(string targetPath)
+        {
+            string normalizedTarget = System.IO.Path.GetFullPath(targetPath.Trim());
+            List<AOClient> clientsToUpdate = clientOrder
+                .Where(client => clients.Values.Contains(client))
+                .Concat(singleInternalClient != null ? new[] { singleInternalClient } : Array.Empty<AOClient>())
+                .Distinct()
+                .Where(client => IsCharacterFolderPath(client.currentINI?.DirectoryPath, normalizedTarget))
+                .ToList();
+
+            CharacterFolder? replacement = CharacterFolder.FullList.FirstOrDefault(character =>
+                !IsCharacterFolderPath(character.DirectoryPath, normalizedTarget));
+
+            foreach (AOClient client in clientsToUpdate)
+            {
+                if (replacement != null)
+                {
+                    client.SetCharacter(replacement);
+                }
+                else
+                {
+                    client.ClearCharacter();
+                }
+            }
+
+            viewportContent?.ReleaseCharacterAssetsForDeletedFolder(normalizedTarget);
+            ICMessageSettingsControl.ClearSettings();
+            if (currentClient != null && clientsToUpdate.Contains(currentClient) && replacement != null)
+            {
+                ICMessageSettingsControl.SetClient(currentClient);
+            }
+        }
+
+        private static bool IsCharacterFolderPath(string? candidatePath, string normalizedTarget)
+        {
+            if (string.IsNullOrWhiteSpace(candidatePath))
+            {
+                return false;
+            }
+
+            string normalizedCandidate = System.IO.Path.GetFullPath(candidatePath.Trim());
+            return string.Equals(normalizedCandidate, normalizedTarget, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private async Task OpenNewCharacterInEditorAsync()
+        {
+            Window owner = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            AOCharacterFileCreatorWindow creator = new AOCharacterFileCreatorWindow();
+            Window creatorWindow = OceanyaWindowManager.CreateWindow(creator);
+            creatorWindow.Owner = owner;
+            _ = creatorWindow.ShowDialog();
+            if (creator.CharacterGenerationCompleted)
+            {
+                await RefreshCharacterAssetsAsync(null, refreshAllCharacters: true, refreshAllAssets: false);
+            }
         }
 
         private async Task DuplicateCharacterInEditorAsync(string characterDirectory)

@@ -554,6 +554,13 @@ namespace AOBot_Testing.Agents
 
             OnChangedCharacter?.Invoke(character);
         }
+
+        public void ClearCharacter()
+        {
+            CurrentINI = null;
+            currentEmote = null;
+        }
+
         public void SetPos(string newPos, bool callEvent = true)
         {
             if (curPos == newPos) return;

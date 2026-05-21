@@ -45,10 +45,12 @@ namespace OceanyaClient.Components
         public Action<string>? OnRefreshBackgroundRequested;
         public Action? OnRefreshAllAssetsRequested;
         public Action? OnRefreshAllCharactersRequested;
+        public Action? OnNewCharacterFolderRequested;
         public Action<string>? OnOpenInCharacterEditorRequested;
         public Action<string>? OnDuplicateInCharacterEditorRequested;
         public Action<string>? OnOpenInCharacterEmoteVisualizerRequested;
         public Action<string>? OnOpenInCharacterFolderVisualizerRequested;
+        public Func<string, string, Task>? OnDeleteCharacterFolderRequested;
         public Action<AOClient, string>? OnPositionConfirmed;
         public Action? OnClientStateChanged;
         private const string DefaultPositionDisplayPrefix = "default";
@@ -153,112 +155,77 @@ namespace OceanyaClient.Components
         private ContextMenu BuildCharacterDropdownContextMenu()
         {
             ContextMenu contextMenu = new ContextMenu();
-            ContextMenuSectionHelper.AddHeader(contextMenu, "Character", addLeadingSeparator: false);
-            MenuItem refreshCurrentCharacterItem = new MenuItem();
-            refreshCurrentCharacterItem.Click += (_, _) =>
-            {
-                string characterName = ResolveCurrentCharacterName();
-                if (!string.IsNullOrWhiteSpace(characterName))
-                {
-                    OnRefreshCharacterRequested?.Invoke(characterName);
-                }
-            };
-
-            MenuItem refreshAllAssetsItem = new MenuItem
-            {
-                Header = "Refresh All Assets"
-            };
-            refreshAllAssetsItem.Click += (_, _) => OnRefreshAllAssetsRequested?.Invoke();
-
-            MenuItem refreshAllCharactersItem = new MenuItem
-            {
-                Header = "Refresh All Characters"
-            };
-            refreshAllCharactersItem.Click += (_, _) => OnRefreshAllCharactersRequested?.Invoke();
-
-            MenuItem openInEditorItem = new MenuItem { Header = "Open in Character Editor" };
-            openInEditorItem.Click += (_, _) =>
-            {
-                string characterDirectory = ResolveCurrentCharacterDirectory();
-                if (!string.IsNullOrWhiteSpace(characterDirectory))
-                {
-                    OnOpenInCharacterEditorRequested?.Invoke(characterDirectory);
-                }
-            };
-
-            MenuItem duplicateInEditorItem = new MenuItem { Header = "Duplicate and open in Character Editor" };
-            duplicateInEditorItem.Click += (_, _) =>
-            {
-                string characterDirectory = ResolveCurrentCharacterDirectory();
-                if (!string.IsNullOrWhiteSpace(characterDirectory))
-                {
-                    OnDuplicateInCharacterEditorRequested?.Invoke(characterDirectory);
-                }
-            };
-
-            MenuItem openInEmoteVisualizerItem = new MenuItem { Header = "Open in Character Emote Visualizer" };
-            openInEmoteVisualizerItem.Click += (_, _) =>
-            {
-                string characterDirectory = ResolveCurrentCharacterDirectory();
-                if (!string.IsNullOrWhiteSpace(characterDirectory))
-                {
-                    OnOpenInCharacterEmoteVisualizerRequested?.Invoke(characterDirectory);
-                }
-            };
-
-            MenuItem openInFolderVisualizerItem = new MenuItem { Header = "Open in Character Folder Visualizer" };
-            openInFolderVisualizerItem.Click += (_, _) =>
-            {
-                string characterDirectory = ResolveCurrentCharacterDirectory();
-                if (!string.IsNullOrWhiteSpace(characterDirectory))
-                {
-                    OnOpenInCharacterFolderVisualizerRequested?.Invoke(characterDirectory);
-                }
-            };
-
-            MenuItem openExplorerItem = new MenuItem { Header = "Open in file explorer" };
-            openExplorerItem.Click += (_, _) => OpenDirectory(ResolveCurrentCharacterDirectory());
-
-            MenuItem copyNameItem = new MenuItem { Header = "Copy name" };
-            copyNameItem.Click += (_, _) =>
-            {
-                string characterName = ResolveCurrentCharacterName();
-                if (!string.IsNullOrWhiteSpace(characterName))
-                {
-                    ClipboardUtilities.TrySetText(characterName);
-                }
-            };
-
-            contextMenu.Items.Add(refreshCurrentCharacterItem);
-            contextMenu.Items.Add(openExplorerItem);
-            contextMenu.Items.Add(copyNameItem);
-            contextMenu.Items.Add(openInEditorItem);
-            contextMenu.Items.Add(duplicateInEditorItem);
-            contextMenu.Items.Add(openInEmoteVisualizerItem);
-            contextMenu.Items.Add(openInFolderVisualizerItem);
-
-            ContextMenuSectionHelper.AddHeader(contextMenu, "Asset cache", addLeadingSeparator: true);
-            contextMenu.Items.Add(refreshAllAssetsItem);
-            contextMenu.Items.Add(refreshAllCharactersItem);
             contextMenu.Opened += (_, _) =>
             {
-                string characterName = ResolveCurrentCharacterName();
-                string characterDirectory = ResolveCurrentCharacterDirectory();
-                refreshCurrentCharacterItem.Header = string.IsNullOrWhiteSpace(characterName)
-                    ? "Refresh Current Character"
-                    : "Refresh " + characterName;
-                refreshCurrentCharacterItem.IsEnabled = !string.IsNullOrWhiteSpace(characterName);
-                refreshAllAssetsItem.IsEnabled = true;
-                refreshAllCharactersItem.IsEnabled = true;
-                openExplorerItem.IsEnabled = Directory.Exists(characterDirectory);
-                copyNameItem.IsEnabled = !string.IsNullOrWhiteSpace(characterName);
-                openInEditorItem.IsEnabled = Directory.Exists(characterDirectory);
-                duplicateInEditorItem.IsEnabled = Directory.Exists(characterDirectory);
-                openInEmoteVisualizerItem.IsEnabled = Directory.Exists(characterDirectory);
-                openInFolderVisualizerItem.IsEnabled = Directory.Exists(characterDirectory);
+                contextMenu.Items.Clear();
+                CharacterContextMenuBuilder.Populate(contextMenu, BuildCurrentCharacterContextMenuOptions());
             };
 
             return contextMenu;
+        }
+
+        private CharacterContextMenuOptions BuildCurrentCharacterContextMenuOptions()
+        {
+            string characterName = ResolveCurrentCharacterName();
+            string characterDirectory = ResolveCurrentCharacterDirectory();
+            string charIniPath = curClient?.currentINI?.PathToConfigIni?.Trim() ?? Path.Combine(characterDirectory, "char.ini");
+            string readmePath = ResolveReadmePath(characterDirectory);
+            return new CharacterContextMenuOptions
+            {
+                CharacterName = characterName,
+                DirectoryPath = characterDirectory,
+                CharIniPath = charIniPath,
+                ReadmePath = readmePath,
+                Owner = Window.GetWindow(this),
+                HasReadme = !string.IsNullOrWhiteSpace(readmePath),
+                RefreshCharacterAsync = () =>
+                {
+                    if (!string.IsNullOrWhiteSpace(characterName))
+                    {
+                        OnRefreshCharacterRequested?.Invoke(characterName);
+                    }
+
+                    return Task.CompletedTask;
+                },
+                RefreshAllAssetsAsync = () =>
+                {
+                    OnRefreshAllAssetsRequested?.Invoke();
+                    return Task.CompletedTask;
+                },
+                RefreshAllCharactersAsync = () =>
+                {
+                    OnRefreshAllCharactersRequested?.Invoke();
+                    return Task.CompletedTask;
+                },
+                NewCharacterFolderAsync = () =>
+                {
+                    OnNewCharacterFolderRequested?.Invoke();
+                    return Task.CompletedTask;
+                },
+                EditCharacterFolderAsync = () =>
+                {
+                    if (!string.IsNullOrWhiteSpace(characterDirectory))
+                    {
+                        OnOpenInCharacterEditorRequested?.Invoke(characterDirectory);
+                    }
+
+                    return Task.CompletedTask;
+                },
+                DuplicateCharacterFolderAsync = () =>
+                {
+                    if (!string.IsNullOrWhiteSpace(characterDirectory))
+                    {
+                        OnDuplicateInCharacterEditorRequested?.Invoke(characterDirectory);
+                    }
+
+                    return Task.CompletedTask;
+                },
+                OpenCharacterEmoteVisualizer = () => OnOpenInCharacterEmoteVisualizerRequested?.Invoke(characterDirectory),
+                OpenCharacterFolderVisualizer = () => OnOpenInCharacterFolderVisualizerRequested?.Invoke(characterDirectory),
+                DeleteCharacterFolderAsync = OnDeleteCharacterFolderRequested == null
+                    ? null
+                    : () => OnDeleteCharacterFolderRequested(characterName, characterDirectory)
+            };
         }
 
         private ContextMenu BuildPositionDropdownContextMenu()
@@ -326,6 +293,23 @@ namespace OceanyaClient.Components
         private string ResolveCurrentCharacterDirectory()
         {
             return curClient?.currentINI?.DirectoryPath?.Trim() ?? string.Empty;
+        }
+
+        private static string ResolveReadmePath(string directory)
+        {
+            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+            {
+                return string.Empty;
+            }
+
+            string[] candidates =
+            {
+                Path.Combine(directory, "readme.txt"),
+                Path.Combine(directory, "README.txt"),
+                Path.Combine(directory, "readme.md"),
+                Path.Combine(directory, "README.md")
+            };
+            return candidates.FirstOrDefault(File.Exists) ?? string.Empty;
         }
 
         private string ResolveCurrentBackgroundName()
@@ -687,13 +671,13 @@ namespace OceanyaClient.Components
                 if (offExists && onExists)
                 {
                     // Both images exist, use them as is
-                    offImage = new BitmapImage(new Uri(buttonOff, UriKind.Absolute));
-                    onImage = new BitmapImage(new Uri(buttonOn, UriKind.Absolute));
+                    offImage = BitmapFileLoader.LoadFrozen(buttonOff);
+                    onImage = BitmapFileLoader.LoadFrozen(buttonOn);
                 }
                 else if (offExists)
                 {
                     // Only off image exists
-                    BitmapImage existingImage = new BitmapImage(new Uri(buttonOff, UriKind.Absolute));
+                    BitmapImage existingImage = BitmapFileLoader.LoadFrozen(buttonOff);
                     // Create darkened version for on state
                     onImage = CreateDarkenedImage(buttonOff);
                    
@@ -703,7 +687,7 @@ namespace OceanyaClient.Components
                 else // onExists
                 {
                     // Only on image exists
-                    BitmapImage existingImage = new BitmapImage(new Uri(buttonOn, UriKind.Absolute));
+                    BitmapImage existingImage = BitmapFileLoader.LoadFrozen(buttonOn);
                     // Use existing image as the on state
                     onImage = existingImage;
                     // Create darkened version for off state
@@ -989,7 +973,7 @@ namespace OceanyaClient.Components
         private BitmapImage CreateDarkenedImage(string imagePath)
         {
             // Load the original image
-            BitmapImage originalImage = new BitmapImage(new Uri(imagePath, UriKind.Absolute));
+            BitmapImage originalImage = BitmapFileLoader.LoadFrozen(imagePath);
 
             // Create a writable bitmap to manipulate the pixels
             WriteableBitmap writableBmp = new WriteableBitmap(originalImage);

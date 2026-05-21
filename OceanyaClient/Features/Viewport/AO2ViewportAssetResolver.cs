@@ -1114,7 +1114,14 @@ namespace OceanyaClient.Features.Viewport
             }
 
             string token = ReadIniSectionValue(character.configINI.PathToConfigINI, "Options", "chat");
-            return string.IsNullOrWhiteSpace(token) ? string.Empty : token.Trim();
+            token = string.IsNullOrWhiteSpace(token) ? string.Empty : token.Trim();
+            // Intentional Oceanya exception to AO2 parity: AO2 treats "chat=default"
+            // as the literal default misc chatbox, but that often looks worse than
+            // the active theme default. Treat only this literal token like no chat
+            // override so themed chatboxes remain consistent.
+            return string.Equals(token, "default", StringComparison.OrdinalIgnoreCase)
+                ? string.Empty
+                : token;
         }
 
         /// <summary>

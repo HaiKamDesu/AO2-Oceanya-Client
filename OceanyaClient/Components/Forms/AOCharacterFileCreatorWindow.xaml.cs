@@ -10980,6 +10980,15 @@ namespace OceanyaClient
             return result == true;
         }
 
+        internal static Color? ShowSolidColorPickerDialog(Window? owner, Color initialColor)
+        {
+            AOCharacterFileCreatorWindow pickerHost = new AOCharacterFileCreatorWindow
+            {
+                Owner = owner
+            };
+            return pickerHost.ShowAdvancedColorPickerDialog(initialColor);
+        }
+
         private Color? ShowAdvancedColorPickerDialog(Color initialColor)
         {
             Window dialog = CreateEmoteDialog("Solid Color Picker", 760, 680);
@@ -13147,7 +13156,7 @@ namespace OceanyaClient
 
         private Window CreateEmoteDialog(string title, double width, double height)
         {
-            Window? ownerWindow = HostWindow ?? this;
+            Window? ownerWindow = HostWindow ?? Owner;
             GenericOceanyaWindow dialog = new GenericOceanyaWindow
             {
                 Owner = ownerWindow,

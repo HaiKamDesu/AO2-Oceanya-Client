@@ -28,14 +28,26 @@ namespace OceanyaClient.Features.Viewport
         /// <summary>Requests that a character be opened in the character editor.</summary>
         public event Func<string, Task>? OpenCharacterInEditorRequested;
 
+        /// <summary>Requests that a new character folder be created in the character editor.</summary>
+        public event Func<Task>? NewCharacterFolderRequested;
+
         /// <summary>Requests that a character be duplicated and opened in the character editor.</summary>
         public event Func<string, Task>? DuplicateCharacterInEditorRequested;
 
         /// <summary>Requests that a character be selected in the character folder visualizer.</summary>
         public event Action<string>? OpenCharacterInFolderVisualizerRequested;
 
+        /// <summary>Requests that a character folder be deleted.</summary>
+        public event Func<string, string, Task>? DeleteCharacterFolderRequested;
+
         /// <summary>Requests that one character's asset cache be refreshed.</summary>
         public event Func<string, Task>? RefreshCharacterRequested;
+
+        /// <summary>Requests that every local asset cache be refreshed.</summary>
+        public event Func<Task>? RefreshAllAssetsRequested;
+
+        /// <summary>Requests that all character asset caches be refreshed.</summary>
+        public event Func<Task>? RefreshAllCharactersRequested;
 
         /// <summary>Requests that one background's asset cache be refreshed.</summary>
         public event Func<string, Task>? RefreshBackgroundRequested;
@@ -114,6 +126,7 @@ namespace OceanyaClient.Features.Viewport
                 string.IsNullOrWhiteSpace(backgroundName) ? "Background" : "Background (" + backgroundName + ")",
                 addLeadingSeparator: true);
             AddOpenFolderItem(menu, backgroundDirectory);
+            AddOpenFileItem(menu, "Open design.ini", Path.Combine(backgroundDirectory, "design.ini"));
             AddCopyNameItem(menu, backgroundName);
 
             MenuItem refreshItem = new MenuItem
@@ -136,81 +149,48 @@ namespace OceanyaClient.Features.Viewport
             CharacterFolder? character = control?.CurrentCharacter;
             string characterName = character?.Name?.Trim() ?? string.Empty;
             string characterDirectory = character?.DirectoryPath?.Trim() ?? string.Empty;
+            string readmePath = ResolveReadmePath(characterDirectory);
+            string header = string.IsNullOrWhiteSpace(characterName) ? "Character" : "Character (" + characterName + ")";
+            if (menu.Items.Count > 0)
+            {
+                menu.Items.Add(new Separator());
+            }
 
-            ContextMenuSectionHelper.AddHeader(
-                menu,
-                string.IsNullOrWhiteSpace(characterName) ? "Character" : "Character (" + characterName + ")",
-                addLeadingSeparator: true);
-            AddOpenFolderItem(menu, characterDirectory);
-            AddCopyNameItem(menu, characterName);
-
-            MenuItem refreshItem = new MenuItem
+            menu.Items.Add(CharacterContextMenuBuilder.BuildSubmenu(header, new CharacterContextMenuOptions
             {
-                Header = string.IsNullOrWhiteSpace(characterName) ? "Refresh character" : "Refresh " + characterName,
-                IsEnabled = !string.IsNullOrWhiteSpace(characterName)
-            };
-            refreshItem.Click += async (_, _) =>
-            {
-                if (RefreshCharacterRequested != null)
-                {
-                    await RefreshCharacterRequested(characterName);
-                }
-            };
-            menu.Items.Add(refreshItem);
-
-            MenuItem openEditorItem = new MenuItem
-            {
-                Header = "Open in Character Editor",
-                IsEnabled = Directory.Exists(characterDirectory)
-            };
-            openEditorItem.Click += async (_, _) =>
-            {
-                if (OpenCharacterInEditorRequested != null)
-                {
-                    await OpenCharacterInEditorRequested(characterDirectory);
-                }
-            };
-            menu.Items.Add(openEditorItem);
-
-            MenuItem duplicateEditorItem = new MenuItem
-            {
-                Header = "Duplicate and open in Character Editor",
-                IsEnabled = Directory.Exists(characterDirectory)
-            };
-            duplicateEditorItem.Click += async (_, _) =>
-            {
-                if (DuplicateCharacterInEditorRequested != null)
-                {
-                    await DuplicateCharacterInEditorRequested(characterDirectory);
-                }
-            };
-            menu.Items.Add(duplicateEditorItem);
-
-            MenuItem emoteVisualizerItem = new MenuItem
-            {
-                Header = "Open in Character Emote Visualizer",
-                IsEnabled = character != null
-            };
-            emoteVisualizerItem.Click += (_, _) =>
-            {
-                if (character != null)
-                {
-                    CharacterEmoteVisualizerWindow emoteVisualizerWindow = new CharacterEmoteVisualizerWindow(character)
+                CharacterName = characterName,
+                DirectoryPath = characterDirectory,
+                CharIniPath = character?.PathToConfigIni?.Trim() ?? Path.Combine(characterDirectory, "char.ini"),
+                ReadmePath = readmePath,
+                Owner = Window.GetWindow(this),
+                HasReadme = !string.IsNullOrWhiteSpace(readmePath),
+                RefreshCharacterAsync = RefreshCharacterRequested == null
+                    ? null
+                    : () => RefreshCharacterRequested(characterName),
+                RefreshAllAssetsAsync = RefreshAllAssetsRequested,
+                RefreshAllCharactersAsync = RefreshAllCharactersRequested,
+                NewCharacterFolderAsync = NewCharacterFolderRequested,
+                EditCharacterFolderAsync = OpenCharacterInEditorRequested == null
+                    ? null
+                    : () => OpenCharacterInEditorRequested(characterDirectory),
+                DuplicateCharacterFolderAsync = DuplicateCharacterInEditorRequested == null
+                    ? null
+                    : () => DuplicateCharacterInEditorRequested(characterDirectory),
+                OpenCharacterEmoteVisualizer = character == null
+                    ? null
+                    : () =>
                     {
-                        Owner = Window.GetWindow(this)
-                    };
-                    emoteVisualizerWindow.ShowDialog();
-                }
-            };
-            menu.Items.Add(emoteVisualizerItem);
-
-            MenuItem folderVisualizerItem = new MenuItem
-            {
-                Header = "Open in Character Folder Visualizer",
-                IsEnabled = !string.IsNullOrWhiteSpace(characterDirectory)
-            };
-            folderVisualizerItem.Click += (_, _) => OpenCharacterInFolderVisualizerRequested?.Invoke(characterDirectory);
-            menu.Items.Add(folderVisualizerItem);
+                        CharacterEmoteVisualizerWindow emoteVisualizerWindow = new CharacterEmoteVisualizerWindow(character)
+                        {
+                            Owner = Window.GetWindow(this)
+                        };
+                        emoteVisualizerWindow.ShowDialog();
+                    },
+                OpenCharacterFolderVisualizer = () => OpenCharacterInFolderVisualizerRequested?.Invoke(characterDirectory),
+                DeleteCharacterFolderAsync = DeleteCharacterFolderRequested == null
+                    ? null
+                    : () => DeleteCharacterFolderRequested(characterName, characterDirectory)
+            }));
         }
 
         private void AddChatboxMenuSection(ContextMenu menu, AO2ViewportControl? control)
@@ -225,7 +205,18 @@ namespace OceanyaClient.Features.Viewport
                 string.IsNullOrWhiteSpace(chatboxName) ? "Chatbox" : "Chatbox (" + chatboxName + ")",
                 addLeadingSeparator: true);
             AddOpenFolderItem(menu, chatboxDirectory);
+            AddOpenFileItem(menu, "Open config.ini", Globals.PathToConfigINI);
             AddCopyNameItem(menu, chatboxName);
+
+            MenuItem chooseColorItem = new MenuItem { Header = "Set chat background color..." };
+            chooseColorItem.IsEnabled = control != null;
+            chooseColorItem.Click += (_, _) => control?.PickChatBackgroundColor();
+            menu.Items.Add(chooseColorItem);
+
+            MenuItem transparentItem = new MenuItem { Header = "Use transparent chat background" };
+            transparentItem.IsEnabled = control != null;
+            transparentItem.Click += (_, _) => control?.SetChatBackgroundColor(null);
+            menu.Items.Add(transparentItem);
         }
 
         private static void AddOpenFolderItem(ContextMenu menu, string directory)
@@ -236,6 +227,17 @@ namespace OceanyaClient.Features.Viewport
                 IsEnabled = Directory.Exists(directory)
             };
             item.Click += (_, _) => OpenDirectory(directory);
+            menu.Items.Add(item);
+        }
+
+        private static void AddOpenFileItem(ContextMenu menu, string header, string filePath)
+        {
+            MenuItem item = new MenuItem
+            {
+                Header = header,
+                IsEnabled = File.Exists(filePath)
+            };
+            item.Click += (_, _) => OpenFile(filePath);
             menu.Items.Add(item);
         }
 
@@ -262,6 +264,45 @@ namespace OceanyaClient.Features.Viewport
                 FileName = directory,
                 UseShellExecute = true
             });
+        }
+
+        private static void OpenFile(string filePath)
+        {
+            if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+            {
+                return;
+            }
+
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = filePath,
+                UseShellExecute = true
+            });
+        }
+
+        private static string ResolveReadmePath(string directory)
+        {
+            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+            {
+                return string.Empty;
+            }
+
+            string[] candidates =
+            {
+                Path.Combine(directory, "readme.txt"),
+                Path.Combine(directory, "README.txt"),
+                Path.Combine(directory, "readme.md"),
+                Path.Combine(directory, "README.md")
+            };
+            foreach (string candidate in candidates)
+            {
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            return string.Empty;
         }
 
         private AO2ViewportControl? GetActiveControl()
@@ -366,6 +407,14 @@ namespace OceanyaClient.Features.Viewport
             foreach (AO2ViewportControl control in profileControls.Values)
             {
                 control.RefreshVolumes();
+            }
+        }
+
+        public void ReleaseCharacterAssetsForDeletedFolder(string normalizedCharacterDirectory)
+        {
+            foreach (AO2ViewportControl control in profileControls.Values)
+            {
+                control.ReleaseCharacterAssetsForDeletedFolder(normalizedCharacterDirectory);
             }
         }
 

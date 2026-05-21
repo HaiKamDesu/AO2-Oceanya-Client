@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
@@ -10,6 +11,7 @@ using System.Windows.Media.Imaging;
 using AOBot_Testing.Structures;
 using NUnit.Framework;
 using OceanyaClient;
+using OceanyaClient.Utilities;
 
 namespace UnitTests
 {
@@ -263,6 +265,46 @@ namespace UnitTests
             window.Close();
         }
 
+        [Test]
+        public void NormalView_UsesVirtualizingWrapPanel()
+        {
+            CharacterFolder folder = BuildCharacterFolderWithEmotes();
+            CharacterEmoteVisualizerWindow window = new CharacterEmoteVisualizerWindow(folder);
+
+            ComboBox? viewModeCombo = window.FindName("ViewModeCombo") as ComboBox;
+            Assert.That(viewModeCombo, Is.Not.Null);
+            EmoteVisualizerViewPreset? normalPreset = viewModeCombo!.Items
+                .OfType<EmoteVisualizerViewPreset>()
+                .FirstOrDefault(preset => preset.Mode == FolderVisualizerLayoutMode.Normal);
+            Assert.That(normalPreset, Is.Not.Null);
+
+            viewModeCombo.SelectedItem = normalPreset;
+            ItemsPanelTemplate template = (ItemsPanelTemplate)window.FindResource("IconItemsPanelTemplate");
+            Assert.That(template.LoadContent(), Is.TypeOf<VirtualizingWrapPanel>());
+            window.Close();
+        }
+
+        [Test]
+        public void EmoteContextMenu_AddsEmoteSectionBeforeSharedCharacterMenu()
+        {
+            CharacterFolder folder = BuildCharacterFolderWithEmotes();
+            CharacterEmoteVisualizerWindow window = new CharacterEmoteVisualizerWindow(folder);
+            EmoteVisualizerItem item = window.BuildEmoteItems(folder).First();
+
+            MethodInfo method = typeof(CharacterEmoteVisualizerWindow).GetMethod(
+                "BuildContextMenuForItem",
+                BindingFlags.Instance | BindingFlags.NonPublic)!;
+            ContextMenu menu = (ContextMenu)method.Invoke(window, new object[] { item })!;
+            List<string> headers = ExtractMenuHeaders(menu).ToList();
+
+            Assert.That(headers.First(), Is.EqualTo("Emote"));
+            Assert.That(headers, Does.Contain("Set as folder display"));
+            Assert.That(headers, Does.Contain("Oceanya Client"));
+            Assert.That(headers, Does.Contain("Integrity verifier"));
+            Assert.That(headers, Does.Contain("Attorney Online"));
+            window.Close();
+        }
+
         private CharacterFolder BuildCharacterFolderWithEmotes()
         {
             string characterDirectory = Path.Combine(tempRoot, "characters", "Apollo");
@@ -290,6 +332,24 @@ namespace UnitTests
             File.WriteAllText(iniPath, ini);
 
             return CharacterFolder.Create(iniPath);
+        }
+
+        private static IEnumerable<string> ExtractMenuHeaders(ItemsControl menu)
+        {
+            foreach (object item in menu.Items)
+            {
+                if (item is MenuItem menuItem)
+                {
+                    if (menuItem.Header is TextBlock textBlock)
+                    {
+                        yield return textBlock.Text;
+                    }
+                    else if (menuItem.Header is string text)
+                    {
+                        yield return text;
+                    }
+                }
+            }
         }
 
         private static void CreateSolidPng(string path)
