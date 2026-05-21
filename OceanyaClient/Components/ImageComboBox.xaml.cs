@@ -10,6 +10,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Text;
+using OceanyaClient.Utilities;
 
 namespace OceanyaClient.Components
 {
@@ -96,6 +97,7 @@ namespace OceanyaClient.Components
         public ImageComboBox()
         {
             InitializeComponent();
+            cboINISelect.ItemsSource = allItems;
 
             cboINISelect.Loaded += (s, e) =>
             {
@@ -372,7 +374,7 @@ namespace OceanyaClient.Components
         #region Methods
         public void Add(string name, string imagePath, string? value = null)
         {
-            Application.Current.Dispatcher.Invoke(() =>
+            InvokeOnDispatcher(() =>
             {
                 allItems.Add(new DropdownItem
                 {
@@ -380,7 +382,27 @@ namespace OceanyaClient.Components
                     ImagePath = imagePath,
                     Value = value ?? name
                 });
+                RestoreAllItemsIfNotFiltering();
+            });
+        }
+
+        public void SetItems(IEnumerable<DropdownItem> items)
+        {
+            InvokeOnDispatcher(() =>
+            {
+                allItems.Clear();
+                foreach (DropdownItem item in items)
+                {
+                    allItems.Add(new DropdownItem
+                    {
+                        Name = item.Name ?? string.Empty,
+                        ImagePath = item.ImagePath ?? string.Empty,
+                        Value = item.Value ?? item.Name ?? string.Empty
+                    });
+                }
+
                 cboINISelect.ItemsSource = allItems;
+                AssignItemAutomationIdentifiers();
             });
         }
 
@@ -424,6 +446,15 @@ namespace OceanyaClient.Components
             }
 
             cboINISelect.ItemsSource = allItems;
+        }
+
+        private void RestoreAllItemsIfNotFiltering()
+        {
+            if (cboINISelect.ItemsSource == null
+                || string.Equals(cboINISelect.Text, lastConfirmedText, StringComparison.OrdinalIgnoreCase))
+            {
+                cboINISelect.ItemsSource = allItems;
+            }
         }
 
         private void HandleArrowKey(KeyEventArgs e)
@@ -526,10 +557,10 @@ namespace OceanyaClient.Components
 
         public void Clear()
         {
-            Application.Current.Dispatcher.Invoke(() =>
+            InvokeOnDispatcher(() =>
             {
                 allItems.Clear();
-                cboINISelect.ItemsSource = null;
+                cboINISelect.ItemsSource = allItems;
             });
         }
 
@@ -545,12 +576,46 @@ namespace OceanyaClient.Components
                     else
                         imageUri = new Uri(imagePath, UriKind.RelativeOrAbsolute);
 
-                    imgSelected.Source = new BitmapImage(imageUri);
+                    imgSelected.Source = LoadSelectedImage(imagePath, imageUri);
                 }
                 catch (Exception)
                 {
                     imgSelected.Source = null;
                 }
+            }
+        }
+
+        private static ImageSource? LoadSelectedImage(string imagePath, Uri imageUri)
+        {
+            if (!string.IsNullOrWhiteSpace(imagePath)
+                && !imagePath.StartsWith("pack://application:,,,", StringComparison.OrdinalIgnoreCase)
+                && System.IO.File.Exists(imagePath))
+            {
+                return BitmapFileLoader.LoadFrozen(imagePath);
+            }
+
+            BitmapImage image = new BitmapImage();
+            image.BeginInit();
+            image.CacheOption = BitmapCacheOption.OnLoad;
+            image.UriSource = imageUri;
+            image.EndInit();
+            if (image.CanFreeze)
+            {
+                image.Freeze();
+            }
+
+            return image;
+        }
+
+        private void InvokeOnDispatcher(Action action)
+        {
+            if (Dispatcher.CheckAccess())
+            {
+                action();
+            }
+            else
+            {
+                Dispatcher.Invoke(action);
             }
         }
 

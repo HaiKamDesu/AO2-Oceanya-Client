@@ -28,6 +28,8 @@ namespace OceanyaClient.Components
         private int columns = 10;
         private int currentPage = 0;
         private List<UIElement> elements = new();
+        private List<object> virtualItems = new();
+        private Func<object, UIElement>? virtualElementFactory;
 
         public PageButtonGrid()
         {
@@ -40,7 +42,7 @@ namespace OceanyaClient.Components
         public int GetPageCount()
         {
             int elementsPerPage = Math.Max(1, rows * columns);
-            return Math.Max(1, (int)Math.Ceiling((double)elements.Count / elementsPerPage));
+            return Math.Max(1, (int)Math.Ceiling((double)GetItemCount() / elementsPerPage));
         }
 
         public void SetCurrentPage(int page)
@@ -59,8 +61,31 @@ namespace OceanyaClient.Components
 
         public void AddElement(UIElement element)
         {
+            ClearVirtualizedItems();
             elements.Add(element);
             UpdateGridContent();
+        }
+
+        public void SetVirtualizedItems<T>(IEnumerable<T> items, Func<T, UIElement> elementFactory)
+        {
+            elements.Clear();
+            virtualItems = items.Cast<object>().ToList();
+            virtualElementFactory = item => elementFactory((T)item);
+            currentPage = Math.Clamp(currentPage, 0, GetPageCount() - 1);
+            UpdateGridContent();
+        }
+
+        public bool SetPageToVirtualizedItem(Predicate<object> predicate)
+        {
+            int index = virtualItems.FindIndex(predicate);
+            if (index < 0)
+            {
+                return false;
+            }
+
+            currentPage = index / Math.Max(1, rows * columns);
+            UpdateGridContent();
+            return true;
         }
 
         public void SetPageToElement(UIElement element)
@@ -79,6 +104,7 @@ namespace OceanyaClient.Components
 
         public bool MoveElement(UIElement element, int offset)
         {
+            ClearVirtualizedItems();
             int index = elements.IndexOf(element);
             if (index < 0)
             {
@@ -136,11 +162,15 @@ namespace OceanyaClient.Components
             currentPage = Math.Clamp(currentPage, 0, GetPageCount() - 1);
             int elementsPerPage = Math.Max(1, rows * columns);
             int startIndex = currentPage * elementsPerPage;
-            int endIndex = Math.Min(startIndex + elementsPerPage, elements.Count);
+            int endIndex = Math.Min(startIndex + elementsPerPage, GetItemCount());
 
             for (int i = startIndex, row = 0, col = 0; i < endIndex; i++)
             {
-                UIElement element = elements[i];
+                UIElement? element = CreateElementForIndex(i);
+                if (element == null)
+                {
+                    continue;
+                }
 
                 // Ensure the element is placed in a valid row and column
                 if (row >= TestingGrid.RowDefinitions.Count || col >= TestingGrid.ColumnDefinitions.Count)
@@ -185,6 +215,7 @@ namespace OceanyaClient.Components
 
         public void DeleteElement(UIElement element)
         {
+            ClearVirtualizedItems();
             if (elements.Remove(element))
             {
                 UpdateGridContent();
@@ -193,6 +224,7 @@ namespace OceanyaClient.Components
 
         public void DeleteElementAt(int index)
         {
+            ClearVirtualizedItems();
             if (index >= 0 && index < elements.Count)
             {
                 elements.RemoveAt(index);
@@ -203,7 +235,34 @@ namespace OceanyaClient.Components
         public void ClearGrid()
         {
             elements.Clear();
+            ClearVirtualizedItems();
             UpdateGridContent();
+        }
+
+        private int GetItemCount()
+        {
+            return virtualElementFactory == null ? elements.Count : virtualItems.Count;
+        }
+
+        private UIElement? CreateElementForIndex(int index)
+        {
+            if (virtualElementFactory == null)
+            {
+                return elements[index];
+            }
+
+            if (index < 0 || index >= virtualItems.Count)
+            {
+                return null;
+            }
+
+            return virtualElementFactory(virtualItems[index]);
+        }
+
+        private void ClearVirtualizedItems()
+        {
+            virtualItems.Clear();
+            virtualElementFactory = null;
         }
 
         #region Currently Works
@@ -214,7 +273,7 @@ namespace OceanyaClient.Components
         }
         private void UpdateButtonVisibility()
         {
-            int totalPages = (int)Math.Ceiling((double)elements.Count / (rows * columns));
+            int totalPages = (int)Math.Ceiling((double)GetItemCount() / Math.Max(1, rows * columns));
 
             Grid grid = (Grid)UpButton.Parent; // Get the parent Grid
 
@@ -284,7 +343,7 @@ namespace OceanyaClient.Components
 
         private void RightPage_Click(object sender, RoutedEventArgs e)
         {
-            if ((currentPage + 1) * (rows * columns) < elements.Count)
+            if ((currentPage + 1) * (rows * columns) < GetItemCount())
             {
                 currentPage++;
                 UpdateGridContent();
@@ -302,7 +361,7 @@ namespace OceanyaClient.Components
 
         private void DownPage_Click(object sender, RoutedEventArgs e)
         {
-            if ((currentPage + 1) * (rows * columns) < elements.Count)
+            if ((currentPage + 1) * (rows * columns) < GetItemCount())
             {
                 currentPage++;
                 UpdateGridContent();

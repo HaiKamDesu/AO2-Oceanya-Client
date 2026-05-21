@@ -15,6 +15,10 @@
               TextSearch.TextPath="Name"
               StaysOpenOnEdit="True"
               IsTextSearchEnabled="False"
+              VirtualizingPanel.IsVirtualizing="True"
+              VirtualizingPanel.VirtualizationMode="Recycling"
+              VirtualizingPanel.ScrollUnit="Item"
+              ScrollViewer.CanContentScroll="True"
               KeyDown="cboINISelect_KeyDown"
               SelectionChanged="cboINISelect_SelectionChanged"
               PreviewKeyDown="cboINISelect_PreviewKeyDown"
@@ -94,7 +98,10 @@
                    StaysOpen="False">
                             <Border Background="White" BorderBrush="Black" BorderThickness="1"
                         Width="{Binding ActualWidth, ElementName=cboINISelect}">
-                                <ScrollViewer MaxHeight="150">
+                                <ScrollViewer MaxHeight="150"
+                                              CanContentScroll="True"
+                                              VirtualizingPanel.IsVirtualizing="True"
+                                              VirtualizingPanel.VirtualizationMode="Recycling">
                                     <ItemsPresenter/>
                                 </ScrollViewer>
                             </Border>

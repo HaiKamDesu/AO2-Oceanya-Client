@@ -35,7 +35,8 @@ namespace OceanyaClient.Components
     {
         public static int ICShownameMaxLength = 22;
         public static int ICMessageMaxLength = 256;
-        Dictionary<Emote, ToggleButton> emotes = new();
+        readonly List<Emote> emotes = new();
+        bool suppressEmoteToggleEvents;
         AOClient? curClient;
         readonly Dictionary<AOClient, int> clientEmotePages = new();
         public bool stickyEffects;
@@ -388,10 +389,11 @@ namespace OceanyaClient.Components
 
         private void EmoteDropdown_OnConfirm(object? sender, string emoteDisplayID)
         {
-            //toggles the emote button that corresponds to the selected emote in the dropdown
-            var emote = emotes.FirstOrDefault(x => x.Key.DisplayID == emoteDisplayID).Value;
+            Emote? emote = FindEmoteByDisplayId(emoteDisplayID);
             if (emote == null) return;
-            emote.IsChecked = true;
+            EmoteGrid.SetPageToVirtualizedItem(item => item is Emote candidate
+                && string.Equals(candidate.DisplayID, emote.DisplayID, StringComparison.OrdinalIgnoreCase));
+            SelectEmote(emote, updateClient: true, focusMessageBox: true, notifyStateChanged: true);
             txtICMessage.Focus();
         }
 
@@ -430,8 +432,8 @@ namespace OceanyaClient.Components
             AOClient? previousClient = this.curClient;
             if (previousClient != null)
             {
-                curClient.OnSideChange -= UpdatePos;
-                curClient.OnBGChange -= EventHandler_ClientOnBgChange;
+                previousClient.OnSideChange -= UpdatePos;
+                previousClient.OnBGChange -= EventHandler_ClientOnBgChange;
                 clientEmotePages[previousClient] = EmoteGrid.GetCurrentPage();
             }
 
@@ -562,27 +564,14 @@ namespace OceanyaClient.Components
                 EmoteGrid.ClearGrid();
                 emotes.Clear();
                 EmoteDropdown.Clear();
-                foreach (var emote in ini.configINI.Emotions.Values)
-                {
-                    AddEmote(emote);
-                }
+                emotes.AddRange(ini.configINI.Emotions.Values);
 
                 string? selectedDisplayId = curClient.currentEmote?.DisplayID;
-                var selectedEmoteButton = string.IsNullOrWhiteSpace(selectedDisplayId)
+                Emote? selectedEmote = string.IsNullOrWhiteSpace(selectedDisplayId)
                     ? null
-                    : emotes.FirstOrDefault(x => x.Key.DisplayID == selectedDisplayId).Value;
+                    : FindEmoteByDisplayId(selectedDisplayId);
 
-                if (selectedEmoteButton != null)
-                {
-                    selectedEmoteButton.IsChecked = true;
-                }
-                else if (emotes.Count > 0)
-                {
-                    var fallbackEmote = emotes.First();
-                    curClient.SetEmote(fallbackEmote.Key.DisplayID);
-                    fallbackEmote.Value.IsChecked = true;
-                }
-                else
+                if (emotes.Count == 0)
                 {
                     CustomConsole.Warning(
                         $"No emotes were loaded for INI '{ini?.Name ?? "unknown"}'. " +
@@ -597,11 +586,23 @@ namespace OceanyaClient.Components
                         DeskMod = ICMessage.DeskMods.Chat
                     };
 
-                    AddEmote(syntheticFallbackEmote);
-                    curClient.SetEmote(syntheticFallbackEmote.DisplayID);
-                    emotes[syntheticFallbackEmote].IsChecked = true;
+                    emotes.Add(syntheticFallbackEmote);
+                    selectedEmote = syntheticFallbackEmote;
                 }
 
+                selectedEmote ??= emotes.FirstOrDefault();
+                EmoteDropdown.SetItems(emotes.Select(emote => new DropdownItem
+                {
+                    Name = emote.DisplayID,
+                    ImagePath = emote.PathToImage_off,
+                    Value = emote.DisplayID
+                }));
+                EmoteGrid.SetVirtualizedItems(emotes, CreateEmoteButton);
+                if (selectedEmote != null)
+                {
+                    SelectEmote(selectedEmote, updateClient: !IsSelectedEmote(selectedEmote), focusMessageBox: false, notifyStateChanged: false);
+                    EmoteGrid.SetPageToVirtualizedItem(item => ReferenceEquals(item, selectedEmote));
+                }
 
                 sfxDropdown.Clear();
                 sfxDropdown.Add("Default", "");
@@ -635,7 +636,7 @@ namespace OceanyaClient.Components
                 throw;
             }
         }
-        private void AddEmote(Emote emote)
+        private ToggleButton CreateEmoteButton(Emote emote)
         {
             string buttonOff = emote.PathToImage_off;
             string buttonOn = emote.PathToImage_on;
@@ -645,7 +646,9 @@ namespace OceanyaClient.Components
                 Height = 40,
                 ToolTip = emote.DisplayID,
                 Focusable = false,
-                IsTabStop = false
+                IsTabStop = false,
+                Tag = emote,
+                IsChecked = IsSelectedEmote(emote)
             };
             AutomationProperties.SetAutomationId(toggleBtn, "Main.Ic.EmoteGrid." + SanitizeAutomationSegment(emote.DisplayID));
             AutomationProperties.SetName(toggleBtn, emote.DisplayID);
@@ -717,10 +720,8 @@ namespace OceanyaClient.Components
                 toggleBtn.Content = emote.DisplayID;
             }
 
-            EmoteDropdown.Add(emote.DisplayID, emote.PathToImage_off);
-            EmoteGrid.AddElement(toggleBtn);
-            emotes.Add(emote, toggleBtn);
             toggleBtn.ContextMenu = BuildEmoteButtonContextMenu(emote);
+            return toggleBtn;
         }
 
         private ContextMenu BuildEmoteButtonContextMenu(Emote emote)
@@ -1038,49 +1039,94 @@ namespace OceanyaClient.Components
             txtICShowname.Clear();
             txtICMessage.Clear();
             EmoteGrid.ClearGrid();
+            emotes.Clear();
         }
 
         private void EmoteToggleBtn_Checked(object sender, RoutedEventArgs e)
         {
-            ToggleButton? clickedButton = sender as ToggleButton;
-            if (clickedButton == null || curClient == null)
+            if (suppressEmoteToggleEvents)
             {
                 return;
             }
 
-            foreach (var button in emotes.Values)
+            ToggleButton? clickedButton = sender as ToggleButton;
+            if (clickedButton?.Tag is not Emote emote || curClient == null)
             {
-                if (button != clickedButton)
-                {
-                    button.Unchecked -= EmoteToggleBtn_Unchecked;
-                    button.IsChecked = false;
-                    button.Unchecked += EmoteToggleBtn_Unchecked;
-                }
+                return;
             }
 
-            var emote = emotes.FirstOrDefault(x => x.Value == clickedButton).Key;
-            EmoteDropdown.SelectedText = emote.DisplayID;
-            curClient.SetEmote(emote.DisplayID);
-            chkPreanim.IsChecked = emote.Modifier == ICMessage.EmoteModifiers.PlayPreanimation
-                || emote.Modifier == ICMessage.EmoteModifiers.PlayPreanimationAndObjection;
-            txtICMessage.Focus();
-            OnClientStateChanged?.Invoke();
+            SelectEmote(emote, updateClient: true, focusMessageBox: true, notifyStateChanged: true);
         }
         private void EmoteToggleBtn_Unchecked(object sender, RoutedEventArgs e)
         {
-            ToggleButton? clickedButton = sender as ToggleButton;
-            if (clickedButton == null)
+            if (suppressEmoteToggleEvents)
             {
                 return;
             }
 
-            if (clickedButton.IsChecked == false)
+            ToggleButton? clickedButton = sender as ToggleButton;
+            if (clickedButton?.Tag is not Emote emote)
+            {
+                return;
+            }
+
+            if (clickedButton.IsChecked == false && IsSelectedEmote(emote))
             {
                 chkPreanim.IsChecked = !chkPreanim.IsChecked;
 
                 clickedButton.Checked -= EmoteToggleBtn_Checked;
                 clickedButton.IsChecked = true;
                 clickedButton.Checked += EmoteToggleBtn_Checked;
+            }
+        }
+
+        private Emote? FindEmoteByDisplayId(string? displayId)
+        {
+            return emotes.FirstOrDefault(emote =>
+                string.Equals(emote.DisplayID, displayId, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private bool IsSelectedEmote(Emote emote)
+        {
+            return string.Equals(
+                curClient?.currentEmote?.DisplayID,
+                emote.DisplayID,
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void SelectEmote(Emote emote, bool updateClient, bool focusMessageBox, bool notifyStateChanged)
+        {
+            if (curClient == null)
+            {
+                return;
+            }
+
+            suppressEmoteToggleEvents = true;
+            try
+            {
+                if (updateClient)
+                {
+                    curClient.SetEmote(emote.DisplayID);
+                }
+
+                EmoteDropdown.SelectedText = emote.DisplayID;
+                chkPreanim.IsChecked = emote.Modifier == ICMessage.EmoteModifiers.PlayPreanimation
+                    || emote.Modifier == ICMessage.EmoteModifiers.PlayPreanimationAndObjection;
+                EmoteGrid.SetVirtualizedItems(emotes, CreateEmoteButton);
+            }
+            finally
+            {
+                suppressEmoteToggleEvents = false;
+            }
+
+            if (focusMessageBox)
+            {
+                txtICMessage.Focus();
+            }
+
+            if (notifyStateChanged)
+            {
+                OnClientStateChanged?.Invoke();
             }
         }
         private void txtICMessage_KeyDown(object sender, KeyEventArgs e)
