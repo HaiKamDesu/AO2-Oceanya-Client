@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <OceanyaAppVersion>6.3</OceanyaAppVersion>
+    <OceanyaAppVersion>6.4</OceanyaAppVersion>
     <Version>$(OceanyaAppVersion)</Version>
     <AssemblyVersion>$(OceanyaAppVersion).0.0</AssemblyVersion>
     <FileVersion>$(OceanyaAppVersion).0.0</FileVersion>
