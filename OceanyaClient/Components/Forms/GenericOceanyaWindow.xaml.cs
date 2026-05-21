@@ -458,11 +458,11 @@ namespace OceanyaClient
             }
             else if (msg == WM_MOVING)
             {
-                HandleWindowMovingSynchronize(lParam);
+                HandleWindowMovingSynchronize(hwnd, lParam);
             }
             else if (msg == WM_ENTERSIZEMOVE)
             {
-                ResetSynchronizedMoveTracking();
+                InitializeSynchronizedMoveTracking(hwnd);
             }
             else if (msg == WM_EXITSIZEMOVE)
             {
@@ -472,7 +472,7 @@ namespace OceanyaClient
             return IntPtr.Zero;
         }
 
-        private void HandleWindowMovingSynchronize(IntPtr lParam)
+        private void HandleWindowMovingSynchronize(IntPtr hwnd, IntPtr lParam)
         {
             if (SynchronizedMovePartner == null)
             {
@@ -486,23 +486,21 @@ namespace OceanyaClient
             }
 
             GenericRect rect = Marshal.PtrToStructure<GenericRect>(lParam);
+            if (!synchronizedMoveStartRect.HasValue || !synchronizedMovePartnerStartRect.HasValue)
+            {
+                InitializeSynchronizedMoveTracking(hwnd);
+            }
+
+            if (!synchronizedMoveStartRect.HasValue || !synchronizedMovePartnerStartRect.HasValue)
+            {
+                return;
+            }
+
             WindowInteropHelper partnerInterop = new WindowInteropHelper(SynchronizedMovePartner);
             IntPtr partnerHandle = partnerInterop.Handle;
             if (partnerHandle == IntPtr.Zero)
             {
                 return;
-            }
-
-            if (!synchronizedMoveStartRect.HasValue || !synchronizedMovePartnerStartRect.HasValue)
-            {
-                synchronizedMoveStartRect = rect;
-                if (!GetWindowRect(partnerHandle, out GenericRect partnerRect))
-                {
-                    ResetSynchronizedMoveTracking();
-                    return;
-                }
-
-                synchronizedMovePartnerStartRect = partnerRect;
             }
 
             int dx = rect.left - synchronizedMoveStartRect.Value.left;
@@ -516,6 +514,29 @@ namespace OceanyaClient
                 0,
                 0,
                 SetWindowPosFlags.NoSize | SetWindowPosFlags.NoZOrder | SetWindowPosFlags.NoActivate | SetWindowPosFlags.NoOwnerZOrder);
+        }
+
+        private void InitializeSynchronizedMoveTracking(IntPtr hwnd)
+        {
+            if (SynchronizedMovePartner == null)
+            {
+                ResetSynchronizedMoveTracking();
+                return;
+            }
+
+            WindowInteropHelper partnerInterop = new WindowInteropHelper(SynchronizedMovePartner);
+            IntPtr partnerHandle = partnerInterop.Handle;
+            if (hwnd == IntPtr.Zero
+                || partnerHandle == IntPtr.Zero
+                || !GetWindowRect(hwnd, out GenericRect currentRect)
+                || !GetWindowRect(partnerHandle, out GenericRect partnerRect))
+            {
+                ResetSynchronizedMoveTracking();
+                return;
+            }
+
+            synchronizedMoveStartRect = currentRect;
+            synchronizedMovePartnerStartRect = partnerRect;
         }
 
         private void ResetSynchronizedMoveTracking()
