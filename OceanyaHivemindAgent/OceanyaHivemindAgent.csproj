@@ -46,6 +46,7 @@
       <HivemindFilesToCopy Include="$(TargetDir)$(AssemblyName).pdb" Condition="Exists('$(TargetDir)$(AssemblyName).pdb')" />
       <HivemindFilesToCopy Include="$(TargetDir)Resources\**\*" Condition="Exists('$(TargetDir)Resources')" />
       <HivemindFilesToCopy Include="..\OceanyaUpdater\bin\$(Configuration)\net8.0-windows\OceanyaUpdater.exe" Condition="Exists('..\OceanyaUpdater\bin\$(Configuration)\net8.0-windows\OceanyaUpdater.exe')" />
+      <HivemindFilesToCopy Include="..\OceanyaUpdater\bin\$(Configuration)\net8.0-windows\OceanyaUpdater.dll" Condition="Exists('..\OceanyaUpdater\bin\$(Configuration)\net8.0-windows\OceanyaUpdater.dll')" />
       <HivemindFilesToCopy Include="..\OceanyaUpdater\bin\$(Configuration)\net8.0-windows\OceanyaUpdater.deps.json" Condition="Exists('..\OceanyaUpdater\bin\$(Configuration)\net8.0-windows\OceanyaUpdater.deps.json')" />
       <HivemindFilesToCopy Include="..\OceanyaUpdater\bin\$(Configuration)\net8.0-windows\OceanyaUpdater.runtimeconfig.json" Condition="Exists('..\OceanyaUpdater\bin\$(Configuration)\net8.0-windows\OceanyaUpdater.runtimeconfig.json')" />
     </ItemGroup>

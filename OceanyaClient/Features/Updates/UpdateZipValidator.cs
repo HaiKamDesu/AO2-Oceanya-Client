@@ -30,11 +30,6 @@ namespace OceanyaClient.Features.Updates
                 ValidateEntry(entry, fullExtractionRoot, topLevelNames);
             }
 
-            if (topLevelNames.Count != 1)
-            {
-                throw new InvalidOperationException("The update package must contain exactly one top-level folder.");
-            }
-
             foreach (ZipArchiveEntry entry in archive.Entries)
             {
                 string destinationPath = Path.GetFullPath(Path.Combine(extractionRoot, entry.FullName.Replace('/', Path.DirectorySeparatorChar)));
@@ -48,7 +43,7 @@ namespace OceanyaClient.Features.Updates
                 entry.ExtractToFile(destinationPath, overwrite: false);
             }
 
-            string packageRoot = Path.Combine(extractionRoot, topLevelNames.Single());
+            string packageRoot = ResolvePackageRoot(extractionRoot, topLevelNames);
             ValidateExtractedTree(packageRoot, fullExtractionRoot);
             if (!File.Exists(Path.Combine(packageRoot, "OceanyaClient.exe")))
             {
@@ -56,6 +51,37 @@ namespace OceanyaClient.Features.Updates
             }
 
             return packageRoot;
+        }
+
+        private static string ResolvePackageRoot(string extractionRoot, HashSet<string> topLevelNames)
+        {
+            List<string> candidates = new List<string>();
+            if (File.Exists(Path.Combine(extractionRoot, "OceanyaClient.exe")))
+            {
+                candidates.Add(extractionRoot);
+            }
+
+            foreach (string topLevelName in topLevelNames)
+            {
+                string topLevelPath = Path.Combine(extractionRoot, topLevelName);
+                if (Directory.Exists(topLevelPath) && File.Exists(Path.Combine(topLevelPath, "OceanyaClient.exe")))
+                {
+                    candidates.Add(topLevelPath);
+                }
+            }
+
+            if (candidates.Count == 1)
+            {
+                return candidates[0];
+            }
+
+            if (candidates.Count > 1)
+            {
+                throw new InvalidOperationException("The update package contains multiple possible OceanyaClient.exe roots.");
+            }
+
+            throw new InvalidOperationException(
+                "The update package must contain OceanyaClient.exe either at the zip root or inside one top-level application folder.");
         }
 
         private static void ValidateEntry(ZipArchiveEntry entry, string fullExtractionRoot, HashSet<string> topLevelNames)

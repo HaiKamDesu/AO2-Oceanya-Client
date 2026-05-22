@@ -875,8 +875,7 @@ namespace OceanyaClient
 
                 if (owner != null && !OceanyaTestMode.Current.DisableWaitForms)
                 {
-                    WaitForm.SetSubtitle("Launching updater...");
-                    await WaitForm.CloseFormAsync();
+                    WaitForm.SetSubtitle("Applying update... Oceanya will close and reopen automatically.");
                 }
 
                 updateCheckService.LaunchUpdaterAndExit(release, staging);
@@ -910,7 +909,9 @@ namespace OceanyaClient
                 {
                     OceanyaMessageBox.Show(
                         owner,
-                        "Update failed:\n" + ex.Message,
+                        "Update failed before Oceanya could hand off to the updater:\n"
+                        + ex.Message
+                        + "\n\nOceanya is still open. Check the updater logs and handoff files under the Updates folder.",
                         "Update Failed",
                         MessageBoxButton.OK,
                         MessageBoxImage.Error);

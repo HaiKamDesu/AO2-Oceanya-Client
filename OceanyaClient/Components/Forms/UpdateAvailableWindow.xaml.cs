@@ -39,7 +39,7 @@ namespace OceanyaClient
             content.SubtitleTextBlock.Text = isTest
                 ? $"TEST CHANNEL  |  {release.Name}  |  {published}"
                 : $"{release.Name}  |  {published}";
-            content.ReleaseNotesTextBlock.Text = ReleaseNotesSanitizer.ToSafePlainText(release.Body);
+            content.ReleaseNotesViewer.Document = ReleaseNotesMarkdownRenderer.BuildDocument(release.Body);
 
             OceanyaWindowPresentationOptions options = new OceanyaWindowPresentationOptions
             {

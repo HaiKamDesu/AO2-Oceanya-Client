@@ -11,6 +11,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows.Documents;
 
 namespace UnitTests
 {
@@ -190,6 +191,21 @@ namespace UnitTests
         }
 
         [Test]
+        [Apartment(ApartmentState.STA)]
+        public void ReleaseNotesMarkdownRenderer_BuildsSafeFlowDocumentWithLinksAndCode()
+        {
+            FlowDocument document = ReleaseNotesMarkdownRenderer.BuildDocument(
+                "# Title\n\n- **Fix** `updater`\n[Release](https://github.com/HaiKamDesu/AO2-Oceanya-Client)\n<script>alert(1)</script>");
+
+            Assert.That(document.Blocks.Count, Is.GreaterThanOrEqualTo(4));
+            string text = new TextRange(document.ContentStart, document.ContentEnd).Text;
+            Assert.That(text, Does.Contain("Title"));
+            Assert.That(text, Does.Contain("Fix"));
+            Assert.That(text, Does.Contain("Release"));
+            Assert.That(text, Does.Not.Contain("<script>"));
+        }
+
+        [Test]
         public void ZipValidator_ExtractsSafeSingleRootPackage()
         {
             string root = CreateTempDir();
@@ -203,6 +219,38 @@ namespace UnitTests
             string packageRoot = UpdateZipValidator.ExtractValidatedPackage(zip, Path.Combine(root, "staged"));
 
             Assert.That(File.Exists(Path.Combine(packageRoot, "OceanyaClient.exe")), Is.True);
+        }
+
+        [Test]
+        public void ZipValidator_ExtractsDirectRootPackage()
+        {
+            string root = CreateTempDir();
+            string zip = Path.Combine(root, "direct.zip");
+            using (ZipArchive archive = ZipFile.Open(zip, ZipArchiveMode.Create))
+            {
+                archive.CreateEntry("OceanyaClient.exe").WriteText("exe");
+                archive.CreateEntry("data.txt").WriteText("data");
+            }
+
+            string packageRoot = UpdateZipValidator.ExtractValidatedPackage(zip, Path.Combine(root, "staged"));
+
+            Assert.That(packageRoot, Is.EqualTo(Path.Combine(root, "staged")));
+            Assert.That(File.Exists(Path.Combine(packageRoot, "OceanyaClient.exe")), Is.True);
+        }
+
+        [Test]
+        public void ZipValidator_RejectsNestedGithubReleaseFolderPackage()
+        {
+            string root = CreateTempDir();
+            string zip = Path.Combine(root, "nested.zip");
+            using (ZipArchive archive = ZipFile.Open(zip, ZipArchiveMode.Create))
+            {
+                archive.CreateEntry("Github Release/Oceanya Client 6.5/OceanyaClient.exe").WriteText("exe");
+            }
+
+            InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() =>
+                UpdateZipValidator.ExtractValidatedPackage(zip, Path.Combine(root, "staged")))!;
+            Assert.That(ex.Message, Does.Contain("OceanyaClient.exe"));
         }
 
         [Test]
@@ -239,12 +287,62 @@ namespace UnitTests
                 "--backup", @"C:\Temp\backup",
                 "--parent-pid", "123",
                 "--entry-exe", "OceanyaClient.exe",
-                "--log", @"C:\Temp\updater.log"
+                "--log", @"C:\Temp\updater.log",
+                "--channel", "test",
+                "--version", "7.0",
+                "--client-exe", @"C:\Temp\install\OceanyaClient.exe",
+                "--handoff", @"C:\Temp\handoff.json",
+                "--download", @"C:\Temp\download.zip",
+                "--extraction-root", @"C:\Temp\staged",
+                "--visible"
             }, out UpdaterArguments args, out string error);
 
             Assert.That(parsed, Is.True, error);
             Assert.That(args.EntryExe, Is.EqualTo("OceanyaClient.exe"));
+            Assert.That(args.Channel, Is.EqualTo("test"));
+            Assert.That(args.Version, Is.EqualTo("7.0"));
+            Assert.That(args.Download, Is.EqualTo(@"C:\Temp\download.zip"));
+            Assert.That(args.ExtractionRoot, Is.EqualTo(@"C:\Temp\staged"));
+            Assert.That(args.Quiet, Is.False);
             Assert.That(UpdaterArguments.TryParse(new[] { "--entry-exe", @"..\evil.exe" }, out _, out _), Is.False);
+        }
+
+        [Test]
+        public void UpdateCheckService_RequiresUpdaterRuntimeFilesBeforeLaunch()
+        {
+            string root = CreateTempDir();
+            File.WriteAllText(Path.Combine(root, "OceanyaUpdater.exe"), "stub");
+            File.WriteAllText(Path.Combine(root, "OceanyaUpdater.deps.json"), "{}");
+            File.WriteAllText(Path.Combine(root, "OceanyaUpdater.runtimeconfig.json"), "{}");
+
+            FileNotFoundException ex = Assert.Throws<FileNotFoundException>(() =>
+                UpdateCheckService.ValidateUpdaterRuntimeFiles(root))!;
+            Assert.That(ex.Message, Does.Contain("OceanyaUpdater.dll"));
+        }
+
+        [Test]
+        public void UpdateCheckService_RejectsUpdaterRuntimeConfigWithoutWindowsDesktopFramework()
+        {
+            string root = CreateTempDir();
+            File.WriteAllText(Path.Combine(root, "OceanyaUpdater.exe"), "stub");
+            File.WriteAllText(Path.Combine(root, "OceanyaUpdater.dll"), "stub");
+            File.WriteAllText(Path.Combine(root, "OceanyaUpdater.deps.json"), "{}");
+            File.WriteAllText(
+                Path.Combine(root, "OceanyaUpdater.runtimeconfig.json"),
+                """
+                {
+                  "runtimeOptions": {
+                    "framework": {
+                      "name": "Microsoft.NETCore.App",
+                      "version": "8.0.0"
+                    }
+                  }
+                }
+                """);
+
+            InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() =>
+                UpdateCheckService.ValidateUpdaterRuntimeFiles(root))!;
+            Assert.That(ex.Message, Does.Contain("Microsoft.WindowsDesktop.App"));
         }
 
         private static string ValidManifestJson()

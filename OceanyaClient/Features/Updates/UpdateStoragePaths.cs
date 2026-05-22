@@ -24,6 +24,7 @@ namespace OceanyaClient.Features.Updates
             Staged = Path.Combine(root, "staged");
             Backups = Path.Combine(root, "backups");
             Logs = Path.Combine(root, "logs");
+            Handoffs = Path.Combine(root, "handoffs");
         }
 
         public string Root { get; }
@@ -31,6 +32,7 @@ namespace OceanyaClient.Features.Updates
         public string Staged { get; }
         public string Backups { get; }
         public string Logs { get; }
+        public string Handoffs { get; }
         public string UpdaterLogPath => Path.Combine(Logs, "updater.log");
 
         public void EnsureCreated()
@@ -39,6 +41,7 @@ namespace OceanyaClient.Features.Updates
             Directory.CreateDirectory(Staged);
             Directory.CreateDirectory(Backups);
             Directory.CreateDirectory(Logs);
+            Directory.CreateDirectory(Handoffs);
         }
     }
 }

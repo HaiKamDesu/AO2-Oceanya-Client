@@ -14,7 +14,7 @@ Release packaging collects the built client output, copies the Hivemind agent an
 1. Build `OceanyaClient`.
 2. Build `OceanyaHivemindAgent`.
 3. Build `OceanyaUpdater`.
-4. Copy the Hivemind executable, updater executable, and their runtime files into `OceanyaClient/bin/<Configuration>/net8.0-windows/`.
+4. Copy the Hivemind executable, updater executable, updater managed DLL, and their runtime files into `OceanyaClient/bin/<Configuration>/net8.0-windows/`.
 5. Copy that output into a package folder.
 6. Stage only that outer release folder into a temporary zip-staging directory.
 7. Zip the staging directory to the channel-specific GitHub release folder.
@@ -35,7 +35,7 @@ Release packaging collects the built client output, copies the Hivemind agent an
 ## Zip Layout Requirement
 - The zip must contain the outer folder:
   - `Oceanya Client <version>/` for stable, or `Oceanya Client <version>-test/` for Debug/test
-  - `OceanyaClient.exe`, `OceanyaUpdater.exe`, `OceanyaHivemindAgent.exe`, and the rest of the release files inside that folder
+  - `OceanyaClient.exe`, `OceanyaUpdater.exe`, `OceanyaUpdater.dll`, `OceanyaHivemindAgent.exe`, and the rest of the release files inside that folder
 - The zip should not flatten directly to the files from `net8.0-windows/`.
 - Packaging excludes transient local runtime folders such as `OceanyaClient.exe.WebView2/` and duplicate RID output under `win-x64/`.
 
@@ -62,6 +62,25 @@ Release packaging collects the built client output, copies the Hivemind agent an
 5. Run the Debug app from Visual Studio. Debug builds use the Test channel and separate `OceanyaClientDev` updater state/cache paths.
 
 Unauthenticated GitHub API clients cannot see draft releases. Test update feeds should use GitHub prereleases, not drafts.
+
+## Updater Troubleshooting
+- Stable updater logs: `%LOCALAPPDATA%/OceanyaClient/Updates/logs/updater.log`
+- Test/Debug updater logs: `%LOCALAPPDATA%/OceanyaClientDev/Updates/logs/updater.log`
+- Client-to-updater handoff files:
+  - Stable: `%LOCALAPPDATA%/OceanyaClient/Updates/handoffs/`
+  - Test/Debug: `%LOCALAPPDATA%/OceanyaClientDev/Updates/handoffs/`
+- The handoff JSON records the staged package root, target install path, client executable path, parent process id, channel, version, updater executable path, log path, and exact updater arguments.
+- Before closing the client, the in-app launcher now verifies that `OceanyaUpdater.exe`, `OceanyaUpdater.dll`, `OceanyaUpdater.deps.json`, and `OceanyaUpdater.runtimeconfig.json` exist beside `OceanyaClient.exe` and after copying them into the LocalAppData runner folder. It also verifies that `OceanyaUpdater.runtimeconfig.json` references `Microsoft.WindowsDesktop.App`, which is required by the visible WPF updater window. If any file is missing or the runtime config is stale, the client stays open and shows a visible error.
+- The updater opens a small `Oceanya Updater` status window for user-initiated updates. It logs startup before waiting for the old client process, logs each apply phase, times out if the old client does not exit within 45 seconds, logs Hivemind stop/wait results, backs up current files, rolls back on apply failure where possible, and relaunches the exact `OceanyaClient.exe` path passed by the client.
+- The updater clears the install directory before copying the staged package, so files removed from a future release are removed from the installed folder too. If any file cannot be deleted or copied, the update fails and rollback is attempted from the backup.
+- After a successful relaunch, the updater deletes the downloaded zip, staged extraction folder, and successful backup folder. It keeps logs and handoff JSON for diagnostics. The LocalAppData `runner/` folder is reused and overwritten on future updates because the updater runs from that folder during the apply phase.
+- To retry the current Debug test against `test-v7.0`, build Debug, run the Debug client, click the bottom-left test update link, click `Update`, and watch for:
+  - download progress in the client wait form
+  - `Applying update... Oceanya will close and reopen automatically.`
+  - the separate `Oceanya Updater` status window
+  - automatic relaunch of `OceanyaClient.exe`
+- If the client closes and does not reopen, inspect `updater.log` first. If there is no new log entry, inspect the latest handoff file and confirm the runner folder contains the updater `.exe`, `.dll`, `.deps.json`, and `.runtimeconfig.json`.
+- Replacing `bin/Debug/net8.0-windows` while running under Visual Studio can fail if the debugger or another process keeps files locked. That should now fail visibly and log the locked file path. For a cleaner end-to-end test, run `OceanyaClient.exe` directly from `OceanyaClient/bin/Debug/net8.0-windows/` after building Debug instead of launching under the debugger.
 
 ## Creating a Production Release
 1. Build Release or run the release workflow for a `v<version>` tag.

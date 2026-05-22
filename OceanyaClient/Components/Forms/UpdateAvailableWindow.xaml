@@ -67,16 +67,12 @@
                 BorderBrush="#FF383838"
                 BorderThickness="1"
                 CornerRadius="3">
-            <ScrollViewer VerticalScrollBarVisibility="Auto"
-                          HorizontalScrollBarVisibility="Disabled"
-                          Padding="12">
-                <TextBlock x:Name="ReleaseNotesTextBlock"
-                           AutomationProperties.AutomationId="UpdateAvailable.ReleaseNotes"
-                           Foreground="#FFE8E8E8"
-                           FontFamily="Consolas"
-                           FontSize="12"
-                           TextWrapping="Wrap"/>
-            </ScrollViewer>
+            <FlowDocumentScrollViewer x:Name="ReleaseNotesViewer"
+                                      AutomationProperties.AutomationId="UpdateAvailable.ReleaseNotes"
+                                      Padding="12"
+                                      VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled"
+                                      IsSelectionEnabled="True"/>
         </Border>
 
         <StackPanel Grid.Row="3"

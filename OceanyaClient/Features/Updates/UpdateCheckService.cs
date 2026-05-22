@@ -2,7 +2,9 @@ using Common;
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -97,16 +99,19 @@ namespace OceanyaClient.Features.Updates
         public void LaunchUpdaterAndExit(UpdateRelease release, UpdateStagingResult staging)
         {
             string updaterPath = PrepareExternalUpdaterRunner();
-            if (!File.Exists(updaterPath))
-            {
-                throw new FileNotFoundException("OceanyaUpdater.exe is missing from the install folder.", updaterPath);
-            }
+            ValidateStagedPackage(staging, release.Manifest.EntryExe);
+            UpdateStoragePaths paths = new UpdateStoragePaths(environment);
+            paths.EnsureCreated();
+            string clientExePath = Path.Combine(AppContext.BaseDirectory, release.Manifest.EntryExe);
+            string handoffPath = Path.Combine(
+                paths.Handoffs,
+                "handoff-" + SanitizeFileName(release.Manifest.Tag) + "-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss") + ".json");
 
             ProcessStartInfo startInfo = new ProcessStartInfo
             {
                 FileName = updaterPath,
                 UseShellExecute = false,
-                WorkingDirectory = AppContext.BaseDirectory
+                WorkingDirectory = Path.GetDirectoryName(updaterPath) ?? AppContext.BaseDirectory
             };
             startInfo.ArgumentList.Add("--source");
             startInfo.ArgumentList.Add(staging.PackageRoot);
@@ -120,37 +125,225 @@ namespace OceanyaClient.Features.Updates
             startInfo.ArgumentList.Add(release.Manifest.EntryExe);
             startInfo.ArgumentList.Add("--log");
             startInfo.ArgumentList.Add(staging.LogPath);
+            startInfo.ArgumentList.Add("--download");
+            startInfo.ArgumentList.Add(staging.DownloadPath);
+            startInfo.ArgumentList.Add("--extraction-root");
+            startInfo.ArgumentList.Add(staging.ExtractionRoot);
+            startInfo.ArgumentList.Add("--channel");
+            startInfo.ArgumentList.Add(environment.ChannelName);
+            startInfo.ArgumentList.Add("--version");
+            startInfo.ArgumentList.Add(release.Manifest.Version);
+            startInfo.ArgumentList.Add("--client-exe");
+            startInfo.ArgumentList.Add(clientExePath);
+            startInfo.ArgumentList.Add("--handoff");
+            startInfo.ArgumentList.Add(handoffPath);
+            startInfo.ArgumentList.Add("--visible");
 
-            Process.Start(startInfo);
+            WriteUpdaterHandoff(handoffPath, release, staging, updaterPath, clientExePath, startInfo);
+            Process? updaterProcess = Process.Start(startInfo);
+            if (updaterProcess == null)
+            {
+                throw new InvalidOperationException(
+                    "Windows did not start OceanyaUpdater.exe. Handoff details were written to: " + handoffPath);
+            }
+
             System.Windows.Application.Current.Shutdown();
         }
 
         private string PrepareExternalUpdaterRunner()
         {
             string installUpdaterPath = Path.Combine(AppContext.BaseDirectory, "OceanyaUpdater.exe");
-            if (!File.Exists(installUpdaterPath))
-            {
-                throw new FileNotFoundException("OceanyaUpdater.exe is missing from the install folder.", installUpdaterPath);
-            }
+            ValidateUpdaterRuntimeFiles(AppContext.BaseDirectory);
 
             UpdateStoragePaths paths = new UpdateStoragePaths(environment);
             string runnerDirectory = Path.Combine(paths.Root, "runner");
             Directory.CreateDirectory(runnerDirectory);
 
-            CopyIfExists(installUpdaterPath, Path.Combine(runnerDirectory, "OceanyaUpdater.exe"));
-            CopyIfExists(Path.Combine(AppContext.BaseDirectory, "OceanyaUpdater.deps.json"), Path.Combine(runnerDirectory, "OceanyaUpdater.deps.json"));
-            CopyIfExists(Path.Combine(AppContext.BaseDirectory, "OceanyaUpdater.runtimeconfig.json"), Path.Combine(runnerDirectory, "OceanyaUpdater.runtimeconfig.json"));
+            CopyRequired(installUpdaterPath, Path.Combine(runnerDirectory, "OceanyaUpdater.exe"));
+            CopyRequired(Path.Combine(AppContext.BaseDirectory, "OceanyaUpdater.dll"), Path.Combine(runnerDirectory, "OceanyaUpdater.dll"));
+            CopyRequired(Path.Combine(AppContext.BaseDirectory, "OceanyaUpdater.deps.json"), Path.Combine(runnerDirectory, "OceanyaUpdater.deps.json"));
+            CopyRequired(Path.Combine(AppContext.BaseDirectory, "OceanyaUpdater.runtimeconfig.json"), Path.Combine(runnerDirectory, "OceanyaUpdater.runtimeconfig.json"));
+            ValidateUpdaterRuntimeFiles(runnerDirectory);
             return Path.Combine(runnerDirectory, "OceanyaUpdater.exe");
         }
 
-        private static void CopyIfExists(string source, string destination)
+        public static void ValidateUpdaterRuntimeFiles(string directory)
+        {
+            string[] requiredFiles =
+            {
+                "OceanyaUpdater.exe",
+                "OceanyaUpdater.dll",
+                "OceanyaUpdater.deps.json",
+                "OceanyaUpdater.runtimeconfig.json"
+            };
+
+            string[] missing = requiredFiles
+                .Select(file => Path.Combine(directory, file))
+                .Where(path => !File.Exists(path))
+                .ToArray();
+            if (missing.Length > 0)
+            {
+                throw new FileNotFoundException(
+                    "The external updater cannot be started because required files are missing beside OceanyaClient.exe: "
+                    + string.Join(", ", missing));
+            }
+
+            string runtimeConfigPath = Path.Combine(directory, "OceanyaUpdater.runtimeconfig.json");
+            if (!RuntimeConfigIncludesWindowsDesktop(runtimeConfigPath))
+            {
+                throw new InvalidOperationException(
+                    "The external updater runtime config is stale or invalid. "
+                    + "It must reference Microsoft.WindowsDesktop.App so the visible updater window can start: "
+                    + runtimeConfigPath);
+            }
+        }
+
+        private static void CopyRequired(string source, string destination)
         {
             if (!File.Exists(source))
             {
-                return;
+                throw new FileNotFoundException("Required updater runtime file is missing.", source);
             }
 
+            Directory.CreateDirectory(Path.GetDirectoryName(destination) ?? string.Empty);
             File.Copy(source, destination, overwrite: true);
+        }
+
+        private static void ValidateStagedPackage(UpdateStagingResult staging, string entryExe)
+        {
+            if (string.IsNullOrWhiteSpace(staging.PackageRoot) || !Directory.Exists(staging.PackageRoot))
+            {
+                throw new DirectoryNotFoundException("The staged update folder was not found: " + staging.PackageRoot);
+            }
+
+            string stagedEntry = Path.Combine(staging.PackageRoot, entryExe);
+            if (!File.Exists(stagedEntry))
+            {
+                throw new FileNotFoundException("The staged update is missing " + entryExe + ".", stagedEntry);
+            }
+
+            EnsureStagedUpdaterRuntime(staging.PackageRoot);
+        }
+
+        private static void EnsureStagedUpdaterRuntime(string packageRoot)
+        {
+            string[] updaterRuntimeFiles =
+            {
+                "OceanyaUpdater.exe",
+                "OceanyaUpdater.dll",
+                "OceanyaUpdater.deps.json",
+                "OceanyaUpdater.runtimeconfig.json"
+            };
+
+            foreach (string fileName in updaterRuntimeFiles)
+            {
+                string stagedPath = Path.Combine(packageRoot, fileName);
+                string currentPath = Path.Combine(AppContext.BaseDirectory, fileName);
+                if (!File.Exists(currentPath))
+                {
+                    throw new FileNotFoundException(
+                        "The staged update and current install are missing required updater runtime file " + fileName + ".",
+                        stagedPath);
+                }
+
+                File.Copy(currentPath, stagedPath, overwrite: true);
+            }
+
+            ValidateUpdaterRuntimeFiles(packageRoot);
+        }
+
+        private static bool RuntimeConfigIncludesWindowsDesktop(string runtimeConfigPath)
+        {
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(File.ReadAllText(runtimeConfigPath));
+                if (!document.RootElement.TryGetProperty("runtimeOptions", out JsonElement runtimeOptions))
+                {
+                    return false;
+                }
+
+                if (runtimeOptions.TryGetProperty("framework", out JsonElement framework)
+                    && IsWindowsDesktopFramework(framework))
+                {
+                    return true;
+                }
+
+                if (!runtimeOptions.TryGetProperty("frameworks", out JsonElement frameworks)
+                    || frameworks.ValueKind != JsonValueKind.Array)
+                {
+                    return false;
+                }
+
+                foreach (JsonElement item in frameworks.EnumerateArray())
+                {
+                    if (IsWindowsDesktopFramework(item))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return false;
+            }
+        }
+
+        private static bool IsWindowsDesktopFramework(JsonElement framework)
+        {
+            return framework.ValueKind == JsonValueKind.Object
+                && framework.TryGetProperty("name", out JsonElement name)
+                && string.Equals(name.GetString(), "Microsoft.WindowsDesktop.App", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void WriteUpdaterHandoff(
+            string handoffPath,
+            UpdateRelease release,
+            UpdateStagingResult staging,
+            string updaterPath,
+            string clientExePath,
+            ProcessStartInfo startInfo)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(handoffPath) ?? string.Empty);
+            var handoff = new
+            {
+                CreatedUtc = DateTimeOffset.UtcNow,
+                Channel = environment.ChannelName,
+                Version = release.Manifest.Version,
+                Tag = release.Manifest.Tag,
+                StagedPath = staging.PackageRoot,
+                DownloadPath = staging.DownloadPath,
+                TargetInstallPath = AppContext.BaseDirectory,
+                ClientExePath = clientExePath,
+                UpdaterPath = updaterPath,
+                ParentProcessId = System.Environment.ProcessId,
+                LogPath = staging.LogPath,
+                Arguments = startInfo.ArgumentList.ToArray()
+            };
+
+            File.WriteAllText(
+                handoffPath,
+                JsonSerializer.Serialize(handoff, new JsonSerializerOptions { WriteIndented = true }));
+        }
+
+        private static string SanitizeFileName(string value)
+        {
+            string safe = value.Trim();
+            foreach (char invalid in Path.GetInvalidFileNameChars())
+            {
+                safe = safe.Replace(invalid, '_');
+            }
+
+            return string.IsNullOrWhiteSpace(safe) ? "update" : safe;
         }
 
         private static bool IsSilentStartupFailure(Exception ex)

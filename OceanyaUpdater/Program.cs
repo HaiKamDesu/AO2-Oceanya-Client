@@ -2,10 +2,24 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Threading;
 
 namespace OceanyaUpdater
 {
+    public static class UpdaterExitCodes
+    {
+        public const int Success = 0;
+        public const int ApplyFailed = 1;
+        public const int ArgumentError = 2;
+        public const int ParentTimeout = 3;
+        public const int RelaunchFailed = 4;
+    }
+
     public sealed class UpdaterArguments
     {
         public string Source { get; init; } = string.Empty;
@@ -14,12 +28,20 @@ namespace OceanyaUpdater
         public int ParentPid { get; init; }
         public string EntryExe { get; init; } = "OceanyaClient.exe";
         public string Log { get; init; } = string.Empty;
+        public string Channel { get; init; } = "stable";
+        public string Version { get; init; } = string.Empty;
+        public string ClientExe { get; init; } = string.Empty;
+        public string Handoff { get; init; } = string.Empty;
+        public string Download { get; init; } = string.Empty;
+        public string ExtractionRoot { get; init; } = string.Empty;
+        public bool Quiet { get; init; }
 
         public static bool TryParse(string[] args, out UpdaterArguments parsed, out string error)
         {
             parsed = new UpdaterArguments();
             error = string.Empty;
             Dictionary<string, string> values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> flags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             for (int index = 0; index < args.Length; index++)
             {
                 string key = args[index]?.Trim() ?? string.Empty;
@@ -27,6 +49,13 @@ namespace OceanyaUpdater
                 {
                     error = "Unexpected argument: " + key;
                     return false;
+                }
+
+                if (string.Equals(key, "--quiet", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(key, "--visible", StringComparison.OrdinalIgnoreCase))
+                {
+                    flags.Add(key);
+                    continue;
                 }
 
                 if (index + 1 >= args.Length)
@@ -44,6 +73,12 @@ namespace OceanyaUpdater
             string entryExe = Get(values, "--entry-exe");
             string log = Get(values, "--log");
             string parentPidRaw = Get(values, "--parent-pid");
+            string channel = Get(values, "--channel");
+            string version = Get(values, "--version");
+            string clientExe = Get(values, "--client-exe");
+            string handoff = Get(values, "--handoff");
+            string download = Get(values, "--download");
+            string extractionRoot = Get(values, "--extraction-root");
 
             if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(install)
                 || string.IsNullOrWhiteSpace(backup) || string.IsNullOrWhiteSpace(log))
@@ -65,6 +100,14 @@ namespace OceanyaUpdater
                 return false;
             }
 
+            if (!string.IsNullOrWhiteSpace(channel)
+                && !string.Equals(channel, "stable", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(channel, "test", StringComparison.OrdinalIgnoreCase))
+            {
+                error = "The update channel is invalid.";
+                return false;
+            }
+
             parsed = new UpdaterArguments
             {
                 Source = Path.GetFullPath(source),
@@ -72,7 +115,14 @@ namespace OceanyaUpdater
                 Backup = Path.GetFullPath(backup),
                 ParentPid = parentPid,
                 EntryExe = entryExe,
-                Log = Path.GetFullPath(log)
+                Log = Path.GetFullPath(log),
+                Channel = string.IsNullOrWhiteSpace(channel) ? "stable" : channel.Trim().ToLowerInvariant(),
+                Version = version.Trim(),
+                ClientExe = string.IsNullOrWhiteSpace(clientExe) ? string.Empty : Path.GetFullPath(clientExe),
+                Handoff = string.IsNullOrWhiteSpace(handoff) ? string.Empty : Path.GetFullPath(handoff),
+                Download = string.IsNullOrWhiteSpace(download) ? string.Empty : Path.GetFullPath(download),
+                ExtractionRoot = string.IsNullOrWhiteSpace(extractionRoot) ? string.Empty : Path.GetFullPath(extractionRoot),
+                Quiet = flags.Contains("--quiet")
             };
             return true;
         }
@@ -92,45 +142,107 @@ namespace OceanyaUpdater
     {
         private const string HivemindAgentMutexName = @"Local\OceanyaClient.FileHivemind.Agent";
         private const string HivemindAgentStopSignalEventName = @"Local\OceanyaClient.FileHivemind.Agent.Stop";
+        private static TextWriter? activeLog;
 
+        [STAThread]
         private static int Main(string[] args)
         {
+            AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+            {
+                activeLog?.WriteLine(DateTimeOffset.Now.ToString("O") + " Unhandled exception: " + e.ExceptionObject);
+                activeLog?.Flush();
+            };
+
+            string earlyLogPath = TryGetRawArgValue(args, "--log")
+                ?? Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "OceanyaClient",
+                    "Updates",
+                    "logs",
+                    "updater.log");
+            using StreamWriter log = OpenLog(earlyLogPath);
+            activeLog = log;
+            WriteLog(log, "Updater process started. Raw args: " + string.Join(" ", args.Select(EscapeArgForLog)));
+
             if (!UpdaterArguments.TryParse(args, out UpdaterArguments options, out string error))
             {
-                Console.Error.WriteLine(error);
-                return 2;
+                WriteLog(log, "Argument parse failed: " + error);
+                MessageBox.Show(error, "Oceanya Updater", MessageBoxButton.OK, MessageBoxImage.Error);
+                return UpdaterExitCodes.ArgumentError;
             }
 
-            Directory.CreateDirectory(Path.GetDirectoryName(options.Log) ?? string.Empty);
-            using StreamWriter log = new StreamWriter(new FileStream(options.Log, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
-            {
-                AutoFlush = true
-            };
+            UpdaterStatusWindow? status = options.Quiet ? null : new UpdaterStatusWindow();
+            status?.ShowStatus("Starting Oceanya update...");
 
             try
             {
-                WriteLog(log, "Updater started.");
+                WriteLog(log, $"Updater parsed args. channel={options.Channel}; version={options.Version}; source={options.Source}; install={options.Install}; backup={options.Backup}; clientExe={options.ClientExe}; handoff={options.Handoff}; download={options.Download}; extractionRoot={options.ExtractionRoot}");
+                status?.ShowStatus("Waiting for Oceanya Client to close...");
                 WaitForParentExit(options.ParentPid, log);
+                status?.ShowStatus("Stopping File Hivemind...");
                 StopHivemindAgent(log);
+                status?.ShowStatus("Checking update files...");
                 ValidatePaths(options);
+                status?.ShowStatus("Backing up current files...");
                 BackupInstall(options, log);
+                status?.ShowStatus("Applying update files...");
                 ReplaceInstall(options, log);
                 WriteLog(log, "Update applied successfully.");
+                status?.ShowStatus("Reopening Oceanya Client...");
                 Relaunch(options, log);
-                return 0;
+                status?.ShowStatus("Cleaning up update files...");
+                CleanupSuccessfulUpdate(options, log);
+                status?.ShowStatus("Update complete. Reopening Oceanya Client...");
+                Thread.Sleep(options.Quiet ? 0 : 1200);
+                status?.Close();
+                return UpdaterExitCodes.Success;
+            }
+            catch (ParentProcessTimeoutException ex)
+            {
+                WriteFailure(log, status, ex);
+                TryRollback(options, log);
+                return UpdaterExitCodes.ParentTimeout;
+            }
+            catch (RelaunchFailedException ex)
+            {
+                WriteFailure(log, status, ex);
+                return UpdaterExitCodes.RelaunchFailed;
             }
             catch (Exception ex)
             {
-                WriteLog(log, "Update failed: " + ex);
+                WriteFailure(log, status, ex);
                 TryRollback(options, log);
-                return 1;
+                return UpdaterExitCodes.ApplyFailed;
             }
+        }
+
+        private static StreamWriter OpenLog(string path)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path) ?? string.Empty);
+            return new StreamWriter(new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+            {
+                AutoFlush = true
+            };
+        }
+
+        private static string? TryGetRawArgValue(string[] args, string name)
+        {
+            for (int i = 0; i < args.Length - 1; i++)
+            {
+                if (string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase))
+                {
+                    return args[i + 1];
+                }
+            }
+
+            return null;
         }
 
         private static void WaitForParentExit(int parentPid, TextWriter log)
         {
             if (parentPid <= 0)
             {
+                WriteLog(log, "No parent process id supplied; continuing.");
                 return;
             }
 
@@ -138,10 +250,14 @@ namespace OceanyaUpdater
             {
                 using Process process = Process.GetProcessById(parentPid);
                 WriteLog(log, "Waiting for parent process " + parentPid + " to exit.");
-                process.WaitForExit(30000);
+                if (!process.WaitForExit(45000))
+                {
+                    throw new ParentProcessTimeoutException("OceanyaClient.exe did not exit within 45 seconds. Update was not applied.");
+                }
             }
             catch (ArgumentException)
             {
+                WriteLog(log, "Parent process " + parentPid + " is already gone.");
             }
         }
 
@@ -163,12 +279,16 @@ namespace OceanyaUpdater
             {
                 if (!Mutex.TryOpenExisting(HivemindAgentMutexName, out Mutex? mutex))
                 {
+                    WriteLog(log, "Hivemind agent mutex is not present.");
                     return;
                 }
 
                 mutex.Dispose();
                 Thread.Sleep(250);
+                PumpWpfEvents();
             }
+
+            WriteLog(log, "Timed out waiting for Hivemind agent to stop; continuing update.");
         }
 
         private static void ValidatePaths(UpdaterArguments options)
@@ -213,20 +333,7 @@ namespace OceanyaUpdater
 
         private static void ReplaceInstall(UpdaterArguments options, TextWriter log)
         {
-            foreach (string file in Directory.EnumerateFiles(options.Install, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-                File.Delete(file);
-            }
-
-            foreach (string directory in Directory.EnumerateDirectories(options.Install, "*", SearchOption.AllDirectories).OrderByDescending(path => path.Length))
-            {
-                if (!Directory.EnumerateFileSystemEntries(directory).Any())
-                {
-                    Directory.Delete(directory);
-                }
-            }
-
+            ClearDirectory(options.Install, log);
             CopyDirectory(options.Source, options.Install, log);
         }
 
@@ -240,6 +347,7 @@ namespace OceanyaUpdater
                     return;
                 }
 
+                ClearDirectory(options.Install, log);
                 CopyDirectory(options.Backup, options.Install, log);
                 WriteLog(log, "Rollback completed.");
             }
@@ -248,6 +356,75 @@ namespace OceanyaUpdater
                 WriteLog(log, "Rollback failed. Manual recovery may be required from: " + options.Backup);
                 WriteLog(log, rollbackEx.ToString());
             }
+        }
+
+        private static void CleanupSuccessfulUpdate(UpdaterArguments options, TextWriter log)
+        {
+            TryDeleteDirectory(options.Backup, log, "backup");
+            TryDeleteFile(options.Download, log, "downloaded package");
+            TryDeleteDirectory(options.ExtractionRoot, log, "staged extraction");
+        }
+
+        private static void TryDeleteFile(string path, TextWriter log, string label)
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            {
+                return;
+            }
+
+            try
+            {
+                File.SetAttributes(path, FileAttributes.Normal);
+                File.Delete(path);
+                WriteLog(log, "Deleted " + label + ": " + path);
+            }
+            catch (Exception ex)
+            {
+                WriteLog(log, "Could not delete " + label + " " + path + ": " + ex.Message);
+            }
+        }
+
+        private static void TryDeleteDirectory(string path, TextWriter log, string label)
+        {
+            if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
+            {
+                return;
+            }
+
+            try
+            {
+                foreach (string file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+                {
+                    File.SetAttributes(file, FileAttributes.Normal);
+                }
+
+                Directory.Delete(path, recursive: true);
+                WriteLog(log, "Deleted " + label + ": " + path);
+            }
+            catch (Exception ex)
+            {
+                WriteLog(log, "Could not delete " + label + " " + path + ": " + ex.Message);
+            }
+        }
+
+        private static void ClearDirectory(string directory, TextWriter log)
+        {
+            foreach (string file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+            {
+                File.SetAttributes(file, FileAttributes.Normal);
+                File.Delete(file);
+            }
+
+            foreach (string childDirectory in Directory.EnumerateDirectories(directory, "*", SearchOption.AllDirectories)
+                .OrderByDescending(path => path.Length))
+            {
+                if (!Directory.EnumerateFileSystemEntries(childDirectory).Any())
+                {
+                    Directory.Delete(childDirectory);
+                }
+            }
+
+            WriteLog(log, "Cleared install directory " + directory);
         }
 
         private static void CopyDirectory(string source, string destination, TextWriter log)
@@ -273,19 +450,32 @@ namespace OceanyaUpdater
 
         private static void Relaunch(UpdaterArguments options, TextWriter log)
         {
-            string entryPath = Path.Combine(options.Install, options.EntryExe);
+            string entryPath = string.IsNullOrWhiteSpace(options.ClientExe)
+                ? Path.Combine(options.Install, options.EntryExe)
+                : options.ClientExe;
             if (!File.Exists(entryPath))
             {
-                WriteLog(log, "Relaunch skipped; entry executable missing: " + entryPath);
-                return;
+                throw new RelaunchFailedException("Relaunch failed; entry executable is missing: " + entryPath);
             }
 
-            Process.Start(new ProcessStartInfo
+            Process? process = Process.Start(new ProcessStartInfo
             {
                 FileName = entryPath,
-                WorkingDirectory = options.Install,
+                WorkingDirectory = Path.GetDirectoryName(entryPath) ?? options.Install,
                 UseShellExecute = true
             });
+            if (process == null)
+            {
+                throw new RelaunchFailedException("Windows did not start " + entryPath);
+            }
+
+            WriteLog(log, "Relaunched Oceanya Client pid=" + process.Id + " path=" + entryPath);
+        }
+
+        private static void WriteFailure(TextWriter log, UpdaterStatusWindow? status, Exception ex)
+        {
+            WriteLog(log, "Update failed: " + ex);
+            status?.ShowError("Update failed", ex.Message);
         }
 
         private static void WriteLog(TextWriter log, string message)
@@ -293,9 +483,139 @@ namespace OceanyaUpdater
             log.WriteLine(DateTimeOffset.Now.ToString("O") + " " + message);
         }
 
+        private static string EscapeArgForLog(string arg)
+        {
+            return arg.Contains(' ', StringComparison.Ordinal) ? "\"" + arg.Replace("\"", "\\\"", StringComparison.Ordinal) + "\"" : arg;
+        }
+
         private static string EnsureTrailingSeparator(string path)
         {
             return path.EndsWith(Path.DirectorySeparatorChar) ? path : path + Path.DirectorySeparatorChar;
+        }
+
+        private static void PumpWpfEvents()
+        {
+            DispatcherFrame frame = new DispatcherFrame();
+            Dispatcher.CurrentDispatcher.BeginInvoke(
+                DispatcherPriority.Background,
+                new Action(() => frame.Continue = false));
+            Dispatcher.PushFrame(frame);
+        }
+    }
+
+    internal sealed class UpdaterStatusWindow : Window
+    {
+        private readonly TextBlock statusText = new TextBlock();
+        private readonly ProgressBar progressBar = new ProgressBar();
+
+        public UpdaterStatusWindow()
+        {
+            Title = "Oceanya Updater";
+            Width = 360;
+            Height = 150;
+            MinWidth = 360;
+            MinHeight = 150;
+            ResizeMode = ResizeMode.NoResize;
+            WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            WindowStyle = WindowStyle.None;
+            AllowsTransparency = true;
+            Background = Brushes.Transparent;
+            ShowInTaskbar = true;
+            Topmost = true;
+
+            Border outerBorder = new Border
+            {
+                BorderBrush = new SolidColorBrush(Color.FromRgb(34, 34, 34)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(5),
+                Background = new SolidColorBrush(Color.FromArgb(235, 0, 0, 0))
+            };
+
+            Grid grid = new Grid
+            {
+                Margin = new Thickness(20, 18, 20, 18)
+            };
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            TextBlock titleText = new TextBlock
+            {
+                Text = "Updating Oceanya Client",
+                Foreground = Brushes.White,
+                FontSize = 16,
+                FontWeight = FontWeights.SemiBold,
+                TextAlignment = TextAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+            Grid.SetRow(titleText, 0);
+
+            statusText.Text = "Starting...";
+            statusText.Foreground = new SolidColorBrush(Color.FromRgb(210, 210, 210));
+            statusText.FontSize = 12;
+            statusText.TextAlignment = TextAlignment.Center;
+            statusText.TextWrapping = TextWrapping.Wrap;
+            statusText.HorizontalAlignment = HorizontalAlignment.Center;
+            statusText.Margin = new Thickness(0, 0, 0, 14);
+            Grid.SetRow(statusText, 1);
+
+            progressBar.IsIndeterminate = true;
+            progressBar.Height = 5;
+            progressBar.BorderBrush = Brushes.Transparent;
+            progressBar.Foreground = Brushes.White;
+            progressBar.Background = new SolidColorBrush(Color.FromArgb(40, 230, 230, 230));
+            Grid.SetRow(progressBar, 2);
+
+            grid.Children.Add(titleText);
+            grid.Children.Add(statusText);
+            grid.Children.Add(progressBar);
+            outerBorder.Child = grid;
+            Content = outerBorder;
+        }
+
+        public void ShowStatus(string message)
+        {
+            if (!IsVisible)
+            {
+                Show();
+            }
+
+            statusText.Text = message;
+            UpdateLayout();
+            ProgramPump();
+        }
+
+        public void ShowError(string title, string message)
+        {
+            ShowStatus(message);
+            progressBar.IsIndeterminate = false;
+            MessageBox.Show(this, message, title, MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+
+        private static void ProgramPump()
+        {
+            DispatcherFrame frame = new DispatcherFrame();
+            Dispatcher.CurrentDispatcher.BeginInvoke(
+                DispatcherPriority.Background,
+                new Action(() => frame.Continue = false));
+            Dispatcher.PushFrame(frame);
+        }
+    }
+
+    internal sealed class ParentProcessTimeoutException : Exception
+    {
+        public ParentProcessTimeoutException(string message)
+            : base(message)
+        {
+        }
+    }
+
+    internal sealed class RelaunchFailedException : Exception
+    {
+        public RelaunchFailedException(string message)
+            : base(message)
+        {
         }
     }
 }
