@@ -980,8 +980,7 @@ namespace OceanyaClient
                     using (DrawingGraphics graphics = DrawingGraphics.FromImage(bitmap))
                     {
                         graphics.Clear(System.Drawing.Color.Transparent);
-                        graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Bilinear;
-                        graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
+                        ApplyAo2GifInterpolation(graphics, sourceHeight, targetFrameHeight);
                         graphics.DrawImage(gifImage, 0, 0, targetFrameWidth, targetFrameHeight);
                     }
 
@@ -1030,6 +1029,19 @@ namespace OceanyaClient
         private static int BuildTargetHeightCacheKey(int targetHeight)
         {
             return -Math.Max(1, targetHeight);
+        }
+
+        internal static void ApplyAo2GifInterpolation(DrawingGraphics graphics, int sourceHeight, int targetHeight)
+        {
+            if (sourceHeight > 0 && targetHeight > sourceHeight)
+            {
+                graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+                graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
+                return;
+            }
+
+            graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Bilinear;
+            graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
         }
 
         private static BitmapSource ScaleBitmapToTargetHeight(BitmapSource source, int targetHeight)
@@ -2048,8 +2060,7 @@ namespace OceanyaClient
                 using (DrawingGraphics graphics = DrawingGraphics.FromImage(bitmap))
                 {
                     graphics.Clear(System.Drawing.Color.Transparent);
-                    graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear;
-                    graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+                    Ao2AnimationPreview.ApplyAo2GifInterpolation(graphics, gifImage.Height, targetHeight);
                     graphics.DrawImage(gifImage, 0, 0, targetWidth, targetHeight);
                 }
 

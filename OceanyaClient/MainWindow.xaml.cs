@@ -141,11 +141,11 @@ namespace OceanyaClient
         private string lastUnknownOverlayPromptKey = string.Empty;
         private bool hasRaisedFinishedLoading;
         private static readonly TimeSpan PendingAiOriginRetention = TimeSpan.FromMinutes(2);
-        private const double ViewportContentAspectRatio =
-            (double)AO2ViewportAssetResolver.ViewportWidth / AO2ViewportAssetResolver.ViewportToolHeight;
         private const int WmGetMinMaxInfo = 0x0024;
         private const int WmMouseActivate = 0x0021;
         private const int WmSizing = 0x0214;
+        private const double MinimumViewportContentWidth = 160;
+        private const double MinimumViewportContentHeight = 120;
         private const int WmDwmSendIconicThumbnail = 0x0323;
         private const int WmDwmSendIconicLivePreviewBitmap = 0x0326;
         private const int WmKeyDown = 0x0100;
@@ -5502,6 +5502,7 @@ namespace OceanyaClient
             if (viewportWindow != null)
             {
                 RefreshViewportAttachment();
+                NormalizeVisibleViewportWindowSize(preferWidth: false);
                 ShowViewportWindowAfterRestore();
                 return;
             }
@@ -5724,6 +5725,7 @@ namespace OceanyaClient
 
             viewportContent = new AO2ViewportWindowContent();
             viewportContent.UseAsWindowsPreviewChanged += (_, _) => ApplyViewportTaskbarPriority();
+            viewportContent.ViewportSurfaceLayoutChanged += (_, _) => OnViewportSurfaceLayoutChanged();
             viewportContent.NewCharacterFolderRequested += OpenNewCharacterInEditorAsync;
             viewportContent.OpenCharacterInEditorRequested += OpenCharacterInEditorAsync;
             viewportContent.DuplicateCharacterInEditorRequested += DuplicateCharacterInEditorAsync;
@@ -5736,6 +5738,24 @@ namespace OceanyaClient
             viewportContent.RefreshAllCharactersRequested += () =>
                 RefreshCharacterAssetsAsync(null, refreshAllCharacters: true, refreshAllAssets: false);
             viewportContent.RefreshBackgroundRequested += RefreshBackgroundAssetsAsync;
+        }
+
+        private void OnViewportSurfaceLayoutChanged()
+        {
+            if (viewportWindow != null)
+            {
+                viewportWindow.MinWidth = GetViewportMinimumWindowWidth();
+                viewportWindow.MinHeight = GetViewportMinimumWindowHeight();
+                if (ShouldResizeViewportToNativeSurface(SaveFile.Data.GMViewportWindowState))
+                {
+                    ResizeViewportWindowToContent(
+                        AO2ViewportAssetResolver.ViewportToolWidth,
+                        AO2ViewportAssetResolver.ViewportToolHeight);
+                    return;
+                }
+
+                NormalizeVisibleViewportWindowSize(preferWidth: false);
+            }
         }
 
         private Func<ICMessage, bool>? CreateViewportMessageFilter(AOClient profileClient)
@@ -5840,6 +5860,18 @@ namespace OceanyaClient
 
             viewportWindow.Width = desiredWidth;
             viewportWindow.Height = desiredHeight;
+        }
+
+        private void ResizeViewportWindowToContent(double contentWidth, double contentHeight)
+        {
+            if (viewportWindow == null || viewportWindow.WindowState != WindowState.Normal)
+            {
+                return;
+            }
+
+            (double width, double height) = NormalizeViewportContentSize(contentWidth, contentHeight);
+            viewportWindow.Width = GetViewportWindowWidthFromContentWidth(width);
+            viewportWindow.Height = GetViewportWindowHeightFromContentHeight(height);
         }
 
         private IntPtr ViewportWindow_WndProc(
@@ -7251,20 +7283,20 @@ namespace OceanyaClient
 
             if (preferWidth)
             {
-                height = ((width - horizontalOffset) / ViewportContentAspectRatio) + verticalOffset;
+                height = ((width - horizontalOffset) / GetViewportContentAspectRatio()) + verticalOffset;
                 if (height < minHeight)
                 {
                     height = minHeight;
-                    width = ((height - verticalOffset) * ViewportContentAspectRatio) + horizontalOffset;
+                    width = ((height - verticalOffset) * GetViewportContentAspectRatio()) + horizontalOffset;
                 }
             }
             else
             {
-                width = ((height - verticalOffset) * ViewportContentAspectRatio) + horizontalOffset;
+                width = ((height - verticalOffset) * GetViewportContentAspectRatio()) + horizontalOffset;
                 if (width < minWidth)
                 {
                     width = minWidth;
-                    height = ((width - horizontalOffset) / ViewportContentAspectRatio) + verticalOffset;
+                    height = ((width - horizontalOffset) / GetViewportContentAspectRatio()) + verticalOffset;
                 }
             }
 
@@ -7321,26 +7353,38 @@ namespace OceanyaClient
             double height,
             bool preferWidth)
         {
-            double minWidth = GetViewportWindowWidthFromContentWidth(AO2ViewportAssetResolver.ViewportWidth);
-            double minHeight = GetViewportWindowHeightFromContentHeight(AO2ViewportAssetResolver.ViewportToolHeight);
+            double minWidth = GetViewportMinimumWindowWidth();
+            double minHeight = GetViewportMinimumWindowHeight();
             double clampedWidth = Math.Max(minWidth, width);
             double clampedHeight = Math.Max(minHeight, height);
 
             if (preferWidth)
             {
                 double contentWidth = Math.Max(
-                    AO2ViewportAssetResolver.ViewportWidth,
+                    MinimumViewportContentWidth,
                     clampedWidth - GetViewportWindowHorizontalOffset());
-                double contentHeight = contentWidth / ViewportContentAspectRatio;
+                double contentHeight = contentWidth / GetViewportContentAspectRatio();
+                if (contentHeight < MinimumViewportContentHeight)
+                {
+                    contentHeight = MinimumViewportContentHeight;
+                    contentWidth = contentHeight * GetViewportContentAspectRatio();
+                }
+
                 return (
                     GetViewportWindowWidthFromContentWidth(contentWidth),
                     GetViewportWindowHeightFromContentHeight(contentHeight));
             }
 
             double heightDrivenContentHeight = Math.Max(
-                AO2ViewportAssetResolver.ViewportToolHeight,
+                MinimumViewportContentHeight,
                 clampedHeight - GetViewportWindowVerticalOffset());
-            double heightDrivenContentWidth = heightDrivenContentHeight * ViewportContentAspectRatio;
+            double heightDrivenContentWidth = heightDrivenContentHeight * GetViewportContentAspectRatio();
+            if (heightDrivenContentWidth < MinimumViewportContentWidth)
+            {
+                heightDrivenContentWidth = MinimumViewportContentWidth;
+                heightDrivenContentHeight = heightDrivenContentWidth / GetViewportContentAspectRatio();
+            }
+
             return (
                 GetViewportWindowWidthFromContentWidth(heightDrivenContentWidth),
                 GetViewportWindowHeightFromContentHeight(heightDrivenContentHeight));
@@ -7368,12 +7412,12 @@ namespace OceanyaClient
         {
             if (savedState == null)
             {
-                return (AO2ViewportAssetResolver.ViewportWidth, AO2ViewportAssetResolver.ViewportToolHeight);
+                return (AO2ViewportAssetResolver.ViewportToolWidth, AO2ViewportAssetResolver.ViewportToolHeight);
             }
 
             double contentWidth = IsFinite(savedState.Width) && savedState.Width > 0
                 ? savedState.Width
-                : AO2ViewportAssetResolver.ViewportWidth;
+                : AO2ViewportAssetResolver.ViewportToolWidth;
             double contentHeight = IsFinite(savedState.Height) && savedState.Height > 0
                 ? savedState.Height
                 : AO2ViewportAssetResolver.ViewportToolHeight;
@@ -7415,6 +7459,8 @@ namespace OceanyaClient
             {
                 Width = width,
                 Height = height,
+                SurfaceWidth = AO2ViewportAssetResolver.ViewportToolWidth,
+                SurfaceHeight = AO2ViewportAssetResolver.ViewportToolHeight,
                 Left = left,
                 Top = top,
                 IsVisible = viewportWindow.IsVisible
@@ -7424,18 +7470,24 @@ namespace OceanyaClient
 
         private static (double Width, double Height) NormalizeViewportContentSize(double width, double height)
         {
-            double contentWidth = IsFinite(width) && width > 0 ? width : AO2ViewportAssetResolver.ViewportWidth;
+            double contentWidth = IsFinite(width) && width > 0 ? width : AO2ViewportAssetResolver.ViewportToolWidth;
             double contentHeight = IsFinite(height) && height > 0 ? height : AO2ViewportAssetResolver.ViewportToolHeight;
-            contentWidth = Math.Max(AO2ViewportAssetResolver.ViewportWidth, contentWidth);
-            contentHeight = Math.Max(AO2ViewportAssetResolver.ViewportToolHeight, contentHeight);
+            contentWidth = Math.Max(MinimumViewportContentWidth, contentWidth);
+            contentHeight = Math.Max(MinimumViewportContentHeight, contentHeight);
 
             if (IsViewportContentAspectRatio(contentWidth, contentHeight))
             {
                 return (contentWidth, contentHeight);
             }
 
-            double widthDrivenHeight = contentWidth / ViewportContentAspectRatio;
-            return (contentWidth, Math.Max(AO2ViewportAssetResolver.ViewportToolHeight, widthDrivenHeight));
+            double widthDrivenHeight = contentWidth / GetViewportContentAspectRatio();
+            if (widthDrivenHeight >= MinimumViewportContentHeight)
+            {
+                return (contentWidth, widthDrivenHeight);
+            }
+
+            contentHeight = MinimumViewportContentHeight;
+            return (contentHeight * GetViewportContentAspectRatio(), contentHeight);
         }
 
         private static bool IsViewportContentAspectRatio(double width, double height)
@@ -7444,7 +7496,23 @@ namespace OceanyaClient
                 && IsFinite(height)
                 && width > 0
                 && height > 0
-                && Math.Abs((width / height) - ViewportContentAspectRatio) < 0.01;
+                && Math.Abs((width / height) - GetViewportContentAspectRatio()) < 0.01;
+        }
+
+        private static bool ShouldResizeViewportToNativeSurface(ViewportWindowState? savedState)
+        {
+            if (savedState == null)
+            {
+                return true;
+            }
+
+            return savedState.SurfaceWidth != AO2ViewportAssetResolver.ViewportToolWidth
+                || savedState.SurfaceHeight != AO2ViewportAssetResolver.ViewportToolHeight;
+        }
+
+        private static double GetViewportContentAspectRatio()
+        {
+            return (double)AO2ViewportAssetResolver.ViewportToolWidth / AO2ViewportAssetResolver.ViewportToolHeight;
         }
 
         private static double GetViewportWindowWidthFromContentWidth(double contentWidth)
@@ -7469,12 +7537,12 @@ namespace OceanyaClient
 
         private static double GetViewportMinimumWindowWidth()
         {
-            return GetViewportWindowWidthFromContentWidth(AO2ViewportAssetResolver.ViewportWidth);
+            return GetViewportWindowWidthFromContentWidth(MinimumViewportContentWidth);
         }
 
         private static double GetViewportMinimumWindowHeight()
         {
-            return GetViewportWindowHeightFromContentHeight(AO2ViewportAssetResolver.ViewportToolHeight);
+            return GetViewportWindowHeightFromContentHeight(MinimumViewportContentHeight);
         }
 
         private static bool IsFinite(double value)

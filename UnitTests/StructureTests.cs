@@ -626,6 +626,59 @@ namespace UnitTests
         }
 
         [Test]
+        public void Test_AO2ChatPreviewResolver_ViewportLayoutPlacesChatboxBelowByDefault()
+        {
+            string viewportThemeDir = Path.Combine(_tempDir, "themes", "(714x688) FullChar");
+            Directory.CreateDirectory(viewportThemeDir);
+            CreateEmptyFile(Path.Combine(viewportThemeDir, "chat.png"));
+            File.WriteAllText(
+                Path.Combine(viewportThemeDir, "courtroom_design.ini"),
+                "viewport=10,20,714,400\n" +
+                "ao2_chatbox=10,420,714,178\n" +
+                "showname=4,0,120,28\n" +
+                "message=28,30,650,125\n" +
+                "chat_arrow=680,140,24,20\n");
+
+            AO2ViewportThemeLayout layout = AO2ChatPreviewResolver.ResolveViewportLayout(
+                "default",
+                hasShowname: true,
+                chatboxOverlapsViewport: false);
+
+            Assert.That(layout.ViewportBounds, Is.EqualTo(new AO2ChatPreviewBounds(10, 20, 714, 400)));
+            Assert.That(layout.SurfaceWidth, Is.EqualTo(714));
+            Assert.That(layout.SurfaceHeight, Is.EqualTo(578));
+            Assert.That(layout.ChatboxLeft, Is.EqualTo(0));
+            Assert.That(layout.ChatboxTop, Is.EqualTo(400));
+            Assert.That(layout.ChatArrowBounds, Is.EqualTo(new AO2ChatPreviewBounds(680, 540, 24, 20)));
+        }
+
+        [Test]
+        public void Test_AO2ChatPreviewResolver_ViewportLayoutCanOverlapChatboxAtAo2Position()
+        {
+            string viewportThemeDir = Path.Combine(_tempDir, "themes", "(714x688) FullChar");
+            Directory.CreateDirectory(viewportThemeDir);
+            CreateEmptyFile(Path.Combine(viewportThemeDir, "chat.png"));
+            File.WriteAllText(
+                Path.Combine(viewportThemeDir, "courtroom_design.ini"),
+                "viewport=10,20,714,400\n" +
+                "ao2_chatbox=10,320,714,178\n" +
+                "showname=4,0,120,28\n" +
+                "message=28,30,650,125\n" +
+                "chat_arrow=680,140,24,20\n");
+
+            AO2ViewportThemeLayout layout = AO2ChatPreviewResolver.ResolveViewportLayout(
+                "default",
+                hasShowname: true,
+                chatboxOverlapsViewport: true);
+
+            Assert.That(layout.SurfaceWidth, Is.EqualTo(714));
+            Assert.That(layout.SurfaceHeight, Is.EqualTo(478));
+            Assert.That(layout.ChatboxLeft, Is.EqualTo(0));
+            Assert.That(layout.ChatboxTop, Is.EqualTo(300));
+            Assert.That(layout.ChatArrowBounds, Is.EqualTo(new AO2ChatPreviewBounds(680, 440, 24, 20)));
+        }
+
+        [Test]
         public void Test_AO2ChatPreviewResolver_CustomChatboxOverridesThemeDefaultArt()
         {
             string viewportThemeDir = Path.Combine(_tempDir, "themes", "(714x688) FullChar");

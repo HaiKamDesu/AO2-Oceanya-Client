@@ -35,6 +35,8 @@ namespace OceanyaClient.Features.Viewport
         private int chatTextCrawlMilliseconds = DefaultChatTextCrawlMilliseconds;
         private int chatBlipRate = DefaultBlipRate;
         private bool chatBlankBlipEnabled;
+        private bool chatboxOverlapsViewport;
+        private AO2ViewportThemeLayout? currentThemeLayout;
         private AO2ViewportBlipPlaybackRules.BlipCrawlState? chatBlipState;
         private string chatFullText = string.Empty;
         private string chatPrefixText = string.Empty;
@@ -68,6 +70,8 @@ namespace OceanyaClient.Features.Viewport
         private const int ScreenShakeDurationMilliseconds = 300;
         private const int ScreenShakeIntervalMilliseconds = 20;
 
+        public event EventHandler? SurfaceLayoutChanged;
+
         /// <summary>
         /// Initializes a new instance of the <see cref="AO2ViewportControl"/> class.
         /// </summary>
@@ -77,9 +81,34 @@ namespace OceanyaClient.Features.Viewport
             BackgroundImage.RenderTransform = backgroundShakeTransform;
             ChatPreview.RenderTransform = chatShakeTransform;
             audioManager.RefreshVolumes();
+            chatboxOverlapsViewport = SaveFile.Data.GMViewportChatboxOverlapsViewport;
+            ApplyThemeLayout();
             ApplySavedChatBackground();
             IsVisibleChanged += OnIsVisibleChanged;
             Unloaded += (_, _) => audioManager.Dispose();
+        }
+
+        public int SurfaceWidth => currentThemeLayout?.SurfaceWidth ?? AO2ViewportAssetResolver.ViewportToolWidth;
+
+        public int SurfaceHeight => currentThemeLayout?.SurfaceHeight ?? AO2ViewportAssetResolver.ViewportToolHeight;
+
+        public bool ChatboxOverlapsViewport
+        {
+            get => chatboxOverlapsViewport;
+            set
+            {
+                if (chatboxOverlapsViewport == value)
+                {
+                    return;
+                }
+
+                chatboxOverlapsViewport = value;
+                SaveFile.Data.GMViewportChatboxOverlapsViewport = value;
+                SaveFile.Save();
+                ApplyThemeLayout();
+                ReapplyScenePlacementAfterLayoutChange();
+                ChatPreview.RefreshPreview();
+            }
         }
 
         /// <summary>
@@ -93,7 +122,7 @@ namespace OceanyaClient.Features.Viewport
         /// <summary>
         /// Current background token rendered by this viewport.
         /// </summary>
-        public string CurrentBackgroundName => sceneClient?.curBG ?? string.Empty;
+        public string CurrentBackgroundName => ResolveCurrentBackgroundName();
 
         /// <summary>
         /// Current speaker/character folder rendered by this viewport.
@@ -123,6 +152,124 @@ namespace OceanyaClient.Features.Viewport
         private void ApplySavedChatBackground()
         {
             SetChatBackgroundBrush(TryParseSavedChatBackgroundColor(SaveFile.Data.GMViewportChatBackgroundColor));
+        }
+
+        private void ApplyThemeLayout(string? chatTokenOverride = null, bool? hasShownameOverride = null)
+        {
+            string chatToken = !string.IsNullOrWhiteSpace(chatTokenOverride)
+                ? chatTokenOverride
+                : !string.IsNullOrWhiteSpace(ChatPreview.ChatToken)
+                ? ChatPreview.ChatToken
+                : AO2ViewportAssetResolver.ResolveCharacterChatToken(CurrentCharacter);
+            bool hasShowname = hasShownameOverride ?? !string.IsNullOrWhiteSpace(ChatPreview.PreviewShowname);
+            AO2ViewportThemeLayout layout = AO2ChatPreviewResolver.ResolveViewportLayout(
+                chatToken,
+                hasShowname,
+                chatboxOverlapsViewport);
+
+            int oldWidth = SurfaceWidth;
+            int oldHeight = SurfaceHeight;
+            currentThemeLayout = layout;
+
+            Width = layout.SurfaceWidth;
+            Height = layout.SurfaceHeight;
+            ViewportRoot.Width = layout.SurfaceWidth;
+            ViewportRoot.Height = layout.SurfaceHeight;
+            ChatArrowCanvas.Width = layout.SurfaceWidth;
+            ChatArrowCanvas.Height = layout.SurfaceHeight;
+
+            Canvas.SetLeft(ViewportCanvas, layout.ViewportLeft);
+            Canvas.SetTop(ViewportCanvas, layout.ViewportTop);
+            SetViewportLayerSize(layout.ViewportBounds.Width, layout.ViewportBounds.Height);
+
+            Canvas.SetLeft(ChatPreview, layout.ChatboxLeft);
+            Canvas.SetTop(ChatPreview, layout.ChatboxTop);
+            ChatPreview.Width = layout.ChatboxBounds.Width;
+            ChatPreview.Height = layout.ChatboxBounds.Height;
+
+            AO2ViewportAssetResolver.SetViewportSurfaceDimensions(
+                layout.ViewportBounds.Width,
+                layout.ViewportBounds.Height,
+                layout.SurfaceWidth,
+                layout.SurfaceHeight,
+                chatboxOverlapsViewport ? 0 : layout.ChatboxBounds.Height);
+
+            if (oldWidth != layout.SurfaceWidth || oldHeight != layout.SurfaceHeight)
+            {
+                SurfaceLayoutChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+
+        private void SetViewportLayerSize(int width, int height)
+        {
+            ViewportCanvas.Width = width;
+            ViewportCanvas.Height = height;
+            ViewportFallbackImage.Width = width;
+            ViewportFallbackImage.Height = height;
+            BackgroundImage.Width = width;
+            BackgroundImage.Height = height;
+            SpeedlinesImage.Width = width;
+            SpeedlinesImage.Height = height;
+            CharacterImage.Width = width;
+            CharacterImage.Height = height;
+            PairCharacterImage.Width = width;
+            PairCharacterImage.Height = height;
+            DeskImage.Width = width;
+            DeskImage.Height = height;
+            EffectImage.Width = width;
+            EffectImage.Height = height;
+            ShoutOverlayImage.Width = width;
+            ShoutOverlayImage.Height = height;
+            StickerImage.Width = width;
+            StickerImage.Height = height;
+            TestimonyImage.Width = width;
+            TestimonyImage.Height = height;
+            WtceImage.Width = width;
+            WtceImage.Height = height;
+            FlashOverlay.Width = width;
+            FlashOverlay.Height = height;
+        }
+
+        private void ReapplyScenePlacementAfterLayoutChange()
+        {
+            string backgroundName = ResolveCurrentBackgroundName();
+            string position = !string.IsNullOrWhiteSpace(currentRenderPosition)
+                ? currentRenderPosition
+                : sceneClient != null
+                    ? ResolveCurrentOrDefaultViewportPosition(sceneClient)
+                    : string.Empty;
+
+            AO2ViewportAssetResolver.ViewportDisplayOptions displayOptions =
+                AO2ViewportAssetResolver.ResolveDisplayOptions(backgroundName);
+            RenderOptions.SetBitmapScalingMode(BackgroundImage, displayOptions.ScalingMode);
+            RenderOptions.SetBitmapScalingMode(DeskImage, displayOptions.ScalingMode);
+
+            AO2ViewportAssetResolver.ViewportImagePlacement backgroundPlacement =
+                AO2ViewportAssetResolver.ResolveBackgroundPlacement(backgroundName, position);
+            SetPlacedAnimatedImage(
+                BackgroundImage,
+                backgroundPlacement,
+                !string.IsNullOrWhiteSpace(backgroundPlacement.ImagePath),
+                displayOptions.StretchMode);
+
+            bool deskWasVisible = DeskImage.Visibility == Visibility.Visible && DeskImage.Source != null;
+            AO2ViewportAssetResolver.ViewportImagePlacement deskPlacement = deskWasVisible
+                ? AO2ViewportAssetResolver.ResolveDeskPlacement(backgroundName, position)
+                : new AO2ViewportAssetResolver.ViewportImagePlacement(
+                    null,
+                    0,
+                    0,
+                    AO2ViewportAssetResolver.ViewportWidth,
+                    AO2ViewportAssetResolver.ViewportHeight);
+            SetPlacedAnimatedImage(DeskImage, deskPlacement, deskWasVisible, displayOptions.StretchMode);
+
+            ApplyHeightBasedCharacterGeometry(CharacterImage);
+            ApplyHeightBasedCharacterGeometry(PairCharacterImage);
+
+            if (ChatArrowImage.Visibility == Visibility.Visible)
+            {
+                ApplyChatArrowBounds();
+            }
         }
 
         internal void SetChatBackgroundColor(Color? color)
@@ -374,10 +521,15 @@ namespace OceanyaClient.Features.Viewport
             audioManager.StopSfxAndBlips();
             FlashOverlay.BeginAnimation(OpacityProperty, null);
             FlashOverlay.Visibility = Visibility.Collapsed;
+            ApplyThemeLayout();
+            string backgroundName = ResolveCurrentBackgroundName();
             AO2ViewportAssetResolver.ViewportDisplayOptions displayOptions =
-                AO2ViewportAssetResolver.ResolveDisplayOptions(sceneClient.curBG);
+                AO2ViewportAssetResolver.ResolveDisplayOptions(backgroundName);
+            string backgroundOnlyPosition = ResolveCurrentOrDefaultViewportPosition(sceneClient);
             AO2ViewportAssetResolver.ViewportImagePlacement backgroundPlacement =
-                AO2ViewportAssetResolver.ResolveBackgroundPlacement(sceneClient.curBG, sceneClient.curPos);
+                AO2ViewportAssetResolver.ResolveBackgroundPlacement(
+                    backgroundName,
+                    backgroundOnlyPosition);
             RenderOptions.SetBitmapScalingMode(BackgroundImage, displayOptions.ScalingMode);
             RenderOptions.SetBitmapScalingMode(DeskImage, displayOptions.ScalingMode);
             SetPlacedAnimatedImage(BackgroundImage, backgroundPlacement, true, displayOptions.StretchMode);
@@ -405,7 +557,7 @@ namespace OceanyaClient.Features.Viewport
             StickerImage.Visibility = Visibility.Collapsed;
             StopAnimation(EvidenceImage);
             EvidenceImage.Visibility = Visibility.Collapsed;
-            currentRenderPosition = string.Empty;
+            currentRenderPosition = backgroundOnlyPosition;
             currentRenderCharacter = sceneClient.currentINI;
             ChatPreview.PreviewText = string.Empty;
             ChatPreview.Visibility = Visibility.Collapsed;
@@ -417,6 +569,26 @@ namespace OceanyaClient.Features.Viewport
             currentChatArrowMiscToken = string.Empty;
         }
 
+        private static string ResolveCurrentOrDefaultViewportPosition(AOClient client)
+        {
+            if (!string.IsNullOrWhiteSpace(client.curPos))
+            {
+                return client.curPos;
+            }
+
+            return client.currentINI?.configINI?.Side ?? string.Empty;
+        }
+
+        private string ResolveCurrentBackgroundName()
+        {
+            if (!string.IsNullOrWhiteSpace(messageSourceClient?.curBG))
+            {
+                return messageSourceClient.curBG;
+            }
+
+            return sceneClient?.curBG ?? string.Empty;
+        }
+
         private void RenderMessage(ICMessage message)
         {
             messageSequence++;
@@ -426,7 +598,7 @@ namespace OceanyaClient.Features.Viewport
             StopPendingMessageTimer();
             StopScreenShake();
             CharacterFolder? character = AO2ViewportAssetResolver.ResolveCharacter(message.Character);
-            string background = messageSourceClient?.curBG ?? sceneClient?.curBG ?? string.Empty;
+            string background = ResolveCurrentBackgroundName();
             string position = message.Side?.Trim() ?? string.Empty;
             string showname = string.IsNullOrWhiteSpace(message.ShowName)
                 ? character?.configINI.ShowName ?? message.Character
@@ -617,13 +789,16 @@ namespace OceanyaClient.Features.Viewport
             bool startTextReveal = true,
             Action<IAnimationPlayer?>? onCharacterPlayerReady = null)
         {
+            string chatToken = AO2ViewportAssetResolver.ResolveCharacterChatToken(character);
+            bool hasShowname = !string.IsNullOrWhiteSpace(showname);
+            ApplyThemeLayout(chatToken, hasShowname);
             AO2ViewportAssetResolver.ViewportDisplayOptions displayOptions =
                 AO2ViewportAssetResolver.ResolveDisplayOptions(backgroundName);
             currentRenderCharacter = character;
             AO2ViewportAssetResolver.ViewportImagePlacement backgroundPlacement =
                 AO2ViewportAssetResolver.ResolveBackgroundPlacement(backgroundName, position);
             CustomConsole.Debug(
-                $"Render scene bg=\"{backgroundName}\" pos=\"{position}\" bgImage=\"{backgroundPlacement.ImagePath ?? "(null)"}\"",
+                $"Render scene bg=\"{backgroundName}\" pos=\"{position}\" bgImage=\"{backgroundPlacement.ImagePath ?? "(null)"}\" left={backgroundPlacement.Left:0.##} top={backgroundPlacement.Top:0.##} size={backgroundPlacement.Width:0.##}x{backgroundPlacement.Height:0.##} viewport={AO2ViewportAssetResolver.ViewportWidth}x{AO2ViewportAssetResolver.ViewportHeight}",
                 CustomConsole.LogCategory.Viewport);
             RenderOptions.SetBitmapScalingMode(BackgroundImage, displayOptions.ScalingMode);
             RenderOptions.SetBitmapScalingMode(DeskImage, displayOptions.ScalingMode);
@@ -638,7 +813,7 @@ namespace OceanyaClient.Features.Viewport
                     ? AO2ViewportAssetResolver.ShouldCenterAndHidePairDuringPreAnimation(message.DeskMod)
                     : AO2ViewportAssetResolver.ShouldCenterAndHidePairDuringSpeaking(message.DeskMod, message.EmoteModifier));
             AO2ChatPreviewStyle talkingStyle = AO2ChatPreviewResolver.Resolve(
-                AO2ViewportAssetResolver.ResolveCharacterChatToken(character),
+                chatToken,
                 !string.IsNullOrWhiteSpace(showname),
                 preferViewportTheme: true);
             bool useTalkingSprite = !isPreAnimation
@@ -715,8 +890,8 @@ namespace OceanyaClient.Features.Viewport
             {
                 ChatPreview.PreviewText = additivePrefix + (messageText ?? string.Empty);
             }
-            ChatPreview.ChatToken = AO2ViewportAssetResolver.ResolveCharacterChatToken(character);
-            ChatPreview.ShowShowname = !string.IsNullOrWhiteSpace(showname);
+            ChatPreview.ChatToken = chatToken;
+            ChatPreview.ShowShowname = hasShowname;
             ChatPreview.ShowMessage = showChat;
             ChatPreview.Visibility = showChat ? Visibility.Visible : Visibility.Collapsed;
             if (message != null && IsVisible)
@@ -1265,6 +1440,8 @@ namespace OceanyaClient.Features.Viewport
             Stretch stretch)
         {
             ImageSource? source = AO2ViewportAssetResolver.LoadImage(placement.ImagePath, decodePixelWidth: 0);
+            image.BeginAnimation(Canvas.LeftProperty, null);
+            image.BeginAnimation(Canvas.TopProperty, null);
             image.Source = source;
             image.Width = placement.Width;
             image.Height = placement.Height;
@@ -1280,6 +1457,8 @@ namespace OceanyaClient.Features.Viewport
             bool visible,
             Stretch stretch)
         {
+            image.BeginAnimation(Canvas.LeftProperty, null);
+            image.BeginAnimation(Canvas.TopProperty, null);
             image.Width = placement.Width;
             image.Height = placement.Height;
             image.Stretch = stretch;
@@ -1771,18 +1950,31 @@ namespace OceanyaClient.Features.Viewport
             string? postPath = AO2ViewportAssetResolver.ResolveCharacterPostAnimation(character, emoteName);
             if (!string.IsNullOrWhiteSpace(postPath))
             {
-                IAnimationPlayer? postPlayer = SetAnimatedImage(CharacterImage, postPath, true, loop: false);
-                if (postPlayer != null)
-                {
-                    postPlayer.PlaybackFinished += () =>
+                SetCharacterAnimatedImageAsync(
+                    CharacterImage,
+                    postPath,
+                    true,
+                    loop: false,
+                    onPlayerReady: postPlayer =>
                     {
+                        if (postPlayer != null)
+                        {
+                            postPlayer.PlaybackFinished += () =>
+                            {
+                                if (sequence == messageSequence)
+                                {
+                                    RenderIdleCharacterAnimation(character, emoteName);
+                                }
+                            };
+                            return;
+                        }
+
                         if (sequence == messageSequence)
                         {
                             RenderIdleCharacterAnimation(character, emoteName);
                         }
-                    };
-                    return;
-                }
+                    });
+                return;
             }
 
             RenderIdleCharacterAnimation(character, emoteName);
@@ -1791,7 +1983,7 @@ namespace OceanyaClient.Features.Viewport
         private void RenderIdleCharacterAnimation(CharacterFolder character, string emoteName)
         {
             string? idlePath = AO2ViewportAssetResolver.ResolveCharacterDialogAnimation(character, emoteName, talking: false);
-            SetAnimatedImage(CharacterImage, idlePath, !string.IsNullOrWhiteSpace(idlePath));
+            SetCharacterAnimatedImageAsync(CharacterImage, idlePath, !string.IsNullOrWhiteSpace(idlePath));
         }
 
         private int GetNextDisplayedTextElement(
@@ -2387,11 +2579,7 @@ namespace OceanyaClient.Features.Viewport
                 return;
             }
 
-            AO2ChatPreviewBounds arrowBounds = ChatPreview.GetChatArrowBounds();
-            Canvas.SetLeft(ChatArrowImage, arrowBounds.X);
-            Canvas.SetTop(ChatArrowImage, arrowBounds.Y);
-            ChatArrowImage.Width = arrowBounds.Width;
-            ChatArrowImage.Height = arrowBounds.Height;
+            ApplyChatArrowBounds();
 
             StopChatArrow();
             if (Ao2AnimationPreview.TryCreateAnimationPlayer(path, true, out IAnimationPlayer? player, usePreviewLimits: false)
@@ -2408,6 +2596,15 @@ namespace OceanyaClient.Features.Viewport
             }
 
             ChatArrowImage.Visibility = Visibility.Visible;
+        }
+
+        private void ApplyChatArrowBounds()
+        {
+            AO2ChatPreviewBounds arrowBounds = currentThemeLayout?.ChatArrowBounds ?? ChatPreview.GetChatArrowBounds();
+            Canvas.SetLeft(ChatArrowImage, arrowBounds.X);
+            Canvas.SetTop(ChatArrowImage, arrowBounds.Y);
+            ChatArrowImage.Width = arrowBounds.Width;
+            ChatArrowImage.Height = arrowBounds.Height;
         }
 
         private void StopChatArrow()

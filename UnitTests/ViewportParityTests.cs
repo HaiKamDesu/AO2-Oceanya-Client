@@ -2,11 +2,16 @@ using AOBot_Testing.Agents;
 using AOBot_Testing.Structures;
 using Common;
 using NUnit.Framework;
+using OceanyaClient;
 using OceanyaClient.Features.Viewport;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
+using System.Threading;
+using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 
 namespace UnitTests;
 
@@ -243,18 +248,38 @@ public class AO2ViewportParityPacketTests
 /// Uses a temp filesystem so there are no real AO2 asset dependencies.
 /// </summary>
 [TestFixture]
+[NonParallelizable]
+[Apartment(ApartmentState.STA)]
 public class AO2ViewportParityAssetResolverTests
 {
     private string tempDir = string.Empty;
     private List<string> originalBaseFolders = new List<string>();
+    private string originalConfigIniPath = string.Empty;
+    private string originalSaveFilePath = string.Empty;
+    private int originalViewportWidth;
+    private int originalViewportHeight;
+    private int originalToolWidth;
+    private int originalToolHeight;
+    private int originalChatboxHeight;
 
     [SetUp]
     public void SetUp()
     {
         originalBaseFolders = new List<string>(Globals.BaseFolders);
+        originalConfigIniPath = Globals.PathToConfigINI;
+        originalSaveFilePath = SaveFile.CurrentStoragePath;
+        originalViewportWidth = AO2ViewportAssetResolver.ViewportWidth;
+        originalViewportHeight = AO2ViewportAssetResolver.ViewportHeight;
+        originalToolWidth = AO2ViewportAssetResolver.ViewportToolWidth;
+        originalToolHeight = AO2ViewportAssetResolver.ViewportToolHeight;
+        originalChatboxHeight = AO2ViewportAssetResolver.ChatboxHeight;
         tempDir = Path.Combine(Path.GetTempPath(), "vp_resolver_test_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDir);
         Globals.BaseFolders = new List<string> { tempDir };
+        Globals.PathToConfigINI = Path.Combine(tempDir, "config.ini");
+        File.WriteAllText(Globals.PathToConfigINI, "theme=(714x688) FullChar\nsubtheme=default\n");
+        SaveFile.ConfigureStoragePathForTests(Path.Combine(tempDir, "savefile.json"));
+        SaveFile.ResetForTests(new SaveData(), persist: false);
         Background.RefreshCache();
     }
 
@@ -262,7 +287,15 @@ public class AO2ViewportParityAssetResolverTests
     public void TearDown()
     {
         Globals.BaseFolders = originalBaseFolders;
+        Globals.PathToConfigINI = originalConfigIniPath;
+        AO2ViewportAssetResolver.SetViewportSurfaceDimensions(
+            originalViewportWidth,
+            originalViewportHeight,
+            originalToolWidth,
+            originalToolHeight,
+            originalChatboxHeight);
         Background.RefreshCache();
+        SaveFile.ConfigureStoragePathForTests(originalSaveFilePath);
         try
         {
             if (Directory.Exists(tempDir))
@@ -280,6 +313,243 @@ public class AO2ViewportParityAssetResolverTests
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllBytes(path, Array.Empty<byte>());
+    }
+
+    private static void CreatePng(string path, int width, int height)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        byte[] pixels = new byte[width * height * 4];
+        for (int i = 0; i < pixels.Length; i += 4)
+        {
+            pixels[i] = 0x20;
+            pixels[i + 1] = 0x40;
+            pixels[i + 2] = 0x80;
+            pixels[i + 3] = 0xFF;
+        }
+
+        BitmapSource bitmap = BitmapSource.Create(
+            width,
+            height,
+            96,
+            96,
+            PixelFormats.Bgra32,
+            null,
+            pixels,
+            width * 4);
+        PngBitmapEncoder encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        using FileStream stream = File.Create(path);
+        encoder.Save(stream);
+    }
+
+    [Test]
+    public void ResolveBackgroundPlacement_NoStretchScalesByViewportHeightAndCenters()
+    {
+        int originalViewportWidth = AO2ViewportAssetResolver.ViewportWidth;
+        int originalViewportHeight = AO2ViewportAssetResolver.ViewportHeight;
+        int originalToolWidth = AO2ViewportAssetResolver.ViewportToolWidth;
+        int originalToolHeight = AO2ViewportAssetResolver.ViewportToolHeight;
+        int originalChatboxHeight = AO2ViewportAssetResolver.ChatboxHeight;
+        try
+        {
+            AO2ViewportAssetResolver.SetViewportSurfaceDimensions(768, 576, 768, 716, 140);
+            string bgDir = Path.Combine(tempDir, "background", "widebg");
+            CreatePng(Path.Combine(bgDir, "wit.png"), 1024, 576);
+            File.WriteAllText(Path.Combine(bgDir, "design.ini"), "scaling=smooth\n");
+            Background.RefreshCache();
+
+            AO2ViewportAssetResolver.ViewportImagePlacement placement =
+                AO2ViewportAssetResolver.ResolveBackgroundPlacement("widebg", "wit");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(placement.Left, Is.EqualTo(-128));
+                Assert.That(placement.Top, Is.EqualTo(0));
+                Assert.That(placement.Width, Is.EqualTo(1024));
+                Assert.That(placement.Height, Is.EqualTo(576));
+            });
+        }
+        finally
+        {
+            AO2ViewportAssetResolver.SetViewportSurfaceDimensions(
+                originalViewportWidth,
+                originalViewportHeight,
+                originalToolWidth,
+                originalToolHeight,
+                originalChatboxHeight);
+        }
+    }
+
+    [Test]
+    public void ResolveBackgroundPlacement_StretchTrueUsesViewportWidgetSizeWithoutExtraCentering()
+    {
+        int originalViewportWidth = AO2ViewportAssetResolver.ViewportWidth;
+        int originalViewportHeight = AO2ViewportAssetResolver.ViewportHeight;
+        int originalToolWidth = AO2ViewportAssetResolver.ViewportToolWidth;
+        int originalToolHeight = AO2ViewportAssetResolver.ViewportToolHeight;
+        int originalChatboxHeight = AO2ViewportAssetResolver.ChatboxHeight;
+        try
+        {
+            AO2ViewportAssetResolver.SetViewportSurfaceDimensions(768, 576, 768, 716, 140);
+            string bgDir = Path.Combine(tempDir, "background", "stretchbg");
+            CreatePng(Path.Combine(bgDir, "wit.png"), 1024, 576);
+            File.WriteAllText(Path.Combine(bgDir, "design.ini"), "scaling=smooth\nstretch=true\n");
+            Background.RefreshCache();
+
+            AO2ViewportAssetResolver.ViewportImagePlacement placement =
+                AO2ViewportAssetResolver.ResolveBackgroundPlacement("stretchbg", "wit");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(placement.Left, Is.EqualTo(0));
+                Assert.That(placement.Top, Is.EqualTo(0));
+                Assert.That(placement.Width, Is.EqualTo(768));
+                Assert.That(placement.Height, Is.EqualTo(576));
+            });
+        }
+        finally
+        {
+            AO2ViewportAssetResolver.SetViewportSurfaceDimensions(
+                originalViewportWidth,
+                originalViewportHeight,
+                originalToolWidth,
+                originalToolHeight,
+                originalChatboxHeight);
+        }
+    }
+
+    [Test]
+    public void ResolveBackgroundPlacement_PrequalifiedCourtPositionUsesCourtOrigin()
+    {
+        int originalViewportWidth = AO2ViewportAssetResolver.ViewportWidth;
+        int originalViewportHeight = AO2ViewportAssetResolver.ViewportHeight;
+        int originalToolWidth = AO2ViewportAssetResolver.ViewportToolWidth;
+        int originalToolHeight = AO2ViewportAssetResolver.ViewportToolHeight;
+        int originalChatboxHeight = AO2ViewportAssetResolver.ChatboxHeight;
+        try
+        {
+            AO2ViewportAssetResolver.SetViewportSurfaceDimensions(1363, 705, 1363, 865, 160);
+            string bgDir = Path.Combine(tempDir, "background", "courtbg");
+            CreatePng(Path.Combine(bgDir, "court.png"), 2000, 705);
+            File.WriteAllText(Path.Combine(bgDir, "design.ini"), "scaling=smooth\ncourt:def/origin=1000\n");
+            Background.RefreshCache();
+
+            AO2ViewportAssetResolver.ViewportImagePlacement placement =
+                AO2ViewportAssetResolver.ResolveBackgroundPlacement("courtbg", "court:def");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(placement.ImagePath, Does.EndWith("court.png").IgnoreCase);
+                Assert.That(placement.Left, Is.EqualTo(-318));
+                Assert.That(placement.Top, Is.EqualTo(0));
+                Assert.That(placement.Width, Is.EqualTo(2000));
+                Assert.That(placement.Height, Is.EqualTo(705));
+            });
+        }
+        finally
+        {
+            AO2ViewportAssetResolver.SetViewportSurfaceDimensions(
+                originalViewportWidth,
+                originalViewportHeight,
+                originalToolWidth,
+                originalToolHeight,
+                originalChatboxHeight);
+        }
+    }
+
+    [Test]
+    public void ResolveDeskPlacement_NoStretchScalesOverlayByBackgroundWidgetHeightAndCenters()
+    {
+        int originalViewportWidth = AO2ViewportAssetResolver.ViewportWidth;
+        int originalViewportHeight = AO2ViewportAssetResolver.ViewportHeight;
+        int originalToolWidth = AO2ViewportAssetResolver.ViewportToolWidth;
+        int originalToolHeight = AO2ViewportAssetResolver.ViewportToolHeight;
+        int originalChatboxHeight = AO2ViewportAssetResolver.ChatboxHeight;
+        try
+        {
+            AO2ViewportAssetResolver.SetViewportSurfaceDimensions(768, 576, 768, 716, 140);
+            string bgDir = Path.Combine(tempDir, "background", "overlaybg");
+            CreatePng(Path.Combine(bgDir, "wit.png"), 1024, 576);
+            CreatePng(Path.Combine(bgDir, "wit_overlay.png"), 800, 400);
+            File.WriteAllText(Path.Combine(bgDir, "design.ini"), "scaling=smooth\n");
+            Background.RefreshCache();
+
+            AO2ViewportAssetResolver.ViewportImagePlacement placement =
+                AO2ViewportAssetResolver.ResolveDeskPlacement("overlaybg", "wit");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(placement.Left, Is.EqualTo(-192));
+                Assert.That(placement.Top, Is.EqualTo(0));
+                Assert.That(placement.Width, Is.EqualTo(1152));
+                Assert.That(placement.Height, Is.EqualTo(576));
+            });
+        }
+        finally
+        {
+            AO2ViewportAssetResolver.SetViewportSurfaceDimensions(
+                originalViewportWidth,
+                originalViewportHeight,
+                originalToolWidth,
+                originalToolHeight,
+                originalChatboxHeight);
+        }
+    }
+
+    [Test]
+    public void AO2ViewportControl_RenderMessage_AndChatboxOverlapToggle_DoNotSquashWideBackground()
+    {
+        _ = WpfTestApplicationContext.EnsureCreated();
+        File.WriteAllText(Globals.PathToConfigINI, "theme=AOHD\nsubtheme=default\n");
+
+        string themeDir = Path.Combine(tempDir, "themes", "AOHD");
+        Directory.CreateDirectory(themeDir);
+        CreateEmptyFile(Path.Combine(themeDir, "chat.png"));
+        File.WriteAllText(
+            Path.Combine(themeDir, "courtroom_design.ini"),
+            "viewport=0,0,768,576\n" +
+            "ao2_chatbox=0,576,768,140\n" +
+            "showname=4,0,120,28\n" +
+            "message=28,30,650,125\n" +
+            "chat_arrow=680,110,24,20\n");
+
+        string bgDir = Path.Combine(tempDir, "background", "widebg");
+        CreatePng(Path.Combine(bgDir, "wit.png"), 1024, 576);
+        File.WriteAllText(Path.Combine(bgDir, "design.ini"), "scaling=smooth\n");
+        Background.RefreshCache();
+
+        AOClient client = new AOClient("ws://localhost:10001/");
+        client.curBG = "widebg";
+
+        AO2ViewportControl control = new AO2ViewportControl();
+        control.AttachClient(client);
+        control.PreviewMessage(new ICMessage
+        {
+            Character = "Battler Ushiromiya",
+            ShowName = "Battler",
+            Message = "Test",
+            Side = "wit",
+            DeskMod = ICMessage.DeskMods.Hidden
+        });
+
+        AssertWideBackgroundPlacement(control);
+
+        control.ChatboxOverlapsViewport = true;
+        AssertWideBackgroundPlacement(control);
+
+        control.ChatboxOverlapsViewport = false;
+        AssertWideBackgroundPlacement(control);
+    }
+
+    private static void AssertWideBackgroundPlacement(AO2ViewportControl control)
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(control.BackgroundImage.Width, Is.EqualTo(1024));
+            Assert.That(control.BackgroundImage.Height, Is.EqualTo(576));
+            Assert.That(Canvas.GetLeft(control.BackgroundImage), Is.EqualTo(-128));
+            Assert.That(Canvas.GetTop(control.BackgroundImage), Is.EqualTo(0));
+        });
     }
 
     // ─── ResolveWtceOverlayImage ─────────────────────────────────────────────────
@@ -411,13 +681,25 @@ public class AO2ViewportParityAssetResolverTests
     [Test]
     public void ResolveChatArrowImage_UsesCustomMiscArrowBeforeThemeArrow()
     {
-        CreateEmptyFile(Path.Combine(tempDir, "themes", "default", "chat_arrow.png"));
+        CreateEmptyFile(Path.Combine(tempDir, "themes", "(714x688) FullChar", "chat_arrow.png"));
         CreateEmptyFile(Path.Combine(tempDir, "misc", "p4", "Chat_Arrow.gif"));
 
         string? result = AO2ViewportAssetResolver.ResolveChatArrowImage("P4");
 
         Assert.That(result, Is.Not.Null);
         Assert.That(result, Does.EndWith(Path.Combine("misc", "p4", "Chat_Arrow.gif")).IgnoreCase);
+    }
+
+    [Test]
+    public void ResolveChatArrowImage_UsesActiveThemeArrowForThemeDefaultChatbox()
+    {
+        CreateEmptyFile(Path.Combine(tempDir, "themes", "default", "chat_arrow.png"));
+        CreateEmptyFile(Path.Combine(tempDir, "themes", "(714x688) FullChar", "Chat_Arrow.gif"));
+
+        string? result = AO2ViewportAssetResolver.ResolveChatArrowImage();
+
+        Assert.That(result, Is.Not.Null);
+        Assert.That(result, Does.EndWith(Path.Combine("themes", "(714x688) FullChar", "Chat_Arrow.gif")).IgnoreCase);
     }
 
     [Test]

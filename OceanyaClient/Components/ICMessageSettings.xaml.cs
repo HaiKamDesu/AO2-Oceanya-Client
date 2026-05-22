@@ -66,7 +66,7 @@ namespace OceanyaClient.Components
             #endregion
 
             #region Char dropdown
-            foreach (var ini in CharacterFolder.FullList)
+            foreach (var ini in GetAlphabeticalCharacterFolders())
             {
                 CharacterDropdown.Add(ini.Name, ini.CharIconPath);
             }
@@ -118,11 +118,18 @@ namespace OceanyaClient.Components
             OnClientStateChanged?.Invoke();
         }
 
+        private static IEnumerable<CharacterFolder> GetAlphabeticalCharacterFolders()
+        {
+            return CharacterFolder.FullList
+                .OrderBy(character => character.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(character => character.DirectoryPath, StringComparer.OrdinalIgnoreCase);
+        }
+
         public void ReinitializeSettings()
         {
             // Reinitialize Character Dropdown
             CharacterDropdown.Clear();
-            foreach (var ini in CharacterFolder.FullList)
+            foreach (var ini in GetAlphabeticalCharacterFolders())
             {
                 CharacterDropdown.Add(ini.Name, ini.CharIconPath);
             }

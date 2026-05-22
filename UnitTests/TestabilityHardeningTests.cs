@@ -113,6 +113,18 @@ namespace UnitTests
         }
 
         [Test]
+        public void ClientAssetRefreshService_RefreshMarkerPath_UsesActiveSaveFileDirectory()
+        {
+            string expected = Path.Combine(
+                Path.GetDirectoryName(SaveFile.CurrentStoragePath)!,
+                "cache",
+                "asset_refresh_marker.json");
+
+            Assert.That(ClientAssetRefreshService.GetRefreshMarkerPath(), Is.EqualTo(expected));
+            Assert.That(expected, Does.StartWith(tempRoot).IgnoreCase);
+        }
+
+        [Test]
         public void SaveFile_ConfigureStoragePathForTests_AndResetHooks_UseIsolatedFile()
         {
             string isolatedSaveFilePath = Path.Combine(tempRoot, "isolated-savefile.json");

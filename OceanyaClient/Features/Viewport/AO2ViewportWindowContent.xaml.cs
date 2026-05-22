@@ -21,9 +21,12 @@ namespace OceanyaClient.Features.Viewport
         private readonly Dictionary<AOClient, AO2ViewportControl> profileControls = new Dictionary<AOClient, AO2ViewportControl>();
         private AOClient? activeClient;
         private bool _useAsWindowsPreview;
+        private bool _chatboxOverlapsViewport;
 
         /// <summary>Fired whenever <see cref="UseAsWindowsPreview"/> changes.</summary>
         public event EventHandler? UseAsWindowsPreviewChanged;
+
+        public event EventHandler? ViewportSurfaceLayoutChanged;
 
         /// <summary>Requests that a character be opened in the character editor.</summary>
         public event Func<string, Task>? OpenCharacterInEditorRequested;
@@ -73,6 +76,28 @@ namespace OceanyaClient.Features.Viewport
             }
         }
 
+        public bool ChatboxOverlapsViewport
+        {
+            get => _chatboxOverlapsViewport;
+            set
+            {
+                if (_chatboxOverlapsViewport == value)
+                {
+                    return;
+                }
+
+                _chatboxOverlapsViewport = value;
+                SaveFile.Data.GMViewportChatboxOverlapsViewport = value;
+                SaveFile.Save();
+                foreach (AO2ViewportControl control in profileControls.Values)
+                {
+                    control.ChatboxOverlapsViewport = value;
+                }
+
+                RefreshHostSurfaceSize();
+            }
+        }
+
         /// <summary>
         /// Initializes a new instance of the <see cref="AO2ViewportWindowContent"/> class.
         /// </summary>
@@ -80,6 +105,7 @@ namespace OceanyaClient.Features.Viewport
         {
             InitializeComponent();
             _useAsWindowsPreview = SaveFile.Data.GMViewportWindowPreviewPriority;
+            _chatboxOverlapsViewport = SaveFile.Data.GMViewportChatboxOverlapsViewport;
             MarkAutomationReady();
             Loaded += (_, _) => MarkAutomationReady();
         }
@@ -111,6 +137,15 @@ namespace OceanyaClient.Features.Viewport
             };
             useAsPreviewItem.Click += (_, _) => UseAsWindowsPreview = !UseAsWindowsPreview;
             menu.Items.Add(useAsPreviewItem);
+
+            MenuItem overlapChatboxItem = new MenuItem
+            {
+                Header = "Make chatbox overlap viewport",
+                IsCheckable = true,
+                IsChecked = _chatboxOverlapsViewport
+            };
+            overlapChatboxItem.Click += (_, _) => ChatboxOverlapsViewport = !ChatboxOverlapsViewport;
+            menu.Items.Add(overlapChatboxItem);
         }
 
         private void AddBackgroundMenuSection(ContextMenu menu, AO2ViewportControl? control)
@@ -196,17 +231,21 @@ namespace OceanyaClient.Features.Viewport
         private void AddChatboxMenuSection(ContextMenu menu, AO2ViewportControl? control)
         {
             string chatboxName = control?.CurrentChatboxName?.Trim() ?? string.Empty;
+            bool isThemeDefault = string.IsNullOrWhiteSpace(chatboxName);
+            string themeName = AO2ChatPreviewResolver.ResolveActiveThemeName(preferViewportTheme: true);
+            string displayName = isThemeDefault ? "Theme default" : chatboxName;
+            string copyName = isThemeDefault ? themeName : chatboxName;
             string chatboxDirectory = AO2ChatPreviewResolver.ResolveChatboxDirectoryPath(
                 chatboxName,
                 preferViewportTheme: true)?.Trim() ?? string.Empty;
 
             ContextMenuSectionHelper.AddHeader(
                 menu,
-                string.IsNullOrWhiteSpace(chatboxName) ? "Chatbox" : "Chatbox (" + chatboxName + ")",
+                "Chatbox (" + displayName + ")",
                 addLeadingSeparator: true);
             AddOpenFolderItem(menu, chatboxDirectory);
             AddOpenFileItem(menu, "Open config.ini", Globals.PathToConfigINI);
-            AddCopyNameItem(menu, chatboxName);
+            AddCopyNameItem(menu, copyName);
 
             MenuItem chooseColorItem = new MenuItem { Header = "Set chat background color..." };
             chooseColorItem.IsEnabled = control != null;
@@ -386,17 +425,39 @@ namespace OceanyaClient.Features.Viewport
             {
                 control = new AO2ViewportControl
                 {
-                    Visibility = Visibility.Collapsed
+                    Visibility = Visibility.Collapsed,
+                    ChatboxOverlapsViewport = _chatboxOverlapsViewport
                 };
+                control.SurfaceLayoutChanged += Control_SurfaceLayoutChanged;
                 profileControls[client] = control;
                 ViewportHost.Children.Add(control);
+                RefreshHostSurfaceSize(control);
             }
 
             control.AttachClient(client, incomingMessageClient, messageFilter, actionFilter);
             if (ReferenceEquals(activeClient, client))
             {
                 control.Visibility = Visibility.Visible;
+                RefreshHostSurfaceSize(control);
             }
+        }
+
+        private void Control_SurfaceLayoutChanged(object? sender, EventArgs e)
+        {
+            if (sender is AO2ViewportControl control && ReferenceEquals(control, GetActiveControl()))
+            {
+                RefreshHostSurfaceSize(control);
+            }
+        }
+
+        private void RefreshHostSurfaceSize(AO2ViewportControl? control = null)
+        {
+            control ??= GetActiveControl();
+            int width = Math.Max(1, control?.SurfaceWidth ?? AO2ViewportAssetResolver.ViewportToolWidth);
+            int height = Math.Max(1, control?.SurfaceHeight ?? AO2ViewportAssetResolver.ViewportToolHeight);
+            ViewportHost.Width = width;
+            ViewportHost.Height = height;
+            ViewportSurfaceLayoutChanged?.Invoke(this, EventArgs.Empty);
         }
 
         /// <summary>
@@ -429,6 +490,7 @@ namespace OceanyaClient.Features.Viewport
             }
 
             control.AttachClient(null, null);
+            control.SurfaceLayoutChanged -= Control_SurfaceLayoutChanged;
             ViewportHost.Children.Remove(control);
             if (ReferenceEquals(activeClient, client))
             {

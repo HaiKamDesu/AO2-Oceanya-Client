@@ -100,6 +100,101 @@ namespace OceanyaClient.Features.ChatPreview
             return style;
         }
 
+        public static AO2ViewportThemeLayout ResolveViewportLayout(string? chatToken, bool hasShowname, bool chatboxOverlapsViewport)
+        {
+            AO2ChatPreviewStyle style = Resolve(chatToken, hasShowname, preferViewportTheme: true);
+            AO2ChatPreviewThemeContext themeContext = ResolveThemeContext(preferViewportTheme: true);
+            Dictionary<string, string> designValues = LoadMergedConfig(string.Empty, "courtroom_design.ini", preferViewportTheme: true);
+            AO2ChatPreviewBounds viewportBounds = TryParseBounds(GetValue(designValues, "viewport"), themeContext.ScalingFactor)
+                ?? new AO2ChatPreviewBounds(0, 0, 256, 192);
+            AO2ChatPreviewBounds chatboxBounds = style.ChatboxBounds.Width > 0 && style.ChatboxBounds.Height > 0
+                ? style.ChatboxBounds
+                : new AO2ChatPreviewBounds(0, viewportBounds.Height, viewportBounds.Width, 104);
+
+            int relativeChatboxX = chatboxBounds.X - viewportBounds.X;
+            int relativeChatboxY = chatboxBounds.Y - viewportBounds.Y;
+            int viewportLeft = 0;
+            int viewportTop = 0;
+            int chatboxLeft;
+            int chatboxTop;
+            int surfaceWidth;
+            int surfaceHeight;
+
+            if (chatboxOverlapsViewport)
+            {
+                int minX = Math.Min(0, relativeChatboxX);
+                int minY = Math.Min(0, relativeChatboxY);
+                viewportLeft = -minX;
+                viewportTop = -minY;
+                chatboxLeft = relativeChatboxX - minX;
+                chatboxTop = relativeChatboxY - minY;
+                surfaceWidth = Math.Max(viewportLeft + viewportBounds.Width, chatboxLeft + chatboxBounds.Width);
+                surfaceHeight = Math.Max(viewportTop + viewportBounds.Height, chatboxTop + chatboxBounds.Height);
+            }
+            else
+            {
+                chatboxLeft = Math.Max(0, relativeChatboxX);
+                chatboxTop = viewportBounds.Height;
+                surfaceWidth = Math.Max(viewportBounds.Width, chatboxLeft + chatboxBounds.Width);
+                surfaceHeight = viewportBounds.Height + chatboxBounds.Height;
+            }
+
+            AO2ChatPreviewBounds translatedArrowBounds = new AO2ChatPreviewBounds(
+                chatboxLeft + style.ChatArrowBounds.X,
+                chatboxTop + style.ChatArrowBounds.Y,
+                style.ChatArrowBounds.Width,
+                style.ChatArrowBounds.Height);
+
+            return new AO2ViewportThemeLayout(
+                viewportBounds,
+                chatboxBounds,
+                style,
+                chatboxOverlapsViewport,
+                viewportLeft,
+                viewportTop,
+                chatboxLeft,
+                chatboxTop,
+                Math.Max(1, surfaceWidth),
+                Math.Max(1, surfaceHeight),
+                translatedArrowBounds);
+        }
+
+        public static string ResolveActiveThemeName(bool preferViewportTheme)
+        {
+            return ResolveThemeContext(preferViewportTheme).Theme;
+        }
+
+        public static string? ResolveViewportImageAsset(string? chatToken, string stem)
+        {
+            string token = NormalizeChatToken(chatToken);
+            string normalizedStem = (stem ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(normalizedStem))
+            {
+                return null;
+            }
+
+            List<string> baseFolders = Globals.BaseFolders ?? new List<string>();
+            AO2ChatPreviewThemeContext themeContext = ResolveThemeContext(preferViewportTheme: true);
+            foreach (string baseFolder in baseFolders)
+            {
+                if (string.IsNullOrWhiteSpace(baseFolder))
+                {
+                    continue;
+                }
+
+                foreach (string directory in EnumerateAo2AssetDirectoriesHighToLow(baseFolder, themeContext, token))
+                {
+                    string? match = ResolveStemInDirectory(directory, normalizedStem);
+                    if (!string.IsNullOrWhiteSpace(match))
+                    {
+                        return match;
+                    }
+                }
+            }
+
+            return null;
+        }
+
         private static string NormalizeChatToken(string? chatToken)
         {
             string token = (chatToken ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
@@ -586,6 +681,19 @@ namespace OceanyaClient.Features.ChatPreview
     internal sealed record AO2ChatPreviewThemeContext(string Theme, string Subtheme, int ScalingFactor);
 
     public sealed record AO2ChatPreviewBounds(int X, int Y, int Width, int Height);
+
+    public sealed record AO2ViewportThemeLayout(
+        AO2ChatPreviewBounds ViewportBounds,
+        AO2ChatPreviewBounds ChatboxBounds,
+        AO2ChatPreviewStyle ChatboxStyle,
+        bool ChatboxOverlapsViewport,
+        int ViewportLeft,
+        int ViewportTop,
+        int ChatboxLeft,
+        int ChatboxTop,
+        int SurfaceWidth,
+        int SurfaceHeight,
+        AO2ChatPreviewBounds ChatArrowBounds);
 
     public sealed class AO2ChatPreviewStyle
     {

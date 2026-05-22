@@ -69,6 +69,32 @@ namespace UnitTests
         }
 
         [Test]
+        public void ApplyAo2GifInterpolation_UsesNearestNeighborWhenUpscaling()
+        {
+            using System.Drawing.Bitmap bitmap = new System.Drawing.Bitmap(1, 1);
+            using System.Drawing.Graphics graphics = System.Drawing.Graphics.FromImage(bitmap);
+
+            Ao2AnimationPreview.ApplyAo2GifInterpolation(graphics, sourceHeight: 64, targetHeight: 192);
+
+            Assert.That(
+                graphics.InterpolationMode,
+                Is.EqualTo(System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor));
+        }
+
+        [Test]
+        public void ApplyAo2GifInterpolation_UsesBilinearWhenDownscaling()
+        {
+            using System.Drawing.Bitmap bitmap = new System.Drawing.Bitmap(1, 1);
+            using System.Drawing.Graphics graphics = System.Drawing.Graphics.FromImage(bitmap);
+
+            Ao2AnimationPreview.ApplyAo2GifInterpolation(graphics, sourceHeight: 384, targetHeight: 192);
+
+            Assert.That(
+                graphics.InterpolationMode,
+                Is.EqualTo(System.Drawing.Drawing2D.InterpolationMode.Bilinear));
+        }
+
+        [Test]
         public void BuildEmoteItems_LeadingSlashAnimationToken_ResolvesAoIdleAsset()
         {
             string characterDirectory = Path.Combine(tempRoot, "characters", "Akechi");

@@ -677,8 +677,14 @@ namespace OceanyaClient
             }
         }
 
-        private static string GetRefreshMarkerPath()
+        internal static string GetRefreshMarkerPath()
         {
+            string saveFileDirectory = Path.GetDirectoryName(SaveFile.CurrentStoragePath) ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(saveFileDirectory))
+            {
+                return Path.Combine(saveFileDirectory, "cache", "asset_refresh_marker.json");
+            }
+
             return Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "OceanyaClient",

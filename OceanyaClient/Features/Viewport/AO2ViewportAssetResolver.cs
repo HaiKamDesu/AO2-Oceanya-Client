@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Media;
 using AOBot_Testing.Structures;
 using Common;
+using OceanyaClient.Features.ChatPreview;
 
 namespace OceanyaClient.Features.Viewport
 {
@@ -18,22 +19,36 @@ namespace OceanyaClient.Features.Viewport
         /// <summary>
         /// Native AO2 viewport width in pixels.
         /// </summary>
-        public const int ViewportWidth = 256;
+        public static int ViewportWidth { get; private set; } = 256;
 
         /// <summary>
         /// Native AO2 viewport height in pixels.
         /// </summary>
-        public const int ViewportHeight = 192;
+        public static int ViewportHeight { get; private set; } = 192;
 
         /// <summary>
         /// Native-width chatbox area shown below the viewport in Oceanya.
         /// </summary>
-        public const int ChatboxHeight = 104;
+        public static int ChatboxHeight { get; private set; } = 104;
+
+        /// <summary>
+        /// Native-width total viewport tool surface, including any below-viewport chatbox.
+        /// </summary>
+        public static int ViewportToolWidth { get; private set; } = 256;
 
         /// <summary>
         /// Total viewport tool content height: AO viewport plus below-viewport chatbox.
         /// </summary>
-        public const int ViewportToolHeight = ViewportHeight + ChatboxHeight;
+        public static int ViewportToolHeight { get; private set; } = ViewportHeight + ChatboxHeight;
+
+        public static void SetViewportSurfaceDimensions(int viewportWidth, int viewportHeight, int toolWidth, int toolHeight, int chatboxHeight)
+        {
+            ViewportWidth = Math.Max(1, viewportWidth);
+            ViewportHeight = Math.Max(1, viewportHeight);
+            ViewportToolWidth = Math.Max(ViewportWidth, toolWidth);
+            ViewportToolHeight = Math.Max(ViewportHeight, toolHeight);
+            ChatboxHeight = Math.Max(0, chatboxHeight);
+        }
 
         private static readonly string[] ImageExtensions = { ".webp", ".apng", ".gif", ".png", ".jpg", ".jpeg" };
         private static readonly TimeSpan DefaultShoutDuration = TimeSpan.FromMilliseconds(724);
@@ -179,11 +194,10 @@ namespace OceanyaClient.Features.Viewport
                 _ => BitmapScalingMode.Linear
             };
 
-            bool stretchEnabled = !string.Equals(stretchRaw, "false", StringComparison.OrdinalIgnoreCase)
-                && stretchRaw != "0";
-            Stretch stretchMode = stretchEnabled ? Stretch.Fill : Stretch.None;
+            bool stretchEnabled = stretchRaw.StartsWith("true", StringComparison.OrdinalIgnoreCase)
+                || stretchRaw == "1";
 
-            return new ViewportDisplayOptions(scalingMode, stretchMode);
+            return new ViewportDisplayOptions(scalingMode, Stretch.Fill, stretchEnabled);
         }
 
         /// <summary>
@@ -223,11 +237,17 @@ namespace OceanyaClient.Features.Viewport
                     CustomConsole.Info(
                         $"Default bg fallback: stem=\"{defaultResolution.BackgroundStem}\" imagePath=\"{defaultImagePath}\"",
                         CustomConsole.LogCategory.Viewport);
-                    return BuildPlacement(defaultImagePath, defaultResolution.Origin);
+                    return BuildPlacement(
+                        defaultImagePath,
+                        defaultResolution.Origin,
+                        ResolveBackgroundStretchToFit(defaultBg.PathToFile));
                 }
             }
 
-            return BuildPlacement(imagePath, resolution.Origin);
+            return BuildPlacement(
+                imagePath,
+                resolution.Origin,
+                ResolveBackgroundStretchToFit(background.PathToFile));
         }
 
         /// <summary>
@@ -251,9 +271,13 @@ namespace OceanyaClient.Features.Viewport
             string? bgImagePath = ResolveImageStem(background.PathToFile, resolution.BackgroundStem)
                 ?? background.GetBGImage(NormalizePosition(position))
                 ?? background.bgImages.FirstOrDefault(File.Exists);
-            ViewportImagePlacement bgPlacement = BuildPlacement(bgImagePath, resolution.Origin);
+            bool stretchToFit = ResolveBackgroundStretchToFit(background.PathToFile);
+            ViewportImagePlacement bgPlacement = BuildPlacement(
+                bgImagePath,
+                resolution.Origin,
+                stretchToFit);
 
-            return new ViewportImagePlacement(deskImagePath, bgPlacement.Left, bgPlacement.Top, bgPlacement.Width, bgPlacement.Height);
+            return BuildLayerFramePlacement(deskImagePath, bgPlacement, stretchToFit);
         }
 
         /// <summary>
@@ -888,20 +912,7 @@ namespace OceanyaClient.Features.Viewport
         /// </summary>
         public static string? ResolveChatArrowImage(string? miscName = null)
         {
-            string misc = miscName?.Trim() ?? string.Empty;
-            foreach (string baseFolder in Globals.BaseFolders ?? new List<string>())
-            {
-                foreach (string root in EnumerateAo2ImageAssetRoots(baseFolder, string.Empty, misc))
-                {
-                    string? resolved = ResolveImageStem(root, "chat_arrow");
-                    if (!string.IsNullOrWhiteSpace(resolved))
-                    {
-                        return resolved;
-                    }
-                }
-            }
-
-            return null;
+            return AO2ChatPreviewResolver.ResolveViewportImageAsset(miscName, "chat_arrow");
         }
 
         /// <summary>
@@ -1241,6 +1252,12 @@ namespace OceanyaClient.Features.Viewport
             return separator > 0 ? normalized[..separator] : normalized;
         }
 
+        private static string NormalizeBackgroundPositionToken(string? position)
+        {
+            string normalized = (position ?? string.Empty).Trim();
+            return string.IsNullOrWhiteSpace(normalized) ? "wit" : normalized;
+        }
+
         private static string GetCharacterDirectory(CharacterFolder character)
         {
             return character.DirectoryPath
@@ -1250,7 +1267,8 @@ namespace OceanyaClient.Features.Viewport
 
         private static BackgroundPositionResolution ResolveBackgroundPosition(Background background, string? position)
         {
-            string normalizedPosition = NormalizePosition(position);
+            string normalizedPosition = NormalizeBackgroundPositionToken(position);
+            string packetPosition = normalizedPosition;
             string designIniPath = Path.Combine(background.PathToFile, "design.ini");
             DateTime designIniTime = File.Exists(designIniPath) ? File.GetLastWriteTimeUtc(designIniPath) : DateTime.MinValue;
             string cacheKey = background.PathToFile + "\0" + normalizedPosition;
@@ -1261,12 +1279,11 @@ namespace OceanyaClient.Features.Viewport
             }
 
             string[] splitPosition = normalizedPosition.Split(':');
-            string realPosition = splitPosition.Length > 0 ? splitPosition[0] : normalizedPosition;
 
             if (ResolveImageStem(background.PathToFile, "court") != null
-                && !string.IsNullOrWhiteSpace(ReadDesignValue(background.PathToFile, "court:" + realPosition + "/origin")))
+                && !string.IsNullOrWhiteSpace(ReadDesignValue(background.PathToFile, "court:" + normalizedPosition + "/origin")))
             {
-                normalizedPosition = "court:" + realPosition;
+                normalizedPosition = "court:" + normalizedPosition;
                 splitPosition = normalizedPosition.Split(':');
             }
             int? origin = TryReadInt(ReadDesignValue(background.PathToFile, normalizedPosition + "/origin"));
@@ -1275,35 +1292,35 @@ namespace OceanyaClient.Features.Viewport
             string backgroundStem = hasWitnessEmpty ? "witnessempty" : "wit";
             string deskStem = hasWitnessEmpty ? "stand" : "wit_overlay";
 
-            if (string.Equals(realPosition, "def", StringComparison.OrdinalIgnoreCase)
+            if (string.Equals(packetPosition, "def", StringComparison.OrdinalIgnoreCase)
                 && ResolveImageStem(background.PathToFile, "defenseempty") != null)
             {
                 backgroundStem = "defenseempty";
                 deskStem = "defensedesk";
             }
-            else if (string.Equals(realPosition, "pro", StringComparison.OrdinalIgnoreCase)
+            else if (string.Equals(packetPosition, "pro", StringComparison.OrdinalIgnoreCase)
                 && ResolveImageStem(background.PathToFile, "prosecutorempty") != null)
             {
                 backgroundStem = "prosecutorempty";
                 deskStem = "prosecutiondesk";
             }
-            else if (string.Equals(realPosition, "jud", StringComparison.OrdinalIgnoreCase)
+            else if (string.Equals(packetPosition, "jud", StringComparison.OrdinalIgnoreCase)
                 && ResolveImageStem(background.PathToFile, "judgestand") != null)
             {
                 backgroundStem = "judgestand";
                 deskStem = "judgedesk";
             }
-            else if (string.Equals(realPosition, "sea", StringComparison.OrdinalIgnoreCase)
+            else if (string.Equals(packetPosition, "sea", StringComparison.OrdinalIgnoreCase)
                 && ResolveImageStem(background.PathToFile, "seancestand") != null)
             {
                 backgroundStem = "seancestand";
                 deskStem = "seancedesk";
             }
-            else if (LegacyPositionImageNames.TryGetValue(realPosition, out string? legacyName)
+            else if (LegacyPositionImageNames.TryGetValue(packetPosition, out string? legacyName)
                 && ResolveImageStem(background.PathToFile, legacyName) != null)
             {
                 backgroundStem = legacyName;
-                if (DeskImageNames.TryGetValue(realPosition, out string? mappedDesk))
+                if (DeskImageNames.TryGetValue(packetPosition, out string? mappedDesk))
                 {
                     deskStem = mappedDesk;
                 }
@@ -1327,7 +1344,7 @@ namespace OceanyaClient.Features.Viewport
             return resolution;
         }
 
-        private static ViewportImagePlacement BuildPlacement(string? imagePath, int? origin)
+        private static ViewportImagePlacement BuildPlacement(string? imagePath, int? origin, bool stretchToFit)
         {
             if (string.IsNullOrWhiteSpace(imagePath))
             {
@@ -1349,6 +1366,11 @@ namespace OceanyaClient.Features.Viewport
 
             if (!origin.HasValue)
             {
+                if (stretchToFit)
+                {
+                    return DefaultPlacement(imagePath);
+                }
+
                 // AO2 parity: no origin → background widget stays at viewport size (256×192),
                 // image is scaled to height 192 (aspect-ratio preserved) and centered via
                 // Qt::AlignCenter on the QLabel. The widget clips any overhang left/right.
@@ -1365,6 +1387,46 @@ namespace OceanyaClient.Features.Viewport
         private static ViewportImagePlacement DefaultPlacement(string? imagePath)
         {
             return new ViewportImagePlacement(imagePath, 0, 0, ViewportWidth, ViewportHeight);
+        }
+
+        private static ViewportImagePlacement BuildLayerFramePlacement(
+            string? imagePath,
+            ViewportImagePlacement widgetPlacement,
+            bool stretchToFit)
+        {
+            if (string.IsNullOrWhiteSpace(imagePath) || stretchToFit)
+            {
+                return new ViewportImagePlacement(
+                    imagePath,
+                    widgetPlacement.Left,
+                    widgetPlacement.Top,
+                    widgetPlacement.Width,
+                    widgetPlacement.Height);
+            }
+
+            (int width, int height) = TryGetImageSize(imagePath);
+            if (width <= 0 || height <= 0 || widgetPlacement.Height <= 0)
+            {
+                return new ViewportImagePlacement(
+                    imagePath,
+                    widgetPlacement.Left,
+                    widgetPlacement.Top,
+                    widgetPlacement.Width,
+                    widgetPlacement.Height);
+            }
+
+            double scale = widgetPlacement.Height / height;
+            int scaledWidth = (int)Math.Floor(width * scale + 0.5);
+            int scaledHeight = (int)Math.Floor(height * scale + 0.5);
+            int left = (int)widgetPlacement.Left + (int)((widgetPlacement.Width - scaledWidth) / 2.0);
+            return new ViewportImagePlacement(imagePath, left, widgetPlacement.Top, scaledWidth, scaledHeight);
+        }
+
+        private static bool ResolveBackgroundStretchToFit(string backgroundDirectory)
+        {
+            string stretchRaw = ReadDesignValue(backgroundDirectory, "stretch").Trim();
+            return stretchRaw.StartsWith("true", StringComparison.OrdinalIgnoreCase)
+                || stretchRaw == "1";
         }
 
         private static (int Width, int Height) TryGetImageSize(string imagePath)
@@ -1921,10 +1983,10 @@ namespace OceanyaClient.Features.Viewport
         /// <summary>
         /// Display rendering options derived from a background's design.ini.
         /// </summary>
-        public sealed record ViewportDisplayOptions(BitmapScalingMode ScalingMode, Stretch StretchMode)
+        public sealed record ViewportDisplayOptions(BitmapScalingMode ScalingMode, Stretch StretchMode, bool StretchToFit)
         {
             /// <summary>Default options when no design.ini is present or the background is unknown.</summary>
-            public static readonly ViewportDisplayOptions Default = new(BitmapScalingMode.Linear, Stretch.Fill);
+            public static readonly ViewportDisplayOptions Default = new(BitmapScalingMode.Linear, Stretch.Fill, false);
         }
 
         private sealed record CachedImageSize(int Width, int Height, DateTime LastWriteTimeUtc);

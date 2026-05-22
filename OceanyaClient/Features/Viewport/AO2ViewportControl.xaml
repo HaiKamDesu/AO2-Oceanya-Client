@@ -6,13 +6,8 @@
              Height="296"
              SnapsToDevicePixels="True"
              UseLayoutRounding="True">
-    <Grid Width="256" Height="296" Background="Transparent" ClipToBounds="True">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="192"/>
-            <RowDefinition Height="104"/>
-        </Grid.RowDefinitions>
-
-        <Canvas x:Name="ViewportCanvas" Grid.Row="0" Width="256" Height="192" Background="Black" ClipToBounds="True">
+    <Canvas x:Name="ViewportRoot" Width="256" Height="296" Background="Transparent" ClipToBounds="True">
+        <Canvas x:Name="ViewportCanvas" Width="256" Height="192" Background="Black" ClipToBounds="True">
             <!-- ViewportFallbackImage: static layer shown when bg is transparent/absent. Set Source here to use a custom fallback image. -->
             <Image x:Name="ViewportFallbackImage" Width="256" Height="192" Stretch="Fill" Panel.ZIndex="0" Source="pack://application:,,,/OceanyaClient;component/Resources/ViewportFallback.png"/>
             <Image x:Name="BackgroundImage" Width="256" Height="192" Stretch="Fill" Panel.ZIndex="1"/>
@@ -37,7 +32,6 @@
         </Canvas>
 
         <components:AO2ChatPreviewControl x:Name="ChatPreview"
-                                          Grid.Row="1"
                                           Width="256"
                                           Height="104"
                                           ShowPreviewHeader="False"
@@ -45,14 +39,14 @@
                                           Visibility="Collapsed"
                                           IsHitTestVisible="True"/>
 
-        <Canvas Grid.Row="1" Width="256" Height="104" IsHitTestVisible="False">
+        <Canvas x:Name="ChatArrowCanvas" Width="256" Height="296" IsHitTestVisible="False">
             <Image x:Name="ChatArrowImage"
                    Canvas.Left="245"
-                   Canvas.Top="84"
+                   Canvas.Top="276"
                    Width="11"
                    Height="9"
                    Stretch="Uniform"
                    Visibility="Collapsed"/>
         </Canvas>
-    </Grid>
+    </Canvas>
 </UserControl>

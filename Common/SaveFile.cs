@@ -207,6 +207,8 @@ namespace OceanyaClient
     {
         public double Width { get; set; } = 256;
         public double Height { get; set; } = 296;
+        public int SurfaceWidth { get; set; }
+        public int SurfaceHeight { get; set; }
         public double? Left { get; set; }
         public double? Top { get; set; }
         public bool IsVisible { get; set; }
@@ -494,6 +496,9 @@ namespace OceanyaClient
         };
         public GmMultiClientSnapshot GMMultiClientSnapshot { get; set; } = new GmMultiClientSnapshot();
         public string GMViewportChatBackgroundColor { get; set; } = string.Empty;
+
+        /// <summary>When true, the GM viewport renders the AO2 chatbox at its theme overlap position instead of below the viewport.</summary>
+        public bool GMViewportChatboxOverlapsViewport { get; set; }
 
         /// <summary>When true and the viewport is visible, the viewport window takes the taskbar slot instead of the main window.</summary>
         public bool GMViewportWindowPreviewPriority { get; set; } = true;
@@ -1905,8 +1910,10 @@ namespace OceanyaClient
 
         private static void ClampViewportWindowState(ViewportWindowState state)
         {
-            state.Width = Math.Clamp(state.Width, 256, 6000);
-            state.Height = Math.Clamp(state.Height, 296, 7000);
+            state.Width = Math.Clamp(state.Width, 1, 6000);
+            state.Height = Math.Clamp(state.Height, 1, 7000);
+            state.SurfaceWidth = Math.Clamp(state.SurfaceWidth, 0, 6000);
+            state.SurfaceHeight = Math.Clamp(state.SurfaceHeight, 0, 7000);
             if (state.Left.HasValue && (double.IsInfinity(state.Left.Value) || double.IsNaN(state.Left.Value)))
             {
                 state.Left = null;
