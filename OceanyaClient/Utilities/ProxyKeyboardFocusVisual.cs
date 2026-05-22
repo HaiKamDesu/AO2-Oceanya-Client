@@ -210,6 +210,15 @@ namespace OceanyaClient.Utilities
                     return;
                 }
 
+                Rect visibleBounds = new Rect(0, 0, textBox.ActualWidth, textBox.ActualHeight);
+                if (visibleBounds.Width <= 0 || visibleBounds.Height <= 0)
+                {
+                    return;
+                }
+
+                drawingContext.PushClip(new RectangleGeometry(visibleBounds));
+                try
+                {
                 if (textBox.SelectionLength > 0)
                 {
                     DrawSelectionHighlight(drawingContext);
@@ -231,6 +240,11 @@ namespace OceanyaClient.Utilities
                 Brush caretBrush = textBox.CaretBrush ?? textBox.Foreground;
                 Rect drawRect = new Rect(Math.Round(caretRect.X) + 0.5, caretRect.Y, 1, height);
                 drawingContext.DrawRectangle(caretBrush, null, drawRect);
+                }
+                finally
+                {
+                    drawingContext.Pop();
+                }
             }
 
             private void DrawSelectionHighlight(DrawingContext drawingContext)

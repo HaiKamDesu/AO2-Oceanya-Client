@@ -96,6 +96,7 @@ namespace OceanyaClient.Features.FileHivemind
             desktopToastPresenter = new FileHivemindDesktopToastPresenter(() => (Icon)trayIconImage.Clone());
             uiThreadControl = new Forms.Control();
             uiThreadControl.CreateControl();
+            _ = uiThreadControl.Handle;
 
             Forms.ContextMenuStrip menu = new Forms.ContextMenuStrip();
             menu.Items.Add("Open Oceanya Client", null, (_, _) => this.openMainApplication());
@@ -286,18 +287,28 @@ namespace OceanyaClient.Features.FileHivemind
                 return;
             }
 
-            if (uiThreadControl.IsDisposed)
+            if (uiThreadControl.IsDisposed || !uiThreadControl.IsHandleCreated)
             {
                 return;
             }
 
-            if (uiThreadControl.InvokeRequired)
+            try
             {
-                uiThreadControl.BeginInvoke(action);
-                return;
-            }
+                if (uiThreadControl.InvokeRequired)
+                {
+                    uiThreadControl.BeginInvoke(action);
+                    return;
+                }
 
-            action();
+                action();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (InvalidOperationException ex)
+            {
+                CustomConsole.Warning("File Hivemind tray UI action skipped because the tray handle is unavailable.", ex);
+            }
         }
 
         private static string BuildTrayText(string? statusText)

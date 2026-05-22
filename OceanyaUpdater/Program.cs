@@ -7,6 +7,7 @@ using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 
 namespace OceanyaUpdater
@@ -171,7 +172,7 @@ namespace OceanyaUpdater
                 return UpdaterExitCodes.ArgumentError;
             }
 
-            UpdaterStatusWindow? status = options.Quiet ? null : new UpdaterStatusWindow();
+            UpdaterStatusWindow? status = options.Quiet ? null : new UpdaterStatusWindow(options);
             status?.ShowStatus("Starting Oceanya update...");
 
             try
@@ -180,7 +181,7 @@ namespace OceanyaUpdater
                 status?.ShowStatus("Waiting for Oceanya Client to close...");
                 WaitForParentExit(options.ParentPid, log);
                 status?.ShowStatus("Stopping File Hivemind...");
-                StopHivemindAgent(log);
+                StopHivemindAgent(log, status);
                 status?.ShowStatus("Checking update files...");
                 ValidatePaths(options);
                 status?.ShowStatus("Backing up current files...");
@@ -261,7 +262,7 @@ namespace OceanyaUpdater
             }
         }
 
-        private static void StopHivemindAgent(TextWriter log)
+        private static void StopHivemindAgent(TextWriter log, UpdaterStatusWindow? status)
         {
             try
             {
@@ -274,7 +275,7 @@ namespace OceanyaUpdater
                 WriteLog(log, "Could not send Hivemind stop signal: " + ex.Message);
             }
 
-            DateTime deadline = DateTime.UtcNow.AddSeconds(20);
+            DateTime deadline = DateTime.UtcNow.AddSeconds(12);
             while (DateTime.UtcNow < deadline)
             {
                 if (!Mutex.TryOpenExisting(HivemindAgentMutexName, out Mutex? mutex))
@@ -288,7 +289,81 @@ namespace OceanyaUpdater
                 PumpWpfEvents();
             }
 
-            WriteLog(log, "Timed out waiting for Hivemind agent to stop; continuing update.");
+            WriteLog(log, "Timed out waiting for Hivemind agent to stop after stop signal.");
+            status?.ShowStatus("File Hivemind did not close. Forcing it to stop...");
+            ForceStopHivemindProcesses(log);
+            DateTime killDeadline = DateTime.UtcNow.AddSeconds(8);
+            while (DateTime.UtcNow < killDeadline)
+            {
+                if (!Mutex.TryOpenExisting(HivemindAgentMutexName, out Mutex? mutex))
+                {
+                    WriteLog(log, "Hivemind agent mutex cleared after forced stop.");
+                    return;
+                }
+
+                mutex.Dispose();
+                Thread.Sleep(250);
+                PumpWpfEvents();
+            }
+
+            WriteLog(log, "Hivemind agent mutex is still present after forced stop; continuing update.");
+        }
+
+        private static void ForceStopHivemindProcesses(TextWriter log)
+        {
+            Process[] processes;
+            try
+            {
+                processes = Process.GetProcessesByName("OceanyaHivemindAgent");
+            }
+            catch (Exception ex)
+            {
+                WriteLog(log, "Could not enumerate Hivemind processes: " + ex.Message);
+                return;
+            }
+
+            if (processes.Length == 0)
+            {
+                WriteLog(log, "No OceanyaHivemindAgent processes found for forced stop.");
+                return;
+            }
+
+            foreach (Process process in processes)
+            {
+                using (process)
+                {
+                    try
+                    {
+                        if (process.HasExited)
+                        {
+                            continue;
+                        }
+
+                        WriteLog(log, "Killing Hivemind process pid=" + process.Id + ".");
+                        process.Kill(entireProcessTree: true);
+                        if (!process.WaitForExit(5000))
+                        {
+                            WriteLog(log, "Hivemind process did not exit after kill pid=" + process.Id + ".");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        WriteLog(log, "Could not kill Hivemind process pid=" + SafeProcessId(process) + ": " + ex.Message);
+                    }
+                }
+            }
+        }
+
+        private static string SafeProcessId(Process process)
+        {
+            try
+            {
+                return process.Id.ToString();
+            }
+            catch
+            {
+                return "(unknown)";
+            }
         }
 
         private static void ValidatePaths(UpdaterArguments options)
@@ -508,13 +583,13 @@ namespace OceanyaUpdater
         private readonly TextBlock statusText = new TextBlock();
         private readonly ProgressBar progressBar = new ProgressBar();
 
-        public UpdaterStatusWindow()
+        public UpdaterStatusWindow(UpdaterArguments options)
         {
             Title = "Oceanya Updater";
-            Width = 360;
-            Height = 150;
-            MinWidth = 360;
-            MinHeight = 150;
+            Width = 300;
+            Height = 120;
+            MinWidth = 300;
+            MinHeight = 120;
             ResizeMode = ResizeMode.NoResize;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             WindowStyle = WindowStyle.None;
@@ -527,44 +602,61 @@ namespace OceanyaUpdater
             {
                 BorderBrush = new SolidColorBrush(Color.FromRgb(34, 34, 34)),
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(5),
-                Background = new SolidColorBrush(Color.FromArgb(235, 0, 0, 0))
+                CornerRadius = new CornerRadius(5)
             };
 
             Grid grid = new Grid
             {
-                Margin = new Thickness(20, 18, 20, 18)
+                Background = new SolidColorBrush(Color.FromArgb(127, 0, 0, 0))
             };
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            string? logoPath = ResolveLogoPath(options);
+            if (!string.IsNullOrWhiteSpace(logoPath))
+            {
+                System.Windows.Shapes.Rectangle logoMask = new System.Windows.Shapes.Rectangle
+                {
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    VerticalAlignment = VerticalAlignment.Stretch,
+                    Fill = new SolidColorBrush(Color.FromArgb(191, 0, 0, 0)),
+                    OpacityMask = new ImageBrush(LoadBitmapImage(logoPath))
+                    {
+                        Stretch = Stretch.UniformToFill
+                    }
+                };
+                Grid.SetRowSpan(logoMask, 3);
+                grid.Children.Add(logoMask);
+            }
 
             TextBlock titleText = new TextBlock
             {
                 Text = "Updating Oceanya Client",
                 Foreground = Brushes.White,
                 FontSize = 16,
-                FontWeight = FontWeights.SemiBold,
                 TextAlignment = TextAlignment.Center,
+                TextWrapping = TextWrapping.Wrap,
                 HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = new Thickness(0, 0, 0, 8)
+                Margin = new Thickness(20, 20, 20, 5)
             };
             Grid.SetRow(titleText, 0);
 
             statusText.Text = "Starting...";
-            statusText.Foreground = new SolidColorBrush(Color.FromRgb(210, 210, 210));
+            statusText.Foreground = Brushes.LightGray;
             statusText.FontSize = 12;
             statusText.TextAlignment = TextAlignment.Center;
             statusText.TextWrapping = TextWrapping.Wrap;
             statusText.HorizontalAlignment = HorizontalAlignment.Center;
-            statusText.Margin = new Thickness(0, 0, 0, 14);
+            statusText.Margin = new Thickness(20, 0, 20, 10);
             Grid.SetRow(statusText, 1);
 
             progressBar.IsIndeterminate = true;
             progressBar.Height = 5;
+            progressBar.Margin = new Thickness(20, 8, 20, 18);
             progressBar.BorderBrush = Brushes.Transparent;
             progressBar.Foreground = Brushes.White;
-            progressBar.Background = new SolidColorBrush(Color.FromArgb(40, 230, 230, 230));
+            progressBar.Background = new SolidColorBrush(Color.FromArgb(0, 230, 230, 230));
             Grid.SetRow(progressBar, 2);
 
             grid.Children.Add(titleText);
@@ -572,6 +664,36 @@ namespace OceanyaUpdater
             grid.Children.Add(progressBar);
             outerBorder.Child = grid;
             Content = outerBorder;
+        }
+
+        private static string? ResolveLogoPath(UpdaterArguments options)
+        {
+            foreach (string root in new[] { options.Source, options.Install, AppContext.BaseDirectory })
+            {
+                if (string.IsNullOrWhiteSpace(root))
+                {
+                    continue;
+                }
+
+                string path = Path.Combine(root, "Resources", "OceanyaFullLogo.png");
+                if (File.Exists(path))
+                {
+                    return path;
+                }
+            }
+
+            return null;
+        }
+
+        private static BitmapImage LoadBitmapImage(string path)
+        {
+            BitmapImage image = new BitmapImage();
+            image.BeginInit();
+            image.CacheOption = BitmapCacheOption.OnLoad;
+            image.UriSource = new Uri(path);
+            image.EndInit();
+            image.Freeze();
+            return image;
         }
 
         public void ShowStatus(string message)

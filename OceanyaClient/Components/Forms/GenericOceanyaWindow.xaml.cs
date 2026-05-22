@@ -453,7 +453,7 @@ namespace OceanyaClient
 
             if (msg == WM_GETMINMAXINFO)
             {
-                WmGetMinMaxInfo(hwnd, lParam);
+                WmGetMinMaxInfo(this, hwnd, lParam);
                 handled = true;
             }
             else if (msg == WM_MOVING)
@@ -545,7 +545,7 @@ namespace OceanyaClient
             synchronizedMovePartnerStartRect = null;
         }
 
-        private static void WmGetMinMaxInfo(IntPtr hwnd, IntPtr lParam)
+        private static void WmGetMinMaxInfo(Window window, IntPtr hwnd, IntPtr lParam)
         {
             const int MONITOR_DEFAULTTONEAREST = 0x00000002;
             IntPtr monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
@@ -569,8 +569,43 @@ namespace OceanyaClient
             mmi.ptMaxPosition.y = Math.Abs(workArea.top - monitorArea.top);
             mmi.ptMaxSize.x = Math.Abs(workArea.right - workArea.left);
             mmi.ptMaxSize.y = Math.Abs(workArea.bottom - workArea.top);
+            (double scaleX, double scaleY) = GetWindowDeviceScale(window);
+            mmi.ptMinTrackSize.x = Math.Max(mmi.ptMinTrackSize.x, ToDevicePixels(window.MinWidth, scaleX));
+            mmi.ptMinTrackSize.y = Math.Max(mmi.ptMinTrackSize.y, ToDevicePixels(window.MinHeight, scaleY));
+
+            if (!double.IsInfinity(window.MaxWidth) && !double.IsNaN(window.MaxWidth) && window.MaxWidth > 0)
+            {
+                mmi.ptMaxTrackSize.x = Math.Max(mmi.ptMinTrackSize.x, ToDevicePixels(window.MaxWidth, scaleX));
+            }
+
+            if (!double.IsInfinity(window.MaxHeight) && !double.IsNaN(window.MaxHeight) && window.MaxHeight > 0)
+            {
+                mmi.ptMaxTrackSize.y = Math.Max(mmi.ptMinTrackSize.y, ToDevicePixels(window.MaxHeight, scaleY));
+            }
 
             Marshal.StructureToPtr(mmi, lParam, true);
+        }
+
+        private static (double ScaleX, double ScaleY) GetWindowDeviceScale(Window window)
+        {
+            PresentationSource? source = PresentationSource.FromVisual(window);
+            if (source?.CompositionTarget == null)
+            {
+                return (1d, 1d);
+            }
+
+            Matrix transform = source.CompositionTarget.TransformToDevice;
+            return (transform.M11 > 0 ? transform.M11 : 1d, transform.M22 > 0 ? transform.M22 : 1d);
+        }
+
+        private static int ToDevicePixels(double value, double scale)
+        {
+            if (double.IsNaN(value) || double.IsInfinity(value) || value <= 0)
+            {
+                return 0;
+            }
+
+            return Math.Max(0, (int)Math.Ceiling(value * scale));
         }
 
         [DllImport("user32.dll")]
@@ -820,7 +855,7 @@ namespace OceanyaClient
                 const int WM_GETMINMAXINFO = 0x0024;
                 if (msg == WM_GETMINMAXINFO)
                 {
-                    WmGetMinMaxInfo(hwnd, lParam);
+                    WmGetMinMaxInfo(window, hwnd, lParam);
                     handled = true;
                 }
 

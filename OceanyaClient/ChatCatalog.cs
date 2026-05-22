@@ -52,35 +52,31 @@ namespace OceanyaClient
                     continue;
                 }
 
-                string miscRoot = Path.Combine(baseFolder, "misc");
-                if (!Directory.Exists(miscRoot))
+                foreach (string miscRoot in EnumerateMiscRoots(baseFolder))
                 {
-                    continue;
-                }
-
-                IEnumerable<string> directories;
-                try
-                {
-                    directories = Directory.EnumerateDirectories(miscRoot, "*", SearchOption.AllDirectories);
-                }
-                catch
-                {
-                    continue;
-                }
-
-                foreach (string directory in directories)
-                {
-                    string configPath = Path.Combine(directory, "config.ini");
-                    if (!File.Exists(configPath))
+                    IEnumerable<string> directories;
+                    try
+                    {
+                        directories = Directory.EnumerateDirectories(miscRoot, "*", SearchOption.AllDirectories);
+                    }
+                    catch
                     {
                         continue;
                     }
 
-                    string relative = Path.GetRelativePath(miscRoot, directory);
-                    string normalized = relative.Replace('\\', '/').Trim('/');
-                    if (!string.IsNullOrWhiteSpace(normalized))
+                    foreach (string directory in directories)
                     {
-                        values.Add(normalized);
+                        if (!LooksLikeChatboxFolder(directory))
+                        {
+                            continue;
+                        }
+
+                        string relative = Path.GetRelativePath(miscRoot, directory);
+                        string normalized = relative.Replace('\\', '/').Trim('/');
+                        if (!string.IsNullOrWhiteSpace(normalized))
+                        {
+                            values.Add(normalized);
+                        }
                     }
                 }
             }
@@ -88,6 +84,87 @@ namespace OceanyaClient
             return values
                 .OrderBy(static x => x, StringComparer.OrdinalIgnoreCase)
                 .ToList();
+        }
+
+        private static IEnumerable<string> EnumerateMiscRoots(string baseFolder)
+        {
+            string rootMisc = Path.Combine(baseFolder, "misc");
+            if (Directory.Exists(rootMisc))
+            {
+                yield return rootMisc;
+            }
+
+            string themesRoot = Path.Combine(baseFolder, "themes");
+            if (!Directory.Exists(themesRoot))
+            {
+                yield break;
+            }
+
+            IEnumerable<string> themeDirectories;
+            try
+            {
+                themeDirectories = Directory.EnumerateDirectories(themesRoot, "*", SearchOption.TopDirectoryOnly);
+            }
+            catch
+            {
+                yield break;
+            }
+
+            foreach (string themeDirectory in themeDirectories)
+            {
+                string themeMisc = Path.Combine(themeDirectory, "misc");
+                if (Directory.Exists(themeMisc))
+                {
+                    yield return themeMisc;
+                }
+
+                IEnumerable<string> subthemeDirectories;
+                try
+                {
+                    subthemeDirectories = Directory.EnumerateDirectories(themeDirectory, "*", SearchOption.TopDirectoryOnly);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                foreach (string subthemeDirectory in subthemeDirectories)
+                {
+                    string subthemeMisc = Path.Combine(subthemeDirectory, "misc");
+                    if (Directory.Exists(subthemeMisc))
+                    {
+                        yield return subthemeMisc;
+                    }
+                }
+            }
+        }
+
+        private static bool LooksLikeChatboxFolder(string directory)
+        {
+            if (File.Exists(Path.Combine(directory, "config.ini"))
+                || File.Exists(Path.Combine(directory, "chat_config.ini"))
+                || File.Exists(Path.Combine(directory, "courtroom_design.ini"))
+                || File.Exists(Path.Combine(directory, "courtroom_fonts.ini")))
+            {
+                return true;
+            }
+
+            return HasImageStem(directory, "chat")
+                || HasImageStem(directory, "chatbox")
+                || HasImageStem(directory, "chatblank");
+        }
+
+        private static bool HasImageStem(string directory, string stem)
+        {
+            foreach (string extension in new[] { ".webp", ".apng", ".gif", ".png", ".jpg", ".jpeg" })
+            {
+                if (File.Exists(Path.Combine(directory, stem + extension)))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 }

@@ -4,8 +4,8 @@
         xmlns:local="clr-namespace:OceanyaClient"
         Height="760"
         Width="1220"
-        MinHeight="640"
-        MinWidth="980"
+        MinHeight="720"
+        MinWidth="1160"
         Background="Transparent"
         Loaded="Window_Loaded"
         KeyDown="Window_KeyDown">

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -290,6 +291,46 @@ namespace UnitTests
                 StartupFunctionalityCatalog.Options.Any(o =>
                     string.Equals(o.Id, StartupFunctionalityIds.OceanyanFileHivemind, StringComparison.OrdinalIgnoreCase)),
                 Is.True);
+        }
+
+        [Test]
+        public void ChatCatalog_DiscoversChatboxesFromRootThemeAndSubthemeMiscFolders()
+        {
+            string chatCatalogTempRoot = Path.Combine(Path.GetTempPath(), "ao_chat_catalog_tests_" + Guid.NewGuid().ToString("N"));
+            string root = Path.Combine(chatCatalogTempRoot, "base");
+            Directory.CreateDirectory(Path.Combine(root, "misc", "root_chat"));
+            Directory.CreateDirectory(Path.Combine(root, "themes", "default", "misc", "theme_chat"));
+            Directory.CreateDirectory(Path.Combine(root, "themes", "custom", "sub", "misc", "subtheme_chat"));
+            Directory.CreateDirectory(Path.Combine(root, "misc", "not_a_chat"));
+            File.WriteAllText(Path.Combine(root, "misc", "root_chat", "config.ini"), "[Options]");
+            File.WriteAllText(Path.Combine(root, "themes", "default", "misc", "theme_chat", "chat.png"), "fake");
+            File.WriteAllText(Path.Combine(root, "themes", "custom", "sub", "misc", "subtheme_chat", "courtroom_design.ini"), "[Design]");
+
+            List<string> previousBaseFolders = Globals.BaseFolders?.ToList() ?? new List<string>();
+            string previousConfigPath = Globals.PathToConfigINI;
+            try
+            {
+                Globals.BaseFolders = new List<string> { root };
+                Globals.PathToConfigINI = Path.Combine(root, "base", "config.ini");
+
+                IReadOnlyList<string> chats = ChatCatalog.Refresh();
+
+                Assert.That(chats, Does.Contain("root_chat"));
+                Assert.That(chats, Does.Contain("theme_chat"));
+                Assert.That(chats, Does.Contain("subtheme_chat"));
+                Assert.That(chats, Does.Not.Contain("not_a_chat"));
+            }
+            finally
+            {
+                Globals.BaseFolders = previousBaseFolders;
+                Globals.PathToConfigINI = previousConfigPath;
+                ChatCatalog.Refresh();
+
+                if (Directory.Exists(chatCatalogTempRoot))
+                {
+                    Directory.Delete(chatCatalogTempRoot, recursive: true);
+                }
+            }
         }
     }
 

@@ -6402,6 +6402,7 @@ namespace OceanyaClient
             int insertionStart = target.SelectionStart;
             target.SelectedText = text;
             target.CaretIndex = Math.Min((target.Text?.Length ?? 0), insertionStart + text.Length);
+            EnsureTextBoxCaretVisible(target);
         }
 
         private static void BackspaceTextBox(TextBox target)
@@ -6420,6 +6421,7 @@ namespace OceanyaClient
             int index = target.CaretIndex - 1;
             target.Text = target.Text.Remove(index, 1);
             target.CaretIndex = index;
+            EnsureTextBoxCaretVisible(target);
         }
 
         private static void DeleteTextBoxSelectionOrNextChar(TextBox target)
@@ -6438,6 +6440,7 @@ namespace OceanyaClient
             int index = target.CaretIndex;
             target.Text = target.Text.Remove(index, 1);
             target.CaretIndex = index;
+            EnsureTextBoxCaretVisible(target);
         }
 
         private static void MoveTextBoxCaret(TextBox target, int delta, bool extendSelection)
@@ -6453,6 +6456,7 @@ namespace OceanyaClient
             {
                 target.CaretIndex = next;
                 target.SelectionLength = 0;
+                EnsureTextBoxCaretVisible(target);
                 return;
             }
 
@@ -6460,6 +6464,7 @@ namespace OceanyaClient
             int start = Math.Min(anchor, next);
             int length = Math.Abs(next - anchor);
             target.Select(start, length);
+            EnsureTextBoxCaretVisible(target);
         }
 
         private void SelectNextViewportPreviewInputTarget(TextBox current)
@@ -6474,6 +6479,86 @@ namespace OceanyaClient
             lastMainWindowFocusedElement = next;
             SetViewportPreviewInputProxyTarget(next, "tab target switch");
             next.CaretIndex = next.Text?.Length ?? 0;
+            EnsureTextBoxCaretVisible(next);
+        }
+
+        private static void EnsureTextBoxCaretVisible(TextBox target)
+        {
+            target.Dispatcher.BeginInvoke(
+                DispatcherPriority.Background,
+                new Action(() =>
+                {
+                    if (!target.IsVisible)
+                    {
+                        return;
+                    }
+
+                    ScrollViewer? scrollViewer = FindDescendant<ScrollViewer>(target);
+                    if (scrollViewer == null)
+                    {
+                        target.BringIntoView();
+                        return;
+                    }
+
+                    Rect caretRect = GetTextBoxCaretRect(target);
+                    if (caretRect.IsEmpty
+                        || double.IsNaN(caretRect.X)
+                        || double.IsNaN(caretRect.Y))
+                    {
+                        return;
+                    }
+
+                    const double padding = 12;
+                    if (caretRect.Right > scrollViewer.ViewportWidth - padding)
+                    {
+                        scrollViewer.ScrollToHorizontalOffset(
+                            scrollViewer.HorizontalOffset + caretRect.Right - scrollViewer.ViewportWidth + padding);
+                    }
+                    else if (caretRect.Left < padding)
+                    {
+                        scrollViewer.ScrollToHorizontalOffset(
+                            Math.Max(0, scrollViewer.HorizontalOffset + caretRect.Left - padding));
+                    }
+
+                    if (caretRect.Bottom > scrollViewer.ViewportHeight - padding)
+                    {
+                        scrollViewer.ScrollToVerticalOffset(
+                            scrollViewer.VerticalOffset + caretRect.Bottom - scrollViewer.ViewportHeight + padding);
+                    }
+                    else if (caretRect.Top < padding)
+                    {
+                        scrollViewer.ScrollToVerticalOffset(
+                            Math.Max(0, scrollViewer.VerticalOffset + caretRect.Top - padding));
+                    }
+                }));
+        }
+
+        private static Rect GetTextBoxCaretRect(TextBox target)
+        {
+            int textLength = target.Text?.Length ?? 0;
+            int caretIndex = Math.Clamp(target.CaretIndex, 0, textLength);
+            try
+            {
+                if (caretIndex > 0)
+                {
+                    Rect trailingPrevious = target.GetRectFromCharacterIndex(caretIndex - 1, true);
+                    if (!trailingPrevious.IsEmpty)
+                    {
+                        return trailingPrevious;
+                    }
+                }
+
+                Rect leadingCurrent = target.GetRectFromCharacterIndex(caretIndex, false);
+                if (!leadingCurrent.IsEmpty)
+                {
+                    return leadingCurrent;
+                }
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+            }
+
+            return Rect.Empty;
         }
 
         private void SubmitViewportPreviewTextBox(TextBox target)
@@ -6673,6 +6758,32 @@ namespace OceanyaClient
                 }
 
                 source = GetDependencyObjectParent(source);
+            }
+
+            return null;
+        }
+
+        private static T? FindDescendant<T>(DependencyObject? source) where T : DependencyObject
+        {
+            if (source == null)
+            {
+                return null;
+            }
+
+            int count = VisualTreeHelper.GetChildrenCount(source);
+            for (int index = 0; index < count; index++)
+            {
+                DependencyObject child = VisualTreeHelper.GetChild(source, index);
+                if (child is T match)
+                {
+                    return match;
+                }
+
+                T? nested = FindDescendant<T>(child);
+                if (nested != null)
+                {
+                    return nested;
+                }
             }
 
             return null;
