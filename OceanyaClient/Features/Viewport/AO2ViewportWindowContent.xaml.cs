@@ -55,6 +55,9 @@ namespace OceanyaClient.Features.Viewport
         /// <summary>Requests that one background's asset cache be refreshed.</summary>
         public event Func<string, Task>? RefreshBackgroundRequested;
 
+        /// <summary>Requests that the main settings window open directly to viewport settings.</summary>
+        public event Action? ChangeViewportThemeRequested;
+
         /// <summary>
         /// When <see langword="true"/> and the viewport is visible, the viewport window takes
         /// the Windows taskbar slot instead of the main window.
@@ -128,7 +131,14 @@ namespace OceanyaClient.Features.Viewport
 
         private void AddViewportMenuSection(ContextMenu menu)
         {
-            ContextMenuSectionHelper.AddHeader(menu, "Viewport", addLeadingSeparator: false);
+            string themeName = AO2ThemeCatalog.GetConfiguredThemeName();
+            ContextMenuSectionHelper.AddHeader(menu, "Viewport (" + themeName + ")", addLeadingSeparator: false);
+            AddCopyNameItem(menu, themeName);
+
+            MenuItem changeThemeItem = new MenuItem { Header = "Change theme..." };
+            changeThemeItem.Click += (_, _) => ChangeViewportThemeRequested?.Invoke();
+            menu.Items.Add(changeThemeItem);
+
             MenuItem useAsPreviewItem = new MenuItem
             {
                 Header = "Use viewport as Windows preview",
@@ -469,6 +479,20 @@ namespace OceanyaClient.Features.Viewport
             {
                 control.RefreshVolumes();
             }
+        }
+
+        public void ReloadThemeLayout()
+        {
+            _useAsWindowsPreview = SaveFile.Data.GMViewportWindowPreviewPriority;
+            _chatboxOverlapsViewport = SaveFile.Data.GMViewportChatboxOverlapsViewport;
+            foreach (AO2ViewportControl control in profileControls.Values)
+            {
+                control.ChatboxOverlapsViewport = _chatboxOverlapsViewport;
+                control.ReloadThemeLayout();
+            }
+
+            RefreshHostSurfaceSize();
+            UseAsWindowsPreviewChanged?.Invoke(this, EventArgs.Empty);
         }
 
         public void ReleaseCharacterAssetsForDeletedFolder(string normalizedCharacterDirectory)

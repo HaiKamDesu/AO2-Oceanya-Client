@@ -229,6 +229,7 @@
             <StackPanel Grid.Column="0" Margin="0,0,12,0">
                 <RadioButton x:Name="AudioPageButton" Content="Audio" IsChecked="True" Style="{StaticResource PageButton}" Checked="PageButton_Checked"/>
                 <RadioButton x:Name="ClientPageButton" Content="Client" Style="{StaticResource PageButton}" Checked="PageButton_Checked"/>
+                <RadioButton x:Name="ViewportPageButton" Content="Viewport" Style="{StaticResource PageButton}" Checked="PageButton_Checked"/>
                 <RadioButton x:Name="LoggingPageButton" Content="Logging" Style="{StaticResource PageButton}" Checked="PageButton_Checked"/>
                 <RadioButton x:Name="ConfigPageButton" Content="AO2 Config" Style="{StaticResource PageButton}" Checked="PageButton_Checked"/>
                 <RadioButton x:Name="CallwordsPageButton" Content="Callwords" Style="{StaticResource PageButton}" Checked="PageButton_Checked"/>
@@ -319,6 +320,41 @@
                             <TextBlock Text="Client" Foreground="White" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10"/>
                             <CheckBox x:Name="StickyEffectsCheckBox" Content="Sticky effects" Foreground="White" Margin="0,0,0,10" ToolTip="Keep selected effects around instead of clearing them after send."/>
                             <CheckBox x:Name="SwitchPosOnIniSwapCheckBox" Content="Switch position on INI swap" Foreground="White" Margin="0,0,0,10" ToolTip="When changing character INI, also switch to that character's preferred side/position when known."/>
+                        </StackPanel>
+
+                        <StackPanel x:Name="ViewportPage" Visibility="Collapsed">
+                            <TextBlock Text="Viewport" Foreground="White" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10"/>
+                            <CheckBox x:Name="ViewportPreviewCheckBox" Content="Use viewport as Windows preview" Foreground="White" Margin="0,0,0,10" ToolTip="Show the viewport window in the taskbar and Alt-Tab slot instead of the main GM window."/>
+                            <CheckBox x:Name="ViewportOverlapCheckBox" Content="Show chatbox on top of viewport" Foreground="White" Margin="0,0,0,18" ToolTip="Render the AO2 chatbox at the theme's overlapping viewport position."/>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <TextBlock Text="AO2 Theme" Foreground="White" FontWeight="SemiBold"/>
+                                <TextBlock Style="{StaticResource HelpGlyph}" ToolTip="Theme and subtheme are saved to the selected AO2 config.ini. Theme choices are scanned from the active base folder and mount paths."/>
+                            </StackPanel>
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="140"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Theme" Style="{StaticResource LabelText}"/>
+                                <ComboBox x:Name="ViewportThemeComboBox"
+                                          Grid.Column="1"
+                                          Style="{StaticResource DarkComboBox}"
+                                          SelectionChanged="ViewportThemeComboBox_SelectionChanged"/>
+                            </Grid>
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="140"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Subtheme" Style="{StaticResource LabelText}"/>
+                                <ComboBox x:Name="ViewportSubthemeComboBox"
+                                          Grid.Column="1"
+                                          Style="{StaticResource DarkComboBox}"
+                                          DisplayMemberPath="DisplayName"
+                                          SelectedValuePath="Value"/>
+                            </Grid>
+                            <TextBlock x:Name="ViewportThemePathTextBlock" Style="{StaticResource SubText}" Margin="0,2,0,0"/>
                         </StackPanel>
 
                         <StackPanel x:Name="LoggingPage" Visibility="Collapsed">

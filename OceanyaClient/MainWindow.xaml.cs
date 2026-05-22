@@ -61,6 +61,7 @@ namespace OceanyaClient
         private DispatcherTimer? viewportAltTabHeldReinjectTimer;
         private DateTime? viewportAltTabExitAltReleasedAt;
         private Window? settingsWindow;
+        private SettingsWindow? settingsContent;
         private AO2ViewportWindowContent? viewportContent;
         private IntPtr viewportAltTabKeyboardHook;
         private IntPtr lastViewportPreviewExternalForegroundHwnd;
@@ -5628,35 +5629,37 @@ namespace OceanyaClient
                 System.Windows.Threading.DispatcherPriority.Loaded);
         }
 
-        private void OpenSettingsWindow()
+        private void OpenSettingsWindow(SettingsWindowPage initialPage = SettingsWindowPage.Audio)
         {
             if (settingsWindow != null)
             {
+                settingsContent?.SelectPage(initialPage);
                 settingsWindow.Activate();
                 return;
             }
 
-            SettingsWindow settingsContent = new SettingsWindow();
-            settingsContent.SettingsSaved += ApplySavedClientSettingsToRuntime;
-            settingsContent.SettingsSaved += ao2TextLogWriter.RefreshSession;
+            SettingsWindow content = new SettingsWindow(initialPage);
+            settingsContent = content;
+            content.SettingsSaved += ApplySavedClientSettingsToRuntime;
+            content.SettingsSaved += ao2TextLogWriter.RefreshSession;
             Action liveVolumeRefresh = () =>
             {
                 viewportContent?.RefreshVolumes();
                 mainMusicAudioManager.RefreshVolumes();
             };
-            settingsContent.VolumeLiveChanged += liveVolumeRefresh;
+            content.VolumeLiveChanged += liveVolumeRefresh;
             Window owner = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
             settingsWindow = OceanyaWindowManager.CreateWindow(
-                settingsContent,
+                content,
                 new OceanyaWindowPresentationOptions
                 {
                     Owner = owner,
                     Title = "Settings",
                     HeaderText = "Settings",
-                    Width = 560,
-                    Height = 430,
-                    MinWidth = 520,
-                    MinHeight = 400,
+                    Width = 860,
+                    Height = 620,
+                    MinWidth = 720,
+                    MinHeight = 520,
                     ShowInTaskbar = false,
                     IsUserResizeEnabled = true,
                     IsUserMoveEnabled = true,
@@ -5665,10 +5668,14 @@ namespace OceanyaClient
                 });
             settingsWindow.Closed += (_, _) =>
             {
-                settingsContent.SettingsSaved -= ApplySavedClientSettingsToRuntime;
-                settingsContent.SettingsSaved -= ao2TextLogWriter.RefreshSession;
-                settingsContent.VolumeLiveChanged -= liveVolumeRefresh;
+                content.SettingsSaved -= ApplySavedClientSettingsToRuntime;
+                content.SettingsSaved -= ao2TextLogWriter.RefreshSession;
+                content.VolumeLiveChanged -= liveVolumeRefresh;
                 settingsWindow = null;
+                if (ReferenceEquals(settingsContent, content))
+                {
+                    settingsContent = null;
+                }
             };
             settingsWindow.Show();
             settingsWindow.Activate();
@@ -5687,6 +5694,13 @@ namespace OceanyaClient
 
             ICLogControl.SetInvertOnClientLogs(SaveFile.Data.InvertICLog);
             viewportContent?.RefreshVolumes();
+            if (viewportContent != null)
+            {
+                viewportContent.UseAsWindowsPreview = SaveFile.Data.GMViewportWindowPreviewPriority;
+                viewportContent.ChatboxOverlapsViewport = SaveFile.Data.GMViewportChatboxOverlapsViewport;
+                viewportContent.ReloadThemeLayout();
+            }
+
             mainMusicAudioManager.RefreshVolumes();
         }
 
@@ -5726,6 +5740,7 @@ namespace OceanyaClient
             viewportContent = new AO2ViewportWindowContent();
             viewportContent.UseAsWindowsPreviewChanged += (_, _) => ApplyViewportTaskbarPriority();
             viewportContent.ViewportSurfaceLayoutChanged += (_, _) => OnViewportSurfaceLayoutChanged();
+            viewportContent.ChangeViewportThemeRequested += () => OpenSettingsWindow(SettingsWindowPage.Viewport);
             viewportContent.NewCharacterFolderRequested += OpenNewCharacterInEditorAsync;
             viewportContent.OpenCharacterInEditorRequested += OpenCharacterInEditorAsync;
             viewportContent.DuplicateCharacterInEditorRequested += DuplicateCharacterInEditorAsync;

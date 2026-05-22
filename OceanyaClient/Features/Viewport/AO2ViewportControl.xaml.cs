@@ -119,6 +119,18 @@ namespace OceanyaClient.Features.Viewport
             audioManager.RefreshVolumes();
         }
 
+        internal void ReloadThemeLayout()
+        {
+            ApplyThemeLayout();
+            ApplySavedChatBackground();
+            ReapplyScenePlacementAfterLayoutChange();
+            ChatPreview.RefreshPreview();
+            if (ChatArrowImage.Visibility == Visibility.Visible)
+            {
+                ApplyChatArrowBounds();
+            }
+        }
+
         /// <summary>
         /// Current background token rendered by this viewport.
         /// </summary>

@@ -7,6 +7,7 @@ using OceanyaClient.Features.Viewport;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Threading;
 using System.Windows.Controls;
@@ -340,6 +341,44 @@ public class AO2ViewportParityAssetResolverTests
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using FileStream stream = File.Create(path);
         encoder.Save(stream);
+    }
+
+    [Test]
+    public void AO2ThemeCatalog_EnumeratesThemesFromConfigBaseBeforeMounts()
+    {
+        string mountDir = Path.Combine(tempDir, "mount");
+        Directory.CreateDirectory(Path.Combine(tempDir, "themes", "AOHD"));
+        Directory.CreateDirectory(Path.Combine(tempDir, "themes", "Theme 10"));
+        Directory.CreateDirectory(Path.Combine(tempDir, "themes", "Theme 2"));
+        Directory.CreateDirectory(Path.Combine(mountDir, "themes", "Mounted"));
+        Directory.CreateDirectory(Path.Combine(mountDir, "themes", "AOHD"));
+        File.WriteAllText(Globals.PathToConfigINI, "mount_paths=" + mountDir + "\n");
+        Globals.UpdateConfigINI(Globals.PathToConfigINI);
+
+        IReadOnlyList<string> themes = AO2ThemeCatalog.GetThemes();
+
+        Assert.That(themes, Does.Contain("AOHD"));
+        Assert.That(themes, Does.Contain("Mounted"));
+        Assert.That(themes.ToList().IndexOf("Theme 2"), Is.LessThan(themes.ToList().IndexOf("Theme 10")));
+        Assert.That(themes.Count(theme => string.Equals(theme, "AOHD", StringComparison.OrdinalIgnoreCase)), Is.EqualTo(1));
+    }
+
+    [Test]
+    public void AO2ThemeCatalog_SubthemesMatchAo2SelectorRules()
+    {
+        string themeRoot = Path.Combine(tempDir, "themes", "AOHD");
+        Directory.CreateDirectory(Path.Combine(themeRoot, "server"));
+        Directory.CreateDirectory(Path.Combine(themeRoot, "default"));
+        Directory.CreateDirectory(Path.Combine(themeRoot, "effects"));
+        Directory.CreateDirectory(Path.Combine(themeRoot, "misc"));
+        Directory.CreateDirectory(Path.Combine(themeRoot, "wide"));
+        Directory.CreateDirectory(Path.Combine(themeRoot, "thin"));
+
+        IReadOnlyList<AO2SubthemeOption> subthemes = AO2ThemeCatalog.GetSubthemes("AOHD");
+
+        Assert.That(subthemes.Select(option => option.DisplayName), Is.EqualTo(new[] { "server", "default", "thin", "wide" }));
+        Assert.That(subthemes[0].Value, Is.EqualTo("server"));
+        Assert.That(subthemes[1].Value, Is.EqualTo("server"));
     }
 
     [Test]

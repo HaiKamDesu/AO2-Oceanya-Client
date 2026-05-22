@@ -12,9 +12,20 @@ using System.Windows.Media.Imaging;
 using Common;
 using OceanyaClient.Components.Forms;
 using OceanyaClient.Features.Chat;
+using OceanyaClient.Features.Viewport;
 
 namespace OceanyaClient
 {
+    public enum SettingsWindowPage
+    {
+        Audio,
+        Client,
+        Viewport,
+        Logging,
+        Ao2Config,
+        Callwords
+    }
+
     /// <summary>
     /// Client settings window for Oceanya savefile settings and selected AO2 config.ini values.
     /// </summary>
@@ -28,6 +39,7 @@ namespace OceanyaClient
         private double originalMusicVolume;
         private double originalSfxVolume;
         private double originalBlipVolume;
+        private SettingsWindowPage initialPage;
 
         public event Action? SettingsSaved;
 
@@ -43,8 +55,9 @@ namespace OceanyaClient
         /// <inheritdoc/>
         public override bool IsUserResizeEnabled => true;
 
-        public SettingsWindow()
+        public SettingsWindow(SettingsWindowPage initialPage = SettingsWindowPage.Audio)
         {
+            this.initialPage = initialPage;
             InitializeComponent();
             Title = "Settings";
             Icon = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/OceanyaO.ico"));
@@ -52,6 +65,35 @@ namespace OceanyaClient
             AudioRulesListBox.ItemsSource = audioRules;
             ConfigEntriesListBox.ItemsSource = configEntries;
             LoadSettings();
+            SelectPage(initialPage);
+        }
+
+        public void SelectPage(SettingsWindowPage page)
+        {
+            initialPage = page;
+            switch (page)
+            {
+                case SettingsWindowPage.Client:
+                    ClientPageButton.IsChecked = true;
+                    break;
+                case SettingsWindowPage.Viewport:
+                    ViewportPageButton.IsChecked = true;
+                    break;
+                case SettingsWindowPage.Logging:
+                    LoggingPageButton.IsChecked = true;
+                    break;
+                case SettingsWindowPage.Ao2Config:
+                    ConfigPageButton.IsChecked = true;
+                    break;
+                case SettingsWindowPage.Callwords:
+                    CallwordsPageButton.IsChecked = true;
+                    break;
+                default:
+                    AudioPageButton.IsChecked = true;
+                    break;
+            }
+
+            PageButton_Checked(this, new RoutedEventArgs());
         }
 
         private void LoadSettings()
@@ -83,6 +125,9 @@ namespace OceanyaClient
 
             StickyEffectsCheckBox.IsChecked = SaveFile.Data.StickyEffect;
             SwitchPosOnIniSwapCheckBox.IsChecked = SaveFile.Data.SwitchPosOnIniSwap;
+            ViewportPreviewCheckBox.IsChecked = SaveFile.Data.GMViewportWindowPreviewPriority;
+            ViewportOverlapCheckBox.IsChecked = SaveFile.Data.GMViewportChatboxOverlapsViewport;
+            RefreshViewportThemeControls();
             InvertIcLogsCheckBox.IsChecked = SaveFile.Data.InvertICLog;
             AutomaticTextLoggingCheckBox.IsChecked = Ao2ConfigIniSettings.GetBool(configValues, "automatic_logging_enabled", true);
             DemoLoggingCheckBox.IsChecked = Ao2ConfigIniSettings.GetBool(configValues, "demo_logging_enabled", true);
@@ -147,9 +192,57 @@ namespace OceanyaClient
 
             AudioPage.Visibility = AudioPageButton.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
             ClientPage.Visibility = ClientPageButton.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+            ViewportPage.Visibility = ViewportPageButton.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
             LoggingPage.Visibility = LoggingPageButton.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
             ConfigPage.Visibility = ConfigPageButton.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
             CallwordsPage.Visibility = CallwordsPageButton.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void RefreshViewportThemeControls()
+        {
+            string configuredTheme = AO2ThemeCatalog.GetConfiguredThemeName(configValues);
+            IReadOnlyList<string> themes = AO2ThemeCatalog.GetThemes();
+            List<string> themeItems = new List<string>(themes);
+            if (!themeItems.Any(theme => string.Equals(theme, configuredTheme, StringComparison.OrdinalIgnoreCase)))
+            {
+                themeItems.Insert(0, configuredTheme);
+            }
+
+            ViewportThemeComboBox.ItemsSource = themeItems;
+            ViewportThemeComboBox.SelectedItem = themeItems.FirstOrDefault(theme => string.Equals(theme, configuredTheme, StringComparison.OrdinalIgnoreCase))
+                ?? themeItems.FirstOrDefault();
+            RefreshViewportSubthemeControls(AO2ThemeCatalog.GetConfiguredSubthemeValue(configValues));
+
+            string folders = string.Join(", ", AO2ThemeCatalog.GetAo2ThemeScanFolders());
+            ViewportThemePathTextBlock.Text = string.IsNullOrWhiteSpace(folders)
+                ? "No AO2 theme folders can be resolved until a config.ini is selected."
+                : "Scanned folders: " + folders;
+        }
+
+        private void RefreshViewportSubthemeControls(string? preferredValue = null)
+        {
+            string theme = ViewportThemeComboBox.SelectedItem as string
+                ?? AO2ThemeCatalog.GetConfiguredThemeName(configValues);
+            IReadOnlyList<AO2SubthemeOption> subthemes = AO2ThemeCatalog.GetSubthemes(theme);
+            ViewportSubthemeComboBox.ItemsSource = subthemes;
+            string selectedValue = string.IsNullOrWhiteSpace(preferredValue)
+                ? AO2ThemeCatalog.ServerSubthemeValue
+                : preferredValue.Trim();
+
+            AO2SubthemeOption? selected = subthemes.FirstOrDefault(option =>
+                string.Equals(option.Value, selectedValue, StringComparison.OrdinalIgnoreCase))
+                ?? subthemes.FirstOrDefault();
+            ViewportSubthemeComboBox.SelectedItem = selected;
+        }
+
+        private void ViewportThemeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (suppressControlEvents)
+            {
+                return;
+            }
+
+            RefreshViewportSubthemeControls(AO2ThemeCatalog.ServerSubthemeValue);
         }
 
         private void AudioSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -340,6 +433,8 @@ namespace OceanyaClient
             SaveFile.Data.MusicEffectSyncPos = MusicSyncPosCheckBox.IsChecked == true;
             SaveFile.Data.StickyEffect = StickyEffectsCheckBox.IsChecked == true;
             SaveFile.Data.SwitchPosOnIniSwap = SwitchPosOnIniSwapCheckBox.IsChecked == true;
+            SaveFile.Data.GMViewportWindowPreviewPriority = ViewportPreviewCheckBox.IsChecked == true;
+            SaveFile.Data.GMViewportChatboxOverlapsViewport = ViewportOverlapCheckBox.IsChecked == true;
             SaveFile.Data.InvertICLog = InvertIcLogsCheckBox.IsChecked == true;
             SaveFile.Data.CallwordRules = new List<CallwordRule>(callwordRules);
             SaveFile.Data.ExtraAudioRules = new List<ExtraAudioRule>(audioRules);
@@ -364,6 +459,16 @@ namespace OceanyaClient
             configValues["log_maximum"] = TryParseInt(LogMaximumTextBox.Text, 200).ToString(CultureInfo.InvariantCulture);
             configValues["automatic_logging_enabled"] = (AutomaticTextLoggingCheckBox.IsChecked == true).ToString().ToLowerInvariant();
             configValues["demo_logging_enabled"] = (DemoLoggingCheckBox.IsChecked == true).ToString().ToLowerInvariant();
+            if (ViewportThemeComboBox.SelectedItem is string selectedTheme && !string.IsNullOrWhiteSpace(selectedTheme))
+            {
+                configValues["theme"] = selectedTheme.Trim();
+            }
+
+            if (ViewportSubthemeComboBox.SelectedItem is AO2SubthemeOption selectedSubtheme)
+            {
+                configValues["subtheme"] = selectedSubtheme.Value;
+            }
+
             configValues["callwords"] = string.Join(
                 ", ",
                 callwordRules
