@@ -505,7 +505,26 @@ namespace OceanyaClient.Features.Viewport
                 return;
             }
 
-            Dispatcher.Invoke(() => RenderMessage(message));
+            if (!IsVisible)
+            {
+                return;
+            }
+
+            if (Dispatcher.CheckAccess())
+            {
+                RenderMessage(message);
+                return;
+            }
+
+            Dispatcher.BeginInvoke(
+                new Action(() =>
+                {
+                    if (IsVisible)
+                    {
+                        RenderMessage(message);
+                    }
+                }),
+                DispatcherPriority.Send);
         }
 
         private void OnIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)

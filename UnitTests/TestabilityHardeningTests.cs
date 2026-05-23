@@ -667,6 +667,40 @@ namespace UnitTests
         }
 
         [Test]
+        public void MainWindow_ClampViewportWindowRestorePosition_KeepsVisiblePositionUnchanged()
+        {
+            (double? left, double? top) = MainWindow.ClampViewportWindowRestorePosition(
+                left: 1700,
+                top: 820,
+                width: 160,
+                height: 120,
+                virtualBounds: new Rect(0, 0, 3840, 1080));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(left, Is.EqualTo(1700).Within(0.001));
+                Assert.That(top, Is.EqualTo(820).Within(0.001));
+            });
+        }
+
+        [Test]
+        public void MainWindow_ClampViewportWindowRestorePosition_ClampsOutsideVirtualDesktop()
+        {
+            (double? left, double? top) = MainWindow.ClampViewportWindowRestorePosition(
+                left: 3900,
+                top: 1200,
+                width: 200,
+                height: 160,
+                virtualBounds: new Rect(0, 0, 3840, 1080));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(left, Is.EqualTo(3640).Within(0.001));
+                Assert.That(top, Is.EqualTo(920).Within(0.001));
+            });
+        }
+
+        [Test]
         public void AO2ViewportWindowContent_PictureInPictureToggle_DoesNotPersistAcrossSessions()
         {
             SaveFile.Data.GMPictureInPictureViewport = false;

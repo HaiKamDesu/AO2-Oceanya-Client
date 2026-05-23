@@ -5683,8 +5683,16 @@ namespace OceanyaClient
 
             if (restoredLeft.HasValue && restoredTop.HasValue)
             {
-                viewportWindow.Left = restoredLeft.Value;
-                viewportWindow.Top = restoredTop.Value;
+                (double? clampedLeft, double? clampedTop) = ClampViewportWindowRestorePositionToCurrentVirtualScreen(
+                    restoredLeft,
+                    restoredTop,
+                    initialWidth,
+                    initialHeight);
+                if (clampedLeft.HasValue && clampedTop.HasValue)
+                {
+                    viewportWindow.Left = clampedLeft.Value;
+                    viewportWindow.Top = clampedTop.Value;
+                }
             }
             else
             {
@@ -6020,8 +6028,16 @@ namespace OceanyaClient
 
             if (restoredLeft.HasValue && restoredTop.HasValue)
             {
-                pictureInPictureViewportWindow.Left = restoredLeft.Value;
-                pictureInPictureViewportWindow.Top = restoredTop.Value;
+                (double? clampedLeft, double? clampedTop) = ClampViewportWindowRestorePositionToCurrentVirtualScreen(
+                    restoredLeft,
+                    restoredTop,
+                    initialWidth,
+                    initialHeight);
+                if (clampedLeft.HasValue && clampedTop.HasValue)
+                {
+                    pictureInPictureViewportWindow.Left = clampedLeft.Value;
+                    pictureInPictureViewportWindow.Top = clampedTop.Value;
+                }
             }
             else
             {
@@ -6089,14 +6105,20 @@ namespace OceanyaClient
                             ResolvePictureInPictureViewportRestoreOrCurrentSize(preferWidth: false);
                         pictureInPictureViewportWindow.Width = desiredWidth;
                         pictureInPictureViewportWindow.Height = desiredHeight;
-                        if (pendingPictureInPictureViewportRestoreLeft.HasValue)
+                        (double? clampedLeft, double? clampedTop) =
+                            ClampViewportWindowRestorePositionToCurrentVirtualScreen(
+                                pendingPictureInPictureViewportRestoreLeft,
+                                pendingPictureInPictureViewportRestoreTop,
+                                desiredWidth,
+                                desiredHeight);
+                        if (clampedLeft.HasValue)
                         {
-                            pictureInPictureViewportWindow.Left = pendingPictureInPictureViewportRestoreLeft.Value;
+                            pictureInPictureViewportWindow.Left = clampedLeft.Value;
                         }
 
-                        if (pendingPictureInPictureViewportRestoreTop.HasValue)
+                        if (clampedTop.HasValue)
                         {
-                            pictureInPictureViewportWindow.Top = pendingPictureInPictureViewportRestoreTop.Value;
+                            pictureInPictureViewportWindow.Top = clampedTop.Value;
                         }
 
                         RememberPictureInPictureViewportWindowSize(desiredWidth, desiredHeight);
@@ -8052,6 +8074,49 @@ namespace OceanyaClient
                 GetViewportWindowHeightFromContentHeight(contentHeight),
                 left,
                 top);
+        }
+
+        private static (double? Left, double? Top) ClampViewportWindowRestorePositionToCurrentVirtualScreen(
+            double? left,
+            double? top,
+            double width,
+            double height)
+        {
+            Rect virtualBounds = new Rect(
+                SystemParameters.VirtualScreenLeft,
+                SystemParameters.VirtualScreenTop,
+                SystemParameters.VirtualScreenWidth,
+                SystemParameters.VirtualScreenHeight);
+            return ClampViewportWindowRestorePosition(left, top, width, height, virtualBounds);
+        }
+
+        internal static (double? Left, double? Top) ClampViewportWindowRestorePosition(
+            double? left,
+            double? top,
+            double width,
+            double height,
+            Rect virtualBounds)
+        {
+            if (!left.HasValue || !top.HasValue || !IsFinite(left.Value) || !IsFinite(top.Value))
+            {
+                return (null, null);
+            }
+
+            if (!IsFinite(width) || width <= 0 || !IsFinite(height) || height <= 0)
+            {
+                return (left.Value, top.Value);
+            }
+
+            if (virtualBounds.Width <= 0 || virtualBounds.Height <= 0)
+            {
+                return (left.Value, top.Value);
+            }
+
+            double maxLeft = virtualBounds.Right - width;
+            double maxTop = virtualBounds.Bottom - height;
+            double clampedLeft = Clamp(left.Value, virtualBounds.Left, maxLeft);
+            double clampedTop = Clamp(top.Value, virtualBounds.Top, maxTop);
+            return (clampedLeft, clampedTop);
         }
 
         internal static (double Width, double Height) ResolveViewportContentRestoreSize(ViewportWindowState? savedState)
