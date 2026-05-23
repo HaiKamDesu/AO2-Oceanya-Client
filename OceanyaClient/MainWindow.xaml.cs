@@ -52,9 +52,11 @@ namespace OceanyaClient
         private AOClient? singleInternalClient;
         private AOClient? boundSingleClientProfile;
         private Window? viewportWindow;
+        private Window? viewportPreviewShellWindow;
         private Window? pictureInPictureViewportWindow;
         private HwndSource? hostWindowSource;
         private HwndSource? viewportWindowSource;
+        private HwndSource? viewportPreviewShellWindowSource;
         private HwndSource? pictureInPictureViewportWindowSource;
         private DispatcherTimer? viewportTaskbarPreviewRefreshTimer;
         private DispatcherTimer? viewportAltTabFocusRedirectTimer;
@@ -63,9 +65,12 @@ namespace OceanyaClient
         private DispatcherTimer? viewportAltTabHeldReinjectTimer;
         private DispatcherTimer? pictureInPictureActivationTimer;
         private DateTime? viewportAltTabExitAltReleasedAt;
+        private DateTime? pictureInPictureExternalFocusShownAt;
+        private DateTime? explicitOceanyaReturnAt;
         private Window? settingsWindow;
         private SettingsWindow? settingsContent;
         private AO2ViewportWindowContent? viewportContent;
+        private AO2ViewportWindowContent? viewportPreviewShellContent;
         private AO2ViewportWindowContent? pictureInPictureViewportContent;
         private IntPtr viewportAltTabKeyboardHook;
         private IntPtr lastViewportPreviewExternalForegroundHwnd;
@@ -78,11 +83,13 @@ namespace OceanyaClient
         private bool isHostWindowHiddenByViewportMinimize;
         private bool isHostWindowHiddenByViewportAltTabExit;
         private bool isNormalViewportHiddenByPictureInPicture;
+        private bool isPictureInPictureInitialPlacementVisible;
         private bool isMainWindowClosing;
         private bool viewportPreviewInputProxyActive;
         private bool viewportPreviewInputProxyFailureLogged;
         private bool pendingMainInputRestoreAfterActivation;
         private TextBox? viewportPreviewProxyVisualTarget;
+        private ViewportPreviewShellState viewportPreviewShellState = ViewportPreviewShellState.PreviewDisabled;
         private bool hasHookedHostWindowClosing;
         private bool cleanCloseInProgress;
         private bool hasAppliedMainWindowState;
@@ -158,8 +165,10 @@ namespace OceanyaClient
         private const int WmDwmSendIconicLivePreviewBitmap = 0x0326;
         private const int WmKeyDown = 0x0100;
         private const int WmKeyUp = 0x0101;
+        private const int WmChar = 0x0102;
         private const int WmSysKeyDown = 0x0104;
         private const int WmSysKeyUp = 0x0105;
+        private const int WmSysChar = 0x0106;
         private const int VkTab = 0x09;
         private const int VkShift = 0x10;
         private const int VkMenu = 0x12;
@@ -188,6 +197,9 @@ namespace OceanyaClient
             return brush;
         }
         private const int WmSize = 0x0005;
+        private const int SizeRestored = 0;
+        private const int SizeMinimized = 1;
+        private const int SizeMaximized = 2;
         private const int WmszLeft = 1;
         private const int WmszRight = 2;
         private const int WmszTop = 3;
@@ -201,6 +213,14 @@ namespace OceanyaClient
         {
             Delete,
             SelectIniPuppet
+        }
+
+        private enum ViewportPreviewShellState
+        {
+            PreviewDisabled,
+            PreviewEnabled_NormalVisible,
+            PreviewEnabled_PiPVisibleExternalFocus,
+            PreviewEnabled_ReturningToMain
         }
 
         private enum SnapshotPuppetConflictReason
@@ -577,7 +597,9 @@ namespace OceanyaClient
                     }
 
                     Dispatcher.BeginInvoke(
-                        new Action(() => EnsureViewportIsForegroundShellRepresentative("main keyboard focus returned to viewport shell")),
+                        new Action(() => EnsureViewportIsForegroundShellRepresentative(
+                            "main keyboard focus returned to viewport shell",
+                            explicitOceanyaReturn: IsExplicitOceanyaReturnOrUserActivation())),
                         DispatcherPriority.Input);
                 }
             }
@@ -595,9 +617,12 @@ namespace OceanyaClient
                 TextBox? textBox = FindAncestor<TextBox>(source);
                 if (IsProxyEligibleMainInput(textBox))
                 {
+                    MarkExplicitOceanyaReturn("main mouse target");
                     SetViewportPreviewInputProxyTarget(textBox, "main mouse target");
                     Dispatcher.BeginInvoke(
-                        new Action(() => EnsureViewportIsForegroundShellRepresentative("main mouse target returned to viewport shell")),
+                        new Action(() => EnsureViewportIsForegroundShellRepresentative(
+                            "main mouse target returned to viewport shell",
+                            explicitOceanyaReturn: true)),
                         DispatcherPriority.Input);
                     LogViewportPreviewState("main mouse target=" + textBox!.Name);
                 }
@@ -613,12 +638,13 @@ namespace OceanyaClient
                          && lastMainWindowFocusedElement is TextBox proxyTextBox
                          && IsProxyEligibleMainInput(proxyTextBox))
                 {
+                    MarkExplicitOceanyaReturn("main non-input mouse target");
                     viewportPreviewInputProxyActive = true;
                     SetViewportPreviewInputProxyTarget(proxyTextBox, "main mouse target retained proxy");
                     Dispatcher.BeginInvoke(
                         new Action(() => EnsureViewportIsForegroundShellRepresentative(
                             "main non-input mouse target returned to viewport shell",
-                            allowExternalForegroundOverride: true)),
+                            explicitOceanyaReturn: true)),
                         DispatcherPriority.Input);
                 }
             }
@@ -644,7 +670,9 @@ namespace OceanyaClient
             int virtualKey = wParam.ToInt32();
             if (virtualKey == VkMenu || (virtualKey == VkTab && IsAltKeyDown()))
             {
-                EnsureViewportIsForegroundShellRepresentative("alt-tab key preparation");
+                EnsureViewportIsForegroundShellRepresentative(
+                    "alt-tab key preparation",
+                    explicitOceanyaReturn: IsExplicitOceanyaReturnOrUserActivation());
             }
         }
 
@@ -657,14 +685,14 @@ namespace OceanyaClient
         {
             Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
             IntPtr hostHwnd = hostWindow == null ? IntPtr.Zero : new WindowInteropHelper(hostWindow).Handle;
-            IntPtr viewportHwnd = viewportWindow == null ? IntPtr.Zero : new WindowInteropHelper(viewportWindow).Handle;
+            IntPtr shellHwnd = viewportPreviewShellWindow == null ? IntPtr.Zero : new WindowInteropHelper(viewportPreviewShellWindow).Handle;
             int currentProcessId = Process.GetCurrentProcess().Id;
 
             for (IntPtr hwnd = GetTopWindow(IntPtr.Zero);
                  hwnd != IntPtr.Zero;
                  hwnd = GetWindow(hwnd, GwHwndNext))
             {
-                if (!IsEligibleAltTabSwitchTarget(hwnd, hostHwnd, viewportHwnd, currentProcessId))
+                if (!IsEligibleAltTabSwitchTarget(hwnd, hostHwnd, shellHwnd, currentProcessId))
                 {
                     continue;
                 }
@@ -743,13 +771,18 @@ namespace OceanyaClient
         {
             if (!IsViewportUsingWindowsPreview())
             {
-                viewportWindow?.Activate();
+                if (!IsExternalForegroundOwnedByAnotherProcess(out _, out _))
+                {
+                    viewportWindow?.Activate();
+                }
                 return;
             }
 
             viewportPreviewInputProxyActive = true;
             UpdateViewportPreviewProxyVisual("input proxy active");
-            EnsureViewportIsForegroundShellRepresentative("main focus restore skipped; viewport shell retained");
+            EnsureViewportIsForegroundShellRepresentative(
+                "main focus restore skipped; viewport shell retained",
+                explicitOceanyaReturn: IsExplicitOceanyaReturnOrUserActivation());
             LogViewportPreviewState("main focus restore skipped; input proxy active");
         }
 
@@ -822,11 +855,20 @@ namespace OceanyaClient
             {
                 ViewportThumbnailCompositor.Deactivate(hwnd);
             }
+            IntPtr previewShellHwnd = viewportPreviewShellWindow == null ? IntPtr.Zero : new WindowInteropHelper(viewportPreviewShellWindow).Handle;
+            if (previewShellHwnd != IntPtr.Zero)
+            {
+                ViewportThumbnailCompositor.Deactivate(previewShellHwnd);
+            }
 
             hostWindowSource?.RemoveHook(MainWindowHost_WndProc);
             hostWindowSource = null;
+            viewportPreviewShellWindowSource?.RemoveHook(ViewportPreviewShellWindow_WndProc);
+            viewportPreviewShellWindowSource = null;
             pictureInPictureViewportWindowSource?.RemoveHook(PictureInPictureViewportWindow_WndProc);
             pictureInPictureViewportWindowSource = null;
+            viewportPreviewShellWindow?.Close();
+            viewportPreviewShellWindow = null;
         }
 
         private IntPtr MainWindowHost_WndProc(
@@ -836,8 +878,16 @@ namespace OceanyaClient
             IntPtr lParam,
             ref bool handled)
         {
+            HandlePictureInPictureHostWindowMessage(message, wParam);
+
             if (!IsViewportUsingWindowsPreview())
             {
+                return IntPtr.Zero;
+            }
+
+            if (TryRouteMainWindowPreviewProxyMessage(message, wParam))
+            {
+                handled = true;
                 return IntPtr.Zero;
             }
 
@@ -851,13 +901,59 @@ namespace OceanyaClient
 
             if (message == WmMouseActivate)
             {
-                RestoreMainWindowVisualForViewportReturn(forceForegroundRepresentative: true);
-                LogViewportPreviewState("main WM_MOUSEACTIVATE no-activate; viewport shell foreground requested");
-                handled = true;
-                return new IntPtr(MaNoActivate);
+                MarkExplicitOceanyaReturn("main WM_MOUSEACTIVATE");
+                RestoreMainWindowVisualForViewportReturn(explicitOceanyaReturn: true);
+                Dispatcher.BeginInvoke(
+                    new Action(() =>
+                    {
+                        RestoreMainWindowVisualForViewportReturn(explicitOceanyaReturn: true);
+                        EnsureViewportIsForegroundShellRepresentative(
+                            "main WM_MOUSEACTIVATE deferred shell representative",
+                            explicitOceanyaReturn: true);
+                    }),
+                    DispatcherPriority.Input);
+                LogViewportPreviewState("main WM_MOUSEACTIVATE explicit return");
+                return IntPtr.Zero;
             }
 
             return IntPtr.Zero;
+        }
+
+        private void HandlePictureInPictureHostWindowMessage(int message, IntPtr wParam)
+        {
+            if (message != WmSize || !SaveFile.Data.GMPictureInPictureViewport || isMainWindowClosing)
+            {
+                return;
+            }
+
+            int sizeCommand = wParam.ToInt32();
+            if (sizeCommand == SizeMinimized)
+            {
+                Dispatcher.BeginInvoke(
+                    new Action(ShowPictureInPictureViewportForExternalFocus),
+                    DispatcherPriority.Background);
+            }
+            else if (sizeCommand is SizeRestored or SizeMaximized)
+            {
+                Dispatcher.BeginInvoke(
+                    new Action(() =>
+                    {
+                        if (IsExternalForegroundOwnedByAnotherProcess(out _, out _))
+                        {
+                            LogForegroundOperation(
+                                "wm-size-restore-skipped-external",
+                                "main WM_SIZE restore",
+                                IntPtr.Zero,
+                                isPassiveSync: true,
+                                allowed: false);
+                            return;
+                        }
+
+                        MarkExplicitOceanyaReturn("main WM_SIZE restore");
+                        ShowNormalViewportForMainFocus(explicitOceanyaReturn: true);
+                    }),
+                    DispatcherPriority.Background);
+            }
         }
 
         private void HookHostWindowClosing()
@@ -915,8 +1011,17 @@ namespace OceanyaClient
         {
             StopPictureInPictureActivationTimer();
             RestoreMainInputFocusAfterExternalActivation();
-            ShowNormalViewportForMainFocus();
-            EnsureViewportVisibleWithMainWindow();
+            if (!isPictureInPictureInitialPlacementVisible
+                && !IsWithinPictureInPictureExternalShowGuard()
+                && IsExplicitOceanyaReturnOrUserActivation())
+            {
+                ShowNormalViewportForMainFocus(explicitOceanyaReturn: true);
+                EnsureViewportVisibleWithMainWindow();
+            }
+            else if (!SaveFile.Data.GMPictureInPictureViewport)
+            {
+                EnsureViewportVisibleWithMainWindow();
+            }
         }
 
         private void HostWindow_Deactivated(object? sender, EventArgs e)
@@ -939,11 +1044,15 @@ namespace OceanyaClient
                 pendingMainInputRestoreAfterActivation = false;
                 viewportPreviewInputProxyActive = true;
                 SetViewportPreviewInputProxyTarget(textBox, "main window activated in viewport preview mode");
-                Dispatcher.BeginInvoke(
-                    new Action(() => EnsureViewportIsForegroundShellRepresentative(
-                        "main activation returned to viewport shell for input proxy",
-                        allowExternalForegroundOverride: true)),
-                    DispatcherPriority.Input);
+                if (IsExplicitOceanyaReturnOrUserActivation())
+                {
+                    Dispatcher.BeginInvoke(
+                        new Action(() => EnsureViewportIsForegroundShellRepresentative(
+                            "main activation returned to viewport shell for input proxy",
+                            explicitOceanyaReturn: true)),
+                        DispatcherPriority.Input);
+                }
+
                 return;
             }
 
@@ -962,6 +1071,24 @@ namespace OceanyaClient
                 return;
             }
 
+            if (IsExternalForegroundOwnedByAnotherProcess(out _, out _))
+            {
+                pendingMainInputRestoreAfterActivation = false;
+                LogForegroundOperation(
+                    "textbox-focus-skipped-external",
+                    textBox.Name,
+                    IntPtr.Zero,
+                    isPassiveSync: true,
+                    allowed: false);
+                return;
+            }
+
+            LogForegroundOperation(
+                "textbox-focus",
+                textBox.Name,
+                IntPtr.Zero,
+                isPassiveSync: false,
+                allowed: true);
             textBox.Focus();
             Keyboard.Focus(textBox);
             pendingMainInputRestoreAfterActivation = false;
@@ -5905,6 +6032,11 @@ namespace OceanyaClient
             {
                 RefreshPictureInPictureViewportAttachment();
             }
+
+            if (viewportPreviewShellWindow != null)
+            {
+                RefreshViewportPreviewShellAttachment();
+            }
         }
 
         private void EnsureViewportContent()
@@ -5931,6 +6063,48 @@ namespace OceanyaClient
             viewportContent.RefreshAllCharactersRequested += () =>
                 RefreshCharacterAssetsAsync(null, refreshAllCharacters: true, refreshAllAssets: false);
             viewportContent.RefreshBackgroundRequested += RefreshBackgroundAssetsAsync;
+        }
+
+        private void EnsureViewportPreviewShellContent()
+        {
+            if (viewportPreviewShellContent != null)
+            {
+                return;
+            }
+
+            viewportPreviewShellContent = new AO2ViewportWindowContent
+            {
+                IsViewportContextMenuEnabled = false
+            };
+            viewportPreviewShellContent.UseAsWindowsPreview = SaveFile.Data.GMViewportWindowPreviewPriority;
+            viewportPreviewShellContent.PictureInPictureViewport = SaveFile.Data.GMPictureInPictureViewport;
+            viewportPreviewShellContent.ViewportSurfaceLayoutChanged += (_, _) => OnViewportPreviewShellSurfaceLayoutChanged();
+        }
+
+        private void RefreshViewportPreviewShellAttachment()
+        {
+            EnsureViewportPreviewShellContent();
+            if (viewportPreviewShellContent == null)
+            {
+                return;
+            }
+
+            foreach (AOClient client in clientOrder.Where(client => clients.Values.Contains(client)))
+            {
+                AOClient? incomingMessageClient = GetTargetClientForNetwork(client) ?? client;
+                viewportPreviewShellContent.EnsureClient(
+                    client,
+                    incomingMessageClient,
+                    CreateViewportMessageFilter(client),
+                    CreateViewportActionFilter(client));
+            }
+
+            AOClient? currentIncomingMessageClient = GetTargetClientForNetwork(currentClient) ?? currentClient;
+            viewportPreviewShellContent.AttachClient(
+                currentClient,
+                currentIncomingMessageClient,
+                currentClient == null ? null : CreateViewportMessageFilter(currentClient),
+                currentClient == null ? null : CreateViewportActionFilter(currentClient));
         }
 
         private void EnsurePictureInPictureViewportContent()
@@ -5965,6 +6139,8 @@ namespace OceanyaClient
             Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
             if (!SaveFile.Data.GMPictureInPictureViewport)
             {
+                isPictureInPictureInitialPlacementVisible = false;
+                pictureInPictureExternalFocusShownAt = null;
                 HidePictureInPictureViewport();
                 if (SaveFile.Data.GMViewportWindowState?.IsVisible == true && hostWindow?.IsActive == true)
                 {
@@ -5974,22 +6150,134 @@ namespace OceanyaClient
                 return;
             }
 
+            isPictureInPictureInitialPlacementVisible = IsForegroundOwnedByCurrentProcess();
             OpenPictureInPictureViewportWindow();
+            ApplyViewportTaskbarPriority();
         }
 
-        private void ShowNormalViewportForMainFocus()
+        private void EnsureViewportPreviewShellWindow()
+        {
+            if (viewportPreviewShellWindow != null)
+            {
+                RefreshViewportPreviewShellAttachment();
+                return;
+            }
+
+            EnsureViewportPreviewShellContent();
+            RefreshViewportPreviewShellAttachment();
+            ICMessage? lastViewportMessage = viewportContent?.GetActiveLastRenderedMessage();
+            if (lastViewportMessage != null)
+            {
+                viewportPreviewShellContent?.ReplayMessageForActiveClient(lastViewportMessage);
+            }
+            ViewportWindowState savedState = SaveFile.Data.GMViewportWindowState ?? new ViewportWindowState();
+            (double initialWidth, double initialHeight, _, _) = ResolveViewportWindowRestoreState(savedState);
+            (double restoreContentWidth, double restoreContentHeight) = ResolveViewportContentRestoreSize(savedState);
+            viewportPreviewShellContent!.SetCurrentValue(FrameworkElement.WidthProperty, restoreContentWidth);
+            viewportPreviewShellContent.SetCurrentValue(FrameworkElement.HeightProperty, restoreContentHeight);
+
+            viewportPreviewShellWindow = OceanyaWindowManager.CreateWindow(
+                viewportPreviewShellContent,
+                new OceanyaWindowPresentationOptions
+                {
+                    Owner = null,
+                    Title = "AO2 Viewport Preview",
+                    HeaderText = "Viewport",
+                    Width = initialWidth,
+                    Height = initialHeight,
+                    MinWidth = GetViewportMinimumWindowWidth(),
+                    MinHeight = GetViewportMinimumWindowHeight(),
+                    ShowInTaskbar = true,
+                    IsUserResizeEnabled = false,
+                    IsUserMoveEnabled = false,
+                    IsCloseButtonVisible = false,
+                    WindowStartupLocation = WindowStartupLocation.Manual
+                });
+
+            viewportPreviewShellWindow.Left = -32000;
+            viewportPreviewShellWindow.Top = -32000;
+            viewportPreviewShellWindow.ShowActivated = false;
+            viewportPreviewShellWindow.Opacity = 0.01;
+            viewportPreviewShellWindow.SourceInitialized += ViewportPreviewShellWindow_SourceInitialized;
+            viewportPreviewShellWindow.PreviewKeyDown += ViewportWindow_PreviewKeyDown;
+            viewportPreviewShellWindow.TextInput += ViewportWindow_TextInput;
+            viewportPreviewShellWindow.Closing += (_, eventArgs) =>
+            {
+                if (!isMainWindowClosing && viewportContent?.UseAsWindowsPreview == true)
+                {
+                    eventArgs.Cancel = true;
+                }
+            };
+            viewportPreviewShellWindow.Closed += (_, _) =>
+            {
+                viewportPreviewShellWindow.SourceInitialized -= ViewportPreviewShellWindow_SourceInitialized;
+                viewportPreviewShellWindow.PreviewKeyDown -= ViewportWindow_PreviewKeyDown;
+                viewportPreviewShellWindow.TextInput -= ViewportWindow_TextInput;
+                viewportPreviewShellWindowSource?.RemoveHook(ViewportPreviewShellWindow_WndProc);
+                viewportPreviewShellWindowSource = null;
+                viewportPreviewShellWindow = null;
+            };
+
+            viewportPreviewShellWindow.Show();
+        }
+
+        private void CloseViewportPreviewShellWindow()
+        {
+            if (viewportPreviewShellWindow == null)
+            {
+                return;
+            }
+
+            IntPtr hwnd = new WindowInteropHelper(viewportPreviewShellWindow).Handle;
+            if (hwnd != IntPtr.Zero)
+            {
+                ViewportThumbnailCompositor.Deactivate(hwnd);
+            }
+
+            viewportPreviewShellWindow.Close();
+            viewportPreviewShellWindow = null;
+        }
+
+        private void ShowNormalViewportForMainFocus(bool explicitOceanyaReturn = false)
         {
             if (!SaveFile.Data.GMPictureInPictureViewport)
             {
                 return;
             }
 
+            if (!explicitOceanyaReturn && !IsExplicitOceanyaReturnOrUserActivation())
+            {
+                LogForegroundOperation(
+                    "show-normal-viewport-skipped",
+                    "ShowNormalViewportForMainFocus",
+                    IntPtr.Zero,
+                    isPassiveSync: true,
+                    allowed: false);
+                return;
+            }
+
+            isPictureInPictureInitialPlacementVisible = false;
+            pictureInPictureExternalFocusShownAt = null;
+            TransitionViewportPreviewShellState(
+                ViewportPreviewShellState.PreviewEnabled_ReturningToMain,
+                "normal viewport returning for main focus",
+                isPassiveForegroundObservation: !explicitOceanyaReturn);
             HidePictureInPictureViewport();
             if (SaveFile.Data.GMViewportWindowState?.IsVisible == true
                 || SaveFile.Data.GMPictureInPictureViewport)
             {
                 isNormalViewportHiddenByPictureInPicture = false;
                 OpenViewportWindow();
+                Dispatcher.BeginInvoke(
+                    new Action(() =>
+                    {
+                        ApplyViewportTaskbarPriority();
+                        TransitionViewportPreviewShellState(
+                            ViewportPreviewShellState.PreviewEnabled_NormalVisible,
+                            "normal viewport visible after main focus",
+                            isPassiveForegroundObservation: !explicitOceanyaReturn);
+                    }),
+                    DispatcherPriority.Loaded);
             }
         }
 
@@ -6007,10 +6295,54 @@ namespace OceanyaClient
             {
                 isNormalViewportHiddenByPictureInPicture = true;
                 viewportWindow.Hide();
-                ApplyViewportTaskbarPriority();
             }
 
             OpenPictureInPictureViewportWindow();
+            isPictureInPictureInitialPlacementVisible = false;
+            pictureInPictureExternalFocusShownAt = DateTime.UtcNow;
+            ApplyPictureInPictureToolWindowStyle();
+            TransitionViewportPreviewShellState(
+                ViewportPreviewShellState.PreviewEnabled_PiPVisibleExternalFocus,
+                "PiP shown for external focus",
+                isPassiveForegroundObservation: true);
+        }
+
+        private void SynchronizePictureInPictureVisibilityWithForeground()
+        {
+            if (!SaveFile.Data.GMPictureInPictureViewport || isMainWindowClosing)
+            {
+                return;
+            }
+
+            if (IsPictureInPictureViewportForeground())
+            {
+                return;
+            }
+
+            if (IsMainOrNormalViewportForeground())
+            {
+                if (isPictureInPictureInitialPlacementVisible)
+                {
+                    return;
+                }
+
+                if (IsWithinPictureInPictureExternalShowGuard())
+                {
+                    return;
+                }
+
+                if (isNormalViewportHiddenByPictureInPicture || pictureInPictureViewportWindow?.IsVisible == true)
+                {
+                    ShowNormalViewportForMainFocus(explicitOceanyaReturn: true);
+                }
+
+                return;
+            }
+
+            if (pictureInPictureViewportWindow?.IsVisible != true || viewportWindow?.IsVisible == true)
+            {
+                ShowPictureInPictureViewportForExternalFocus();
+            }
         }
 
         private void HidePictureInPictureViewport()
@@ -6067,6 +6399,7 @@ namespace OceanyaClient
                     WindowStartupLocation = WindowStartupLocation.Manual
                 });
             pictureInPictureViewportWindow.Topmost = true;
+            pictureInPictureViewportWindow.ShowActivated = false;
             pictureInPictureViewportWindow.Opacity = 0;
 
             if (restoredLeft.HasValue && restoredTop.HasValue)
@@ -6118,6 +6451,190 @@ namespace OceanyaClient
             ShowPictureInPictureViewportWindowAfterRestore();
         }
 
+        private void ApplyPictureInPictureToolWindowStyle()
+        {
+            if (pictureInPictureViewportWindow != null)
+            {
+                pictureInPictureViewportWindow.ShowInTaskbar = false;
+                SetWindowShellVisibility(pictureInPictureViewportWindow, forceTaskbar: false, showInAltTab: false);
+                SetWindowNoActivate(pictureInPictureViewportWindow, noActivate: true);
+            }
+        }
+
+        private Window? GetViewportPreviewSourceWindow()
+        {
+            if (viewportWindow?.IsVisible == true)
+            {
+                return viewportWindow;
+            }
+
+            if (pictureInPictureViewportWindow?.IsVisible == true)
+            {
+                return pictureInPictureViewportWindow;
+            }
+
+            return viewportPreviewShellWindow;
+        }
+
+        private bool IsViewportPreviewConfigured()
+        {
+            return viewportContent?.UseAsWindowsPreview == true;
+        }
+
+        private bool IsPictureInPictureViewportForeground()
+        {
+            if (pictureInPictureViewportWindow == null)
+            {
+                return false;
+            }
+
+            IntPtr pictureInPictureHwnd = new WindowInteropHelper(pictureInPictureViewportWindow).Handle;
+            return pictureInPictureHwnd != IntPtr.Zero && GetForegroundWindow() == pictureInPictureHwnd;
+        }
+
+        private bool IsMainOrNormalViewportForeground()
+        {
+            IntPtr foregroundHwnd = GetForegroundWindow();
+            if (foregroundHwnd == IntPtr.Zero)
+            {
+                return false;
+            }
+
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            IntPtr hostHwnd = hostWindow == null ? IntPtr.Zero : new WindowInteropHelper(hostWindow).Handle;
+            if (hostHwnd != IntPtr.Zero && foregroundHwnd == hostHwnd)
+            {
+                return true;
+            }
+
+            IntPtr viewportHwnd = viewportWindow == null ? IntPtr.Zero : new WindowInteropHelper(viewportWindow).Handle;
+            if (viewportHwnd != IntPtr.Zero
+                && viewportWindow?.IsVisible == true
+                && foregroundHwnd == viewportHwnd)
+            {
+                return true;
+            }
+
+            IntPtr previewShellHwnd = viewportPreviewShellWindow == null ? IntPtr.Zero : new WindowInteropHelper(viewportPreviewShellWindow).Handle;
+            return previewShellHwnd != IntPtr.Zero && foregroundHwnd == previewShellHwnd;
+        }
+
+        private bool IsWithinPictureInPictureExternalShowGuard()
+        {
+            return pictureInPictureExternalFocusShownAt.HasValue
+                && (DateTime.UtcNow - pictureInPictureExternalFocusShownAt.Value).TotalMilliseconds < 750;
+        }
+
+        private void MarkExplicitOceanyaReturn(string reason)
+        {
+            explicitOceanyaReturnAt = DateTime.UtcNow;
+            LogForegroundOperation(
+                "explicit-oceanya-return",
+                reason,
+                IntPtr.Zero,
+                isPassiveSync: false,
+                allowed: true);
+        }
+
+        private void TransitionViewportPreviewShellState(ViewportPreviewShellState nextState, string reason, bool isPassiveForegroundObservation)
+        {
+            ViewportPreviewShellState previousState = viewportPreviewShellState;
+            viewportPreviewShellState = nextState;
+            LogViewportPreviewShellTransition(previousState, nextState, reason, isPassiveForegroundObservation);
+        }
+
+        private void LogViewportPreviewShellTransition(
+            ViewportPreviewShellState previousState,
+            ViewportPreviewShellState nextState,
+            string reason,
+            bool isPassiveForegroundObservation)
+        {
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            IntPtr mainHwnd = hostWindow == null ? IntPtr.Zero : new WindowInteropHelper(hostWindow).Handle;
+            IntPtr normalViewportHwnd = viewportWindow == null ? IntPtr.Zero : new WindowInteropHelper(viewportWindow).Handle;
+            IntPtr previewShellHwnd = viewportPreviewShellWindow == null ? IntPtr.Zero : new WindowInteropHelper(viewportPreviewShellWindow).Handle;
+            IntPtr pictureInPictureHwnd = pictureInPictureViewportWindow == null ? IntPtr.Zero : new WindowInteropHelper(pictureInPictureViewportWindow).Handle;
+            IntPtr foregroundHwnd = GetForegroundWindow();
+            int foregroundProcessId = 0;
+            if (foregroundHwnd == IntPtr.Zero)
+            {
+                foregroundProcessId = 0;
+            }
+            else
+            {
+                _ = GetWindowThreadProcessId(foregroundHwnd, out foregroundProcessId);
+            }
+
+            CustomConsole.Debug(
+                "[VPT-SM] "
+                + $"{previousState}->{nextState} reason={reason} mode={(isPassiveForegroundObservation ? "passive" : "explicit")} "
+                + $"foreground=0x{foregroundHwnd.ToInt64():X}/pid={foregroundProcessId} "
+                + DescribeShellWindow("main", hostWindow, mainHwnd) + " "
+                + DescribeShellWindow("normalViewport", viewportWindow, normalViewportHwnd) + " "
+                + DescribeShellWindow("previewShell", viewportPreviewShellWindow, previewShellHwnd) + " "
+                + DescribeShellWindow("pip", pictureInPictureViewportWindow, pictureInPictureHwnd),
+                CustomConsole.LogCategory.Viewport);
+        }
+
+        private static string DescribeShellWindow(string name, Window? window, IntPtr hwnd)
+        {
+            if (hwnd == IntPtr.Zero)
+            {
+                return $"{name}=0x0";
+            }
+
+            const int GWL_EXSTYLE = -20;
+            int exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+            IntPtr owner = GetWindow(hwnd, GwOwner);
+            bool visible = IsWindowVisible(hwnd);
+            bool minimized = IsIconic(hwnd);
+            bool showInTaskbar = window?.ShowInTaskbar == true;
+            return $"{name}=0x{hwnd.ToInt64():X}/taskbar={showInTaskbar}/ex=0x{exStyle:X8}/owner=0x{owner.ToInt64():X}/visible={visible}/minimized={minimized}";
+        }
+
+        private bool IsExplicitOceanyaReturnOrUserActivation()
+        {
+            return IsMainOrNormalViewportForeground()
+                || (explicitOceanyaReturnAt.HasValue
+                    && (DateTime.UtcNow - explicitOceanyaReturnAt.Value).TotalMilliseconds < 1000);
+        }
+
+        private static bool IsExternalForegroundOwnedByAnotherProcess(out IntPtr foregroundHwnd, out int foregroundProcessId)
+        {
+            foregroundHwnd = GetForegroundWindow();
+            foregroundProcessId = 0;
+            if (foregroundHwnd == IntPtr.Zero)
+            {
+                return false;
+            }
+
+            _ = GetWindowThreadProcessId(foregroundHwnd, out foregroundProcessId);
+            return foregroundProcessId != Process.GetCurrentProcess().Id;
+        }
+
+        private static void LogForegroundOperation(
+            string operation,
+            string reason,
+            IntPtr targetHwnd,
+            bool isPassiveSync,
+            bool allowed)
+        {
+            IntPtr foregroundHwnd = GetForegroundWindow();
+            int foregroundProcessId = 0;
+            if (foregroundHwnd == IntPtr.Zero)
+            {
+                foregroundProcessId = 0;
+            }
+            else
+            {
+                _ = GetWindowThreadProcessId(foregroundHwnd, out foregroundProcessId);
+            }
+
+            CustomConsole.Debug(
+                $"[VPT-FOCUS] op={operation} reason={reason} target=0x{targetHwnd.ToInt64():X} foreground=0x{foregroundHwnd.ToInt64():X}/pid={foregroundProcessId} mode={(isPassiveSync ? "passive" : "explicit")} allowed={allowed}",
+                CustomConsole.LogCategory.Viewport);
+        }
+
         private void ShowPictureInPictureViewportWindowAfterRestore()
         {
             if (pictureInPictureViewportWindow == null)
@@ -6133,6 +6650,7 @@ namespace OceanyaClient
             }
 
             pictureInPictureViewportWindow.Topmost = true;
+            SetWindowNoActivate(pictureInPictureViewportWindow, noActivate: true);
             Dispatcher.BeginInvoke(
                 new Action(() =>
                 {
@@ -6209,6 +6727,11 @@ namespace OceanyaClient
                 ApplyViewportMinMaxInfo(lParam, pictureInPictureViewportWindow);
                 handled = true;
             }
+            else if (message == WmMouseActivate)
+            {
+                handled = true;
+                return new IntPtr(MaNoActivate);
+            }
             else if (message == WmSizing)
             {
                 ApplyViewportSizingRect((int)wParam, lParam, pictureInPictureViewportWindow);
@@ -6249,6 +6772,23 @@ namespace OceanyaClient
                 NormalizeViewportWindowSize(pictureInPictureViewportWindow.Width, pictureInPictureViewportWindow.Height, preferWidth: false);
             pictureInPictureViewportWindow.Width = desiredWidth;
             pictureInPictureViewportWindow.Height = desiredHeight;
+        }
+
+        private void OnViewportPreviewShellSurfaceLayoutChanged()
+        {
+            if (viewportPreviewShellWindow == null)
+            {
+                return;
+            }
+
+            viewportPreviewShellWindow.MinWidth = GetViewportMinimumWindowWidth();
+            viewportPreviewShellWindow.MinHeight = GetViewportMinimumWindowHeight();
+            (double desiredWidth, double desiredHeight) =
+                NormalizeViewportWindowSize(viewportPreviewShellWindow.Width, viewportPreviewShellWindow.Height, preferWidth: false);
+            viewportPreviewShellWindow.Width = desiredWidth;
+            viewportPreviewShellWindow.Height = desiredHeight;
+            IntPtr hwnd = new WindowInteropHelper(viewportPreviewShellWindow).Handle;
+            ViewportThumbnailCompositor.Invalidate(hwnd);
         }
 
         private void EnsureViewportVisibleWithMainWindow()
@@ -6292,7 +6832,7 @@ namespace OceanyaClient
             {
                 return;
             }
-
+	
             IntPtr hostHwnd = new WindowInteropHelper(hostWindow).Handle;
             IntPtr viewportHwnd = new WindowInteropHelper(viewportWindow).Handle;
             if (hostHwnd == IntPtr.Zero || viewportHwnd == IntPtr.Zero)
@@ -6366,14 +6906,80 @@ namespace OceanyaClient
             SetupViewportWindowStateSync();
         }
 
+        private void ViewportPreviewShellWindow_SourceInitialized(object? sender, EventArgs e)
+        {
+            if (viewportPreviewShellWindow == null)
+            {
+                return;
+            }
+
+            IntPtr hwnd = new WindowInteropHelper(viewportPreviewShellWindow).Handle;
+            viewportPreviewShellWindowSource = HwndSource.FromHwnd(hwnd);
+            viewportPreviewShellWindowSource?.AddHook(ViewportPreviewShellWindow_WndProc);
+            SetWindowNoActivate(viewportPreviewShellWindow, noActivate: true);
+            SetWindowOwner(viewportPreviewShellWindow, IntPtr.Zero);
+            SetWindowShellVisibility(viewportPreviewShellWindow, forceTaskbar: true, showInAltTab: true);
+            ViewportThumbnailCompositor.Activate(hwnd);
+            ViewportThumbnailCompositor.SubmitIconicThumbnail(hwnd, HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow, GetViewportPreviewSourceWindow());
+        }
+
+        private IntPtr ViewportPreviewShellWindow_WndProc(
+            IntPtr hwnd,
+            int message,
+            IntPtr wParam,
+            IntPtr lParam,
+            ref bool handled)
+        {
+            if (TryRouteMainWindowPreviewProxyMessage(message, wParam))
+            {
+                handled = true;
+                return IntPtr.Zero;
+            }
+
+            if (message == WmDwmSendIconicThumbnail)
+            {
+                ViewportThumbnailCompositor.HandleSendIconicThumbnail(
+                    hwnd,
+                    HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow,
+                    GetViewportPreviewSourceWindow(),
+                    wParam);
+                handled = true;
+                return IntPtr.Zero;
+            }
+
+            if (message == WmDwmSendIconicLivePreviewBitmap)
+            {
+                ViewportThumbnailCompositor.HandleSendIconicLivePreviewBitmap(
+                    hwnd,
+                    HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow,
+                    GetViewportPreviewSourceWindow());
+                handled = true;
+                return IntPtr.Zero;
+            }
+
+            if (message == WmMouseActivate)
+            {
+                MarkExplicitOceanyaReturn("preview shell WM_MOUSEACTIVATE");
+                viewportPreviewInputProxyActive = true;
+                UpdateViewportPreviewProxyVisual("preview shell mouse activation");
+                handled = true;
+                return new IntPtr(MaNoActivate);
+            }
+
+            return IntPtr.Zero;
+        }
+
         private void ViewportWindow_Activated(object? sender, EventArgs e)
         {
             if (IsViewportUsingWindowsPreview())
             {
-                RestoreMainWindowVisualForViewportReturn();
+                MarkExplicitOceanyaReturn("viewport activated");
+                RestoreMainWindowVisualForViewportReturn(explicitOceanyaReturn: true);
                 viewportPreviewInputProxyActive = true;
                 UpdateViewportPreviewProxyVisual("viewport activated");
-                EnsureViewportIsForegroundShellRepresentative("viewport activated");
+                EnsureViewportIsForegroundShellRepresentative(
+                    "viewport activated",
+                    explicitOceanyaReturn: true);
                 LogViewportPreviewState("viewport activated; main visual restored and input proxy active");
             }
         }
@@ -6444,6 +7050,7 @@ namespace OceanyaClient
             }
             else if (message == WmMouseActivate && IsViewportUsingWindowsPreview())
             {
+                MarkExplicitOceanyaReturn("viewport WM_MOUSEACTIVATE");
                 StopViewportAltTabFocusRedirectTimer();
                 viewportPreviewInputProxyActive = true;
                 UpdateViewportPreviewProxyVisual("viewport mouse activation");
@@ -6550,13 +7157,32 @@ namespace OceanyaClient
 
         private void HostWindow_StateChanged(object? sender, EventArgs e)
         {
-            if (isSynchronizingWindowState || viewportWindow?.IsVisible != true)
+            if (isSynchronizingWindowState)
             {
                 return;
             }
 
             Window? hostWindow = HostWindow ?? Window.GetWindow(this);
             if (hostWindow == null)
+            {
+                return;
+            }
+
+            if (SaveFile.Data.GMPictureInPictureViewport)
+            {
+                if (hostWindow.WindowState == WindowState.Minimized)
+                {
+                    ShowPictureInPictureViewportForExternalFocus();
+                }
+                else if (IsExplicitOceanyaReturnOrUserActivation())
+                {
+                    ShowNormalViewportForMainFocus(explicitOceanyaReturn: true);
+                }
+
+                return;
+            }
+
+            if (viewportWindow?.IsVisible != true)
             {
                 return;
             }
@@ -6583,13 +7209,13 @@ namespace OceanyaClient
 
         private void ApplyViewportTaskbarPriority()
         {
-            bool useViewport = IsViewportUsingWindowsPreview();
+            bool usePreviewShell = viewportContent?.UseAsWindowsPreview == true;
             Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
             IntPtr hostHwnd = hostWindow == null ? IntPtr.Zero : new WindowInteropHelper(hostWindow).Handle;
-            IntPtr viewportHwnd = viewportWindow == null ? IntPtr.Zero : new WindowInteropHelper(viewportWindow).Handle;
+            IntPtr previewShellHwnd = IntPtr.Zero;
 
             StopViewportTaskbarPreviewRefreshTimer();
-            if (!useViewport)
+            if (!usePreviewShell)
             {
                 StopViewportAltTabFocusRedirectTimer();
                 StopViewportAltTabExitPreparationTimer(restoreNoActivate: true);
@@ -6604,41 +7230,82 @@ namespace OceanyaClient
                     isHostWindowHiddenByViewportAltTabExit = false;
                     hostWindow.Show();
                 }
+                CloseViewportPreviewShellWindow();
             }
-
+            else
+            {
+                EnsureViewportPreviewShellWindow();
+                previewShellHwnd = viewportPreviewShellWindow == null ? IntPtr.Zero : new WindowInteropHelper(viewportPreviewShellWindow).Handle;
+            }
+	
             if (hostHwnd != IntPtr.Zero)
             {
                 ViewportThumbnailCompositor.Deactivate(hostHwnd);
             }
-
+	
             if (viewportWindow != null)
             {
-                viewportWindow.ShowInTaskbar = useViewport;
-                SetWindowShellVisibility(viewportWindow, forceTaskbar: useViewport, showInAltTab: useViewport);
+                viewportWindow.ShowInTaskbar = false;
+                SetWindowShellVisibility(viewportWindow, forceTaskbar: false, showInAltTab: false);
                 SetWindowNoActivate(viewportWindow, noActivate: false);
             }
-
+	
             if (hostWindow != null)
             {
                 SetWindowOwner(hostWindow, IntPtr.Zero);
-                hostWindow.ShowInTaskbar = !useViewport;
-                SetWindowShellVisibility(hostWindow, forceTaskbar: !useViewport, showInAltTab: !useViewport);
-                SetWindowNoActivate(hostWindow, useViewport);
+                hostWindow.ShowInTaskbar = !usePreviewShell;
+                SetWindowShellVisibility(hostWindow, forceTaskbar: !usePreviewShell, showInAltTab: !usePreviewShell);
+                SetWindowNoActivate(hostWindow, noActivate: false);
             }
 
-            if (useViewport)
+            if (viewportPreviewShellWindow != null)
+            {
+                viewportPreviewShellWindow.ShowInTaskbar = usePreviewShell;
+                SetWindowOwner(viewportPreviewShellWindow, IntPtr.Zero);
+                SetWindowShellVisibility(viewportPreviewShellWindow, forceTaskbar: usePreviewShell, showInAltTab: usePreviewShell);
+                SetWindowNoActivate(viewportPreviewShellWindow, noActivate: true);
+                if (previewShellHwnd != IntPtr.Zero)
+                {
+                    ViewportThumbnailCompositor.Activate(previewShellHwnd);
+                    ViewportThumbnailCompositor.SubmitIconicThumbnail(previewShellHwnd, hostWindow, GetViewportPreviewSourceWindow());
+                    StartViewportTaskbarPreviewRefreshTimer(previewShellHwnd);
+                }
+            }
+
+            if (pictureInPictureViewportWindow != null)
+            {
+                ApplyPictureInPictureToolWindowStyle();
+            }
+
+            if (usePreviewShell)
             {
                 StartViewportExternalForegroundTrackingTimer();
                 viewportPreviewInputProxyActive = true;
                 UpdateViewportPreviewProxyVisual("viewport preview shell mode applied");
-                EnsureViewportIsForegroundShellRepresentative("viewport preview shell mode applied");
-                LogViewportPreviewState("viewport preview shell mode applied");
+                TransitionViewportPreviewShellState(
+                    isNormalViewportHiddenByPictureInPicture
+                        ? ViewportPreviewShellState.PreviewEnabled_PiPVisibleExternalFocus
+                        : ViewportPreviewShellState.PreviewEnabled_NormalVisible,
+                    "viewport preview shell mode applied",
+                    isPassiveForegroundObservation: false);
+            }
+            else
+            {
+                TransitionViewportPreviewShellState(
+                    ViewportPreviewShellState.PreviewDisabled,
+                    "viewport preview shell mode disabled",
+                    isPassiveForegroundObservation: false);
             }
         }
-
+	
         private bool IsViewportUsingWindowsPreview()
         {
-            return viewportWindow?.IsVisible == true && viewportContent?.UseAsWindowsPreview == true;
+            return viewportContent?.UseAsWindowsPreview == true && viewportPreviewShellWindow != null;
+        }
+
+        private bool IsViewportPreviewForegroundTrackingActive()
+        {
+            return viewportContent?.UseAsWindowsPreview == true && viewportPreviewShellWindow != null;
         }
 
         private void CenterViewportWindowNearOwner(Window owner, double initialWidth, double initialHeight)
@@ -6697,22 +7364,33 @@ namespace OceanyaClient
             viewportTaskbarPreviewRefreshTimer = null;
         }
 
-        private void RestoreMainWindowVisualForViewportReturn(bool forceForegroundRepresentative = false)
+        private void RestoreMainWindowVisualForViewportReturn(bool explicitOceanyaReturn = false)
         {
             if (!IsViewportUsingWindowsPreview())
             {
                 return;
             }
 
-            Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
-            if (hostWindow == null || viewportWindow == null)
+            if (!explicitOceanyaReturn && !IsExplicitOceanyaReturnOrUserActivation())
             {
+                LogForegroundOperation(
+                    "main-visual-return-skipped",
+                    "RestoreMainWindowVisualForViewportReturn",
+                    IntPtr.Zero,
+                    isPassiveSync: true,
+                    allowed: false);
                 return;
             }
 
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            if (hostWindow == null || viewportPreviewShellWindow == null)
+            {
+                return;
+            }
+	
             IntPtr hostHwnd = new WindowInteropHelper(hostWindow).Handle;
-            IntPtr viewportHwnd = new WindowInteropHelper(viewportWindow).Handle;
-            if (hostHwnd == IntPtr.Zero || viewportHwnd == IntPtr.Zero)
+            IntPtr shellHwnd = new WindowInteropHelper(viewportPreviewShellWindow).Handle;
+            if (hostHwnd == IntPtr.Zero || shellHwnd == IntPtr.Zero)
             {
                 return;
             }
@@ -6726,14 +7404,14 @@ namespace OceanyaClient
             bool hostVisibleBefore = IsWindowVisible(hostHwnd);
             bool hostMinimizedBefore = IsIconic(hostHwnd);
             bool hostCloakedBefore = IsWindowCloaked(hostHwnd);
-            bool viewportVisibleBefore = IsWindowVisible(viewportHwnd);
+            bool shellVisibleBefore = IsWindowVisible(shellHwnd);
             bool showResult = true;
             bool restackResult = true;
-            bool viewportTopResult = true;
+            bool shellTopResult = true;
 
             try
             {
-                SetWindowNoActivate(hostWindow, noActivate: true);
+                SetWindowNoActivate(hostWindow, noActivate: false);
                 if (!hostWindow.IsVisible)
                 {
                     hostWindow.Show();
@@ -6744,11 +7422,9 @@ namespace OceanyaClient
                     showResult = ShowWindow(hostHwnd, SwShownoactivate);
                 }
 
-                SetWindowShellVisibility(hostWindow, forceTaskbar: false, showInAltTab: false);
-
                 const uint restoreFlags = SwpNomove | SwpNosize | SwpNoactivate | SwpShowwindow;
-                restackResult = SetWindowPos(hostHwnd, viewportHwnd, 0, 0, 0, 0, restoreFlags);
-                viewportTopResult = SetWindowPos(viewportHwnd, HwndTop, 0, 0, 0, 0, restoreFlags);
+                restackResult = SetWindowPos(hostHwnd, shellHwnd, 0, 0, 0, 0, restoreFlags);
+                shellTopResult = SetWindowPos(shellHwnd, HwndTop, 0, 0, 0, 0, restoreFlags);
             }
             catch (Exception ex)
             {
@@ -6757,6 +7433,13 @@ namespace OceanyaClient
             }
 
             TextBox? target = GetViewportPreviewInputProxyTarget();
+            if (target == null
+                && lastMainWindowFocusedElement is TextBox lastTextBox
+                && IsProxyEligibleMainInput(lastTextBox))
+            {
+                target = lastTextBox;
+            }
+
             if (target != null)
             {
                 lastMainWindowFocusedElement = target;
@@ -6765,12 +7448,12 @@ namespace OceanyaClient
             viewportPreviewInputProxyActive = true;
             SetViewportPreviewInputProxyTarget(target, "main visual return restore");
             EnsureViewportIsForegroundShellRepresentative(
-                forceForegroundRepresentative
+                explicitOceanyaReturn
                     ? "main visual return restore from main mouse activation"
                     : "main visual return restore",
-                allowExternalForegroundOverride: forceForegroundRepresentative);
+                explicitOceanyaReturn: explicitOceanyaReturn);
             LogViewportPreviewState(
-                $"main visual return restore: hiddenForAltTab={wasHiddenForAltTab} mainVisibleBefore={hostVisibleBefore} mainMinimizedBefore={hostMinimizedBefore} mainCloakedBefore={hostCloakedBefore} viewportVisibleBefore={viewportVisibleBefore} showResult={showResult} restackResult={restackResult} viewportTopResult={viewportTopResult} target={target?.Name ?? "(none)"}");
+                $"main visual return restore: hiddenForAltTab={wasHiddenForAltTab} mainVisibleBefore={hostVisibleBefore} mainMinimizedBefore={hostMinimizedBefore} mainCloakedBefore={hostCloakedBefore} shellVisibleBefore={shellVisibleBefore} showResult={showResult} restackResult={restackResult} shellTopResult={shellTopResult} target={target?.Name ?? "(none)"}");
         }
 
         private void ViewportWindow_PreviewKeyDown(object sender, KeyEventArgs e)
@@ -6811,6 +7494,65 @@ namespace OceanyaClient
             {
                 DisableViewportPreviewInputProxyAfterFailure("text route failed", ex);
             }
+        }
+
+        private bool TryRouteMainWindowPreviewProxyMessage(int message, IntPtr wParam)
+        {
+            if (!IsViewportUsingWindowsPreview())
+            {
+                return false;
+            }
+
+            if (message is WmSysKeyDown or WmSysChar
+                || (Keyboard.Modifiers & ModifierKeys.Alt) == ModifierKeys.Alt)
+            {
+                return false;
+            }
+
+            try
+            {
+                TextBox? target = GetViewportPreviewInputProxyTarget();
+                if (target == null)
+                {
+                    return false;
+                }
+
+                viewportPreviewInputProxyActive = true;
+                SetViewportPreviewInputProxyTarget(target, "main HWND proxy message target");
+
+                if (message == WmChar)
+                {
+                    char character = (char)wParam.ToInt32();
+                    if (char.IsControl(character))
+                    {
+                        return false;
+                    }
+
+                    InsertTextIntoTextBox(target, character.ToString());
+                    UpdateViewportPreviewProxyVisual("main HWND proxy char routed");
+                    LogViewportPreviewState("main HWND proxy char routed target=" + target.Name);
+                    return true;
+                }
+
+                if (message == WmKeyDown)
+                {
+                    Key key = KeyInterop.KeyFromVirtualKey(wParam.ToInt32());
+                    bool routed = RouteViewportPreviewKeyToTextBox(target, key);
+                    if (routed)
+                    {
+                        UpdateViewportPreviewProxyVisual("main HWND proxy key routed");
+                        LogViewportPreviewState("main HWND proxy key routed target=" + target.Name + " key=" + key);
+                    }
+
+                    return routed;
+                }
+            }
+            catch (Exception ex)
+            {
+                DisableViewportPreviewInputProxyAfterFailure("main HWND proxy route failed", ex);
+            }
+
+            return false;
         }
 
         private bool TryRouteViewportPreviewKey(KeyEventArgs e)
@@ -7073,6 +7815,11 @@ namespace OceanyaClient
                     ScrollViewer? scrollViewer = FindDescendant<ScrollViewer>(target);
                     if (scrollViewer == null)
                     {
+                        if (IsExternalForegroundOwnedByAnotherProcess(out _, out _))
+                        {
+                            return;
+                        }
+
                         target.BringIntoView();
                         return;
                     }
@@ -7230,37 +7977,51 @@ namespace OceanyaClient
             }
         }
 
-        private void EnsureViewportIsForegroundShellRepresentative(string reason, bool allowExternalForegroundOverride = false)
+        private void EnsureViewportIsForegroundShellRepresentative(string reason, bool explicitOceanyaReturn = false)
         {
-            if (!IsViewportUsingWindowsPreview() || viewportWindow == null)
+            if (!IsViewportUsingWindowsPreview() || viewportPreviewShellWindow == null)
             {
                 return;
             }
-
+	
             Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
             IntPtr hostHwnd = hostWindow == null ? IntPtr.Zero : new WindowInteropHelper(hostWindow).Handle;
-            IntPtr viewportHwnd = new WindowInteropHelper(viewportWindow).Handle;
-            if (viewportHwnd == IntPtr.Zero)
+            IntPtr shellHwnd = new WindowInteropHelper(viewportPreviewShellWindow).Handle;
+            if (shellHwnd == IntPtr.Zero)
             {
                 return;
             }
 
+            bool isPassiveSync = !explicitOceanyaReturn;
             IntPtr foregroundHwnd = GetForegroundWindow();
-            if (foregroundHwnd != IntPtr.Zero)
+            if (IsExternalForegroundOwnedByAnotherProcess(out IntPtr externalForegroundHwnd, out _)
+                && !explicitOceanyaReturn)
             {
-                _ = GetWindowThreadProcessId(foregroundHwnd, out int foregroundProcessId);
-                if (foregroundProcessId != Process.GetCurrentProcess().Id && !allowExternalForegroundOverride)
-                {
-                    UpdateViewportPreviewProxyVisual("external foreground during shell representative ensure");
-                    LogViewportPreviewState("viewport shell representative skipped external foreground reason=" + reason);
-                    return;
-                }
+                UpdateViewportPreviewProxyVisual("external foreground during shell representative ensure");
+                    LogForegroundOperation(
+                        "ensure-viewport-shell-skipped-external",
+                        reason,
+                        shellHwnd,
+                        isPassiveSync,
+                        allowed: false);
+                return;
+            }
+	
+            if (!explicitOceanyaReturn && !IsMainOrNormalViewportForeground())
+            {
+                    LogForegroundOperation(
+                        "ensure-viewport-shell-skipped-passive",
+                        reason,
+                        shellHwnd,
+                        isPassiveSync,
+                        allowed: false);
+                return;
             }
 
             const int GWL_EXSTYLE = -20;
             const int WS_EX_NOACTIVATE = 0x08000000;
-            int viewportStyleBefore = GetWindowLong(viewportHwnd, GWL_EXSTYLE);
-            bool restoreNoActivate = (viewportStyleBefore & WS_EX_NOACTIVATE) != 0;
+            int shellStyleBefore = GetWindowLong(shellHwnd, GWL_EXSTYLE);
+            bool restoreNoActivate = (shellStyleBefore & WS_EX_NOACTIVATE) != 0;
             bool setForegroundResult = true;
             IntPtr activeResult = IntPtr.Zero;
 
@@ -7268,25 +8029,49 @@ namespace OceanyaClient
             {
                 if (restoreNoActivate)
                 {
-                    SetWindowNoActivate(viewportWindow, noActivate: false);
+                    LogForegroundOperation(
+                        "set-window-noactivate-off",
+                        reason,
+                        shellHwnd,
+                        isPassiveSync,
+                        allowed: true);
+                    SetWindowNoActivate(viewportPreviewShellWindow, noActivate: false);
                 }
 
-                if (GetForegroundWindow() != viewportHwnd)
+                if (GetForegroundWindow() != shellHwnd)
                 {
-                    setForegroundResult = SetForegroundWindow(viewportHwnd);
+                    LogForegroundOperation(
+                        "set-foreground-window",
+                        reason,
+                        shellHwnd,
+                        isPassiveSync,
+                        allowed: true);
+                    setForegroundResult = SetForegroundWindow(shellHwnd);
                 }
-
-                activeResult = SetActiveWindow(viewportHwnd);
+	
+                LogForegroundOperation(
+                    "set-active-window",
+                    reason,
+                    shellHwnd,
+                    isPassiveSync,
+                    allowed: true);
+                activeResult = SetActiveWindow(shellHwnd);
             }
             finally
             {
                 if (restoreNoActivate)
                 {
-                    SetWindowNoActivate(viewportWindow, noActivate: true);
+                    LogForegroundOperation(
+                        "set-window-noactivate-on",
+                        reason,
+                        shellHwnd,
+                        isPassiveSync,
+                        allowed: true);
+                    SetWindowNoActivate(viewportPreviewShellWindow, noActivate: true);
                 }
             }
-
-            UpdateViewportPreviewProxyVisual("viewport foreground shell representative ensured");
+	
+            UpdateViewportPreviewProxyVisual("preview shell foreground representative ensured");
             LogViewportPreviewState(
                 $"viewport shell representative ensured reason={reason} setForeground={setForegroundResult} setActivePrevious=0x{activeResult.ToInt64():X} mainHwnd=0x{hostHwnd.ToInt64():X} restoreNoActivate={restoreNoActivate}");
         }
@@ -7301,27 +8086,38 @@ namespace OceanyaClient
             Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
             IntPtr hostHwnd = hostWindow == null ? IntPtr.Zero : new WindowInteropHelper(hostWindow).Handle;
             IntPtr viewportHwnd = viewportWindow == null ? IntPtr.Zero : new WindowInteropHelper(viewportWindow).Handle;
+            IntPtr previewShellHwnd = viewportPreviewShellWindow == null ? IntPtr.Zero : new WindowInteropHelper(viewportPreviewShellWindow).Handle;
+            IntPtr pictureInPictureHwnd = pictureInPictureViewportWindow == null ? IntPtr.Zero : new WindowInteropHelper(pictureInPictureViewportWindow).Handle;
             IntPtr foregroundHwnd = GetForegroundWindow();
             IntPtr activeHwnd = GetActiveWindow();
             const int GWL_EXSTYLE = -20;
             int hostStyle = hostHwnd == IntPtr.Zero ? 0 : GetWindowLong(hostHwnd, GWL_EXSTYLE);
             int viewportStyle = viewportHwnd == IntPtr.Zero ? 0 : GetWindowLong(viewportHwnd, GWL_EXSTYLE);
+            int previewShellStyle = previewShellHwnd == IntPtr.Zero ? 0 : GetWindowLong(previewShellHwnd, GWL_EXSTYLE);
+            int pictureInPictureStyle = pictureInPictureHwnd == IntPtr.Zero ? 0 : GetWindowLong(pictureInPictureHwnd, GWL_EXSTYLE);
             bool hostVisible = hostHwnd != IntPtr.Zero && IsWindowVisible(hostHwnd);
             bool hostMinimized = hostHwnd != IntPtr.Zero && IsIconic(hostHwnd);
             bool hostCloaked = hostHwnd != IntPtr.Zero && IsWindowCloaked(hostHwnd);
             bool viewportVisible = viewportHwnd != IntPtr.Zero && IsWindowVisible(viewportHwnd);
+            bool previewShellVisible = previewShellHwnd != IntPtr.Zero && IsWindowVisible(previewShellHwnd);
+            bool pictureInPictureVisible = pictureInPictureHwnd != IntPtr.Zero && IsWindowVisible(pictureInPictureHwnd);
             IntPtr shellRepresentativeHwnd = viewportHwnd != IntPtr.Zero && foregroundHwnd == viewportHwnd
                 ? viewportHwnd
+                : previewShellHwnd != IntPtr.Zero && foregroundHwnd == previewShellHwnd
+                    ? previewShellHwnd
                 : foregroundHwnd;
             bool mainForeground = hostHwnd != IntPtr.Zero && foregroundHwnd == hostHwnd;
             bool mainActive = hostHwnd != IntPtr.Zero && activeHwnd == hostHwnd;
             bool viewportForeground = viewportHwnd != IntPtr.Zero && foregroundHwnd == viewportHwnd;
             bool viewportActive = viewportHwnd != IntPtr.Zero && activeHwnd == viewportHwnd;
+            bool previewShellForeground = previewShellHwnd != IntPtr.Zero && foregroundHwnd == previewShellHwnd;
+            bool previewShellActive = previewShellHwnd != IntPtr.Zero && activeHwnd == previewShellHwnd;
+            bool pictureInPictureForeground = pictureInPictureHwnd != IntPtr.Zero && foregroundHwnd == pictureInPictureHwnd;
             bool altTabPreparationActive = viewportAltTabExitPreparationTimer != null
                 || viewportAltTabHeldReinjectTimer != null
                 || IsAltKeyDown();
             CustomConsole.Debug(
-                $"[VPT-ALT] {reason}; foreground=0x{foregroundHwnd.ToInt64():X} active=0x{activeHwnd.ToInt64():X} shell=0x{shellRepresentativeHwnd.ToInt64():X} main=0x{hostHwnd.ToInt64():X}/ex=0x{hostStyle:X8}/visible={hostVisible}/minimized={hostMinimized}/cloaked={hostCloaked}/foreground={mainForeground}/active={mainActive} viewport=0x{viewportHwnd.ToInt64():X}/ex=0x{viewportStyle:X8}/visible={viewportVisible}/foreground={viewportForeground}/active={viewportActive} proxy={viewportPreviewInputProxyActive} proxyVisual={viewportPreviewProxyVisualTarget?.Name ?? "(none)"} altTabPrep={altTabPreparationActive}",
+                $"[VPT-ALT] {reason}; state={viewportPreviewShellState} foreground=0x{foregroundHwnd.ToInt64():X} active=0x{activeHwnd.ToInt64():X} shell=0x{shellRepresentativeHwnd.ToInt64():X} main=0x{hostHwnd.ToInt64():X}/ex=0x{hostStyle:X8}/visible={hostVisible}/minimized={hostMinimized}/cloaked={hostCloaked}/taskbar={hostWindow?.ShowInTaskbar == true}/foreground={mainForeground}/active={mainActive} viewport=0x{viewportHwnd.ToInt64():X}/ex=0x{viewportStyle:X8}/visible={viewportVisible}/taskbar={viewportWindow?.ShowInTaskbar == true}/foreground={viewportForeground}/active={viewportActive} previewShell=0x{previewShellHwnd.ToInt64():X}/ex=0x{previewShellStyle:X8}/visible={previewShellVisible}/taskbar={viewportPreviewShellWindow?.ShowInTaskbar == true}/foreground={previewShellForeground}/active={previewShellActive} pip=0x{pictureInPictureHwnd.ToInt64():X}/ex=0x{pictureInPictureStyle:X8}/visible={pictureInPictureVisible}/taskbar={pictureInPictureViewportWindow?.ShowInTaskbar == true}/foreground={pictureInPictureForeground} proxy={viewportPreviewInputProxyActive} proxyVisual={viewportPreviewProxyVisualTarget?.Name ?? "(none)"} altTabPrep={altTabPreparationActive}",
                 CustomConsole.LogCategory.Viewport);
         }
 
@@ -7399,16 +8195,18 @@ namespace OceanyaClient
             };
             viewportExternalForegroundTrackingTimer.Tick += (_, _) =>
             {
-                if (!IsViewportUsingWindowsPreview())
+                if (!IsViewportPreviewForegroundTrackingActive())
                 {
                     StopViewportExternalForegroundTrackingTimer();
                     return;
                 }
 
                 RememberExternalForegroundWindow();
+                SynchronizePictureInPictureVisibilityWithForeground();
             };
             viewportExternalForegroundTrackingTimer.Start();
             RememberExternalForegroundWindow();
+            SynchronizePictureInPictureVisibilityWithForeground();
         }
 
         private void StopViewportExternalForegroundTrackingTimer()
@@ -7443,18 +8241,41 @@ namespace OceanyaClient
 
                 viewportAltTabHookPendingSuppressedQuickSwitch = false;
 
-                // Pre-activate the viewport so the injected Tab fires from the viewport HWND.
+                // Pre-activate the preview shell so the injected Tab fires from the shell HWND.
                 // Without this, the main window (WS_EX_TOOLWINDOW, hidden from Alt-Tab) is
-                // still foreground and Windows cycles through the viewport as the current
+                // still foreground and Windows cycles through the preview shell as the current
                 // Oceanya entry before reaching the external app, producing a double switch.
-                if (viewportWindow != null && IsViewportUsingWindowsPreview())
+                if (viewportPreviewShellWindow != null && IsViewportUsingWindowsPreview())
                 {
-                    IntPtr viewportHwnd = new WindowInteropHelper(viewportWindow).Handle;
-                    if (viewportHwnd != IntPtr.Zero)
+                    IntPtr shellHwnd = new WindowInteropHelper(viewportPreviewShellWindow).Handle;
+                    if (shellHwnd != IntPtr.Zero)
                     {
+                        if (IsExternalForegroundOwnedByAnotherProcess(out _, out _))
+                        {
+                            LogForegroundOperation(
+                                "alt-tab-held-reinject-skipped-external",
+                                "StartViewportAltTabHeldReinjectTimer",
+                                shellHwnd,
+                                isPassiveSync: true,
+                                allowed: false);
+                            return;
+                        }
+
                         viewportAltTabHeldPreActivated = true;
-                        SetWindowNoActivate(viewportWindow, noActivate: false);
-                        SetForegroundWindow(viewportHwnd);
+                        LogForegroundOperation(
+                            "alt-tab-held-set-noactivate-off",
+                            "StartViewportAltTabHeldReinjectTimer",
+                            shellHwnd,
+                            isPassiveSync: false,
+                            allowed: true);
+                        SetWindowNoActivate(viewportPreviewShellWindow, noActivate: false);
+                        LogForegroundOperation(
+                            "alt-tab-held-set-foreground",
+                            "StartViewportAltTabHeldReinjectTimer",
+                            shellHwnd,
+                            isPassiveSync: false,
+                            allowed: true);
+                        SetForegroundWindow(shellHwnd);
                     }
                 }
 
@@ -7485,9 +8306,9 @@ namespace OceanyaClient
 
             Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
             IntPtr hostHwnd = hostWindow == null ? IntPtr.Zero : new WindowInteropHelper(hostWindow).Handle;
-            IntPtr viewportHwnd = viewportWindow == null ? IntPtr.Zero : new WindowInteropHelper(viewportWindow).Handle;
+            IntPtr shellHwnd = viewportPreviewShellWindow == null ? IntPtr.Zero : new WindowInteropHelper(viewportPreviewShellWindow).Handle;
             int currentProcessId = Process.GetCurrentProcess().Id;
-            if (IsEligibleAltTabSwitchTarget(foregroundHwnd, hostHwnd, viewportHwnd, currentProcessId))
+            if (IsEligibleAltTabSwitchTarget(foregroundHwnd, hostHwnd, shellHwnd, currentProcessId))
             {
                 lastViewportPreviewExternalForegroundHwnd = foregroundHwnd;
                 SetViewportPreviewProxyVisualTarget(null, "external foreground");
@@ -7561,12 +8382,12 @@ namespace OceanyaClient
                     Dispatcher.BeginInvoke(
                         new Action(StopViewportAltTabHeldReinjectTimer),
                         DispatcherPriority.Input);
-                    if (wasHeldPreActivated && IsViewportUsingWindowsPreview() && viewportWindow != null)
+                    if (wasHeldPreActivated && IsViewportUsingWindowsPreview() && viewportPreviewShellWindow != null)
                     {
                         // Restore NoActivate that the held-reinject path removed.
                         // Also clear the activation redirect suppress so the next return
-                        // to Oceanya via the viewport is handled normally.
-                        SetWindowNoActivate(viewportWindow, noActivate: true);
+                        // to Oceanya via the preview shell is handled normally.
+                        SetWindowNoActivate(viewportPreviewShellWindow, noActivate: true);
                     }
 
                     if (shouldCorrectQuickSwitch && TryActivateRememberedExternalForegroundWindow())
@@ -7595,12 +8416,12 @@ namespace OceanyaClient
         {
             Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
             IntPtr hostHwnd = hostWindow == null ? IntPtr.Zero : new WindowInteropHelper(hostWindow).Handle;
-            IntPtr viewportHwnd = viewportWindow == null ? IntPtr.Zero : new WindowInteropHelper(viewportWindow).Handle;
+            IntPtr shellHwnd = viewportPreviewShellWindow == null ? IntPtr.Zero : new WindowInteropHelper(viewportPreviewShellWindow).Handle;
             int currentProcessId = Process.GetCurrentProcess().Id;
             if (IsEligibleAltTabSwitchTarget(
                     lastViewportPreviewExternalForegroundHwnd,
                     hostHwnd,
-                    viewportHwnd,
+                    shellHwnd,
                     currentProcessId))
             {
                 return RestoreAndActivateWindow(lastViewportPreviewExternalForegroundHwnd);
@@ -7652,23 +8473,46 @@ namespace OceanyaClient
 
         private void PrepareViewportForAltTabExit()
         {
-            if (!IsViewportUsingWindowsPreview() || viewportWindow == null)
+            if (!IsViewportUsingWindowsPreview() || viewportPreviewShellWindow == null)
+            {
+                return;
+            }
+	
+            IntPtr shellHwnd = new WindowInteropHelper(viewportPreviewShellWindow).Handle;
+            if (shellHwnd == IntPtr.Zero || GetForegroundWindow() == shellHwnd)
             {
                 return;
             }
 
-            IntPtr viewportHwnd = new WindowInteropHelper(viewportWindow).Handle;
-            if (viewportHwnd == IntPtr.Zero || GetForegroundWindow() == viewportHwnd)
+            if (IsExternalForegroundOwnedByAnotherProcess(out _, out _))
             {
+                LogForegroundOperation(
+                    "prepare-alt-tab-exit-skipped-external",
+                    "PrepareViewportForAltTabExit",
+                    shellHwnd,
+                    isPassiveSync: true,
+                    allowed: false);
                 return;
             }
 
             viewportAltTabExitAltReleasedAt = null;
             StopViewportAltTabFocusRedirectTimer();
-            SetWindowNoActivate(viewportWindow, noActivate: false);
-            SetForegroundWindow(viewportHwnd);
-
-            StartViewportAltTabExitPreparationTimer(viewportHwnd);
+            LogForegroundOperation(
+                "prepare-alt-tab-set-noactivate-off",
+                "PrepareViewportForAltTabExit",
+                shellHwnd,
+                isPassiveSync: false,
+                allowed: true);
+            SetWindowNoActivate(viewportPreviewShellWindow, noActivate: false);
+            LogForegroundOperation(
+                "prepare-alt-tab-set-foreground",
+                "PrepareViewportForAltTabExit",
+                shellHwnd,
+                isPassiveSync: false,
+                allowed: true);
+            SetForegroundWindow(shellHwnd);
+	
+            StartViewportAltTabExitPreparationTimer(shellHwnd);
         }
 
         private void StartViewportAltTabExitPreparationTimer(IntPtr viewportHwnd)
@@ -7720,9 +8564,9 @@ namespace OceanyaClient
             }
 
             viewportAltTabExitAltReleasedAt = null;
-            if (restoreNoActivate && IsViewportUsingWindowsPreview() && viewportWindow != null)
+            if (restoreNoActivate && IsViewportUsingWindowsPreview() && viewportPreviewShellWindow != null)
             {
-                SetWindowNoActivate(viewportWindow, noActivate: true);
+                SetWindowNoActivate(viewportPreviewShellWindow, noActivate: true);
             }
         }
 
