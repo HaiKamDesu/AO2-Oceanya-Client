@@ -5,11 +5,13 @@ using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using AOBot_Testing.Agents;
 using AOBot_Testing.Structures;
 using Common;
 using OceanyaClient.Features.ChatPreview;
 using OceanyaClient.Utilities;
+using Rectangle = System.Windows.Shapes.Rectangle;
 
 namespace OceanyaClient.Features.Viewport
 {
@@ -25,6 +27,8 @@ namespace OceanyaClient.Features.Viewport
         private bool _pictureInPictureViewport;
         private bool contextMenuEnabled = true;
         private bool renderAudioEnabled = true;
+        private AO2ViewportWindowContent? mirrorSource;
+        private Rectangle? mirrorSurface;
 
         /// <summary>Fired whenever <see cref="UseAsWindowsPreview"/> changes.</summary>
         public event EventHandler? UseAsWindowsPreviewChanged;
@@ -437,16 +441,6 @@ namespace OceanyaClient.Features.Viewport
             return null;
         }
 
-        internal ICMessage? GetActiveLastRenderedMessage()
-        {
-            return GetActiveControl()?.LastRenderedMessage;
-        }
-
-        internal void ReplayMessageForActiveClient(ICMessage message)
-        {
-            GetActiveControl()?.PreviewMessage(message);
-        }
-
         /// <inheritdoc/>
         public override string HeaderText => "Viewport";
 
@@ -577,6 +571,73 @@ namespace OceanyaClient.Features.Viewport
 
             RefreshHostSurfaceSize();
             UseAsWindowsPreviewChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        public void MirrorFrom(AO2ViewportWindowContent? source)
+        {
+            if (ReferenceEquals(mirrorSource, source))
+            {
+                RefreshMirrorSurfaceSize();
+                return;
+            }
+
+            if (mirrorSource != null)
+            {
+                mirrorSource.ViewportSurfaceLayoutChanged -= MirrorSource_ViewportSurfaceLayoutChanged;
+            }
+
+            foreach (AO2ViewportControl control in profileControls.Values)
+            {
+                control.AttachClient(null, null);
+                control.SurfaceLayoutChanged -= Control_SurfaceLayoutChanged;
+            }
+
+            profileControls.Clear();
+            activeClient = null;
+            ViewportHost.Children.Clear();
+            mirrorSource = source;
+
+            if (source == null)
+            {
+                mirrorSurface = null;
+                RefreshHostSurfaceSize();
+                return;
+            }
+
+            mirrorSurface = new Rectangle
+            {
+                IsHitTestVisible = false,
+                Fill = new VisualBrush(source.ViewportHost)
+                {
+                    Stretch = Stretch.Fill,
+                    AlignmentX = AlignmentX.Left,
+                    AlignmentY = AlignmentY.Top
+                }
+            };
+            ViewportHost.Children.Add(mirrorSurface);
+            source.ViewportSurfaceLayoutChanged += MirrorSource_ViewportSurfaceLayoutChanged;
+            RefreshMirrorSurfaceSize();
+        }
+
+        private void MirrorSource_ViewportSurfaceLayoutChanged(object? sender, EventArgs e)
+        {
+            RefreshMirrorSurfaceSize();
+        }
+
+        private void RefreshMirrorSurfaceSize()
+        {
+            if (mirrorSource == null || mirrorSurface == null)
+            {
+                return;
+            }
+
+            int width = mirrorSource.CurrentSurfaceWidth;
+            int height = mirrorSource.CurrentSurfaceHeight;
+            ViewportHost.Width = width;
+            ViewportHost.Height = height;
+            mirrorSurface.Width = width;
+            mirrorSurface.Height = height;
+            ViewportSurfaceLayoutChanged?.Invoke(this, EventArgs.Empty);
         }
 
         private static bool IsFinite(double value)

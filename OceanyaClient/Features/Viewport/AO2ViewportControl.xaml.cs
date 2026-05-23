@@ -170,8 +170,6 @@ namespace OceanyaClient.Features.Viewport
         /// </summary>
         public CharacterFolder? CurrentCharacter => currentRenderCharacter ?? sceneClient?.currentINI;
 
-        internal ICMessage? LastRenderedMessage => lastRenderedMessage;
-
         /// <summary>
         /// Current chatbox token resolved for the rendered character.
         /// </summary>
@@ -505,11 +503,6 @@ namespace OceanyaClient.Features.Viewport
                 return;
             }
 
-            if (!IsVisible)
-            {
-                return;
-            }
-
             if (Dispatcher.CheckAccess())
             {
                 RenderMessage(message);
@@ -519,10 +512,7 @@ namespace OceanyaClient.Features.Viewport
             Dispatcher.BeginInvoke(
                 new Action(() =>
                 {
-                    if (IsVisible)
-                    {
-                        RenderMessage(message);
-                    }
+                    RenderMessage(message);
                 }),
                 DispatcherPriority.Send);
         }
