@@ -6247,10 +6247,7 @@ namespace OceanyaClient
             {
                 viewportWindow.MinWidth = GetViewportMinimumWindowWidth();
                 viewportWindow.MinHeight = GetViewportMinimumWindowHeight();
-                if (ShouldResizeViewportToNativeSurface(
-                        SaveFile.Data.GMViewportWindowState,
-                        viewportContent.CurrentSurfaceWidth,
-                        viewportContent.CurrentSurfaceHeight))
+                if (SaveFile.Data.GMViewportWindowState == null)
                 {
                     ResizeViewportWindowToContent(
                         viewportContent.CurrentSurfaceWidth,
@@ -6259,6 +6256,7 @@ namespace OceanyaClient
                 }
 
                 NormalizeVisibleViewportWindowSize(preferWidth: false);
+                CaptureViewportWindowState();
             }
         }
 
@@ -8276,20 +8274,6 @@ namespace OceanyaClient
                 && width > 0
                 && height > 0
                 && Math.Abs((width / height) - GetViewportContentAspectRatio()) < 0.01;
-        }
-
-        private static bool ShouldResizeViewportToNativeSurface(
-            ViewportWindowState? savedState,
-            int surfaceWidth,
-            int surfaceHeight)
-        {
-            if (savedState == null)
-            {
-                return true;
-            }
-
-            return savedState.SurfaceWidth != surfaceWidth
-                || savedState.SurfaceHeight != surfaceHeight;
         }
 
         private static double GetViewportContentAspectRatio()

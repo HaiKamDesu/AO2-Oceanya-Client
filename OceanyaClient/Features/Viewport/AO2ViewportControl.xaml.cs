@@ -150,13 +150,18 @@ namespace OceanyaClient.Features.Viewport
 
         internal void ReloadThemeLayout()
         {
+            bool refreshVisibleChatArrow = ChatArrowImage.Visibility == Visibility.Visible;
+            string chatArrowToken = ChatPreview.ChatToken;
+
+            Ao2AnimationPreview.ClearStaticPreviewCache();
             ApplyThemeLayout();
             ApplySavedChatBackground();
             ReapplyScenePlacementAfterLayoutChange();
             ChatPreview.RefreshPreview();
-            if (ChatArrowImage.Visibility == Visibility.Visible)
+            if (refreshVisibleChatArrow)
             {
-                ApplyChatArrowBounds();
+                StopChatArrow();
+                ShowChatArrow(chatArrowToken);
             }
         }
 
