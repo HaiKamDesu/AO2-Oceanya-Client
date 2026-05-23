@@ -54,6 +54,8 @@ namespace OceanyaClient.Components
         public Func<string, string, Task>? OnDeleteCharacterFolderRequested;
         public Action<AOClient, string>? OnPositionConfirmed;
         public Action? OnClientStateChanged;
+        public Func<IReadOnlyList<AOClient>>? PairingClientProvider;
+        public Func<AOClient, AOClient?>? PairingNetworkClientProvider;
         private const string DefaultPositionDisplayPrefix = "default";
 
         public ICMessageSettings()
@@ -1283,6 +1285,32 @@ namespace OceanyaClient.Components
             if (result.HasValue)
             {
                 curClient.SelfOffset = result.Value;
+                OnClientStateChanged?.Invoke();
+            }
+
+            txtICMessage.Focus();
+        }
+
+        private void btnPairingStudio_Click(object sender, RoutedEventArgs e)
+        {
+            if (curClient == null || curClient.currentINI == null)
+            {
+                txtICMessage.Focus();
+                return;
+            }
+
+            CharacterPairingStudioWindow.PairingStudioResult? result =
+                CharacterPairingStudioWindow.ShowDialog(
+                    Window.GetWindow(this),
+                    curClient,
+                    PairingNetworkClientProvider?.Invoke(curClient) ?? curClient,
+                    PairingClientProvider?.Invoke());
+            if (result != null)
+            {
+                curClient.PairTargetCharId = result.TargetCharId;
+                curClient.PairTargetCharacterName = result.TargetCharacterName;
+                curClient.PairLayerOrder = Math.Clamp(result.LayerOrder, 0, 1);
+                curClient.SelfOffset = result.SelfOffset;
                 OnClientStateChanged?.Invoke();
             }
 

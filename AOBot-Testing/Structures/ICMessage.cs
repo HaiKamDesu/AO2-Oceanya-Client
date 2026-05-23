@@ -556,6 +556,11 @@ namespace AOBot_Testing.Structures
             return $"{offset.Horizontal.ToString(CultureInfo.InvariantCulture)}&{offset.Vertical.ToString(CultureInfo.InvariantCulture)}";
         }
 
+        public static string BuildOffsetDebugString((int Horizontal, int Vertical) offset, bool includeVerticalOffset)
+        {
+            return BuildOffsetField(offset, includeVerticalOffset);
+        }
+
         private static PacketFieldLayout ResolvePacketFieldLayout(int fieldCount)
         {
             // Servers (tsuserverCC, tsuserver3) always echo with OtherName/OtherEmote/OtherOffset/OtherFlip

@@ -225,6 +225,11 @@
                                   Style="{StaticResource CategoryCheckBoxStyle}"
                                   Checked="CategoryFilter_Changed"
                                   Unchecked="CategoryFilter_Changed"/>
+                        <CheckBox x:Name="FilterPairingStudio"
+                                  Content="Pairing Studio"
+                                  Style="{StaticResource CategoryCheckBoxStyle}"
+                                  Checked="CategoryFilter_Changed"
+                                  Unchecked="CategoryFilter_Changed"/>
                         <CheckBox x:Name="FilterSFX"
                                   Content="SFX"
                                   Style="{StaticResource CategoryCheckBoxStyle}"

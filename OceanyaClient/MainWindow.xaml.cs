@@ -488,6 +488,19 @@ namespace OceanyaClient
                 }
             };
             ICMessageSettingsControl.OnClientStateChanged += CaptureGmMultiClientSnapshot;
+            ICMessageSettingsControl.PairingClientProvider = () =>
+                useSingleInternalClient
+                    ? Array.Empty<AOClient>()
+                    : clientOrder.ToList();
+            ICMessageSettingsControl.PairingNetworkClientProvider = profileClient =>
+            {
+                if (useSingleInternalClient)
+                {
+                    ApplyProfileToSingleInternalClient(profileClient);
+                }
+
+                return GetTargetClientForNetwork(profileClient);
+            };
 
             OOCLogControl.txtOOCShowname.Text = SaveFile.Data.OOCName;
             OOCLogControl.txtOOCShowname.TextChanged += (_, _) => HandleOocShownameTextChanged();
@@ -3682,6 +3695,9 @@ namespace OceanyaClient
             singleInternalClient.Immediate = profileClient.Immediate;
             singleInternalClient.Additive = profileClient.Additive;
             singleInternalClient.SelfOffset = profileClient.SelfOffset;
+            singleInternalClient.PairTargetCharId = profileClient.PairTargetCharId;
+            singleInternalClient.PairTargetCharacterName = profileClient.PairTargetCharacterName;
+            singleInternalClient.PairLayerOrder = profileClient.PairLayerOrder;
             singleInternalClient.switchPosWhenChangingINI = profileClient.switchPosWhenChangingINI;
 
             if (!string.IsNullOrWhiteSpace(profileClient.curPos))
@@ -4303,6 +4319,9 @@ namespace OceanyaClient
             client.Immediate = state.Immediate;
             client.Additive = state.Additive;
             client.SelfOffset = (state.SelfOffsetHorizontal, state.SelfOffsetVertical);
+            client.PairTargetCharId = state.PairTargetCharId;
+            client.PairTargetCharacterName = state.PairTargetCharacterName?.Trim() ?? string.Empty;
+            client.PairLayerOrder = Math.Clamp(state.PairLayerOrder, 0, 1);
             client.switchPosWhenChangingINI = state.SwitchPosWhenChangingIni;
 
             if (!string.IsNullOrWhiteSpace(state.Position))
@@ -4337,6 +4356,9 @@ namespace OceanyaClient
                 Additive = client.Additive,
                 SelfOffsetHorizontal = client.SelfOffset.Horizontal,
                 SelfOffsetVertical = client.SelfOffset.Vertical,
+                PairTargetCharId = client.PairTargetCharId,
+                PairTargetCharacterName = client.PairTargetCharacterName?.Trim() ?? string.Empty,
+                PairLayerOrder = Math.Clamp(client.PairLayerOrder, 0, 1),
                 SwitchPosWhenChangingIni = client.switchPosWhenChangingINI
             };
         }

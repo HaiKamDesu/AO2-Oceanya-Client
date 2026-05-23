@@ -163,5 +163,44 @@
                 </Style>
             </Button.Style>
         </Button>
+        <Button x:Name="btnPairingStudio" Height="42" Width="42" Canvas.Left="153" Canvas.Top="215"
+            AutomationProperties.AutomationId="Main.Ic.PairingStudio"
+            ToolTip="Pairing Studio"
+            BorderBrush="{x:Null}" Padding="0"
+            Click="btnPairingStudio_Click"
+            Focusable="False" IsTabStop="False">
+            <Button.Style>
+                <Style TargetType="{x:Type Button}">
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="{x:Type Button}">
+                                <Border x:Name="ButtonChrome"
+                                        Background="Transparent"
+                                        BorderBrush="Transparent"
+                                        BorderThickness="1"
+                                        CornerRadius="3">
+                                    <Image x:Name="ButtonImage"
+                                           Source="pack://application:,,,/OceanyaClient;component/Resources/Buttons/pair_button.png"
+                                           Stretch="Uniform"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="ButtonChrome" Property="Background" Value="#33192630"/>
+                                        <Setter TargetName="ButtonChrome" Property="BorderBrush" Value="#667996A8"/>
+                                        <Setter TargetName="ButtonImage" Property="Opacity" Value="0.9"/>
+                                    </Trigger>
+                                    <Trigger Property="IsPressed" Value="True">
+                                        <Setter TargetName="ButtonChrome" Property="Background" Value="#6610161C"/>
+                                        <Setter TargetName="ButtonChrome" Property="BorderBrush" Value="#FF4E6576"/>
+                                        <Setter TargetName="ButtonImage" Property="Opacity" Value="0.72"/>
+                                        <Setter TargetName="ButtonImage" Property="Margin" Value="1,1,0,0"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+            </Button.Style>
+        </Button>
     </Canvas>
 </UserControl>

@@ -44,7 +44,16 @@ Two players can appear on-screen at the same time, standing side by side. One pl
 
 ### Current State
 
-The viewport can **render incoming pairs** from other players (the `PairCharacterImage` layer and `RenderPairCharacter` in `AO2ViewportControl.xaml.cs` are fully working). However, there is **no UI to initiate or configure pairing** — `OtherCharId` is always hardcoded to `-1` in `ICMessageSettings.xaml.cs:778`, so Oceanya users can never appear paired with anyone.
+The viewport can **render incoming pairs** from other players (the `PairCharacterImage` layer and `RenderPairCharacter` in `AO2ViewportControl.xaml.cs` are fully working). Oceanya now has a working **Pairing Studio** opened from the IC controls beside the offset button. It refreshes current-area players through an internal `/getarea` OOC command, hides that internal refresh from the visible OOC log, prefers current-area players over the full server roster, falls back to the server character roster when parsing fails, highlights other internal Oceanya clients first, previews the pair in a live viewport, adjusts this client's outgoing offset, keeps partner offset preview-only, chooses layer order, clears pairing, and persists pair state per GM profile.
+
+Implementation paths:
+- `OceanyaClient/Components/Forms/CharacterPairingStudioWindow.cs`
+- `OceanyaClient/Components/ICMessageSettings.xaml(.cs)` `btnPairingStudio`
+- `AOBot-Testing/AO2Parser.cs` `/getarea` parser for current-area player candidates
+- `AOBot-Testing/Agents/AOClient.cs` `PairTargetCharId`, `PairTargetCharacterName`, `PairLayerOrder`
+- `Common/SaveFile.cs` `GmMultiClientSnapshotClient` pair fields
+
+Remaining improvement area: add a richer partner-readiness workflow based on live echoed IC state. Vanilla AO2/tsuserver still requires both clients to select each other and send IC from the same position before the pair appears in server echoes.
 
 ### Technical Spec
 
@@ -54,22 +63,17 @@ The viewport can **render incoming pairs** from other players (the `PairCharacte
 
 **Relevant MS# packet fields (already defined in `AOBot-Testing/Structures/ICMessage.cs`):**
 - `OtherCharId` (int, -1 = no pair)
-- `OtherCharIdRaw` (string — encodes pair ordering: `"N&"` prefix means pair is behind, no prefix means in front)
+- `OtherCharIdRaw` (string — encodes pair ordering as `charId^order` when the server supports effects)
 - `OtherOffset` (int, horizontal pixel offset for the pair character)
 - `OtherOffsetVertical` (int, vertical offset — Y_OFFSET feature)
 - `OtherFlip` (bool)
 - `SelfOffset` (int, horizontal offset for your own character)
 - `SelfOffsetVertical` (int)
 
-**What needs to be built:**
-1. A "Pair" section in the `ICMessageSettings` user control (or a popup) containing:
-   - A list of available characters (populated from `AOClient.AvailableCharacters` or `AOClient.OnlineCharacters`)
-   - An offset spinbox for `SelfOffset` (-500 to 500 px)
-   - An offset spinbox for `OtherOffset`
-   - A front/behind order toggle
-   - A "clear pair" button that sets `OtherCharId = -1`
-2. The selected pair data must be stored per-client in the GM snapshot (`GMMultiClientSnapshot`) — the fields `SelfOffset`, `SelfOffsetVertical` exist in `SaveFile.cs` but `OtherCharId` and pair ordering do not.
-3. On `BuildICMessage()` in `ICMessageSettings.xaml.cs`, fill in `OtherCharId`, `OtherCharIdRaw`, `OtherOffset`, `OtherOffsetVertical`, `OtherFlip`, `SelfOffset`, `SelfOffsetVertical` from the UI state.
+**Implemented send-side behavior:**
+1. Pairing Studio lists current-area players from supported `/getarea` output such as newline AO2 reports and single-line `$ASG` reports. If parsing fails, it shows the server character roster instead of local AO asset folders.
+2. The selected pair data is stored per-client in the GM snapshot (`GMMultiClientSnapshot`) through `PairTargetCharId`, `PairTargetCharacterName`, `PairLayerOrder`, and `SelfOffset`.
+3. `AOClient.SendICMessage()` fills outgoing compact `MS#` `OtherCharIdRaw` and `SelfOffset` from saved pair state. The server supplies `OtherName`, `OtherEmote`, `OtherOffset`, and `OtherFlip` in echoed legacy `MS#` packets after mutual pairing is confirmed.
 
 **Key constraint:** pairing requires `CCCC_IC_SUPPORT` in the server feature list (`AOClient.ServerFeatures`). Check before enabling the UI.
 

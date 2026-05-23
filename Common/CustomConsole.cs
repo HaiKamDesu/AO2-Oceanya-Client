@@ -44,6 +44,8 @@ namespace Common
             MusicList,
             /// <summary>Area navigator list build and refresh diagnostics</summary>
             AreaVisualizer,
+            /// <summary>AO2 pairing studio candidate discovery and /getarea diagnostics</summary>
+            PairingStudio,
             /// <summary>SFX/blip/shout packet diagnostics</summary>
             SFX
         }

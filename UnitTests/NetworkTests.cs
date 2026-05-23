@@ -194,6 +194,92 @@ public class NetworkTests
     }
 
     [Test]
+    public void ParseGetArea_SupportsSingleLineAsgOutput()
+    {
+        string output = "$ASG: People in this area: 2 === Private Suite 3 === [PS3]: [2 Users][IDLE][LOCKED] [CM][0] Franziska (Kam) [3] Trucy (Gedge)";
+
+        AOBot_Testing.AO2Parser.GetAreaParseResult result = AOBot_Testing.AO2Parser.ParseGetAreaDetailed(output);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsGetAreaReport, Is.True);
+            Assert.That(result.AreaName, Is.EqualTo("Private Suite 3"));
+            Assert.That(result.ParsedPlayers, Is.True);
+            Assert.That(result.Players.Select(player => player.ICCharacterName), Is.EqualTo(new[] { "Franziska", "Trucy" }));
+            Assert.That(result.Players.Select(player => player.CharacterId), Is.EqualTo(new[] { 0, 3 }));
+            Assert.That(result.Players[0].IsCM, Is.True);
+            Assert.That(result.Players[0].OOCShowname, Is.EqualTo("Kam"));
+            Assert.That(result.Players[0].RawGetAreaLine, Is.EqualTo("[CM][0] Franziska (Kam)"));
+            Assert.That(result.Players[1].OOCShowname, Is.EqualTo("Gedge"));
+        });
+    }
+
+    [Test]
+    public void ParseGetArea_SupportsTsuserverCcHeaderOutput()
+    {
+        string output = "$H: People in this area: 3\n\n=== Lobby ===\n\n[LOB]: [3 Users][IDLE]\n\n[2] EmaSkye\n\n[0] Franny\n\n[1] Franziska";
+
+        AOBot_Testing.AO2Parser.GetAreaParseResult result = AOBot_Testing.AO2Parser.ParseGetAreaDetailed(output);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsGetAreaReport, Is.True);
+            Assert.That(result.AreaName, Is.EqualTo("Lobby"));
+            Assert.That(result.ParsedPlayers, Is.True);
+            Assert.That(result.Players.Select(player => player.ICCharacterName), Is.EqualTo(new[] { "EmaSkye", "Franny", "Franziska" }));
+            Assert.That(result.Players.Select(player => player.CharacterId), Is.EqualTo(new[] { 2, 0, 1 }));
+            Assert.That(result.Players[0].RawGetAreaLine, Is.EqualTo("[2] EmaSkye"));
+        });
+    }
+
+    [Test]
+    public void ParseGetArea_SupportsTsuserverCcFlaggedRowsWithoutSpaces()
+    {
+        string output = "People in this area: 2\r\n=== Lobby ===\r\n[LOB]: [2 Users][IDLE][LOCKED]\r\n[CM][M][AFK][4] Judge (Host)\r\n[Hidden][7] Witness (Watcher) [discord]";
+
+        AOBot_Testing.AO2Parser.GetAreaParseResult result = AOBot_Testing.AO2Parser.ParseGetAreaDetailed(output);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.ParsedPlayers, Is.True);
+            Assert.That(result.Players.Select(player => player.ICCharacterName), Is.EqualTo(new[] { "Judge", "Witness" }));
+            Assert.That(result.Players.Select(player => player.CharacterId), Is.EqualTo(new[] { 4, 7 }));
+            Assert.That(result.Players[0].IsCM, Is.True);
+            Assert.That(result.Players[0].OOCShowname, Is.EqualTo("Host"));
+            Assert.That(result.Players[0].RawGetAreaLine, Is.EqualTo("[CM][M][AFK][4] Judge (Host)"));
+            Assert.That(result.Players[1].OOCShowname, Is.EqualTo("Watcher"));
+        });
+    }
+
+    [Test]
+    public async Task HandleMessage_InternalGetAreaRefresh_UpdatesRosterWithoutLoggingOoc()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+        bool sawOoc = false;
+        IReadOnlyList<Player>? updatedPlayers = null;
+        bool? parsedSuccessfully = null;
+        client.OnOOCMessageReceived += (_, _, _) => sawOoc = true;
+        client.OnCurrentAreaPlayersUpdated += (players, parsed) =>
+        {
+            updatedPlayers = players;
+            parsedSuccessfully = parsed;
+        };
+
+        await client.RequestCurrentAreaPlayersRefreshAsync();
+        await client.HandleMessage("CT#Server#People in this area: 3 === Private Suite 3 === [PS3]: [3 Users][IDLE][LOCKED] [CM][0] Franziska (Kam) [3] Trucy (Gedge) [7] Phoenix (Wright)#1#%");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(sawOoc, Is.False);
+            Assert.That(client.LastGetAreaParseSucceeded, Is.True);
+            Assert.That(client.CurrentAreaPlayers.Select(player => player.ICCharacterName), Is.EqualTo(new[] { "Franziska", "Trucy", "Phoenix" }));
+            Assert.That(parsedSuccessfully, Is.True);
+            Assert.That(updatedPlayers, Is.Not.Null);
+            Assert.That(updatedPlayers!.Select(player => player.ICCharacterName), Is.EqualTo(new[] { "Franziska", "Trucy", "Phoenix" }));
+        });
+    }
+
+    [Test]
     public async Task HandleMessage_AreaUpdatePreservesEmptySlots()
     {
         AOClient client = new AOClient("ws://localhost:10001/");

@@ -175,6 +175,7 @@ namespace OceanyaClient
                 FilterViewport.IsChecked = _enabledCategories.Contains("Viewport");
                 FilterMusicList.IsChecked = _enabledCategories.Contains("MusicList");
                 FilterAreaVisualizer.IsChecked = _enabledCategories.Contains("AreaVisualizer");
+                FilterPairingStudio.IsChecked = _enabledCategories.Contains("PairingStudio");
                 FilterSFX.IsChecked     = _enabledCategories.Contains("SFX");
 
                 UpdateFilterSummary();
@@ -195,6 +196,7 @@ namespace OceanyaClient
             if (FilterViewport.IsChecked == true) _enabledCategories.Add("Viewport");
             if (FilterMusicList.IsChecked == true) _enabledCategories.Add("MusicList");
             if (FilterAreaVisualizer.IsChecked == true) _enabledCategories.Add("AreaVisualizer");
+            if (FilterPairingStudio.IsChecked == true) _enabledCategories.Add("PairingStudio");
             if (FilterSFX.IsChecked == true)      _enabledCategories.Add("SFX");
 
             UpdateFilterSummary();
@@ -287,6 +289,7 @@ namespace OceanyaClient
         private static readonly Brush CatViewportBrush = new SolidColorBrush(Color.FromRgb(0x66, 0xD9, 0x99));
         private static readonly Brush CatMusicListBrush = new SolidColorBrush(Color.FromRgb(0xC7, 0xA4, 0x5A));
         private static readonly Brush CatAreaVisualizerBrush = new SolidColorBrush(Color.FromRgb(0x6A, 0xC6, 0xCF));
+        private static readonly Brush CatPairingStudioBrush = new SolidColorBrush(Color.FromRgb(0xF0, 0x9A, 0xA8));
 
         private static Brush GetCategoryBrush(CustomConsole.LogCategory category) => category switch
         {
@@ -296,6 +299,7 @@ namespace OceanyaClient
             CustomConsole.LogCategory.Viewport => CatViewportBrush,
             CustomConsole.LogCategory.MusicList => CatMusicListBrush,
             CustomConsole.LogCategory.AreaVisualizer => CatAreaVisualizerBrush,
+            CustomConsole.LogCategory.PairingStudio => CatPairingStudioBrush,
             _                                 => CatSystemBrush
         };
 
@@ -307,6 +311,7 @@ namespace OceanyaClient
             CustomConsole.LogCategory.Viewport => "[VPT]",
             CustomConsole.LogCategory.MusicList => "[MUS]",
             CustomConsole.LogCategory.AreaVisualizer => "[ARA]",
+            CustomConsole.LogCategory.PairingStudio => "[PAIR]",
             _                                 => "[SYS]"
         };
 

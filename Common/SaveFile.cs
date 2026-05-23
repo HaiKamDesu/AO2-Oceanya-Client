@@ -522,7 +522,7 @@ namespace OceanyaClient
         public bool MusicListShowAssetPaths { get; set; } = false;
         public List<string> MusicListCollapsedCategoryKeys { get; set; } = new List<string>();
         public List<string> EnabledLogCategories { get; set; } =
-            new List<string> { "System", "Network", "IC", "OOC", "Viewport", "MusicList", "AreaVisualizer" };
+            new List<string> { "System", "Network", "IC", "OOC", "Viewport", "MusicList", "AreaVisualizer", "PairingStudio" };
         public List<CallwordRule> CallwordRules { get; set; } = new List<CallwordRule>();
         public List<ExtraAudioRule> ExtraAudioRules { get; set; } = new List<ExtraAudioRule>();
         public Dictionary<string, int> FrequentlyUsedIniPuppets { get; set; } =
@@ -613,6 +613,9 @@ namespace OceanyaClient
         public bool Additive { get; set; }
         public int SelfOffsetHorizontal { get; set; }
         public int SelfOffsetVertical { get; set; }
+        public int PairTargetCharId { get; set; } = -1;
+        public string PairTargetCharacterName { get; set; } = string.Empty;
+        public int PairLayerOrder { get; set; }
         public bool SwitchPosWhenChangingIni { get; set; }
     }
 
@@ -829,7 +832,7 @@ namespace OceanyaClient
             data.EnabledLogCategories ??= new List<string>();
             if (data.EnabledLogCategories.Count == 0)
             {
-                data.EnabledLogCategories.AddRange(new[] { "System", "Network", "IC", "OOC", "Viewport", "MusicList", "AreaVisualizer" });
+                data.EnabledLogCategories.AddRange(new[] { "System", "Network", "IC", "OOC", "Viewport", "MusicList", "AreaVisualizer", "PairingStudio" });
             }
 
             for (int i = 0; i < data.EnabledLogCategories.Count; i++)
@@ -852,6 +855,11 @@ namespace OceanyaClient
             if (!data.EnabledLogCategories.Contains("AreaVisualizer", StringComparer.OrdinalIgnoreCase))
             {
                 data.EnabledLogCategories.Add("AreaVisualizer");
+            }
+
+            if (!data.EnabledLogCategories.Contains("PairingStudio", StringComparer.OrdinalIgnoreCase))
+            {
+                data.EnabledLogCategories.Add("PairingStudio");
             }
 
             data.CharacterFolderPreviewEmoteOverrides ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -1195,6 +1203,9 @@ namespace OceanyaClient
                     Additive = client.Additive,
                     SelfOffsetHorizontal = client.SelfOffsetHorizontal,
                     SelfOffsetVertical = client.SelfOffsetVertical,
+                    PairTargetCharId = client.PairTargetCharId,
+                    PairTargetCharacterName = client.PairTargetCharacterName?.Trim() ?? string.Empty,
+                    PairLayerOrder = client.PairLayerOrder,
                     SwitchPosWhenChangingIni = client.SwitchPosWhenChangingIni
                 })
                 .Where(client => !string.IsNullOrWhiteSpace(client.ClientName)

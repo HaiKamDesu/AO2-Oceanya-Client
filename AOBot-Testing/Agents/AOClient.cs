@@ -51,6 +51,8 @@ namespace AOBot_Testing.Agents
         private readonly List<AreaInfo> availableAreaInfos = new List<AreaInfo>();
         private readonly List<string> availableMusic = new List<string>();
         private readonly List<Player> currentAreaPlayers = new List<Player>();
+        private int pendingInternalGetAreaRefreshes;
+        private bool lastGetAreaParseSucceeded;
         private readonly List<string> currentEvidenceNames = new List<string>();
         private readonly List<string> currentEvidenceImages = new List<string>();
         private string serverAssetUrl = string.Empty;
@@ -78,6 +80,9 @@ namespace AOBot_Testing.Agents
         public bool Immediate = false;
         public bool Additive = false;
         public (int Horizontal, int Vertical) SelfOffset;
+        public int PairTargetCharId = -1;
+        public string PairTargetCharacterName = string.Empty;
+        public int PairLayerOrder = 0;
         public bool switchPosWhenChangingINI = false;
 
         private CharacterFolder? CurrentINI
@@ -114,6 +119,7 @@ namespace AOBot_Testing.Agents
         public Action<string>? OnCurrentAreaChanged;
         public Action<IReadOnlyList<string>>? OnAvailableAreasUpdated;
         public Action<IReadOnlyList<string>>? OnAvailableMusicUpdated;
+        public Action<IReadOnlyList<Player>, bool>? OnCurrentAreaPlayersUpdated;
 
         /// <summary>
         /// Raised when an MC# packet is received.
@@ -195,6 +201,8 @@ namespace AOBot_Testing.Agents
                 return currentAreaPlayers.AsReadOnly();
             }
         }
+
+        public bool LastGetAreaParseSucceeded => lastGetAreaParseSucceeded;
 
         public IReadOnlyDictionary<string, bool> ServerCharacterAvailability
         {
@@ -280,7 +288,20 @@ namespace AOBot_Testing.Agents
                 msg.Realization = effect == ICMessage.Effects.Realization;
                 msg.TextColor = NormalizeTextColorForPacket(textColor);
                 msg.ShowName = ResolveShowNameForPacket();
-                msg.OtherCharId = -1;
+                if (SupportsServerFeature("CCCC_IC_SUPPORT")
+                    && PairTargetCharId > -1
+                    && PairTargetCharId != iniPuppetID)
+                {
+                    msg.OtherCharId = PairTargetCharId;
+                    msg.OtherCharIdRaw = SupportsServerFeature("EFFECTS")
+                        ? $"{PairTargetCharId}^{Math.Clamp(PairLayerOrder, 0, 1)}"
+                        : PairTargetCharId.ToString();
+                }
+                else
+                {
+                    msg.OtherCharId = -1;
+                    msg.OtherCharIdRaw = string.Empty;
+                }
                 msg.SelfOffset = SelfOffset;
                 msg.NonInterruptingPreAnim = PreanimEnabled && Immediate;
                 msg.SfxLooping = false;
@@ -319,20 +340,29 @@ namespace AOBot_Testing.Agents
 
                 msg.EffectString = ResolveEffectStringForPacket(hasSelectedCustomSfx);
 
+                bool includeLoopingSfx = SupportsServerFeature("LOOPING_SFX");
+                bool includeAdditive = SupportsServerFeature("ADDITIVE");
+                bool includeEffects = SupportsServerFeature("EFFECTS");
+                bool includeCustomBlips = SupportsServerFeature("CUSTOM_BLIPS");
+                bool includeExtendedIcFields = includeLoopingSfx || includeAdditive || includeEffects || includeCustomBlips;
+
                 ICMessage.SerializationOptions serializationOptions = new ICMessage.SerializationOptions
                 {
                     IncludeCcccIcSupport = SupportsServerFeature("CCCC_IC_SUPPORT"),
-                    IncludeLoopingSfx = SupportsServerFeature("LOOPING_SFX"),
-                    IncludeAdditive = SupportsServerFeature("ADDITIVE"),
-                    IncludeEffects = SupportsServerFeature("EFFECTS"),
-                    IncludeCustomBlips = SupportsServerFeature("CUSTOM_BLIPS"),
+                    IncludeLoopingSfx = includeExtendedIcFields,
+                    IncludeAdditive = includeExtendedIcFields,
+                    IncludeEffects = includeExtendedIcFields,
+                    IncludeCustomBlips = includeCustomBlips,
                     IncludeVerticalOffset = SupportsServerFeature("Y_OFFSET"),
-                    IncludeSlide = SupportsServerFeature("CUSTOM_BLIPS")
+                    IncludeSlide = includeCustomBlips
                 };
                 string command = ICMessage.GetCommand(msg, serializationOptions);
                 CustomConsole.Info(
-                    $"Outgoing IC packet metadata: character=\"{msg.Character}\" iniPuppet=\"{iniPuppetName}\" iniPuppetId={iniPuppetID} emote=\"{msg.Emote}\" showname=\"{msg.ShowName}\" connected={IsTransportConnected}",
+                    $"Outgoing IC packet metadata: character=\"{msg.Character}\" iniPuppet=\"{iniPuppetName}\" iniPuppetId={iniPuppetID} emote=\"{msg.Emote}\" showname=\"{msg.ShowName}\" pairTarget={msg.OtherCharIdRaw} selfOffset={ICMessage.BuildOffsetDebugString(msg.SelfOffset, serializationOptions.IncludeVerticalOffset)} cccc={serializationOptions.IncludeCcccIcSupport} extended={includeExtendedIcFields} connected={IsTransportConnected}",
                     Common.CustomConsole.LogCategory.IC);
+                CustomConsole.Info(
+                    $"[PAIR] Outgoing IC pair state. client=\"{clientName}\" iniPuppetID={iniPuppetID} pairTarget={PairTargetCharId} pairRaw=\"{msg.OtherCharIdRaw}\" pairName=\"{PairTargetCharacterName}\" pairOrder={PairLayerOrder} selfOffset=({SelfOffset.Horizontal},{SelfOffset.Vertical}) cccc={serializationOptions.IncludeCcccIcSupport} effects={includeEffects} yOffset={serializationOptions.IncludeVerticalOffset}",
+                    Common.CustomConsole.LogCategory.PairingStudio);
                 CustomConsole.Info("Outgoing IC packet: " + command, Common.CustomConsole.LogCategory.Network);
 
                 /// If the message is queued, add it to the list of pending messages.
@@ -479,6 +509,28 @@ namespace AOBot_Testing.Agents
                     serverCharacterList[normalized] = true;
                 }
             }
+        }
+
+        public void ApplyServerFeaturesForTests(IEnumerable<string> features)
+        {
+            serverFeatures.Clear();
+            foreach (string feature in features)
+            {
+                string normalized = feature?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(normalized))
+                {
+                    serverFeatures.Add(normalized);
+                }
+            }
+        }
+
+        public async Task RequestCurrentAreaPlayersRefreshAsync()
+        {
+            Interlocked.Increment(ref pendingInternalGetAreaRefreshes);
+            CustomConsole.Info(
+                $"[PAIR] Sending internal /getarea refresh. client={clientName} iniPuppetID={iniPuppetID} currentArea=\"{currentArea}\" connected={IsTransportConnected}",
+                CustomConsole.LogCategory.PairingStudio);
+            await SendOOCMessage("/getarea");
         }
 
         /// <summary>
@@ -741,30 +793,56 @@ namespace AOBot_Testing.Agents
                 var messageText = Globals.ReplaceTextForSymbols(fields[2]);
                 var fromServer = fields[3].ToString() == "1";
 
-                if (messageText.ToLower().Contains("people in this area: ") && messageText.ToLower().Contains("===") && messageText.Split("\n").Length > 3)
+                AO2Parser.GetAreaParseResult getAreaResult = AO2Parser.ParseGetAreaDetailed(messageText);
+                bool suppressInternalGetAreaMessage = ShouldSuppressInternalGetAreaOoc(messageText, getAreaResult);
+                if (getAreaResult.IsGetAreaReport)
                 {
-                    List<Player> players = AO2Parser.ParseGetArea(messageText);
+                    List<Player> players = getAreaResult.Players;
+                    lastGetAreaParseSucceeded = getAreaResult.ParsedPlayers;
+                    CustomConsole.Info(
+                        $"[PAIR] Parsed /getarea report. parsed={getAreaResult.ParsedPlayers} area=\"{getAreaResult.AreaName}\" players={players.Count} suppress={suppressInternalGetAreaMessage} fromServer={fromServer} text=\"{TruncateForLog(messageText, 240)}\"",
+                        CustomConsole.LogCategory.PairingStudio);
+                    if (!getAreaResult.ParsedPlayers && !string.IsNullOrWhiteSpace(getAreaResult.FailureReason))
+                    {
+                        CustomConsole.Warning(
+                            "[PAIR] /getarea parse failed: " + getAreaResult.FailureReason,
+                            category: CustomConsole.LogCategory.PairingStudio);
+                    }
+
+                    string parsedArea = getAreaResult.AreaName.Trim();
+                    if (!string.IsNullOrWhiteSpace(parsedArea))
+                    {
+                        if (ShouldIgnoreAreaDowngrade(parsedArea))
+                        {
+                            CustomConsole.Warning(
+                                $"[PAIR] Ignoring /getarea area downgrade. current=\"{currentArea}\" parsed=\"{parsedArea}\"",
+                                category: CustomConsole.LogCategory.PairingStudio);
+                            return;
+                        }
+
+                        SetCurrentArea(parsedArea);
+                        ApplyAreaInfoFromGetAreaMessage(parsedArea, messageText);
+                    }
+
                     currentAreaPlayers.Clear();
                     currentAreaPlayers.AddRange(players);
-                    Match areaMatch = Regex.Match(messageText, @"(?:^|\r?\n)===\s*(.+?)\s*===", RegexOptions.IgnoreCase);
-                    if (areaMatch.Success)
+                    if (players.Count > 0)
                     {
-                        string parsedArea = areaMatch.Groups[1].Value.Trim();
-                        if (!string.IsNullOrWhiteSpace(parsedArea))
-                        {
-                            if (ShouldIgnoreAreaDowngrade(parsedArea))
-                            {
-                                return;
-                            }
-
-                            SetCurrentArea(parsedArea);
-                            ApplyAreaInfoFromGetAreaMessage(parsedArea, messageText);
-                        }
+                        CustomConsole.Info(
+                            "[PAIR] Current-area players: " + string.Join(", ", players.Select(player => $"[{player.CharacterId}] {player.ICCharacterName}")),
+                            CustomConsole.LogCategory.PairingStudio);
                     }
+
+                    OnCurrentAreaPlayersUpdated?.Invoke(currentAreaPlayers.ToList().AsReadOnly(), lastGetAreaParseSucceeded);
                 }
                 else if (fromServer && messageText.Contains("=== Areas ===", StringComparison.OrdinalIgnoreCase))
                 {
                     ApplyAreaInfosFromAreaListMessage(messageText);
+                }
+
+                if (suppressInternalGetAreaMessage)
+                {
+                    return;
                 }
 
                 // Handle OOC message
@@ -981,6 +1059,38 @@ namespace AOBot_Testing.Agents
             {
                 OnIcActionReceived?.Invoke(displayName, "has presented evidence " + evidenceMessage, isSentFromSelf, ICMessage.TextColors.White);
             }
+        }
+
+        private bool ShouldSuppressInternalGetAreaOoc(string messageText, AO2Parser.GetAreaParseResult getAreaResult)
+        {
+            if (Volatile.Read(ref pendingInternalGetAreaRefreshes) <= 0)
+            {
+                return false;
+            }
+
+            bool isCommandEcho = string.Equals(messageText?.Trim(), "/getarea", StringComparison.OrdinalIgnoreCase);
+            bool isAreaResponse = getAreaResult.IsGetAreaReport;
+            if (!isCommandEcho && !isAreaResponse)
+            {
+                return false;
+            }
+
+            if (isAreaResponse)
+            {
+                Interlocked.Decrement(ref pendingInternalGetAreaRefreshes);
+            }
+
+            return true;
+        }
+
+        private static string TruncateForLog(string value, int maxLength)
+        {
+            string normalized = (value ?? string.Empty)
+                .Replace("\r", "\\r", StringComparison.Ordinal)
+                .Replace("\n", "\\n", StringComparison.Ordinal);
+            return normalized.Length <= maxLength
+                ? normalized
+                : normalized.Substring(0, maxLength) + "...";
         }
 
         private string ResolveShoutLogMessage(ICMessage icMessage)
