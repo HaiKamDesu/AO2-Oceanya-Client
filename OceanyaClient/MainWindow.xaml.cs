@@ -88,6 +88,10 @@ namespace OceanyaClient
         private double? lastViewportWindowHeight;
         private double? lastPictureInPictureViewportWindowWidth;
         private double? lastPictureInPictureViewportWindowHeight;
+        private double? pendingPictureInPictureViewportRestoreWidth;
+        private double? pendingPictureInPictureViewportRestoreHeight;
+        private double? pendingPictureInPictureViewportRestoreLeft;
+        private double? pendingPictureInPictureViewportRestoreTop;
         private bool hasHookedHostWindowClosing;
         private bool cleanCloseInProgress;
         private bool hasAppliedMainWindowState;
@@ -5985,6 +5989,7 @@ namespace OceanyaClient
             (double initialWidth, double initialHeight, double? restoredLeft, double? restoredTop) =
                 ResolveViewportWindowRestoreState(savedState);
             (initialWidth, initialHeight) = NormalizeViewportWindowSize(initialWidth, initialHeight, preferWidth: false);
+            SetPictureInPictureViewportRestoreTarget(initialWidth, initialHeight, restoredLeft, restoredTop);
             (double restoreContentWidth, double restoreContentHeight) = ResolveViewportContentRestoreSize(savedState);
             pictureInPictureViewportContent!.SetCurrentValue(FrameworkElement.WidthProperty, restoreContentWidth);
             pictureInPictureViewportContent.SetCurrentValue(FrameworkElement.HeightProperty, restoreContentHeight);
@@ -6051,6 +6056,7 @@ namespace OceanyaClient
                 pictureInPictureViewportWindow = null;
                 lastPictureInPictureViewportWindowWidth = null;
                 lastPictureInPictureViewportWindowHeight = null;
+                ClearPictureInPictureViewportRestoreTarget();
                 isClosingPictureInPictureViewportWindow = false;
             };
 
@@ -6080,13 +6086,24 @@ namespace OceanyaClient
                     if (pictureInPictureViewportWindow != null && pictureInPictureViewportWindow.WindowState == WindowState.Normal)
                     {
                         (double desiredWidth, double desiredHeight) =
-                            NormalizeViewportWindowSize(pictureInPictureViewportWindow.Width, pictureInPictureViewportWindow.Height, preferWidth: false);
+                            ResolvePictureInPictureViewportRestoreOrCurrentSize(preferWidth: false);
                         pictureInPictureViewportWindow.Width = desiredWidth;
                         pictureInPictureViewportWindow.Height = desiredHeight;
+                        if (pendingPictureInPictureViewportRestoreLeft.HasValue)
+                        {
+                            pictureInPictureViewportWindow.Left = pendingPictureInPictureViewportRestoreLeft.Value;
+                        }
+
+                        if (pendingPictureInPictureViewportRestoreTop.HasValue)
+                        {
+                            pictureInPictureViewportWindow.Top = pendingPictureInPictureViewportRestoreTop.Value;
+                        }
+
                         RememberPictureInPictureViewportWindowSize(desiredWidth, desiredHeight);
                         pictureInPictureViewportWindow.Opacity = 1;
                     }
                     isRestoringPictureInPictureViewportWindow = false;
+                    ClearPictureInPictureViewportRestoreTarget();
                 }),
                 DispatcherPriority.Loaded);
         }
@@ -6135,12 +6152,22 @@ namespace OceanyaClient
 
         private void PictureInPictureViewportWindow_SizeChanged(object sender, SizeChangedEventArgs e)
         {
+            if (isRestoringPictureInPictureViewportWindow)
+            {
+                return;
+            }
+
             RememberPictureInPictureViewportWindowSize(e.NewSize.Width, e.NewSize.Height);
             CapturePictureInPictureViewportWindowState("resize");
         }
 
         private void PictureInPictureViewportWindow_LocationChanged(object? sender, EventArgs e)
         {
+            if (isRestoringPictureInPictureViewportWindow)
+            {
+                return;
+            }
+
             CapturePictureInPictureViewportWindowState("move");
         }
 
@@ -6269,10 +6296,57 @@ namespace OceanyaClient
             pictureInPictureViewportWindow.MinWidth = GetViewportMinimumWindowWidth();
             pictureInPictureViewportWindow.MinHeight = GetViewportMinimumWindowHeight();
             (double desiredWidth, double desiredHeight) =
-                NormalizeViewportWindowSize(pictureInPictureViewportWindow.Width, pictureInPictureViewportWindow.Height, preferWidth: false);
+                ResolvePictureInPictureViewportRestoreOrCurrentSize(preferWidth: false);
             pictureInPictureViewportWindow.Width = desiredWidth;
             pictureInPictureViewportWindow.Height = desiredHeight;
-            RememberPictureInPictureViewportWindowSize(desiredWidth, desiredHeight);
+            if (!isRestoringPictureInPictureViewportWindow)
+            {
+                RememberPictureInPictureViewportWindowSize(desiredWidth, desiredHeight);
+            }
+        }
+
+        private (double Width, double Height) ResolvePictureInPictureViewportRestoreOrCurrentSize(bool preferWidth)
+        {
+            if (pendingPictureInPictureViewportRestoreWidth.HasValue
+                && pendingPictureInPictureViewportRestoreHeight.HasValue)
+            {
+                return NormalizeViewportWindowSize(
+                    pendingPictureInPictureViewportRestoreWidth.Value,
+                    pendingPictureInPictureViewportRestoreHeight.Value,
+                    preferWidth);
+            }
+
+            if (pictureInPictureViewportWindow == null)
+            {
+                return (
+                    GetViewportWindowWidthFromContentWidth(AO2ViewportAssetResolver.ViewportToolWidth),
+                    GetViewportWindowHeightFromContentHeight(AO2ViewportAssetResolver.ViewportToolHeight));
+            }
+
+            return NormalizeViewportWindowSize(
+                ResolveCapturedWindowWidth(pictureInPictureViewportWindow, lastPictureInPictureViewportWindowWidth),
+                ResolveCapturedWindowHeight(pictureInPictureViewportWindow, lastPictureInPictureViewportWindowHeight),
+                preferWidth);
+        }
+
+        private void SetPictureInPictureViewportRestoreTarget(
+            double width,
+            double height,
+            double? left,
+            double? top)
+        {
+            pendingPictureInPictureViewportRestoreWidth = IsFinite(width) && width > 0 ? width : null;
+            pendingPictureInPictureViewportRestoreHeight = IsFinite(height) && height > 0 ? height : null;
+            pendingPictureInPictureViewportRestoreLeft = left.HasValue && IsFinite(left.Value) ? left.Value : null;
+            pendingPictureInPictureViewportRestoreTop = top.HasValue && IsFinite(top.Value) ? top.Value : null;
+        }
+
+        private void ClearPictureInPictureViewportRestoreTarget()
+        {
+            pendingPictureInPictureViewportRestoreWidth = null;
+            pendingPictureInPictureViewportRestoreHeight = null;
+            pendingPictureInPictureViewportRestoreLeft = null;
+            pendingPictureInPictureViewportRestoreTop = null;
         }
 
         private void EnsureViewportVisibleWithMainWindow()

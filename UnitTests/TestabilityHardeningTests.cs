@@ -643,6 +643,30 @@ namespace UnitTests
         }
 
         [Test]
+        public void MainWindow_CreateViewportWindowStateFromHostBounds_PreservesMinimumViewportSizeBelowDefault()
+        {
+            ViewportWindowState state = MainWindow.CreateViewportWindowStateFromHostBounds(
+                windowWidth: 162,
+                windowHeight: 217,
+                left: 12,
+                top: 24,
+                isVisible: true);
+
+            (double restoreWidth, double restoreHeight, double? left, double? top) =
+                MainWindow.ResolveViewportWindowRestoreState(state);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(state.Width, Is.EqualTo(160).Within(0.001));
+                Assert.That(state.Height, Is.EqualTo(185).Within(0.001));
+                Assert.That(restoreWidth, Is.EqualTo(162).Within(0.001));
+                Assert.That(restoreHeight, Is.EqualTo(217).Within(0.001));
+                Assert.That(left, Is.EqualTo(12).Within(0.001));
+                Assert.That(top, Is.EqualTo(24).Within(0.001));
+            });
+        }
+
+        [Test]
         public void AO2ViewportWindowContent_PictureInPictureToggle_DoesNotPersistAcrossSessions()
         {
             SaveFile.Data.GMPictureInPictureViewport = false;
