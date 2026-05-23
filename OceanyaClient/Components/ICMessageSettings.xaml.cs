@@ -914,7 +914,7 @@ namespace OceanyaClient.Components
                 Flip = client.flip,
                 Realization = false,
                 TextColor = ICMessage.TextColors.White,
-                ShowName = "",
+                ShowName = client.GetCurrentShowNameForPreview(),
                 CharId = 0,
                 EvidenceID = "0",
                 OtherCharId = -1,

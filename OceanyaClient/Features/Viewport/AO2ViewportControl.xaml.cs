@@ -411,6 +411,30 @@ namespace OceanyaClient.Features.Viewport
             Dispatcher.Invoke(() => ApplyCharacterOffset(CharacterImage, offset));
         }
 
+        internal void PreviewPairOffset((int Horizontal, int Vertical) offset)
+        {
+            Dispatcher.Invoke(() => ApplyCharacterOffset(PairCharacterImage, offset));
+        }
+
+        internal void PreviewPairFlip(bool flipped)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                PairCharacterImage.RenderTransformOrigin = new Point(0.5, 0.5);
+                PairCharacterImage.RenderTransform = BuildCharacterTransform(flipped, pairCharacterShakeTransform);
+            });
+        }
+
+        internal void PreviewPairLayerOrder(int layerOrder)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                bool pairInFront = Math.Clamp(layerOrder, 0, 1) == 1;
+                Panel.SetZIndex(CharacterImage, pairInFront ? 3 : 4);
+                Panel.SetZIndex(PairCharacterImage, pairInFront ? 4 : 3);
+            });
+        }
+
         private void AttachClientEvents()
         {
             if (sceneClient != null)
@@ -872,7 +896,7 @@ namespace OceanyaClient.Features.Viewport
                 : new AO2ViewportAssetResolver.ViewportImagePlacement(null, 0, 0, AO2ViewportAssetResolver.ViewportWidth, AO2ViewportAssetResolver.ViewportHeight);
             SetPlacedAnimatedImage(DeskImage, deskPlacement, shouldShowDesk, displayOptions.StretchMode);
 
-            RenderPairCharacter(message, character, centerAndHidePair || isZoom || isPreAnimation);
+            RenderPairCharacter(message, character, centerAndHidePair || isZoom);
             RenderSpeedlines(message, position, character, phase == ViewportPhase.Speaking && isZoom);
             if (phase == ViewportPhase.Speaking)
             {

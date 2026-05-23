@@ -245,7 +245,7 @@ public partial class App : Application
             return;
         }
 
-        if (window.ResizeMode == ResizeMode.NoResize)
+        if (!IsWindowPersistenceEligible(window))
         {
             return;
         }
@@ -287,7 +287,7 @@ public partial class App : Application
 
     private static void Window_ClosingForPersistence(object? sender, CancelEventArgs e)
     {
-        if (sender is not Window window || window.ResizeMode == ResizeMode.NoResize)
+        if (sender is not Window window || !IsWindowPersistenceEligible(window))
         {
             return;
         }
@@ -317,6 +317,13 @@ public partial class App : Application
         string typeName = window.GetType().FullName ?? window.GetType().Name;
         string title = (window.Title ?? string.Empty).Trim();
         return string.IsNullOrWhiteSpace(title) ? typeName : $"{typeName}|{title}";
+    }
+
+    private static bool IsWindowPersistenceEligible(Window window)
+    {
+        return window is GenericOceanyaWindow genericWindow
+            ? genericWindow.IsUserResizeEnabled
+            : window.ResizeMode != ResizeMode.NoResize;
     }
 
     private static bool IsFinite(double value)

@@ -44,7 +44,7 @@ namespace AOBot_Testing.Agents
 
         string hdid = string.Empty;
 
-        public int playerID;
+        public int playerID = -1;
         private string currentArea = string.Empty;
         private readonly object availableStateLock = new object();
         private readonly List<string> availableAreas = new List<string>();
@@ -83,6 +83,9 @@ namespace AOBot_Testing.Agents
         public int PairTargetCharId = -1;
         public string PairTargetCharacterName = string.Empty;
         public int PairLayerOrder = 0;
+        public int LastSentPairTargetCharId = -1;
+        public int LastSentPairLayerOrder = 0;
+        public HashSet<int> ConfirmedPairTargetCharIds { get; } = new HashSet<int>();
         public bool switchPosWhenChangingINI = false;
 
         private CharacterFolder? CurrentINI
@@ -363,6 +366,8 @@ namespace AOBot_Testing.Agents
                 CustomConsole.Info(
                     $"[PAIR] Outgoing IC pair state. client=\"{clientName}\" iniPuppetID={iniPuppetID} pairTarget={PairTargetCharId} pairRaw=\"{msg.OtherCharIdRaw}\" pairName=\"{PairTargetCharacterName}\" pairOrder={PairLayerOrder} selfOffset=({SelfOffset.Horizontal},{SelfOffset.Vertical}) cccc={serializationOptions.IncludeCcccIcSupport} effects={includeEffects} yOffset={serializationOptions.IncludeVerticalOffset}",
                     Common.CustomConsole.LogCategory.PairingStudio);
+                LastSentPairTargetCharId = msg.OtherCharId;
+                LastSentPairLayerOrder = Math.Clamp(PairLayerOrder, 0, 1);
                 CustomConsole.Info("Outgoing IC packet: " + command, Common.CustomConsole.LogCategory.Network);
 
                 /// If the message is queued, add it to the list of pending messages.
@@ -392,6 +397,11 @@ namespace AOBot_Testing.Agents
             {
                 CustomConsole.Error("Server connection is not active. Cannot send message.");
             }
+        }
+
+        public string GetCurrentShowNameForPreview()
+        {
+            return ResolveShowNameForPacket();
         }
 
         private async Task ProcessPendingMessages()

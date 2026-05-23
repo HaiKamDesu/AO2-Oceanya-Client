@@ -611,11 +611,6 @@ namespace OceanyaClient
         public bool PreanimEnabled { get; set; }
         public bool Immediate { get; set; }
         public bool Additive { get; set; }
-        public int SelfOffsetHorizontal { get; set; }
-        public int SelfOffsetVertical { get; set; }
-        public int PairTargetCharId { get; set; } = -1;
-        public string PairTargetCharacterName { get; set; } = string.Empty;
-        public int PairLayerOrder { get; set; }
         public bool SwitchPosWhenChangingIni { get; set; }
     }
 
@@ -1201,11 +1196,6 @@ namespace OceanyaClient
                     PreanimEnabled = client.PreanimEnabled,
                     Immediate = client.Immediate,
                     Additive = client.Additive,
-                    SelfOffsetHorizontal = client.SelfOffsetHorizontal,
-                    SelfOffsetVertical = client.SelfOffsetVertical,
-                    PairTargetCharId = client.PairTargetCharId,
-                    PairTargetCharacterName = client.PairTargetCharacterName?.Trim() ?? string.Empty,
-                    PairLayerOrder = client.PairLayerOrder,
                     SwitchPosWhenChangingIni = client.SwitchPosWhenChangingIni
                 })
                 .Where(client => !string.IsNullOrWhiteSpace(client.ClientName)
