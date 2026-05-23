@@ -85,7 +85,10 @@ namespace AOBot_Testing.Agents
         public int PairLayerOrder = 0;
         public int LastSentPairTargetCharId = -1;
         public int LastSentPairLayerOrder = 0;
+        public string LastSentPairPosition = string.Empty;
+        public (int Horizontal, int Vertical) LastSentPairSelfOffset = (int.MinValue, int.MinValue);
         public HashSet<int> ConfirmedPairTargetCharIds { get; } = new HashSet<int>();
+        public Dictionary<int, string> KnownPairTargetPositions { get; } = new Dictionary<int, string>();
         public bool switchPosWhenChangingINI = false;
 
         private CharacterFolder? CurrentINI
@@ -368,6 +371,8 @@ namespace AOBot_Testing.Agents
                     Common.CustomConsole.LogCategory.PairingStudio);
                 LastSentPairTargetCharId = msg.OtherCharId;
                 LastSentPairLayerOrder = Math.Clamp(PairLayerOrder, 0, 1);
+                LastSentPairPosition = msg.Side ?? string.Empty;
+                LastSentPairSelfOffset = msg.SelfOffset;
                 CustomConsole.Info("Outgoing IC packet: " + command, Common.CustomConsole.LogCategory.Network);
 
                 /// If the message is queued, add it to the list of pending messages.

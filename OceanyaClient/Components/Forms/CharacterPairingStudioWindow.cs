@@ -705,6 +705,8 @@ namespace OceanyaClient.Components
                     message.Emote ?? string.Empty,
                     message.Side ?? string.Empty,
                     message.OtherCharId);
+                RememberKnownPartnerPosition(charId, message.Side);
+                RememberObservedPartnerPairState(charId, message.OtherCharId);
 
                 if (selectedCandidate != null && selectedCandidate.CharacterId == charId)
                 {
@@ -713,7 +715,31 @@ namespace OceanyaClient.Components
 
                 RefreshCandidateList();
                 RefreshStatus();
+                RefreshPreview();
             });
+        }
+
+        private void RememberObservedPartnerPairState(int partnerCharacterId, int observedPairTargetId)
+        {
+            if (partnerCharacterId < 0)
+            {
+                return;
+            }
+
+            if (observedPairTargetId < 0)
+            {
+                return;
+            }
+
+            if (observedPairTargetId == GetSelfPairTargetId())
+            {
+                networkClient.ConfirmedPairTargetCharIds.Add(partnerCharacterId);
+                profileClient.ConfirmedPairTargetCharIds.Add(partnerCharacterId);
+                return;
+            }
+
+            networkClient.ConfirmedPairTargetCharIds.Remove(partnerCharacterId);
+            profileClient.ConfirmedPairTargetCharIds.Remove(partnerCharacterId);
         }
 
         private void HandleSelfPairEcho(ICMessage message)
@@ -907,26 +933,30 @@ namespace OceanyaClient.Components
             string partnerName = selectedCandidate.Name;
             bool askedSaved = profileClient.PairTargetCharId == selectedCandidate.CharacterId;
             bool askedInWindow = selectedCandidate.CanSelect;
-            bool pairConfigSent = IsCurrentPairConfigSent();
             bool partnerPairsBack = IsPartnerPairingBack(selectedCandidate);
             bool partnerAskedFirst = partnerPairsBack && !askedSaved;
             bool positionsMatched = ArePositionsMatched(selectedCandidate);
+            bool partnerPositionKnown = !string.IsNullOrWhiteSpace(GetKnownPartnerPosition(selectedCandidate));
+            bool pairConfigSent = IsCurrentPairConfigSent();
 
             if (partnerAskedFirst)
             {
                 AddPairingStep($"{partnerName} pairs with you", true);
                 AddPairingStep($"Asked {partnerName} to pair", askedInWindow);
-                AddPairingStep("Sent IC so server received your pair target", pairConfigSent);
             }
             else
             {
                 AddPairingStep($"Asked {partnerName} to pair", askedInWindow);
-                AddPairingStep("Sent IC so server received your pair target", pairConfigSent);
                 AddPairingStep($"{partnerName} pairs back", partnerPairsBack);
                 AddPairingStep($"{partnerName} sends IC so server receives their pair target", partnerPairsBack);
             }
 
-            AddPairingStep($"Matched position with {partnerName}", positionsMatched);
+            if (partnerPositionKnown)
+            {
+                AddPairingStep($"Matched position with {partnerName}", positionsMatched);
+            }
+
+            AddPairingStep("Sent IC so server received your current pair state", pairConfigSent);
             AddPairingStep("Paired", supportsPairing && askedInWindow && pairConfigSent && partnerPairsBack && positionsMatched);
         }
 
@@ -967,6 +997,18 @@ namespace OceanyaClient.Components
                 return state.Position;
             }
 
+            if (profileClient.KnownPairTargetPositions.TryGetValue(candidate.CharacterId, out string? profileKnownPosition)
+                && !string.IsNullOrWhiteSpace(profileKnownPosition))
+            {
+                return profileKnownPosition;
+            }
+
+            if (networkClient.KnownPairTargetPositions.TryGetValue(candidate.CharacterId, out string? networkKnownPosition)
+                && !string.IsNullOrWhiteSpace(networkKnownPosition))
+            {
+                return networkKnownPosition;
+            }
+
             if (candidate.InternalPeer != null && !string.IsNullOrWhiteSpace(candidate.InternalPeer.curPos))
             {
                 return candidate.InternalPeer.curPos;
@@ -978,8 +1020,11 @@ namespace OceanyaClient.Components
         private bool IsCurrentPairConfigSent()
         {
             int targetId = selectedCandidate?.CharacterId ?? -1;
+            string currentPosition = ResolveCurrentSendPosition();
             return networkClient.LastSentPairTargetCharId == targetId
-                && networkClient.LastSentPairLayerOrder == CurrentLayerOrder;
+                && networkClient.LastSentPairLayerOrder == CurrentLayerOrder
+                && string.Equals(networkClient.LastSentPairPosition, currentPosition, StringComparison.OrdinalIgnoreCase)
+                && networkClient.LastSentPairSelfOffset == myOffset;
         }
 
         private void RefreshSendBlankpostButton()
@@ -991,11 +1036,20 @@ namespace OceanyaClient.Components
                 return;
             }
 
+            bool knownPositionIsUnmatched = !string.IsNullOrWhiteSpace(GetKnownPartnerPosition(selectedCandidate))
+                && !ArePositionsMatched(selectedCandidate);
+            if (knownPositionIsUnmatched)
+            {
+                sendBlankpostButton.IsEnabled = false;
+                sendBlankpostButton.ToolTip = "Match the partner position before sending the IC update.";
+                return;
+            }
+
             bool needsUpdate = !IsCurrentPairConfigSent();
             sendBlankpostButton.IsEnabled = needsUpdate;
             sendBlankpostButton.ToolTip = needsUpdate
-                ? "Send a blank IC message so the server receives your current pair target and layer order."
-                : "Your current pair target and layer order were already sent in your last IC update.";
+                ? "Send a blank IC message so the server receives your current pair target, layer order, position, and offset."
+                : "Your current pair target, layer order, position, and offset were already sent in your last IC update.";
         }
 
         private async Task SendBlankpostAsync()
@@ -1007,10 +1061,13 @@ namespace OceanyaClient.Components
 
             ApplyCurrentPairConfigToClients();
             sendBlankpostButton.IsEnabled = false;
-            await networkClient.SendICMessage(string.Empty, string.Empty);
+            await networkClient.SendICMessage(" ");
             profileClient.LastSentPairTargetCharId = networkClient.LastSentPairTargetCharId;
             profileClient.LastSentPairLayerOrder = networkClient.LastSentPairLayerOrder;
+            profileClient.LastSentPairPosition = networkClient.LastSentPairPosition;
+            profileClient.LastSentPairSelfOffset = networkClient.LastSentPairSelfOffset;
             RefreshStatus();
+            RefreshPreview();
         }
 
         private void ApplyCurrentPairConfigToClients()
@@ -1025,6 +1082,10 @@ namespace OceanyaClient.Components
             networkClient.PairTargetCharacterName = targetName;
             networkClient.PairLayerOrder = CurrentLayerOrder;
             networkClient.SelfOffset = myOffset;
+            if (selectedCandidate != null)
+            {
+                RememberKnownPartnerPosition(selectedCandidate.CharacterId, GetKnownPartnerPosition(selectedCandidate));
+            }
         }
 
         private void RefreshMatchPartnerPositionButton()
@@ -1070,8 +1131,28 @@ namespace OceanyaClient.Components
             profileClient.curPos = partnerPosition;
             networkClient.curPos = partnerPosition;
             previewSceneClient.curPos = partnerPosition;
+            RememberKnownPartnerPosition(selectedCandidate.CharacterId, partnerPosition);
             RefreshStatus();
             RefreshPreview();
+        }
+
+        private void RememberKnownPartnerPosition(int partnerCharacterId, string? position)
+        {
+            if (partnerCharacterId < 0 || string.IsNullOrWhiteSpace(position))
+            {
+                return;
+            }
+
+            string normalizedPosition = position.Trim();
+            profileClient.KnownPairTargetPositions[partnerCharacterId] = normalizedPosition;
+            networkClient.KnownPairTargetPositions[partnerCharacterId] = normalizedPosition;
+        }
+
+        private string ResolveCurrentSendPosition()
+        {
+            return !string.IsNullOrWhiteSpace(networkClient.curPos)
+                ? networkClient.curPos
+                : profileClient.curPos ?? string.Empty;
         }
 
         private void CharacterPairingStudioWindow_PreviewKeyDown(object sender, KeyEventArgs e)

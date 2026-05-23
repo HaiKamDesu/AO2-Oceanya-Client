@@ -49,6 +49,7 @@ namespace OceanyaClient.Features.Viewport
         private CharacterFolder? currentChatCharacter;
         private string currentChatEmote = string.Empty;
         private int currentChatSequence;
+        private ICMessage? lastRenderedMessage;
         private string[] chatMarkupStart = Array.Empty<string>();
         private string[] chatMarkupEnd = Array.Empty<string>();
         private bool[] chatMarkupRemove = Array.Empty<bool>();
@@ -140,6 +141,8 @@ namespace OceanyaClient.Features.Viewport
         /// Current speaker/character folder rendered by this viewport.
         /// </summary>
         public CharacterFolder? CurrentCharacter => currentRenderCharacter ?? sceneClient?.currentINI;
+
+        internal ICMessage? LastRenderedMessage => lastRenderedMessage;
 
         /// <summary>
         /// Current chatbox token resolved for the rendered character.
@@ -551,6 +554,7 @@ namespace OceanyaClient.Features.Viewport
 
         private void RenderBackgroundOnly()
         {
+            lastRenderedMessage = null;
             if (sceneClient == null)
             {
                 ClearScene();
@@ -632,6 +636,7 @@ namespace OceanyaClient.Features.Viewport
 
         private void RenderMessage(ICMessage message)
         {
+            lastRenderedMessage = message;
             messageSequence++;
             StopChatArrow();
             chatRevealStartedForCurrentMessage = false;

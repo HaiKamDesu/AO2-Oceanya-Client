@@ -22,9 +22,13 @@ namespace OceanyaClient.Features.Viewport
         private AOClient? activeClient;
         private bool _useAsWindowsPreview;
         private bool _chatboxOverlapsViewport;
+        private bool _pictureInPictureViewport;
+        private bool contextMenuEnabled = true;
 
         /// <summary>Fired whenever <see cref="UseAsWindowsPreview"/> changes.</summary>
         public event EventHandler? UseAsWindowsPreviewChanged;
+
+        public event EventHandler? PictureInPictureViewportChanged;
 
         public event EventHandler? ViewportSurfaceLayoutChanged;
 
@@ -101,6 +105,29 @@ namespace OceanyaClient.Features.Viewport
             }
         }
 
+        public bool PictureInPictureViewport
+        {
+            get => _pictureInPictureViewport;
+            set
+            {
+                if (_pictureInPictureViewport == value)
+                {
+                    return;
+                }
+
+                _pictureInPictureViewport = value;
+                SaveFile.Data.GMPictureInPictureViewport = value;
+                SaveFile.Save();
+                PictureInPictureViewportChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+
+        public bool IsViewportContextMenuEnabled
+        {
+            get => contextMenuEnabled;
+            set => contextMenuEnabled = value;
+        }
+
         /// <summary>
         /// Initializes a new instance of the <see cref="AO2ViewportWindowContent"/> class.
         /// </summary>
@@ -109,6 +136,7 @@ namespace OceanyaClient.Features.Viewport
             InitializeComponent();
             _useAsWindowsPreview = SaveFile.Data.GMViewportWindowPreviewPriority;
             _chatboxOverlapsViewport = SaveFile.Data.GMViewportChatboxOverlapsViewport;
+            _pictureInPictureViewport = SaveFile.Data.GMPictureInPictureViewport;
             MarkAutomationReady();
             Loaded += (_, _) => MarkAutomationReady();
         }
@@ -117,6 +145,13 @@ namespace OceanyaClient.Features.Viewport
         {
             if (sender is not ContextMenu menu)
             {
+                return;
+            }
+
+            if (!contextMenuEnabled)
+            {
+                menu.Items.Clear();
+                menu.IsOpen = false;
                 return;
             }
 
@@ -147,6 +182,15 @@ namespace OceanyaClient.Features.Viewport
             };
             useAsPreviewItem.Click += (_, _) => UseAsWindowsPreview = !UseAsWindowsPreview;
             menu.Items.Add(useAsPreviewItem);
+
+            MenuItem pictureInPictureItem = new MenuItem
+            {
+                Header = "Picture in Picture Viewport",
+                IsCheckable = true,
+                IsChecked = _pictureInPictureViewport
+            };
+            pictureInPictureItem.Click += (_, _) => PictureInPictureViewport = !PictureInPictureViewport;
+            menu.Items.Add(pictureInPictureItem);
 
             MenuItem overlapChatboxItem = new MenuItem
             {
@@ -364,6 +408,16 @@ namespace OceanyaClient.Features.Viewport
             return null;
         }
 
+        internal ICMessage? GetActiveLastRenderedMessage()
+        {
+            return GetActiveControl()?.LastRenderedMessage;
+        }
+
+        internal void ReplayMessageForActiveClient(ICMessage message)
+        {
+            GetActiveControl()?.PreviewMessage(message);
+        }
+
         /// <inheritdoc/>
         public override string HeaderText => "Viewport";
 
@@ -485,6 +539,7 @@ namespace OceanyaClient.Features.Viewport
         {
             _useAsWindowsPreview = SaveFile.Data.GMViewportWindowPreviewPriority;
             _chatboxOverlapsViewport = SaveFile.Data.GMViewportChatboxOverlapsViewport;
+            _pictureInPictureViewport = SaveFile.Data.GMPictureInPictureViewport;
             foreach (AO2ViewportControl control in profileControls.Values)
             {
                 control.ChatboxOverlapsViewport = _chatboxOverlapsViewport;

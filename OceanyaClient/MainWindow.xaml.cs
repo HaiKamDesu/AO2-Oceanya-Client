@@ -52,29 +52,36 @@ namespace OceanyaClient
         private AOClient? singleInternalClient;
         private AOClient? boundSingleClientProfile;
         private Window? viewportWindow;
+        private Window? pictureInPictureViewportWindow;
         private HwndSource? hostWindowSource;
         private HwndSource? viewportWindowSource;
+        private HwndSource? pictureInPictureViewportWindowSource;
         private DispatcherTimer? viewportTaskbarPreviewRefreshTimer;
         private DispatcherTimer? viewportAltTabFocusRedirectTimer;
         private DispatcherTimer? viewportAltTabExitPreparationTimer;
         private DispatcherTimer? viewportExternalForegroundTrackingTimer;
         private DispatcherTimer? viewportAltTabHeldReinjectTimer;
+        private DispatcherTimer? pictureInPictureActivationTimer;
         private DateTime? viewportAltTabExitAltReleasedAt;
         private Window? settingsWindow;
         private SettingsWindow? settingsContent;
         private AO2ViewportWindowContent? viewportContent;
+        private AO2ViewportWindowContent? pictureInPictureViewportContent;
         private IntPtr viewportAltTabKeyboardHook;
         private IntPtr lastViewportPreviewExternalForegroundHwnd;
         private LowLevelKeyboardProc? viewportAltTabKeyboardHookProc;
         private bool viewportAltTabHookPendingSuppressedQuickSwitch;
         private bool viewportAltTabHeldPreActivated;
         private bool isRestoringViewportWindow;
+        private bool isRestoringPictureInPictureViewportWindow;
         private bool isSynchronizingWindowState;
         private bool isHostWindowHiddenByViewportMinimize;
         private bool isHostWindowHiddenByViewportAltTabExit;
+        private bool isNormalViewportHiddenByPictureInPicture;
         private bool isMainWindowClosing;
         private bool viewportPreviewInputProxyActive;
         private bool viewportPreviewInputProxyFailureLogged;
+        private bool pendingMainInputRestoreAfterActivation;
         private TextBox? viewportPreviewProxyVisualTarget;
         private bool hasHookedHostWindowClosing;
         private bool cleanCloseInProgress;
@@ -409,6 +416,7 @@ namespace OceanyaClient
                 try
                 {
                     await networkClient.SendICMessage(sendMessage);
+                    SyncPairSendStateFromNetworkClient(client, networkClient);
                     CaptureGmMultiClientSnapshot();
                 }
                 catch (Exception ex)
@@ -593,6 +601,26 @@ namespace OceanyaClient
                         DispatcherPriority.Input);
                     LogViewportPreviewState("main mouse target=" + textBox!.Name);
                 }
+                else if (pendingMainInputRestoreAfterActivation
+                         && lastMainWindowFocusedElement is TextBox lastTextBox
+                         && IsProxyEligibleMainInput(lastTextBox))
+                {
+                    Dispatcher.BeginInvoke(
+                        new Action(() => RestoreMainInputFocusTarget(lastTextBox)),
+                        DispatcherPriority.ApplicationIdle);
+                }
+                else if (IsViewportUsingWindowsPreview()
+                         && lastMainWindowFocusedElement is TextBox proxyTextBox
+                         && IsProxyEligibleMainInput(proxyTextBox))
+                {
+                    viewportPreviewInputProxyActive = true;
+                    SetViewportPreviewInputProxyTarget(proxyTextBox, "main mouse target retained proxy");
+                    Dispatcher.BeginInvoke(
+                        new Action(() => EnsureViewportIsForegroundShellRepresentative(
+                            "main non-input mouse target returned to viewport shell",
+                            allowExternalForegroundOverride: true)),
+                        DispatcherPriority.Input);
+                }
             }
             catch (Exception ex)
             {
@@ -751,7 +779,8 @@ namespace OceanyaClient
             MarkAutomationReady();
             EnsureLocalMusicAssetsScanStarted();
             if (!OceanyaTestMode.Current.DisableViewportWindowPersistence
-                && SaveFile.Data.GMViewportWindowState?.IsVisible == true)
+                && (SaveFile.Data.GMViewportWindowState?.IsVisible == true
+                    || SaveFile.Data.GMPictureInPictureViewport))
             {
                 Dispatcher.BeginInvoke(new Action(OpenViewportWindow));
             }
@@ -781,6 +810,7 @@ namespace OceanyaClient
 
         private void MainWindow_Closed(object? sender, EventArgs e)
         {
+            StopPictureInPictureActivationTimer();
             StopViewportTaskbarPreviewRefreshTimer();
             StopViewportAltTabFocusRedirectTimer();
             StopViewportAltTabExitPreparationTimer(restoreNoActivate: false);
@@ -795,6 +825,8 @@ namespace OceanyaClient
 
             hostWindowSource?.RemoveHook(MainWindowHost_WndProc);
             hostWindowSource = null;
+            pictureInPictureViewportWindowSource?.RemoveHook(PictureInPictureViewportWindow_WndProc);
+            pictureInPictureViewportWindowSource = null;
         }
 
         private IntPtr MainWindowHost_WndProc(
@@ -842,6 +874,8 @@ namespace OceanyaClient
             }
 
             hasHookedHostWindowClosing = true;
+            hostWindow.Activated += HostWindow_Activated;
+            hostWindow.Deactivated += HostWindow_Deactivated;
             hostWindow.Closing += async (_, e) =>
             {
                 if (cleanCloseInProgress)
@@ -854,8 +888,11 @@ namespace OceanyaClient
                 IsEnabled = false;
                 isMainWindowClosing = true;
                 CaptureViewportWindowState();
+                CapturePictureInPictureViewportWindowState();
                 viewportContent?.AttachClient(null, null);
+                pictureInPictureViewportContent?.AttachClient(null, null);
                 viewportWindow?.Close();
+                pictureInPictureViewportWindow?.Close();
                 areaNavigatorRefreshCts?.Cancel();
                 musicListRefreshCts?.Cancel();
                 callwordAudioNotifier.Dispose();
@@ -872,6 +909,93 @@ namespace OceanyaClient
                     // Window was already closed or being destroyed during async cleanup.
                 }
             };
+        }
+
+        private void HostWindow_Activated(object? sender, EventArgs e)
+        {
+            StopPictureInPictureActivationTimer();
+            RestoreMainInputFocusAfterExternalActivation();
+            ShowNormalViewportForMainFocus();
+            EnsureViewportVisibleWithMainWindow();
+        }
+
+        private void HostWindow_Deactivated(object? sender, EventArgs e)
+        {
+            if (SaveFile.Data.GMPictureInPictureViewport)
+            {
+                StartPictureInPictureActivationTimer();
+            }
+        }
+
+        private void RestoreMainInputFocusAfterExternalActivation()
+        {
+            if (lastMainWindowFocusedElement is not TextBox textBox || !IsProxyEligibleMainInput(textBox))
+            {
+                return;
+            }
+
+            if (IsViewportUsingWindowsPreview())
+            {
+                pendingMainInputRestoreAfterActivation = false;
+                viewportPreviewInputProxyActive = true;
+                SetViewportPreviewInputProxyTarget(textBox, "main window activated in viewport preview mode");
+                Dispatcher.BeginInvoke(
+                    new Action(() => EnsureViewportIsForegroundShellRepresentative(
+                        "main activation returned to viewport shell for input proxy",
+                        allowExternalForegroundOverride: true)),
+                    DispatcherPriority.Input);
+                return;
+            }
+
+            pendingMainInputRestoreAfterActivation = true;
+            SetViewportPreviewProxyVisualTarget(null, "main window activated");
+            Dispatcher.BeginInvoke(
+                new Action(() => RestoreMainInputFocusTarget(textBox)),
+                DispatcherPriority.ContextIdle);
+        }
+
+        private void RestoreMainInputFocusTarget(TextBox textBox)
+        {
+            if (!textBox.IsVisible || !textBox.IsEnabled || !IsProxyEligibleMainInput(textBox))
+            {
+                pendingMainInputRestoreAfterActivation = false;
+                return;
+            }
+
+            textBox.Focus();
+            Keyboard.Focus(textBox);
+            pendingMainInputRestoreAfterActivation = false;
+        }
+
+        private void StartPictureInPictureActivationTimer()
+        {
+            pictureInPictureActivationTimer ??= new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromMilliseconds(200)
+            };
+            pictureInPictureActivationTimer.Tick -= PictureInPictureActivationTimer_Tick;
+            pictureInPictureActivationTimer.Tick += PictureInPictureActivationTimer_Tick;
+            pictureInPictureActivationTimer.Stop();
+            pictureInPictureActivationTimer.Start();
+        }
+
+        private void StopPictureInPictureActivationTimer()
+        {
+            if (pictureInPictureActivationTimer == null)
+            {
+                return;
+            }
+
+            pictureInPictureActivationTimer.Stop();
+        }
+
+        private void PictureInPictureActivationTimer_Tick(object? sender, EventArgs e)
+        {
+            StopPictureInPictureActivationTimer();
+            if (SaveFile.Data.GMPictureInPictureViewport && !IsForegroundOwnedByCurrentProcess())
+            {
+                ShowPictureInPictureViewportForExternalFocus();
+            }
         }
 
         private async Task DisconnectAllClientsForShutdownAsync()
@@ -3700,10 +3824,17 @@ namespace OceanyaClient
             singleInternalClient.PairLayerOrder = profileClient.PairLayerOrder;
             singleInternalClient.LastSentPairTargetCharId = profileClient.LastSentPairTargetCharId;
             singleInternalClient.LastSentPairLayerOrder = profileClient.LastSentPairLayerOrder;
+            singleInternalClient.LastSentPairPosition = profileClient.LastSentPairPosition;
+            singleInternalClient.LastSentPairSelfOffset = profileClient.LastSentPairSelfOffset;
             singleInternalClient.ConfirmedPairTargetCharIds.Clear();
             foreach (int confirmedPairTargetCharId in profileClient.ConfirmedPairTargetCharIds)
             {
                 singleInternalClient.ConfirmedPairTargetCharIds.Add(confirmedPairTargetCharId);
+            }
+            singleInternalClient.KnownPairTargetPositions.Clear();
+            foreach (KeyValuePair<int, string> knownPairTargetPosition in profileClient.KnownPairTargetPositions)
+            {
+                singleInternalClient.KnownPairTargetPositions[knownPairTargetPosition.Key] = knownPairTargetPosition.Value;
             }
             singleInternalClient.switchPosWhenChangingINI = profileClient.switchPosWhenChangingINI;
 
@@ -4238,6 +4369,24 @@ namespace OceanyaClient
             catch (Exception ex)
             {
                 CustomConsole.Error($"Character selection failed for \"{charName}\"", ex);
+            }
+        }
+
+        private static void SyncPairSendStateFromNetworkClient(AOClient profileClient, AOClient networkClient)
+        {
+            profileClient.LastSentPairTargetCharId = networkClient.LastSentPairTargetCharId;
+            profileClient.LastSentPairLayerOrder = networkClient.LastSentPairLayerOrder;
+            profileClient.LastSentPairPosition = networkClient.LastSentPairPosition;
+            profileClient.LastSentPairSelfOffset = networkClient.LastSentPairSelfOffset;
+
+            foreach (int confirmedPairTargetCharId in networkClient.ConfirmedPairTargetCharIds)
+            {
+                profileClient.ConfirmedPairTargetCharIds.Add(confirmedPairTargetCharId);
+            }
+
+            foreach (KeyValuePair<int, string> knownPairTargetPosition in networkClient.KnownPairTargetPositions)
+            {
+                profileClient.KnownPairTargetPositions[knownPairTargetPosition.Key] = knownPairTargetPosition.Value;
             }
         }
 
@@ -5504,6 +5653,7 @@ namespace OceanyaClient
                     SaveFile.Data.GMViewportWindowState.IsVisible = false;
                     SaveFile.Save();
                 }
+                isNormalViewportHiddenByPictureInPicture = false;
                 viewportWindow.Hide();
                 ApplyViewportTaskbarPriority();
                 return;
@@ -5587,6 +5737,7 @@ namespace OceanyaClient
                     SaveFile.Data.GMViewportWindowState.IsVisible = false;
                     SaveFile.Save();
                 }
+                isNormalViewportHiddenByPictureInPicture = false;
                 viewportWindow?.Hide();
                 ApplyViewportTaskbarPriority();
             };
@@ -5618,6 +5769,7 @@ namespace OceanyaClient
             viewportWindow.Opacity = 0;
             if (!viewportWindow.IsVisible)
             {
+                isNormalViewportHiddenByPictureInPicture = false;
                 viewportWindow.Show();
             }
 
@@ -5748,6 +5900,11 @@ namespace OceanyaClient
                 currentIncomingMessageClient,
                 currentClient == null ? null : CreateViewportMessageFilter(currentClient),
                 currentClient == null ? null : CreateViewportActionFilter(currentClient));
+
+            if (pictureInPictureViewportWindow?.IsVisible == true)
+            {
+                RefreshPictureInPictureViewportAttachment();
+            }
         }
 
         private void EnsureViewportContent()
@@ -5759,6 +5916,7 @@ namespace OceanyaClient
 
             viewportContent = new AO2ViewportWindowContent();
             viewportContent.UseAsWindowsPreviewChanged += (_, _) => ApplyViewportTaskbarPriority();
+            viewportContent.PictureInPictureViewportChanged += (_, _) => ApplyPictureInPictureViewportMode();
             viewportContent.ViewportSurfaceLayoutChanged += (_, _) => OnViewportSurfaceLayoutChanged();
             viewportContent.ChangeViewportThemeRequested += () => OpenSettingsWindow(SettingsWindowPage.Viewport);
             viewportContent.NewCharacterFolderRequested += OpenNewCharacterInEditorAsync;
@@ -5773,6 +5931,291 @@ namespace OceanyaClient
             viewportContent.RefreshAllCharactersRequested += () =>
                 RefreshCharacterAssetsAsync(null, refreshAllCharacters: true, refreshAllAssets: false);
             viewportContent.RefreshBackgroundRequested += RefreshBackgroundAssetsAsync;
+        }
+
+        private void EnsurePictureInPictureViewportContent()
+        {
+            if (pictureInPictureViewportContent != null)
+            {
+                return;
+            }
+
+            pictureInPictureViewportContent = new AO2ViewportWindowContent();
+            pictureInPictureViewportContent.IsViewportContextMenuEnabled = false;
+            pictureInPictureViewportContent.PictureInPictureViewportChanged += (_, _) =>
+            {
+                SaveFile.Data.GMPictureInPictureViewport = pictureInPictureViewportContent.PictureInPictureViewport;
+                SaveFile.Save();
+                if (viewportContent != null)
+                {
+                    viewportContent.PictureInPictureViewport = SaveFile.Data.GMPictureInPictureViewport;
+                }
+                ApplyPictureInPictureViewportMode();
+            };
+            pictureInPictureViewportContent.ViewportSurfaceLayoutChanged += (_, _) => OnPictureInPictureViewportSurfaceLayoutChanged();
+        }
+
+        private void ApplyPictureInPictureViewportMode()
+        {
+            if (viewportContent != null && viewportContent.PictureInPictureViewport != SaveFile.Data.GMPictureInPictureViewport)
+            {
+                viewportContent.PictureInPictureViewport = SaveFile.Data.GMPictureInPictureViewport;
+            }
+
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            if (!SaveFile.Data.GMPictureInPictureViewport)
+            {
+                HidePictureInPictureViewport();
+                if (SaveFile.Data.GMViewportWindowState?.IsVisible == true && hostWindow?.IsActive == true)
+                {
+                    isNormalViewportHiddenByPictureInPicture = false;
+                    OpenViewportWindow();
+                }
+                return;
+            }
+
+            OpenPictureInPictureViewportWindow();
+        }
+
+        private void ShowNormalViewportForMainFocus()
+        {
+            if (!SaveFile.Data.GMPictureInPictureViewport)
+            {
+                return;
+            }
+
+            HidePictureInPictureViewport();
+            if (SaveFile.Data.GMViewportWindowState?.IsVisible == true
+                || SaveFile.Data.GMPictureInPictureViewport)
+            {
+                isNormalViewportHiddenByPictureInPicture = false;
+                OpenViewportWindow();
+            }
+        }
+
+        private void ShowPictureInPictureViewportForExternalFocus()
+        {
+            if (!SaveFile.Data.GMPictureInPictureViewport
+                || (SaveFile.Data.GMViewportWindowState?.IsVisible != true && viewportWindow == null)
+                || isMainWindowClosing)
+            {
+                return;
+            }
+
+            CaptureViewportWindowState();
+            if (viewportWindow?.IsVisible == true)
+            {
+                isNormalViewportHiddenByPictureInPicture = true;
+                viewportWindow.Hide();
+                ApplyViewportTaskbarPriority();
+            }
+
+            OpenPictureInPictureViewportWindow();
+        }
+
+        private void HidePictureInPictureViewport()
+        {
+            if (pictureInPictureViewportWindow?.IsVisible == true)
+            {
+                CapturePictureInPictureViewportWindowState();
+                pictureInPictureViewportWindow.Hide();
+            }
+        }
+
+        private void OpenPictureInPictureViewportWindow()
+        {
+            EnsurePictureInPictureViewportContent();
+            ICMessage? lastViewportMessage = viewportContent?.GetActiveLastRenderedMessage();
+            RefreshPictureInPictureViewportAttachment();
+            if (lastViewportMessage != null)
+            {
+                pictureInPictureViewportContent?.ReplayMessageForActiveClient(lastViewportMessage);
+            }
+            if (pictureInPictureViewportWindow != null)
+            {
+                ShowPictureInPictureViewportWindowAfterRestore();
+                return;
+            }
+
+            ViewportWindowState savedState = SaveFile.Data.GMPictureInPictureViewportState ?? new ViewportWindowState
+            {
+                Width = 192,
+                Height = 222
+            };
+            (double initialWidth, double initialHeight, double? restoredLeft, double? restoredTop) =
+                ResolveViewportWindowRestoreState(savedState);
+            (initialWidth, initialHeight) = NormalizeViewportWindowSize(initialWidth, initialHeight, preferWidth: false);
+            (double restoreContentWidth, double restoreContentHeight) = ResolveViewportContentRestoreSize(savedState);
+            pictureInPictureViewportContent!.SetCurrentValue(FrameworkElement.WidthProperty, restoreContentWidth);
+            pictureInPictureViewportContent.SetCurrentValue(FrameworkElement.HeightProperty, restoreContentHeight);
+
+            pictureInPictureViewportWindow = OceanyaWindowManager.CreateWindow(
+                pictureInPictureViewportContent,
+                new OceanyaWindowPresentationOptions
+                {
+                    Owner = null,
+                    Title = "AO2 Viewport PiP",
+                    HeaderText = "Viewport",
+                    Width = initialWidth,
+                    Height = initialHeight,
+                    MinWidth = GetViewportMinimumWindowWidth(),
+                    MinHeight = GetViewportMinimumWindowHeight(),
+                    ShowInTaskbar = false,
+                    IsUserResizeEnabled = true,
+                    IsUserMoveEnabled = true,
+                    IsCloseButtonVisible = true,
+                    WindowStartupLocation = WindowStartupLocation.Manual
+                });
+            pictureInPictureViewportWindow.Topmost = true;
+            pictureInPictureViewportWindow.Opacity = 0;
+
+            if (restoredLeft.HasValue && restoredTop.HasValue)
+            {
+                pictureInPictureViewportWindow.Left = restoredLeft.Value;
+                pictureInPictureViewportWindow.Top = restoredTop.Value;
+            }
+            else
+            {
+                Rect workArea = SystemParameters.WorkArea;
+                pictureInPictureViewportWindow.Left = workArea.Right - initialWidth - 24;
+                pictureInPictureViewportWindow.Top = workArea.Bottom - initialHeight - 48;
+            }
+
+            pictureInPictureViewportWindow.SourceInitialized += PictureInPictureViewportWindow_SourceInitialized;
+            pictureInPictureViewportWindow.SizeChanged += PictureInPictureViewportWindow_SizeChanged;
+            pictureInPictureViewportWindow.LocationChanged += PictureInPictureViewportWindow_LocationChanged;
+            pictureInPictureViewportWindow.Closing += (_, eventArgs) =>
+            {
+                if (isMainWindowClosing)
+                {
+                    return;
+                }
+
+                eventArgs.Cancel = true;
+                SaveFile.Data.GMPictureInPictureViewport = false;
+                SaveFile.Save();
+                if (viewportContent != null)
+                {
+                    viewportContent.PictureInPictureViewport = false;
+                }
+                if (pictureInPictureViewportContent != null)
+                {
+                    pictureInPictureViewportContent.PictureInPictureViewport = false;
+                }
+                HidePictureInPictureViewport();
+                OpenViewportWindow();
+            };
+            pictureInPictureViewportWindow.Closed += (_, _) =>
+            {
+                pictureInPictureViewportWindow.SourceInitialized -= PictureInPictureViewportWindow_SourceInitialized;
+                pictureInPictureViewportWindow.SizeChanged -= PictureInPictureViewportWindow_SizeChanged;
+                pictureInPictureViewportWindow.LocationChanged -= PictureInPictureViewportWindow_LocationChanged;
+                pictureInPictureViewportWindowSource?.RemoveHook(PictureInPictureViewportWindow_WndProc);
+                pictureInPictureViewportWindowSource = null;
+                pictureInPictureViewportWindow = null;
+            };
+
+            ShowPictureInPictureViewportWindowAfterRestore();
+        }
+
+        private void ShowPictureInPictureViewportWindowAfterRestore()
+        {
+            if (pictureInPictureViewportWindow == null)
+            {
+                return;
+            }
+
+            isRestoringPictureInPictureViewportWindow = true;
+            pictureInPictureViewportWindow.Opacity = 0;
+            if (!pictureInPictureViewportWindow.IsVisible)
+            {
+                pictureInPictureViewportWindow.Show();
+            }
+
+            pictureInPictureViewportWindow.Topmost = true;
+            Dispatcher.BeginInvoke(
+                new Action(() =>
+                {
+                    if (pictureInPictureViewportWindow != null && pictureInPictureViewportWindow.WindowState == WindowState.Normal)
+                    {
+                        (double desiredWidth, double desiredHeight) =
+                            NormalizeViewportWindowSize(pictureInPictureViewportWindow.Width, pictureInPictureViewportWindow.Height, preferWidth: false);
+                        pictureInPictureViewportWindow.Width = desiredWidth;
+                        pictureInPictureViewportWindow.Height = desiredHeight;
+                        pictureInPictureViewportWindow.Opacity = 1;
+                    }
+                    isRestoringPictureInPictureViewportWindow = false;
+                    CapturePictureInPictureViewportWindowState();
+                }),
+                DispatcherPriority.Loaded);
+        }
+
+        private void RefreshPictureInPictureViewportAttachment()
+        {
+            EnsurePictureInPictureViewportContent();
+            if (pictureInPictureViewportContent == null)
+            {
+                return;
+            }
+
+            foreach (AOClient client in clientOrder.Where(client => clients.Values.Contains(client)))
+            {
+                AOClient? incomingMessageClient = GetTargetClientForNetwork(client) ?? client;
+                pictureInPictureViewportContent.EnsureClient(
+                    client,
+                    incomingMessageClient,
+                    CreateViewportMessageFilter(client),
+                    CreateViewportActionFilter(client));
+            }
+
+            AOClient? currentIncomingMessageClient = GetTargetClientForNetwork(currentClient) ?? currentClient;
+            pictureInPictureViewportContent.AttachClient(
+                currentClient,
+                currentIncomingMessageClient,
+                currentClient == null ? null : CreateViewportMessageFilter(currentClient),
+                currentClient == null ? null : CreateViewportActionFilter(currentClient));
+        }
+
+        private void PictureInPictureViewportWindow_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            CapturePictureInPictureViewportWindowState();
+        }
+
+        private void PictureInPictureViewportWindow_LocationChanged(object? sender, EventArgs e)
+        {
+            CapturePictureInPictureViewportWindowState();
+        }
+
+        private void PictureInPictureViewportWindow_SourceInitialized(object? sender, EventArgs e)
+        {
+            if (pictureInPictureViewportWindow == null)
+            {
+                return;
+            }
+
+            pictureInPictureViewportWindowSource = HwndSource.FromHwnd(new WindowInteropHelper(pictureInPictureViewportWindow).Handle);
+            pictureInPictureViewportWindowSource?.AddHook(PictureInPictureViewportWindow_WndProc);
+        }
+
+        private IntPtr PictureInPictureViewportWindow_WndProc(
+            IntPtr hwnd,
+            int message,
+            IntPtr wParam,
+            IntPtr lParam,
+            ref bool handled)
+        {
+            if (message == WmGetMinMaxInfo)
+            {
+                ApplyViewportMinMaxInfo(lParam, pictureInPictureViewportWindow);
+                handled = true;
+            }
+            else if (message == WmSizing)
+            {
+                ApplyViewportSizingRect((int)wParam, lParam, pictureInPictureViewportWindow);
+                handled = true;
+            }
+
+            return IntPtr.Zero;
         }
 
         private void OnViewportSurfaceLayoutChanged()
@@ -5791,6 +6234,73 @@ namespace OceanyaClient
 
                 NormalizeVisibleViewportWindowSize(preferWidth: false);
             }
+        }
+
+        private void OnPictureInPictureViewportSurfaceLayoutChanged()
+        {
+            if (pictureInPictureViewportWindow == null || pictureInPictureViewportWindow.WindowState != WindowState.Normal)
+            {
+                return;
+            }
+
+            pictureInPictureViewportWindow.MinWidth = GetViewportMinimumWindowWidth();
+            pictureInPictureViewportWindow.MinHeight = GetViewportMinimumWindowHeight();
+            (double desiredWidth, double desiredHeight) =
+                NormalizeViewportWindowSize(pictureInPictureViewportWindow.Width, pictureInPictureViewportWindow.Height, preferWidth: false);
+            pictureInPictureViewportWindow.Width = desiredWidth;
+            pictureInPictureViewportWindow.Height = desiredHeight;
+        }
+
+        private void EnsureViewportVisibleWithMainWindow()
+        {
+            if ((SaveFile.Data.GMViewportWindowState?.IsVisible != true
+                    && !SaveFile.Data.GMPictureInPictureViewport)
+                || isMainWindowClosing)
+            {
+                return;
+            }
+
+            Dispatcher.BeginInvoke(
+                new Action(() =>
+                {
+                    if (viewportWindow == null)
+                    {
+                        OpenViewportWindow();
+                        return;
+                    }
+
+                    if (!viewportWindow.IsVisible)
+                    {
+                        isNormalViewportHiddenByPictureInPicture = false;
+                        viewportWindow.Show();
+                    }
+
+                    if (viewportWindow.WindowState == WindowState.Minimized)
+                    {
+                        viewportWindow.WindowState = WindowState.Normal;
+                    }
+
+                    SetViewportBesideMainWindowInZOrder();
+                }),
+                DispatcherPriority.Background);
+        }
+
+        private void SetViewportBesideMainWindowInZOrder()
+        {
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+            if (hostWindow == null || viewportWindow == null)
+            {
+                return;
+            }
+
+            IntPtr hostHwnd = new WindowInteropHelper(hostWindow).Handle;
+            IntPtr viewportHwnd = new WindowInteropHelper(viewportWindow).Handle;
+            if (hostHwnd == IntPtr.Zero || viewportHwnd == IntPtr.Zero)
+            {
+                return;
+            }
+
+            SetWindowPos(viewportHwnd, hostHwnd, 0, 0, 0, 0, SwpNomove | SwpNosize | SwpNoactivate | SwpShowwindow);
         }
 
         private Func<ICMessage, bool>? CreateViewportMessageFilter(AOClient profileClient)
@@ -5920,12 +6430,12 @@ namespace OceanyaClient
 
             if (message == WmGetMinMaxInfo)
             {
-                ApplyViewportMinMaxInfo(lParam);
+                ApplyViewportMinMaxInfo(lParam, viewportWindow);
                 handled = true;
             }
             else if (message == WmSizing)
             {
-                ApplyViewportSizingRect((int)wParam, lParam);
+                ApplyViewportSizingRect((int)wParam, lParam, viewportWindow);
                 handled = true;
             }
             else if (message == WmSize)
@@ -7293,19 +7803,19 @@ namespace OceanyaClient
             }
         }
 
-        private void ApplyViewportMinMaxInfo(IntPtr lParam)
+        private void ApplyViewportMinMaxInfo(IntPtr lParam, Window? targetWindow)
         {
             ViewportMinMaxInfo minMaxInfo = Marshal.PtrToStructure<ViewportMinMaxInfo>(lParam);
-            (double scaleX, double scaleY) = GetViewportDpiScale();
+            (double scaleX, double scaleY) = GetViewportDpiScale(targetWindow);
             minMaxInfo.ptMinTrackSize.X = (int)Math.Ceiling(GetViewportMinimumWindowWidth() * scaleX);
             minMaxInfo.ptMinTrackSize.Y = (int)Math.Ceiling(GetViewportMinimumWindowHeight() * scaleY);
             Marshal.StructureToPtr(minMaxInfo, lParam, true);
         }
 
-        private void ApplyViewportSizingRect(int sizingEdge, IntPtr lParam)
+        private void ApplyViewportSizingRect(int sizingEdge, IntPtr lParam, Window? targetWindow)
         {
             ViewportNativeRect rect = Marshal.PtrToStructure<ViewportNativeRect>(lParam);
-            (double scaleX, double scaleY) = GetViewportDpiScale();
+            (double scaleX, double scaleY) = GetViewportDpiScale(targetWindow);
             double horizontalOffset = GetViewportWindowHorizontalOffset() * scaleX;
             double verticalOffset = GetViewportWindowVerticalOffset() * scaleY;
             double minWidth = GetViewportMinimumWindowWidth() * scaleX;
@@ -7498,7 +8008,46 @@ namespace OceanyaClient
                 SurfaceHeight = AO2ViewportAssetResolver.ViewportToolHeight,
                 Left = left,
                 Top = top,
-                IsVisible = viewportWindow.IsVisible
+                IsVisible = viewportWindow.IsVisible || isNormalViewportHiddenByPictureInPicture
+            };
+            SaveFile.Save();
+        }
+
+        private void CapturePictureInPictureViewportWindowState()
+        {
+            if (OceanyaTestMode.Current.DisableViewportWindowPersistence)
+            {
+                return;
+            }
+
+            if (pictureInPictureViewportWindow == null
+                || pictureInPictureViewportWindow.WindowState != WindowState.Normal
+                || isRestoringPictureInPictureViewportWindow)
+            {
+                return;
+            }
+
+            double contentWidth = pictureInPictureViewportContent != null
+                                  && IsFinite(pictureInPictureViewportContent.Width)
+                                  && pictureInPictureViewportContent.Width > 0
+                ? pictureInPictureViewportContent.Width
+                : pictureInPictureViewportWindow.Width - GetViewportWindowHorizontalOffset();
+            double contentHeight = pictureInPictureViewportContent != null
+                                   && IsFinite(pictureInPictureViewportContent.Height)
+                                   && pictureInPictureViewportContent.Height > 0
+                ? pictureInPictureViewportContent.Height
+                : pictureInPictureViewportWindow.Height - GetViewportWindowVerticalOffset();
+            (double width, double height) = NormalizeViewportContentSize(contentWidth, contentHeight);
+
+            SaveFile.Data.GMPictureInPictureViewportState = new ViewportWindowState
+            {
+                Width = width,
+                Height = height,
+                SurfaceWidth = AO2ViewportAssetResolver.ViewportToolWidth,
+                SurfaceHeight = AO2ViewportAssetResolver.ViewportToolHeight,
+                Left = IsFinite(pictureInPictureViewportWindow.Left) ? pictureInPictureViewportWindow.Left : null,
+                Top = IsFinite(pictureInPictureViewportWindow.Top) ? pictureInPictureViewportWindow.Top : null,
+                IsVisible = pictureInPictureViewportWindow.IsVisible
             };
             SaveFile.Save();
         }
@@ -7595,14 +8144,14 @@ namespace OceanyaClient
             return Math.Max(minimum, Math.Min(maximum, value));
         }
 
-        private (double ScaleX, double ScaleY) GetViewportDpiScale()
+        private (double ScaleX, double ScaleY) GetViewportDpiScale(Window? targetWindow)
         {
-            if (viewportWindow == null)
+            if (targetWindow == null)
             {
                 return (1.0, 1.0);
             }
 
-            PresentationSource? source = PresentationSource.FromVisual(viewportWindow);
+            PresentationSource? source = PresentationSource.FromVisual(targetWindow);
             if (source?.CompositionTarget == null)
             {
                 return (1.0, 1.0);

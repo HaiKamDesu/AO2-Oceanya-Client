@@ -502,6 +502,16 @@ namespace OceanyaClient
 
         /// <summary>When true and the viewport is visible, the viewport window takes the taskbar slot instead of the main window.</summary>
         public bool GMViewportWindowPreviewPriority { get; set; } = true;
+
+        /// <summary>When true, a separate topmost compact viewport is shown while the main GM window is not active.</summary>
+        public bool GMPictureInPictureViewport { get; set; }
+
+        /// <summary>Saved size and position for the picture-in-picture viewport.</summary>
+        public ViewportWindowState GMPictureInPictureViewportState { get; set; } = new ViewportWindowState
+        {
+            Width = 192,
+            Height = 222
+        };
         public double CharacterCreatorPreviewVolume { get; set; } = 1.0;
         public double AudioMusicVolume { get; set; } = 0.5;
         public double AudioSfxVolume { get; set; } = 1.0;
@@ -812,6 +822,11 @@ namespace OceanyaClient
                 IsMaximized = false
             };
             data.GMViewportWindowState ??= new ViewportWindowState();
+            data.GMPictureInPictureViewportState ??= new ViewportWindowState
+            {
+                Width = 192,
+                Height = 222
+            };
             data.GMMainWindowState ??= new VisualizerWindowState
             {
                 Width = 510,
@@ -824,6 +839,7 @@ namespace OceanyaClient
             ClampWindowState(data.CharacterCreatorWindowState);
             ClampMainWindowState(data.GMMainWindowState);
             ClampViewportWindowState(data.GMViewportWindowState);
+            ClampViewportWindowState(data.GMPictureInPictureViewportState);
             data.EnabledLogCategories ??= new List<string>();
             if (data.EnabledLogCategories.Count == 0)
             {
