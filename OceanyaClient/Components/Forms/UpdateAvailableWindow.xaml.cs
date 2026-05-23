@@ -1,7 +1,9 @@
 using OceanyaClient.Features.Updates;
 using System;
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 
 namespace OceanyaClient
 {
@@ -40,6 +42,8 @@ namespace OceanyaClient
                 ? $"TEST CHANNEL  |  {release.Name}  |  {published}"
                 : $"{release.Name}  |  {published}";
             content.ReleaseNotesViewer.Document = ReleaseNotesMarkdownRenderer.BuildDocument(release.Body);
+            content.Closing += content.UpdateAvailableWindow_Closing;
+            RestoreAndActivateOwner(owner);
 
             OceanyaWindowPresentationOptions options = new OceanyaWindowPresentationOptions
             {
@@ -51,14 +55,61 @@ namespace OceanyaClient
                 MinWidth = 620,
                 MinHeight = 420,
                 IsUserResizeEnabled = true,
+                IsCloseButtonVisible = false,
                 WindowStartupLocation = owner != null
                     ? WindowStartupLocation.CenterOwner
                     : WindowStartupLocation.CenterScreen,
+                Topmost = true,
                 Icon = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/OceanyaO.ico"))
             };
 
             _ = OceanyaWindowManager.ShowDialog(content, options);
             return content.result;
+        }
+
+        private static void RestoreAndActivateOwner(Window? owner)
+        {
+            if (owner == null)
+            {
+                return;
+            }
+
+            if (owner.WindowState == WindowState.Minimized)
+            {
+                owner.WindowState = WindowState.Normal;
+            }
+
+            owner.Activate();
+        }
+
+        private void UpdateAvailableWindow_Closing(object? sender, CancelEventArgs e)
+        {
+            if (result != UpdateAvailableDialogResult.None)
+            {
+                return;
+            }
+
+            e.Cancel = true;
+            Dispatcher.BeginInvoke(
+                DispatcherPriority.Background,
+                new Action(() =>
+                {
+                    Window? host = HostWindow;
+                    if (host == null)
+                    {
+                        return;
+                    }
+
+                    if (host.WindowState == WindowState.Minimized)
+                    {
+                        host.WindowState = WindowState.Normal;
+                    }
+
+                    host.Activate();
+                    host.Topmost = true;
+                    host.Topmost = false;
+                    host.Topmost = true;
+                }));
         }
 
         private void SkipButton_Click(object sender, RoutedEventArgs e)

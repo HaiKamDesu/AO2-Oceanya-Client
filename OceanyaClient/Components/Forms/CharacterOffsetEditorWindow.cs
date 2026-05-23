@@ -11,6 +11,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 
 namespace OceanyaClient.Components
 {
@@ -26,6 +27,8 @@ namespace OceanyaClient.Components
         private (int Horizontal, int Vertical) currentOffset;
         private bool updatingText;
         private Window? keyboardHostWindow;
+        private readonly DispatcherTimer keyboardNudgeTimer;
+        private bool keyboardNudgeActive;
 
         private CharacterOffsetEditorWindow(AOClient client)
         {
@@ -57,6 +60,11 @@ namespace OceanyaClient.Components
 
             xTextBox = CreateOffsetTextBox("Offset.X");
             yTextBox = CreateOffsetTextBox("Offset.Y");
+            keyboardNudgeTimer = new DispatcherTimer(DispatcherPriority.Input)
+            {
+                Interval = TimeSpan.FromMilliseconds(45)
+            };
+            keyboardNudgeTimer.Tick += (_, _) => ApplyHeldArrowKeyNudge();
 
             Content = BuildContent(client);
             Loaded += (_, _) =>
@@ -70,6 +78,7 @@ namespace OceanyaClient.Components
             };
             Closed += (_, _) => DetachHostKeyboardHandler();
             PreviewKeyDown += CharacterOffsetEditorWindow_PreviewKeyDown;
+            PreviewKeyUp += CharacterOffsetEditorWindow_PreviewKeyUp;
         }
 
         public override string HeaderText => "CHARACTER OFFSET";
@@ -505,9 +514,19 @@ namespace OceanyaClient.Components
             HandleOffsetPreviewKeyDown(e);
         }
 
+        private void CharacterOffsetEditorWindow_PreviewKeyUp(object sender, KeyEventArgs e)
+        {
+            HandleOffsetPreviewKeyUp(e);
+        }
+
         private void HostWindow_PreviewKeyDown(object sender, KeyEventArgs e)
         {
             HandleOffsetPreviewKeyDown(e);
+        }
+
+        private void HostWindow_PreviewKeyUp(object sender, KeyEventArgs e)
+        {
+            HandleOffsetPreviewKeyUp(e);
         }
 
         private void HandleOffsetPreviewKeyDown(KeyEventArgs e)
@@ -515,19 +534,15 @@ namespace OceanyaClient.Components
             switch (e.Key)
             {
                 case Key.Left:
-                    AdjustOffset(-1, 0);
-                    e.Handled = true;
-                    break;
                 case Key.Right:
-                    AdjustOffset(1, 0);
-                    e.Handled = true;
-                    break;
                 case Key.Down:
-                    AdjustOffset(0, 1);
+                case Key.Up:
+                    StartKeyboardNudge();
                     e.Handled = true;
                     break;
-                case Key.Up:
-                    AdjustOffset(0, -1);
+                case Key.Enter:
+                    ResultOffset = currentOffset;
+                    RequestHostClose(true);
                     e.Handled = true;
                     break;
                 case Key.Escape:
@@ -535,6 +550,87 @@ namespace OceanyaClient.Components
                     e.Handled = true;
                     break;
             }
+        }
+
+        private void HandleOffsetPreviewKeyUp(KeyEventArgs e)
+        {
+            switch (e.Key)
+            {
+                case Key.Left:
+                case Key.Right:
+                case Key.Down:
+                case Key.Up:
+                    StopKeyboardNudgeIfNoArrowKeysHeld();
+                    e.Handled = true;
+                    break;
+            }
+        }
+
+        private void StartKeyboardNudge()
+        {
+            if (!keyboardNudgeActive)
+            {
+                keyboardNudgeActive = true;
+                ApplyHeldArrowKeyNudge();
+            }
+
+            if (!keyboardNudgeTimer.IsEnabled)
+            {
+                keyboardNudgeTimer.Start();
+            }
+        }
+
+        private void StopKeyboardNudgeIfNoArrowKeysHeld()
+        {
+            if (IsAnyArrowKeyHeld())
+            {
+                return;
+            }
+
+            keyboardNudgeActive = false;
+            keyboardNudgeTimer.Stop();
+        }
+
+        private void ApplyHeldArrowKeyNudge()
+        {
+            int horizontalDelta = 0;
+            int verticalDelta = 0;
+
+            if (Keyboard.IsKeyDown(Key.Left))
+            {
+                horizontalDelta--;
+            }
+
+            if (Keyboard.IsKeyDown(Key.Right))
+            {
+                horizontalDelta++;
+            }
+
+            if (Keyboard.IsKeyDown(Key.Up))
+            {
+                verticalDelta--;
+            }
+
+            if (Keyboard.IsKeyDown(Key.Down))
+            {
+                verticalDelta++;
+            }
+
+            if (horizontalDelta == 0 && verticalDelta == 0)
+            {
+                StopKeyboardNudgeIfNoArrowKeysHeld();
+                return;
+            }
+
+            AdjustOffset(horizontalDelta, verticalDelta);
+        }
+
+        private static bool IsAnyArrowKeyHeld()
+        {
+            return Keyboard.IsKeyDown(Key.Left)
+                || Keyboard.IsKeyDown(Key.Right)
+                || Keyboard.IsKeyDown(Key.Up)
+                || Keyboard.IsKeyDown(Key.Down);
         }
 
         private void AttachHostKeyboardHandler()
@@ -548,6 +644,7 @@ namespace OceanyaClient.Components
             DetachHostKeyboardHandler();
             keyboardHostWindow = host;
             host.AddHandler(Keyboard.PreviewKeyDownEvent, new KeyEventHandler(HostWindow_PreviewKeyDown), true);
+            host.AddHandler(Keyboard.PreviewKeyUpEvent, new KeyEventHandler(HostWindow_PreviewKeyUp), true);
         }
 
         private void DetachHostKeyboardHandler()
@@ -558,7 +655,10 @@ namespace OceanyaClient.Components
             }
 
             keyboardHostWindow.RemoveHandler(Keyboard.PreviewKeyDownEvent, new KeyEventHandler(HostWindow_PreviewKeyDown));
+            keyboardHostWindow.RemoveHandler(Keyboard.PreviewKeyUpEvent, new KeyEventHandler(HostWindow_PreviewKeyUp));
             keyboardHostWindow = null;
+            keyboardNudgeActive = false;
+            keyboardNudgeTimer.Stop();
         }
 
         private void AdjustOffset(int horizontalDelta, int verticalDelta)
