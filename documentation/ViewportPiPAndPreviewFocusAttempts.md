@@ -272,7 +272,8 @@ Approach:
   - `PreviewEnabled_ReturningToMain`
 - The preview shell is created once for preview mode, kept alive across PiP show/hide cycles, kept out of normal desktop layout, and fed by a duplicated `AO2ViewportWindowContent` attached to the same current viewport state. The live viewport visual is not moved between windows.
 - PiP show/hide now controls only presentation: hide/show normal viewport and show/hide PiP. It no longer moves taskbar ownership to the main host and does not restyle the normal viewport as the shell representative.
-- Preview shell DWM iconic thumbnails render from the best available viewport source: visible normal viewport, visible PiP, or the shell's duplicate viewport content.
+- Preview shell DWM iconic thumbnails originally rendered through `ViewportThumbnailCompositor`, but that reintroduced the known custom-bitmap pixelation path. The current fix keeps custom DWM iconic bitmaps disabled for the preview shell so Windows captures the shell HWND's real WPF surface.
+- The preview shell size is synchronized from the normal viewport window/content size so the shell does not keep an old tiny duplicate surface that Windows has to upscale.
 - Fake IC/OOC input routing remains independent of making the normal viewport foreground. Main HWND and preview-shell HWND both route `WM_CHAR` and editing `WM_KEYDOWN` to the proxy textbox while preview mode is active.
 - Every state transition logs `[VPT-SM]` with foreground HWND/process, main HWND, normal viewport HWND, preview shell HWND, PiP HWND, `ShowInTaskbar`, extended styles, owner HWND, visibility/minimize state, and passive-vs-explicit transition mode.
 - Passive foreground observation is still limited to PiP presentation changes. It must not call activation/focus/foreground helpers.
@@ -287,6 +288,17 @@ Expected:
 Result:
 - Build passed after introducing the shell split.
 - Focused unit test run passed: 586 passed, 1 skipped.
+- Follow-up fix added a single explicit taskbar/preview-shell return path:
+  - `RestoreOceanyaFromPreviewShellActivation(...)` now owns taskbar/shell restoration.
+  - Preview-shell `WM_ACTIVATE`, `WM_MOUSEACTIVATE`, `WM_SYSCOMMAND/SC_RESTORE`, `WM_SIZE` restore/maximize, main-host activation/restore messages, viewport activation, and foreground-timer preview-shell foreground all route through that method.
+  - The method atomically restores/shows the main GM window, restores/shows the normal viewport, hides PiP, sets state through `PreviewEnabled_ReturningToMain` to `PreviewEnabled_NormalVisible`, refreshes fake IC/OOC proxy state, reapplies taskbar ownership, and foregrounds the preview shell as the only taskbar representative.
+  - A short restore guard logs and ignores rapid reentrant taskbar activation so double-clicks cannot immediately flip back into PiP/hidden-viewport presentation.
+  - Preview-shell `WM_SIZE` restore is ignored unless the shell is foreground or the state is `PreviewEnabled_PiPVisibleExternalFocus`, preventing shell creation/layout resize from accidentally running the explicit taskbar-return path.
+  - Preview-shell minimize mirrors a normal taskbar minimize path and can show PiP only outside the restore guard.
+  - `[VPT-TASKBAR]` logs now capture message, foreground/active HWNDs, state before/after, main/normal viewport/preview shell/PiP HWNDs, visibility, taskbar flags, owners, extended styles, and reentrancy ignore status.
+- Build passed after follow-up restore fix.
+- UnitTests passed after follow-up restore fix: 586 passed, 1 skipped.
+- Follow-up preview quality fix removed active custom DWM thumbnail composition from the preview-shell path and synchronized the preview shell size from the normal viewport size.
 - Runtime/manual behavior still needs desktop verification.
 
 Outcome: TBD.
