@@ -10,6 +10,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Threading;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -379,6 +380,20 @@ public class AO2ViewportParityAssetResolverTests
         Assert.That(subthemes.Select(option => option.DisplayName), Is.EqualTo(new[] { "server", "default", "thin", "wide" }));
         Assert.That(subthemes[0].Value, Is.EqualTo("server"));
         Assert.That(subthemes[1].Value, Is.EqualTo("server"));
+    }
+
+    [Test]
+    public void AO2ViewportControl_CharacterOffsetUsesAo2ViewportPercent()
+    {
+        AO2ViewportAssetResolver.SetViewportSurfaceDimensions(256, 192, 256, 296, 104);
+
+        Point placement = AO2ViewportControl.CalculateCharacterOffsetPlacement(256, (12, -5));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(placement.X, Is.EqualTo(30.72).Within(0.001));
+            Assert.That(placement.Y, Is.EqualTo(-9.6).Within(0.001));
+        });
     }
 
     [Test]

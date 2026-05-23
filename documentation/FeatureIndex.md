@@ -40,6 +40,12 @@ Use this file as the first stop before broad repository searches. It should poin
 - Main code: `OceanyaClient/Components/ICMessageSettings.xaml.cs`, `AOBot-Testing/Structures/Background.cs`, `AOBot-Testing/Agents/AOClient.cs`
 - Notes: The IC position dropdown displays `default (<character side>)` as a value-backed empty position, then AO2 default positions, `design.ini` positions, and undeclared image-backed positions. Empty `AOClient.curPos` remains default mode across character changes; manual positions remain manual. Incoming server `SP#` packets fire `AOClient.OnServerPositionReceived`; in single-internal-client GM mode `MainWindow.ApplyServerPositionToAllSingleInternalProfiles` applies forced server positions to every profile sharing that network client. Background resolution/cache refresh preserves AO2 mount priority: first matching `Globals.BaseFolders` background name wins when multiple mounts contain the same background folder name.
 
+## GM Multi-Client Character Offset
+- Doc: `Documentation/AO2Viewport.md`
+- Main code: `OceanyaClient/Components/Forms/CharacterOffsetEditorWindow.cs`, `OceanyaClient/Components/ICMessageSettings.xaml(.cs)`, `AOBot-Testing/Agents/AOClient.cs`, `AOBot-Testing/Structures/ICMessage.cs`, `OceanyaClient/Features/Viewport/AO2ViewportControl.xaml.cs`
+- AO2 reference: `AO2-Client/src/courtroom.cpp` (`char_offset`, `char_vert_offset`, `set_self_offset`)
+- Notes: The IC `XY` offset button opens a dark viewport preview popup with AO2 self-offset X/Y integer fields, repeat steppers, low-opacity directional overlay buttons, and Save/Default/Cancel. `AOClient.SelfOffset` serializes into `ICMessage.SelfOffset`; packet output is `X` or `X&Y` depending on server `Y_OFFSET`. AO2 applies offsets as `viewport_width * X / 100` and `viewport_height * Y / 100`, so positive packet Y moves downward; the visual overlay arrows adjust values to move in the arrow direction while preserving AO2 packet parity.
+
 ## GM Multi-Client Music List
 - Doc: `Documentation/MusicList.md`
 - Main code: `OceanyaClient/MainWindow.xaml`, `OceanyaClient/MainWindow.xaml.cs`, `AOBot-Testing/Agents/AOClient.cs`

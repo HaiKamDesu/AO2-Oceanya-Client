@@ -887,7 +887,7 @@ namespace OceanyaClient.Components
             dialog.Show();
         }
 
-        private static ICMessage BuildPreviewICMessage(Emote emote, AOClient client)
+        internal static ICMessage BuildPreviewICMessage(Emote emote, AOClient client)
         {
             string side = !string.IsNullOrWhiteSpace(client.curPos)
                 ? client.curPos
@@ -916,6 +916,7 @@ namespace OceanyaClient.Components
                 CharId = 0,
                 EvidenceID = "0",
                 OtherCharId = -1,
+                SelfOffset = client.SelfOffset,
                 NonInterruptingPreAnim = client.PreanimEnabled && client.Immediate,
                 SfxLooping = false,
                 ScreenShake = false,
@@ -929,7 +930,7 @@ namespace OceanyaClient.Components
             };
         }
 
-        private static ICMessage.EmoteModifiers ResolvePreviewEmoteModifier(
+        internal static ICMessage.EmoteModifiers ResolvePreviewEmoteModifier(
             ICMessage.EmoteModifiers baseModifier, bool preanimEnabled, bool immediate)
         {
             ICMessage.EmoteModifiers resolved = baseModifier;
@@ -1268,6 +1269,24 @@ namespace OceanyaClient.Components
                 txtICMessage.Focus();
                 OnClientStateChanged?.Invoke();
             }
+        }
+
+        private void btnOffset_Click(object sender, RoutedEventArgs e)
+        {
+            if (curClient == null || curClient.currentINI == null)
+            {
+                txtICMessage.Focus();
+                return;
+            }
+
+            (int Horizontal, int Vertical)? result = CharacterOffsetEditorWindow.ShowDialog(Window.GetWindow(this), curClient);
+            if (result.HasValue)
+            {
+                curClient.SelfOffset = result.Value;
+                OnClientStateChanged?.Invoke();
+            }
+
+            txtICMessage.Focus();
         }
     }
 }

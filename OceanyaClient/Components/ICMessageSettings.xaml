@@ -76,6 +76,7 @@
         <components:ImageComboBox x:Name="sfxDropdown" AutomationId="Main.Ic.Sfx" Canvas.Top="168"         Width="140" Canvas.Left="294" HorizontalAlignment="Left" VerticalAlignment="Top"/>
         <ToggleButton x:Name="btnRealization" Height="42" Width="42" Canvas.Left="12" Canvas.Top="215" 
                         AutomationProperties.AutomationId="Main.Ic.Realization"
+                        ToolTip="Realization"
                         BorderBrush="{x:Null}" Padding="0,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center"
                         Checked="btnRealization_Checked" Unchecked="btnRealization_Unchecked"
                         Focusable="False" IsTabStop="False">
@@ -100,6 +101,7 @@
         </ToggleButton>
         <ToggleButton x:Name="btnScreenshake" Height="42" Width="42" Canvas.Left="59" Canvas.Top="215" 
             AutomationProperties.AutomationId="Main.Ic.Screenshake"
+            ToolTip="Shake"
             BorderBrush="{x:Null}" Padding="0,0,0,0"
             Checked="btnScreenshake_Checked" Unchecked="btnScreenshake_Unchecked" HorizontalAlignment="Left" VerticalAlignment="Center"
             Focusable="False" IsTabStop="False">
@@ -122,5 +124,44 @@
                 </Style>
             </ToggleButton.Style>
         </ToggleButton>
+        <Button x:Name="btnOffset" Height="42" Width="42" Canvas.Left="106" Canvas.Top="215"
+            AutomationProperties.AutomationId="Main.Ic.Offset"
+            ToolTip="Offset"
+            BorderBrush="{x:Null}" Padding="0"
+            Click="btnOffset_Click"
+            Focusable="False" IsTabStop="False">
+            <Button.Style>
+                <Style TargetType="{x:Type Button}">
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="{x:Type Button}">
+                                <Border x:Name="ButtonChrome"
+                                        Background="Transparent"
+                                        BorderBrush="Transparent"
+                                        BorderThickness="1"
+                                        CornerRadius="3">
+                                    <Image x:Name="ButtonImage"
+                                           Source="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Offset.png"
+                                           Stretch="Uniform"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="ButtonChrome" Property="Background" Value="#33192630"/>
+                                        <Setter TargetName="ButtonChrome" Property="BorderBrush" Value="#667996A8"/>
+                                        <Setter TargetName="ButtonImage" Property="Opacity" Value="0.9"/>
+                                    </Trigger>
+                                    <Trigger Property="IsPressed" Value="True">
+                                        <Setter TargetName="ButtonChrome" Property="Background" Value="#6610161C"/>
+                                        <Setter TargetName="ButtonChrome" Property="BorderBrush" Value="#FF4E6576"/>
+                                        <Setter TargetName="ButtonImage" Property="Opacity" Value="0.72"/>
+                                        <Setter TargetName="ButtonImage" Property="Margin" Value="1,1,0,0"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+            </Button.Style>
+        </Button>
     </Canvas>
 </UserControl>

@@ -406,6 +406,11 @@ namespace OceanyaClient.Features.Viewport
             Dispatcher.Invoke(() => RenderMessage(message));
         }
 
+        internal void PreviewSelfOffset((int Horizontal, int Vertical) offset)
+        {
+            Dispatcher.Invoke(() => ApplyCharacterOffset(CharacterImage, offset));
+        }
+
         private void AttachClientEvents()
         {
             if (sceneClient != null)
@@ -1611,16 +1616,22 @@ namespace OceanyaClient.Features.Viewport
             ApplyCharacterOffsetNow(image, offset);
         }
 
+        internal static Point CalculateCharacterOffsetPlacement(double imageWidth, (int Horizontal, int Vertical) offset)
+        {
+            double width = double.IsNaN(imageWidth) || imageWidth <= 0
+                ? AO2ViewportAssetResolver.ViewportWidth
+                : imageWidth;
+            return new Point(
+                ((AO2ViewportAssetResolver.ViewportWidth - width) / 2.0)
+                    + AO2ViewportAssetResolver.ViewportWidth * offset.Horizontal / 100.0,
+                AO2ViewportAssetResolver.ViewportHeight * offset.Vertical / 100.0);
+        }
+
         private static void ApplyCharacterOffsetNow(Image image, (int Horizontal, int Vertical) offset)
         {
-            double width = double.IsNaN(image.Width) || image.Width <= 0
-                ? AO2ViewportAssetResolver.ViewportWidth
-                : image.Width;
-            Canvas.SetLeft(
-                image,
-                ((AO2ViewportAssetResolver.ViewportWidth - width) / 2.0)
-                    + AO2ViewportAssetResolver.ViewportWidth * offset.Horizontal / 100.0);
-            Canvas.SetTop(image, AO2ViewportAssetResolver.ViewportHeight * offset.Vertical / 100.0);
+            Point placement = CalculateCharacterOffsetPlacement(image.Width, offset);
+            Canvas.SetLeft(image, placement.X);
+            Canvas.SetTop(image, placement.Y);
         }
 
         private void ReapplyStoredCharacterOffset(Image image)
