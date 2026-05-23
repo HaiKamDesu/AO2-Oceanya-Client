@@ -584,6 +584,88 @@ namespace UnitTests
         }
 
         [Test]
+        public void MainWindow_CreateViewportWindowStateFromHostBounds_SavesContentBoundsAndSurface()
+        {
+            ViewportWindowState state = MainWindow.CreateViewportWindowStateFromHostBounds(
+                windowWidth: 760,
+                windowHeight: 908.875,
+                left: 42,
+                top: 84,
+                isVisible: true);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(state.Width, Is.EqualTo(758).Within(0.001));
+                Assert.That(state.Height, Is.EqualTo(876.875).Within(0.001));
+                Assert.That(state.Left, Is.EqualTo(42).Within(0.001));
+                Assert.That(state.Top, Is.EqualTo(84).Within(0.001));
+                Assert.That(state.IsVisible, Is.True);
+                Assert.That(state.SurfaceWidth, Is.EqualTo(AO2ViewportAssetResolver.ViewportToolWidth));
+                Assert.That(state.SurfaceHeight, Is.EqualTo(AO2ViewportAssetResolver.ViewportToolHeight));
+            });
+        }
+
+        [Test]
+        public void MainWindow_CreateViewportWindowStateFromHostBounds_DropsInvalidPosition()
+        {
+            ViewportWindowState state = MainWindow.CreateViewportWindowStateFromHostBounds(
+                windowWidth: 258,
+                windowHeight: 328,
+                left: double.NaN,
+                top: double.PositiveInfinity,
+                isVisible: false);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(state.Left, Is.Null);
+                Assert.That(state.Top, Is.Null);
+                Assert.That(state.IsVisible, Is.False);
+            });
+        }
+
+        [Test]
+        public void MainWindow_CreateViewportWindowStateFromHostBounds_UsesCapturedSurfaceDimensions()
+        {
+            ViewportWindowState state = MainWindow.CreateViewportWindowStateFromHostBounds(
+                windowWidth: 900,
+                windowHeight: 700,
+                left: null,
+                top: null,
+                isVisible: true,
+                surfaceWidth: 768,
+                surfaceHeight: 716);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(state.SurfaceWidth, Is.EqualTo(768));
+                Assert.That(state.SurfaceHeight, Is.EqualTo(716));
+            });
+        }
+
+        [Test]
+        public void AO2ViewportWindowContent_PictureInPictureToggle_DoesNotPersistAcrossSessions()
+        {
+            SaveFile.Data.GMPictureInPictureViewport = false;
+            AO2ViewportWindowContent content = new AO2ViewportWindowContent();
+
+            content.PictureInPictureViewport = true;
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(content.PictureInPictureViewport, Is.True);
+                Assert.That(SaveFile.Data.GMPictureInPictureViewport, Is.False);
+            });
+        }
+
+        [Test]
+        public void SaveFile_NormalizeLoadedData_ClearsLegacyPictureInPictureToggle()
+        {
+            SaveFile.ResetForTests(new SaveData { GMPictureInPictureViewport = true }, persist: false);
+
+            Assert.That(SaveFile.Data.GMPictureInPictureViewport, Is.False);
+        }
+
+        [Test]
         public void Globals_ReloadServerIpsForTests_UsesProvidedServerJson()
         {
             string serverJsonPath = Path.Combine(tempRoot, "server.json");

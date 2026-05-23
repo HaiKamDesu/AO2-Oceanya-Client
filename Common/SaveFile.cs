@@ -827,6 +827,7 @@ namespace OceanyaClient
                 Width = 192,
                 Height = 222
             };
+            data.GMPictureInPictureViewport = false;
             data.GMMainWindowState ??= new VisualizerWindowState
             {
                 Width = 510,

@@ -117,8 +117,6 @@ namespace OceanyaClient.Features.Viewport
                 }
 
                 _pictureInPictureViewport = value;
-                SaveFile.Data.GMPictureInPictureViewport = value;
-                SaveFile.Save();
                 PictureInPictureViewportChanged?.Invoke(this, EventArgs.Empty);
             }
         }
@@ -147,6 +145,18 @@ namespace OceanyaClient.Features.Viewport
             }
         }
 
+        public int CurrentSurfaceWidth => Math.Max(
+            1,
+            IsFinite(ViewportHost.Width) && ViewportHost.Width > 0
+                ? (int)Math.Round(ViewportHost.Width)
+                : AO2ViewportAssetResolver.ViewportToolWidth);
+
+        public int CurrentSurfaceHeight => Math.Max(
+            1,
+            IsFinite(ViewportHost.Height) && ViewportHost.Height > 0
+                ? (int)Math.Round(ViewportHost.Height)
+                : AO2ViewportAssetResolver.ViewportToolHeight);
+
         /// <summary>
         /// Initializes a new instance of the <see cref="AO2ViewportWindowContent"/> class.
         /// </summary>
@@ -155,7 +165,7 @@ namespace OceanyaClient.Features.Viewport
             InitializeComponent();
             _useAsWindowsPreview = SaveFile.Data.GMViewportWindowPreviewPriority;
             _chatboxOverlapsViewport = SaveFile.Data.GMViewportChatboxOverlapsViewport;
-            _pictureInPictureViewport = SaveFile.Data.GMPictureInPictureViewport;
+            _pictureInPictureViewport = false;
             MarkAutomationReady();
             Loaded += (_, _) => MarkAutomationReady();
         }
@@ -559,7 +569,6 @@ namespace OceanyaClient.Features.Viewport
         {
             _useAsWindowsPreview = SaveFile.Data.GMViewportWindowPreviewPriority;
             _chatboxOverlapsViewport = SaveFile.Data.GMViewportChatboxOverlapsViewport;
-            _pictureInPictureViewport = SaveFile.Data.GMPictureInPictureViewport;
             foreach (AO2ViewportControl control in profileControls.Values)
             {
                 control.ChatboxOverlapsViewport = _chatboxOverlapsViewport;
@@ -568,6 +577,11 @@ namespace OceanyaClient.Features.Viewport
 
             RefreshHostSurfaceSize();
             UseAsWindowsPreviewChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        private static bool IsFinite(double value)
+        {
+            return !double.IsNaN(value) && !double.IsInfinity(value);
         }
 
         public void ReleaseCharacterAssetsForDeletedFolder(string normalizedCharacterDirectory)
