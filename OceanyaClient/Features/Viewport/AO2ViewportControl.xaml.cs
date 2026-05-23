@@ -36,6 +36,7 @@ namespace OceanyaClient.Features.Viewport
         private int chatBlipRate = DefaultBlipRate;
         private bool chatBlankBlipEnabled;
         private bool chatboxOverlapsViewport;
+        private bool renderAudioEnabled = true;
         private AO2ViewportThemeLayout? currentThemeLayout;
         private AO2ViewportBlipPlaybackRules.BlipCrawlState? chatBlipState;
         private string chatFullText = string.Empty;
@@ -112,12 +113,39 @@ namespace OceanyaClient.Features.Viewport
             }
         }
 
+        public bool RenderAudioEnabled
+        {
+            get => renderAudioEnabled;
+            set
+            {
+                if (renderAudioEnabled == value)
+                {
+                    return;
+                }
+
+                renderAudioEnabled = value;
+                if (!renderAudioEnabled)
+                {
+                    audioManager.StopAll();
+                }
+                else if (IsVisible)
+                {
+                    audioManager.RefreshVolumes();
+                }
+            }
+        }
+
+        private bool ShouldPlayViewportAudio => renderAudioEnabled && IsVisible;
+
         /// <summary>
         /// Applies current saved volume settings to all active audio players.
         /// </summary>
         internal void RefreshVolumes()
         {
-            audioManager.RefreshVolumes();
+            if (renderAudioEnabled)
+            {
+                audioManager.RefreshVolumes();
+            }
         }
 
         internal void ReloadThemeLayout()
@@ -484,7 +512,10 @@ namespace OceanyaClient.Features.Viewport
         {
             if (IsVisible)
             {
-                audioManager.RefreshVolumes();
+                if (renderAudioEnabled)
+                {
+                    audioManager.RefreshVolumes();
+                }
                 return;
             }
 
@@ -510,7 +541,7 @@ namespace OceanyaClient.Features.Viewport
 
                 Dispatcher.Invoke(() =>
                 {
-                    if (!IsVisible)
+                    if (!ShouldPlayViewportAudio)
                     {
                         return;
                     }
@@ -527,7 +558,7 @@ namespace OceanyaClient.Features.Viewport
 
             Dispatcher.Invoke(() =>
             {
-                if (!IsVisible)
+                if (!ShouldPlayViewportAudio)
                 {
                     return;
                 }
@@ -940,7 +971,7 @@ namespace OceanyaClient.Features.Viewport
             ChatPreview.ShowShowname = hasShowname;
             ChatPreview.ShowMessage = showChat;
             ChatPreview.Visibility = showChat ? Visibility.Visible : Visibility.Collapsed;
-            if (message != null && IsVisible)
+            if (message != null && ShouldPlayViewportAudio)
             {
                 bool hasPreAnimation = !string.IsNullOrWhiteSpace(
                     AO2ViewportAssetResolver.ResolveCharacterPreAnimation(character, message.PreAnim));
@@ -966,7 +997,10 @@ namespace OceanyaClient.Features.Viewport
             if (showChat)
             {
                 currentChatBlipToken = ResolveViewportBlipToken(character, message);
-                audioManager.PrepareBlip(currentChatBlipToken, character?.Name, showname);
+                if (renderAudioEnabled)
+                {
+                    audioManager.PrepareBlip(currentChatBlipToken, character?.Name, showname);
+                }
                 ChatPreview.RefreshPreview();
                 if (shouldStartTextReveal)
                 {
@@ -1017,7 +1051,7 @@ namespace OceanyaClient.Features.Viewport
         private void ShowShoutOverlay(ICMessage message)
         {
             RenderShoutOverlay(message, ViewportPhase.Shout);
-            if (IsVisible)
+            if (ShouldPlayViewportAudio)
             {
                 string shoutToken = ResolveShoutSfxToken(message);
                 string miscToken = AO2ViewportAssetResolver.ResolveCharacterChatToken(
@@ -1942,7 +1976,7 @@ namespace OceanyaClient.Features.Viewport
                 ChatPreview.PreviewText = chatPrefixText + chatFullText.Substring(0, chatBlipState.Position);
 
                 if (shouldPlayBlip
-                    && IsVisible
+                    && ShouldPlayViewportAudio
                     && AO2ViewportBlipPlaybackRules.ShouldPlayBlipForTextElement(chatBlipState, textElement, blipGateDelay))
                 {
                     audioManager.PlayBlip();
@@ -2122,7 +2156,7 @@ namespace OceanyaClient.Features.Viewport
             timer.Tick += (_, _) =>
             {
                 timer.Stop();
-                if (sequence != messageSequence || !IsVisible)
+                if (sequence != messageSequence || !ShouldPlayViewportAudio)
                 {
                     return;
                 }
@@ -2142,6 +2176,11 @@ namespace OceanyaClient.Features.Viewport
 
         private void PlayEffectSfx(ICMessage message, CharacterFolder? character)
         {
+            if (!ShouldPlayViewportAudio)
+            {
+                return;
+            }
+
             string token = AO2ViewportAssetResolver.ResolveEffectSoundToken(message.EffectString, message.Effect, character);
             if (string.IsNullOrWhiteSpace(token))
             {
@@ -2161,6 +2200,11 @@ namespace OceanyaClient.Features.Viewport
             }
 
             DoFlash();
+
+            if (!ShouldPlayViewportAudio)
+            {
+                return;
+            }
 
             string token = string.IsNullOrWhiteSpace(character?.configINI?.Realization)
                 ? "sfx-realization"
@@ -2388,7 +2432,10 @@ namespace OceanyaClient.Features.Viewport
                         continue;
                     }
 
-                    audioManager.PlaySfx(token, message.Character, message.ShowName);
+                    if (ShouldPlayViewportAudio)
+                    {
+                        audioManager.PlaySfx(token, message.Character, message.ShowName);
+                    }
                 }
             }
         }
@@ -2503,7 +2550,10 @@ namespace OceanyaClient.Features.Viewport
                 return;
             }
 
-            audioManager.PlayCourtSfx("testimony1");
+            if (ShouldPlayViewportAudio)
+            {
+                audioManager.PlayCourtSfx("testimony1");
+            }
             testimonyVisible = true;
             SetAnimatedImage(TestimonyImage, path, true, loop: true);
             TestimonyImage.Visibility = Visibility.Visible;
@@ -2533,7 +2583,7 @@ namespace OceanyaClient.Features.Viewport
                 "guilty_bubble" => "guilty",
                 _ => string.Empty
             };
-            if (!string.IsNullOrEmpty(sfxKey))
+            if (!string.IsNullOrEmpty(sfxKey) && ShouldPlayViewportAudio)
             {
                 audioManager.PlayCourtSfx(sfxKey);
             }

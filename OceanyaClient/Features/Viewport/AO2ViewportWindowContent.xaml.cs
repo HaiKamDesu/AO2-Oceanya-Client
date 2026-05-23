@@ -24,6 +24,7 @@ namespace OceanyaClient.Features.Viewport
         private bool _chatboxOverlapsViewport;
         private bool _pictureInPictureViewport;
         private bool contextMenuEnabled = true;
+        private bool renderAudioEnabled = true;
 
         /// <summary>Fired whenever <see cref="UseAsWindowsPreview"/> changes.</summary>
         public event EventHandler? UseAsWindowsPreviewChanged;
@@ -126,6 +127,24 @@ namespace OceanyaClient.Features.Viewport
         {
             get => contextMenuEnabled;
             set => contextMenuEnabled = value;
+        }
+
+        public bool RenderAudioEnabled
+        {
+            get => renderAudioEnabled;
+            set
+            {
+                if (renderAudioEnabled == value)
+                {
+                    return;
+                }
+
+                renderAudioEnabled = value;
+                foreach (AO2ViewportControl control in profileControls.Values)
+                {
+                    control.RenderAudioEnabled = value;
+                }
+            }
         }
 
         /// <summary>
@@ -490,7 +509,8 @@ namespace OceanyaClient.Features.Viewport
                 control = new AO2ViewportControl
                 {
                     Visibility = Visibility.Collapsed,
-                    ChatboxOverlapsViewport = _chatboxOverlapsViewport
+                    ChatboxOverlapsViewport = _chatboxOverlapsViewport,
+                    RenderAudioEnabled = renderAudioEnabled
                 };
                 control.SurfaceLayoutChanged += Control_SurfaceLayoutChanged;
                 profileControls[client] = control;

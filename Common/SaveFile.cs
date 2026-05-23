@@ -503,7 +503,7 @@ namespace OceanyaClient
         /// <summary>When true and the viewport is visible, the viewport window takes the taskbar slot instead of the main window.</summary>
         public bool GMViewportWindowPreviewPriority { get; set; } = true;
 
-        /// <summary>When true, a separate topmost compact viewport is shown while the main GM window is not active.</summary>
+        /// <summary>When true, a separate topmost passive viewport mirror remains visible until closed or toggled off.</summary>
         public bool GMPictureInPictureViewport { get; set; }
 
         /// <summary>Saved size and position for the picture-in-picture viewport.</summary>
