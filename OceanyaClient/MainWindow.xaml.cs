@@ -6128,6 +6128,11 @@ namespace OceanyaClient
 
         private void PictureInPictureViewportWindow_SizeChanged(object sender, SizeChangedEventArgs e)
         {
+            if (!ReferenceEquals(sender, pictureInPictureViewportWindow))
+            {
+                return;
+            }
+
             if (isRestoringPictureInPictureViewportWindow)
             {
                 return;
@@ -6139,6 +6144,11 @@ namespace OceanyaClient
 
         private void PictureInPictureViewportWindow_LocationChanged(object? sender, EventArgs e)
         {
+            if (!ReferenceEquals(sender, pictureInPictureViewportWindow))
+            {
+                return;
+            }
+
             if (isRestoringPictureInPictureViewportWindow)
             {
                 return;
@@ -6166,6 +6176,12 @@ namespace OceanyaClient
             IntPtr lParam,
             ref bool handled)
         {
+            if (pictureInPictureViewportWindow == null
+                || hwnd != new WindowInteropHelper(pictureInPictureViewportWindow).Handle)
+            {
+                return IntPtr.Zero;
+            }
+
             if (message == WmGetMinMaxInfo)
             {
                 ApplyViewportMinMaxInfo(lParam, pictureInPictureViewportWindow);
@@ -6449,12 +6465,22 @@ namespace OceanyaClient
 
         private void ViewportWindow_SizeChanged(object sender, SizeChangedEventArgs e)
         {
+            if (!ReferenceEquals(sender, viewportWindow))
+            {
+                return;
+            }
+
             RememberViewportWindowSize(e.NewSize.Width, e.NewSize.Height);
             CaptureViewportWindowState();
         }
 
         private void ViewportWindow_LocationChanged(object? sender, EventArgs e)
         {
+            if (!ReferenceEquals(sender, viewportWindow))
+            {
+                return;
+            }
+
             CaptureViewportWindowState();
         }
 
@@ -6497,6 +6523,11 @@ namespace OceanyaClient
             IntPtr lParam,
             ref bool handled)
         {
+            if (viewportWindow == null || hwnd != new WindowInteropHelper(viewportWindow).Handle)
+            {
+                return IntPtr.Zero;
+            }
+
             MarkViewportAltTabKeyIfNeeded(message, wParam);
 
             if (message == WmGetMinMaxInfo)
@@ -8112,7 +8143,8 @@ namespace OceanyaClient
                 viewportWindow.Top,
                 viewportWindow.IsVisible,
                 viewportContent?.CurrentSurfaceWidth ?? AO2ViewportAssetResolver.ViewportToolWidth,
-                viewportContent?.CurrentSurfaceHeight ?? AO2ViewportAssetResolver.ViewportToolHeight);
+                viewportContent?.CurrentSurfaceHeight ?? AO2ViewportAssetResolver.ViewportToolHeight,
+                ViewportWindowState.MainViewportWindowKind);
             SaveFile.Save();
         }
 
@@ -8137,7 +8169,8 @@ namespace OceanyaClient
                 pictureInPictureViewportWindow.Top,
                 pictureInPictureViewportWindow.IsVisible,
                 pictureInPictureViewportContent?.CurrentSurfaceWidth ?? AO2ViewportAssetResolver.ViewportToolWidth,
-                pictureInPictureViewportContent?.CurrentSurfaceHeight ?? AO2ViewportAssetResolver.ViewportToolHeight);
+                pictureInPictureViewportContent?.CurrentSurfaceHeight ?? AO2ViewportAssetResolver.ViewportToolHeight,
+                ViewportWindowState.PictureInPictureViewportWindowKind);
             SaveFile.Save();
             LogPictureInPictureViewport(reason);
         }
@@ -8149,7 +8182,8 @@ namespace OceanyaClient
             double? top,
             bool isVisible,
             int surfaceWidth = 0,
-            int surfaceHeight = 0)
+            int surfaceHeight = 0,
+            string windowKind = "")
         {
             double contentWidth = windowWidth - GetViewportWindowHorizontalOffset();
             double contentHeight = windowHeight - GetViewportWindowVerticalOffset();
@@ -8169,7 +8203,8 @@ namespace OceanyaClient
                 SurfaceHeight = capturedSurfaceHeight,
                 Left = left.HasValue && IsFinite(left.Value) ? left.Value : null,
                 Top = top.HasValue && IsFinite(top.Value) ? top.Value : null,
-                IsVisible = isVisible
+                IsVisible = isVisible,
+                WindowKind = windowKind ?? string.Empty
             };
         }
 

@@ -205,6 +205,9 @@ namespace OceanyaClient
 
     public class ViewportWindowState
     {
+        public const string MainViewportWindowKind = "main_viewport";
+        public const string PictureInPictureViewportWindowKind = "picture_in_picture_viewport";
+
         public double Width { get; set; } = 256;
         public double Height { get; set; } = 296;
         public int SurfaceWidth { get; set; }
@@ -212,6 +215,7 @@ namespace OceanyaClient
         public double? Left { get; set; }
         public double? Top { get; set; }
         public bool IsVisible { get; set; }
+        public string WindowKind { get; set; } = string.Empty;
     }
 
     public enum ExtraAudioRuleKind
@@ -827,6 +831,7 @@ namespace OceanyaClient
                 Width = 192,
                 Height = 222
             };
+            NormalizeViewportWindowStateOwnership(data);
             data.GMPictureInPictureViewport = false;
             data.GMMainWindowState ??= new VisualizerWindowState
             {
@@ -1932,6 +1937,7 @@ namespace OceanyaClient
             state.Height = Math.Clamp(state.Height, 1, 7000);
             state.SurfaceWidth = Math.Clamp(state.SurfaceWidth, 0, 6000);
             state.SurfaceHeight = Math.Clamp(state.SurfaceHeight, 0, 7000);
+            state.WindowKind = NormalizeViewportWindowKind(state.WindowKind);
             if (state.Left.HasValue && (double.IsInfinity(state.Left.Value) || double.IsNaN(state.Left.Value)))
             {
                 state.Left = null;
@@ -1941,6 +1947,104 @@ namespace OceanyaClient
             {
                 state.Top = null;
             }
+        }
+
+        private static void NormalizeViewportWindowStateOwnership(SaveData data)
+        {
+            ViewportWindowState mainState = data.GMViewportWindowState;
+            ViewportWindowState pictureInPictureState = data.GMPictureInPictureViewportState;
+            string mainKind = NormalizeViewportWindowKind(mainState.WindowKind);
+            string pictureInPictureKind = NormalizeViewportWindowKind(pictureInPictureState.WindowKind);
+
+            if (string.Equals(mainKind, ViewportWindowState.PictureInPictureViewportWindowKind, StringComparison.Ordinal)
+                && string.Equals(pictureInPictureKind, ViewportWindowState.MainViewportWindowKind, StringComparison.Ordinal))
+            {
+                data.GMViewportWindowState = pictureInPictureState;
+                data.GMPictureInPictureViewportState = mainState;
+                mainState = data.GMViewportWindowState;
+                pictureInPictureState = data.GMPictureInPictureViewportState;
+            }
+            else
+            {
+                if (string.Equals(mainKind, ViewportWindowState.PictureInPictureViewportWindowKind, StringComparison.Ordinal))
+                {
+                    bool wasVisible = mainState.IsVisible;
+                    data.GMViewportWindowState = new ViewportWindowState { IsVisible = wasVisible };
+                    mainState = data.GMViewportWindowState;
+                }
+
+                if (string.Equals(pictureInPictureKind, ViewportWindowState.MainViewportWindowKind, StringComparison.Ordinal))
+                {
+                    data.GMPictureInPictureViewportState = CreateDefaultPictureInPictureViewportState();
+                    pictureInPictureState = data.GMPictureInPictureViewportState;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(mainKind)
+                && string.IsNullOrWhiteSpace(pictureInPictureKind)
+                && AreLikelySameViewportWindowState(mainState, pictureInPictureState)
+                && LooksLikePictureInPictureViewportState(mainState))
+            {
+                data.GMViewportWindowState = new ViewportWindowState { IsVisible = mainState.IsVisible };
+                mainState = data.GMViewportWindowState;
+            }
+
+            mainState.WindowKind = ViewportWindowState.MainViewportWindowKind;
+            pictureInPictureState.WindowKind = ViewportWindowState.PictureInPictureViewportWindowKind;
+        }
+
+        private static ViewportWindowState CreateDefaultPictureInPictureViewportState()
+        {
+            return new ViewportWindowState
+            {
+                Width = 192,
+                Height = 222,
+                WindowKind = ViewportWindowState.PictureInPictureViewportWindowKind
+            };
+        }
+
+        private static string NormalizeViewportWindowKind(string? windowKind)
+        {
+            string normalized = (windowKind ?? string.Empty).Trim();
+            if (string.Equals(normalized, ViewportWindowState.MainViewportWindowKind, StringComparison.OrdinalIgnoreCase))
+            {
+                return ViewportWindowState.MainViewportWindowKind;
+            }
+
+            if (string.Equals(normalized, ViewportWindowState.PictureInPictureViewportWindowKind, StringComparison.OrdinalIgnoreCase))
+            {
+                return ViewportWindowState.PictureInPictureViewportWindowKind;
+            }
+
+            return string.Empty;
+        }
+
+        private static bool AreLikelySameViewportWindowState(ViewportWindowState left, ViewportWindowState right)
+        {
+            return AreClose(left.Width, right.Width)
+                && AreClose(left.Height, right.Height)
+                && AreNullableClose(left.Left, right.Left)
+                && AreNullableClose(left.Top, right.Top);
+        }
+
+        private static bool LooksLikePictureInPictureViewportState(ViewportWindowState state)
+        {
+            return state.Width <= 360 && state.Height <= 420;
+        }
+
+        private static bool AreNullableClose(double? left, double? right)
+        {
+            if (!left.HasValue || !right.HasValue)
+            {
+                return left.HasValue == right.HasValue;
+            }
+
+            return AreClose(left.Value, right.Value);
+        }
+
+        private static bool AreClose(double left, double right)
+        {
+            return Math.Abs(left - right) < 0.5;
         }
 
         private static string ResolveDefaultSaveFilePath()

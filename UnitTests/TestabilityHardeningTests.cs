@@ -690,6 +690,79 @@ namespace UnitTests
         }
 
         [Test]
+        public void SaveFile_NormalizeLoadedData_SwapsMislabeledViewportAndPictureInPictureStates()
+        {
+            ViewportWindowState mainInPipSlot = new ViewportWindowState
+            {
+                Width = 640,
+                Height = 740,
+                Left = 100,
+                Top = 120,
+                WindowKind = ViewportWindowState.MainViewportWindowKind
+            };
+            ViewportWindowState pipInMainSlot = new ViewportWindowState
+            {
+                Width = 192,
+                Height = 222,
+                Left = 900,
+                Top = 700,
+                WindowKind = ViewportWindowState.PictureInPictureViewportWindowKind
+            };
+
+            SaveFile.ResetForTests(
+                new SaveData
+                {
+                    GMViewportWindowState = pipInMainSlot,
+                    GMPictureInPictureViewportState = mainInPipSlot
+                },
+                persist: false);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(SaveFile.Data.GMViewportWindowState.Width, Is.EqualTo(640));
+                Assert.That(SaveFile.Data.GMViewportWindowState.WindowKind, Is.EqualTo(ViewportWindowState.MainViewportWindowKind));
+                Assert.That(SaveFile.Data.GMPictureInPictureViewportState.Width, Is.EqualTo(192));
+                Assert.That(SaveFile.Data.GMPictureInPictureViewportState.WindowKind, Is.EqualTo(ViewportWindowState.PictureInPictureViewportWindowKind));
+            });
+        }
+
+        [Test]
+        public void SaveFile_NormalizeLoadedData_ResetsLegacyMainViewportWhenItDuplicatesSmallPipState()
+        {
+            ViewportWindowState duplicatedPipState = new ViewportWindowState
+            {
+                Width = 192,
+                Height = 222,
+                Left = 900,
+                Top = 700,
+                IsVisible = true
+            };
+
+            SaveFile.ResetForTests(
+                new SaveData
+                {
+                    GMViewportWindowState = duplicatedPipState,
+                    GMPictureInPictureViewportState = new ViewportWindowState
+                    {
+                        Width = 192,
+                        Height = 222,
+                        Left = 900,
+                        Top = 700
+                    }
+                },
+                persist: false);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(SaveFile.Data.GMViewportWindowState.Width, Is.EqualTo(256));
+                Assert.That(SaveFile.Data.GMViewportWindowState.Height, Is.EqualTo(296));
+                Assert.That(SaveFile.Data.GMViewportWindowState.IsVisible, Is.True);
+                Assert.That(SaveFile.Data.GMViewportWindowState.WindowKind, Is.EqualTo(ViewportWindowState.MainViewportWindowKind));
+                Assert.That(SaveFile.Data.GMPictureInPictureViewportState.WindowKind, Is.EqualTo(ViewportWindowState.PictureInPictureViewportWindowKind));
+            });
+        }
+
+        [Test]
         public void Globals_ReloadServerIpsForTests_UsesProvidedServerJson()
         {
             string serverJsonPath = Path.Combine(tempRoot, "server.json");
