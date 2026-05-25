@@ -113,6 +113,60 @@ namespace UnitTests
         }
 
         [Test]
+        public void SnapshotServerMatchesCurrentEndpoint_RequiresSameRecordedEndpoint()
+        {
+            GmMultiClientSnapshot snapshot = new GmMultiClientSnapshot
+            {
+                ServerEndpoint = "WS://Example.COM:5000/"
+            };
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    MainWindow.SnapshotServerMatchesCurrentEndpoint(snapshot, "ws://example.com:5000"),
+                    Is.True);
+                Assert.That(
+                    MainWindow.SnapshotServerMatchesCurrentEndpoint(snapshot, "ws://example.com:5001"),
+                    Is.False);
+                Assert.That(
+                    MainWindow.SnapshotServerMatchesCurrentEndpoint(new GmMultiClientSnapshot(), "ws://example.com:5000"),
+                    Is.False);
+            });
+        }
+
+        [Test]
+        public void ResolveSnapshotRequestedPuppet_CrossServerPrefersLocalCharacterOverSavedPuppet()
+        {
+            GmMultiClientSnapshotClient state = new GmMultiClientSnapshotClient
+            {
+                IniPuppetName = "OldServerPuppet",
+                IniPuppetId = 1,
+                LocalCharacterName = "KamLoremaster"
+            };
+            Dictionary<string, bool> serverAvailability = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["OldServerPuppet"] = true,
+                ["KamLoremaster"] = true
+            };
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    MainWindow.ResolveSnapshotRequestedPuppet(
+                        state,
+                        serverAvailability,
+                        snapshotMatchesCurrentServer: false),
+                    Is.EqualTo("KamLoremaster"));
+                Assert.That(
+                    MainWindow.ResolveSnapshotRequestedPuppet(
+                        state,
+                        serverAvailability,
+                        snapshotMatchesCurrentServer: true),
+                    Is.EqualTo("OldServerPuppet"));
+            });
+        }
+
+        [Test]
         public void ClientAssetRefreshService_RefreshMarkerPath_UsesActiveSaveFileDirectory()
         {
             string expected = Path.Combine(

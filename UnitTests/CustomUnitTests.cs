@@ -151,6 +151,72 @@ public class ICMessageTests
     }
 
     [Test]
+    public void GetCommand_AllAo2FeatureFields_MatchesCompactOutgoingLayout()
+    {
+        ICMessage message = new ICMessage
+        {
+            DeskMod = DeskMods.Hidden,
+            PreAnim = "-",
+            Character = "KamLoremaster",
+            Emote = "/Animations/Backed",
+            Message = "c",
+            Side = "Judge",
+            SfxName = "1",
+            EmoteModifier = EmoteModifiers.NoPreanimation,
+            CharId = 17,
+            SfxDelay = 1,
+            ShoutModifier = ShoutModifiers.Nothing,
+            EvidenceID = "0",
+            Flip = false,
+            Realization = false,
+            TextColor = TextColors.White,
+            ShowName = "Trucy",
+            OtherCharId = -1,
+            SelfOffset = (0, 0),
+            NonInterruptingPreAnim = false,
+            SfxLooping = false,
+            ScreenShake = false,
+            FramesShake = "-^(b)/Animations/Backed^(a)/Animations/Backed^",
+            FramesRealization = "-^(b)/Animations/Backed^(a)/Animations/Backed^",
+            FramesSfx = "-^(b)/Animations/Backed^(a)/Animations/Backed^",
+            Additive = false,
+            EffectString = "||",
+            Blips = string.Empty,
+            Slide = false
+        };
+        SerializationOptions options = new SerializationOptions
+        {
+            IncludeCcccIcSupport = true,
+            IncludeLoopingSfx = true,
+            IncludeAdditive = true,
+            IncludeEffects = true,
+            IncludeCustomBlips = true,
+            IncludeVerticalOffset = true,
+            IncludeSlide = true
+        };
+
+        string command = ICMessage.GetCommand(message, options);
+        string[] parts = command.Split('#');
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                command,
+                Is.EqualTo("MS#0#-#KamLoremaster#/Animations/Backed#c#Judge#1#0#17#1#0#0#0#0#0#Trucy#-1#0<and>0#0#0#0#-^(b)/Animations/Backed^(a)/Animations/Backed^#-^(b)/Animations/Backed^(a)/Animations/Backed^#-^(b)/Animations/Backed^(a)/Animations/Backed^#0#||##0#%"));
+            Assert.That(parts.Length, Is.EqualTo(30));
+            Assert.That(parts[9], Is.EqualTo("17"));
+            Assert.That(parts[16], Is.EqualTo("Trucy"));
+            Assert.That(parts[18], Is.EqualTo("0<and>0"));
+            Assert.That(parts[19], Is.EqualTo("0"));
+            Assert.That(parts[20], Is.EqualTo("0"));
+            Assert.That(parts[21], Is.EqualTo("0"));
+            Assert.That(parts[22], Does.StartWith("-^(b)"));
+            Assert.That(parts[28], Is.EqualTo("0"));
+            Assert.That(parts[29], Is.EqualTo("%"));
+        });
+    }
+
+    [Test]
     public void GetCommand_OmitsVerticalOffsetWhenYOffsetExtensionIsDisabled()
     {
         ICMessage message = CreateSampleMessage();

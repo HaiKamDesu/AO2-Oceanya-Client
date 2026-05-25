@@ -2018,7 +2018,7 @@ namespace AOBot_Testing.Agents
 
         private static SemaphoreSlim _reconnectQueue = new SemaphoreSlim(1, 1);
 
-        private async Task Reconnect()
+        private async Task Reconnect(bool autoSelectCharacter = true)
         {
             await _reconnectQueue.WaitAsync();
             try
@@ -2029,7 +2029,7 @@ namespace AOBot_Testing.Agents
                     try
                     {
                         OnReconnectionAttempt?.Invoke(retryCount + 1);
-                        await Connect(0, 0, 5000, 2000);
+                        await Connect(0, 0, 5000, 2000, autoSelectCharacter);
                         if (IsTransportConnected)
                         {
                             CustomConsole.Info($"Reconnected via {TransportName}.");
@@ -2288,6 +2288,36 @@ namespace AOBot_Testing.Agents
             }
         }
 
+        private async Task RestoreIniPuppetAfterReconnectAsync(string previousCharacterName, int previousCharacterIndex)
+        {
+            string normalizedName = previousCharacterName?.Trim() ?? string.Empty;
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(normalizedName)
+                    && serverCharacterList.Keys.Any(character =>
+                        string.Equals(character, normalizedName, StringComparison.OrdinalIgnoreCase)))
+                {
+                    await SelectIniPuppet(normalizedName, iniswapToSelected: false);
+                    return;
+                }
+
+                if (previousCharacterIndex >= 0 && previousCharacterIndex < serverCharacterList.Count)
+                {
+                    await SelectIniPuppet(previousCharacterIndex, iniswapToSelected: false);
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Warning(
+                    $"Could not restore previous INIPuppet \"{normalizedName}\" after reconnect. Selecting a fallback.",
+                    ex,
+                    CustomConsole.LogCategory.IC);
+            }
+
+            await SelectFirstAvailableINIPuppet(iniswapToSelected: false);
+        }
+
         public async Task SelectFirstAvailableINIPuppet(bool iniswapToSelected = true)
         {
             if (!IsTransportConnected)
@@ -2542,12 +2572,17 @@ namespace AOBot_Testing.Agents
                         var prevAdditive = Additive;
                         var prevSelfOffset = SelfOffset;
                         var prevSelectedCharacterIndex = iniPuppetID;
+                        var prevSelectedCharacterName = iniPuppetName;
                         #endregion
 
-                        await Reconnect();
+                        await Reconnect(autoSelectCharacter: false);
 
                         if (!dead)
                         {
+                            await RestoreIniPuppetAfterReconnectAsync(
+                                prevSelectedCharacterName,
+                                prevSelectedCharacterIndex);
+
                             #region Reapply the previous state
                             SetICShowname(prevICShowname);
                             OOCShowname = prevOOCShowname;

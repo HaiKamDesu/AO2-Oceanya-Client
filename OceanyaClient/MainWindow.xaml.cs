@@ -4446,7 +4446,6 @@ namespace OceanyaClient
                 ? client.clientName
                 : state.OOCShowname;
             client.iniPuppetID = useSingleInternalClient ? client.iniPuppetID : -1;
-            client.curBG = state.Background;
             client.curSFX = state.Sfx;
             client.deskMod = Enum.IsDefined(typeof(ICMessage.DeskMods), state.DeskMod)
                 ? (ICMessage.DeskMods)state.DeskMod
@@ -4546,7 +4545,9 @@ namespace OceanyaClient
                 Clients = clientList.Select(CreateSnapshotState).ToList(),
                 SelectedClientIndex = selectedIndex,
                 SelectedClientName = currentClient?.clientName?.Trim() ?? string.Empty,
-                UseSingleInternalClient = useSingleInternalClient
+                UseSingleInternalClient = useSingleInternalClient,
+                ServerEndpoint = Globals.GetSelectedServerEndpoint()?.Trim() ?? string.Empty,
+                ServerName = SaveFile.Data.SelectedServerName?.Trim() ?? string.Empty
             };
             SaveFile.Save();
         }
@@ -4592,6 +4593,9 @@ namespace OceanyaClient
             IsEnabled = false;
             try
             {
+                bool snapshotMatchesCurrentServer = SnapshotServerMatchesCurrentEndpoint(
+                    snapshot,
+                    Globals.GetSelectedServerEndpoint());
                 List<GmMultiClientSnapshotClient> statesToRestore = snapshot.Clients
                     .Where(state => state != null)
                     .ToList();
@@ -4619,7 +4623,8 @@ namespace OceanyaClient
 
                     resolvedStates = ResolveSnapshotCharacterConflictsForSingleInternalClient(
                         statesToRestore,
-                        singleInternalClient.ServerCharacterAvailability);
+                        singleInternalClient.ServerCharacterAvailability,
+                        snapshotMatchesCurrentServer);
                     if (resolvedStates.Count == 0)
                     {
                         return;
@@ -4635,7 +4640,8 @@ namespace OceanyaClient
                     await ConnectClientAsync(firstConnectedClient, autoSelectCharacter: false);
                     resolvedStates = ResolveSnapshotCharacterConflicts(
                         statesToRestore,
-                        firstConnectedClient.ServerCharacterAvailability);
+                        firstConnectedClient.ServerCharacterAvailability,
+                        snapshotMatchesCurrentServer);
                     if (resolvedStates.Count == 0)
                     {
                         await firstConnectedClient.Disconnect();
@@ -4740,7 +4746,8 @@ namespace OceanyaClient
 
         private List<GmMultiClientSnapshotClient> ResolveSnapshotCharacterConflicts(
             List<GmMultiClientSnapshotClient> states,
-            IReadOnlyDictionary<string, bool> serverAvailability)
+            IReadOnlyDictionary<string, bool> serverAvailability,
+            bool snapshotMatchesCurrentServer)
         {
             List<GmMultiClientSnapshotClient> resolved = new List<GmMultiClientSnapshotClient>();
             HashSet<string> acceptedPuppets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -4748,7 +4755,10 @@ namespace OceanyaClient
             for (int i = 0; i < states.Count; i++)
             {
                 GmMultiClientSnapshotClient state = states[i];
-                string requestedPuppet = ResolveSnapshotRequestedPuppet(state, serverAvailability);
+                string requestedPuppet = ResolveSnapshotRequestedPuppet(
+                    state,
+                    serverAvailability,
+                    snapshotMatchesCurrentServer);
                 state.IniPuppetName = requestedPuppet;
                 HashSet<string> unavailablePuppets = BuildReservedSnapshotPuppets(states, i + 1, acceptedPuppets);
 
@@ -4792,7 +4802,8 @@ namespace OceanyaClient
 
         private List<GmMultiClientSnapshotClient> ResolveSnapshotCharacterConflictsForSingleInternalClient(
             List<GmMultiClientSnapshotClient> states,
-            IReadOnlyDictionary<string, bool> serverAvailability)
+            IReadOnlyDictionary<string, bool> serverAvailability,
+            bool snapshotMatchesCurrentServer)
         {
             List<GmMultiClientSnapshotClient> resolved = new List<GmMultiClientSnapshotClient>();
             bool hasSelectedNetworkPuppet = false;
@@ -4805,7 +4816,10 @@ namespace OceanyaClient
                     continue;
                 }
 
-                string requestedPuppet = ResolveSnapshotRequestedPuppet(state, serverAvailability);
+                string requestedPuppet = ResolveSnapshotRequestedPuppet(
+                    state,
+                    serverAvailability,
+                    snapshotMatchesCurrentServer);
                 state.IniPuppetName = requestedPuppet;
                 if (CanUseSnapshotPuppet(requestedPuppet, serverAvailability, new HashSet<string>(StringComparer.OrdinalIgnoreCase)))
                 {
@@ -4868,12 +4882,51 @@ namespace OceanyaClient
             return reservedPuppets;
         }
 
-        private static string ResolveSnapshotRequestedPuppet(
+        internal static bool SnapshotServerMatchesCurrentEndpoint(
+            GmMultiClientSnapshot? snapshot,
+            string? currentEndpoint)
+        {
+            string savedEndpoint = NormalizeServerEndpointForSnapshot(snapshot?.ServerEndpoint);
+            string activeEndpoint = NormalizeServerEndpointForSnapshot(currentEndpoint);
+            return !string.IsNullOrWhiteSpace(savedEndpoint)
+                && !string.IsNullOrWhiteSpace(activeEndpoint)
+                && string.Equals(savedEndpoint, activeEndpoint, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string NormalizeServerEndpointForSnapshot(string? endpoint)
+        {
+            string normalized = endpoint?.Trim() ?? string.Empty;
+            if (normalized.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            if (!Uri.TryCreate(normalized, UriKind.Absolute, out Uri? uri))
+            {
+                return normalized.TrimEnd('/');
+            }
+
+            string host = uri.IdnHost.Length > 0
+                ? uri.IdnHost.ToLowerInvariant()
+                : uri.Host.ToLowerInvariant();
+            string path = uri.AbsolutePath.TrimEnd('/');
+            return $"{uri.Scheme.ToLowerInvariant()}://{host}:{uri.Port}{path}";
+        }
+
+        internal static string ResolveSnapshotRequestedPuppet(
             GmMultiClientSnapshotClient state,
-            IReadOnlyDictionary<string, bool> serverAvailability)
+            IReadOnlyDictionary<string, bool> serverAvailability,
+            bool snapshotMatchesCurrentServer)
         {
             string savedPuppet = state.IniPuppetName?.Trim() ?? string.Empty;
             string localCharacter = state.LocalCharacterName?.Trim() ?? string.Empty;
+            if (!snapshotMatchesCurrentServer
+                && !string.IsNullOrWhiteSpace(localCharacter)
+                && serverAvailability.ContainsKey(localCharacter))
+            {
+                return localCharacter;
+            }
+
             if (!string.IsNullOrWhiteSpace(savedPuppet)
                 && !string.Equals(savedPuppet, localCharacter, StringComparison.OrdinalIgnoreCase))
             {

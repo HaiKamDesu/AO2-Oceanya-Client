@@ -601,6 +601,8 @@ namespace OceanyaClient
         public int SelectedClientIndex { get; set; } = -1;
         public string SelectedClientName { get; set; } = string.Empty;
         public bool UseSingleInternalClient { get; set; }
+        public string ServerEndpoint { get; set; } = string.Empty;
+        public string ServerName { get; set; } = string.Empty;
     }
 
     public class GmMultiClientSnapshotClient
@@ -1231,6 +1233,8 @@ namespace OceanyaClient
             }
 
             snapshot.SelectedClientName = snapshot.SelectedClientName?.Trim() ?? string.Empty;
+            snapshot.ServerEndpoint = snapshot.ServerEndpoint?.Trim() ?? string.Empty;
+            snapshot.ServerName = snapshot.ServerName?.Trim() ?? string.Empty;
             return snapshot;
         }
 
