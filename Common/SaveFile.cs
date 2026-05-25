@@ -499,6 +499,7 @@ namespace OceanyaClient
             Height = 676
         };
         public GmMultiClientSnapshot GMMultiClientSnapshot { get; set; } = new GmMultiClientSnapshot();
+        public List<GmMultiClientSnapshotPreset> GMMultiClientSnapshotPresets { get; set; } = new List<GmMultiClientSnapshotPreset>();
         public string GMViewportChatBackgroundColor { get; set; } = string.Empty;
 
         /// <summary>When true, the GM viewport renders the AO2 chatbox at its theme overlap position instead of below the viewport.</summary>
@@ -603,6 +604,14 @@ namespace OceanyaClient
         public bool UseSingleInternalClient { get; set; }
         public string ServerEndpoint { get; set; } = string.Empty;
         public string ServerName { get; set; } = string.Empty;
+    }
+
+    public class GmMultiClientSnapshotPreset
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public GmMultiClientSnapshot Snapshot { get; set; } = new GmMultiClientSnapshot();
+        public DateTime SavedUtc { get; set; } = DateTime.UtcNow;
     }
 
     public class GmMultiClientSnapshotClient
@@ -841,6 +850,7 @@ namespace OceanyaClient
                 Height = 676
             };
             data.GMMultiClientSnapshot = NormalizeGmMultiClientSnapshot(data.GMMultiClientSnapshot);
+            data.GMMultiClientSnapshotPresets = NormalizeGmMultiClientSnapshotPresets(data.GMMultiClientSnapshotPresets);
             data.GMViewportChatBackgroundColor = NormalizeOptionalColor(data.GMViewportChatBackgroundColor);
             ClampWindowState(data.FolderVisualizerWindowState);
             ClampWindowState(data.EmoteVisualizerWindowState);
@@ -1236,6 +1246,38 @@ namespace OceanyaClient
             snapshot.ServerEndpoint = snapshot.ServerEndpoint?.Trim() ?? string.Empty;
             snapshot.ServerName = snapshot.ServerName?.Trim() ?? string.Empty;
             return snapshot;
+        }
+
+        private static List<GmMultiClientSnapshotPreset> NormalizeGmMultiClientSnapshotPresets(List<GmMultiClientSnapshotPreset>? presets)
+        {
+            Dictionary<string, GmMultiClientSnapshotPreset> normalizedByName =
+                new Dictionary<string, GmMultiClientSnapshotPreset>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (GmMultiClientSnapshotPreset? preset in presets ?? new List<GmMultiClientSnapshotPreset>())
+            {
+                if (preset == null)
+                {
+                    continue;
+                }
+
+                string name = preset.Name?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    continue;
+                }
+
+                normalizedByName[name] = new GmMultiClientSnapshotPreset
+                {
+                    Id = string.IsNullOrWhiteSpace(preset.Id) ? Guid.NewGuid().ToString("N") : preset.Id.Trim(),
+                    Name = name,
+                    Snapshot = NormalizeGmMultiClientSnapshot(preset.Snapshot),
+                    SavedUtc = preset.SavedUtc == default ? DateTime.UtcNow : preset.SavedUtc
+                };
+            }
+
+            return normalizedByName.Values
+                .OrderBy(preset => preset.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
 
         private static bool IsValidCallwordRule(CallwordRule rule)

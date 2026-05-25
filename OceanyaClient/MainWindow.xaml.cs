@@ -98,6 +98,7 @@ namespace OceanyaClient
         private bool hasAttemptedSnapshotRestore;
         private bool isRestoringSnapshot;
         private bool suppressSnapshotCapture;
+        private bool suppressClientDisconnectNotifications;
         private bool suppressOocShownameTextChanged;
         private IInputElement? lastMainWindowFocusedElement;
         private readonly bool useSingleInternalClient = SaveFile.Data.UseSingleInternalClient;
@@ -250,6 +251,7 @@ namespace OceanyaClient
         {
             this.aiModeEnabled = aiModeEnabled;
             InitializeComponent();
+            InitializeClientsHeaderContextMenu();
             Title = aiModeEnabled ? "Oceanya Online - AO2 AI Bot" : "Oceanya Online";
             Icon = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/OceanyaO.ico"));
             SourceInitialized += MainWindow_SourceInitialized;
@@ -694,6 +696,249 @@ namespace OceanyaClient
             }
 
             return SetForegroundWindow(hwnd);
+        }
+
+        private void InitializeClientsHeaderContextMenu()
+        {
+            lblClients.ContextMenu = BuildClientsHeaderContextMenu();
+            btnAddClient.ContextMenu = BuildClientsHeaderContextMenu();
+            btnRemoveClient.ContextMenu = BuildClientsHeaderContextMenu();
+        }
+
+        private ContextMenu BuildClientsHeaderContextMenu()
+        {
+            ContextMenu contextMenu = new ContextMenu();
+            ContextMenuSectionHelper.AddHeader(contextMenu, "Clients", addLeadingSeparator: false);
+
+            MenuItem disconnectAllMenuItem = new MenuItem { Header = "Disconnect all clients" };
+            disconnectAllMenuItem.Click += async (_, _) => await DisconnectAllClientsFromMenuAsync(confirm: true);
+            contextMenu.Items.Add(disconnectAllMenuItem);
+
+            MenuItem savePresetMenuItem = new MenuItem { Header = "Save current clients as preset" };
+            savePresetMenuItem.Click += (_, _) => SaveCurrentClientsAsPreset();
+            contextMenu.Items.Add(savePresetMenuItem);
+
+            ContextMenuSectionHelper.AddHeader(contextMenu, "Presets", addLeadingSeparator: true);
+
+            MenuItem restorePresetMenuItem = new MenuItem { Header = "Restore preset" };
+            contextMenu.Items.Add(restorePresetMenuItem);
+
+            MenuItem deletePresetMenuItem = new MenuItem { Header = "Delete preset" };
+            contextMenu.Items.Add(deletePresetMenuItem);
+
+            contextMenu.Opened += (_, _) =>
+            {
+                disconnectAllMenuItem.IsEnabled = clients.Count > 0;
+                savePresetMenuItem.IsEnabled = clients.Count > 0;
+                PopulateRestorePresetMenu(restorePresetMenuItem);
+                PopulateDeletePresetMenu(deletePresetMenuItem);
+            };
+
+            return contextMenu;
+        }
+
+        private List<GmMultiClientSnapshotPreset> GetSavedPresets()
+        {
+            return SaveFile.Data.GMMultiClientSnapshotPresets?
+                .Where(preset => preset != null
+                    && !string.IsNullOrWhiteSpace(preset.Name)
+                    && preset.Snapshot?.Clients?.Count > 0)
+                .OrderBy(preset => preset.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList() ?? new List<GmMultiClientSnapshotPreset>();
+        }
+
+        private void PopulateRestorePresetMenu(MenuItem restorePresetMenuItem)
+        {
+            restorePresetMenuItem.Items.Clear();
+            List<GmMultiClientSnapshotPreset> presets = GetSavedPresets();
+
+            restorePresetMenuItem.IsEnabled = presets.Count > 0;
+            if (presets.Count == 0)
+            {
+                restorePresetMenuItem.Items.Add(new MenuItem { Header = "No saved presets", IsEnabled = false });
+                return;
+            }
+
+            foreach (GmMultiClientSnapshotPreset preset in presets)
+            {
+                GmMultiClientSnapshotPreset capturedPreset = preset;
+                MenuItem presetItem = new MenuItem { Header = preset.Name };
+                presetItem.Click += async (_, _) => await RestoreClientPresetAsync(capturedPreset);
+                restorePresetMenuItem.Items.Add(presetItem);
+            }
+        }
+
+        private void PopulateDeletePresetMenu(MenuItem deletePresetMenuItem)
+        {
+            deletePresetMenuItem.Items.Clear();
+            List<GmMultiClientSnapshotPreset> presets = GetSavedPresets();
+
+            deletePresetMenuItem.IsEnabled = presets.Count > 0;
+            if (presets.Count == 0)
+            {
+                deletePresetMenuItem.Items.Add(new MenuItem { Header = "No saved presets", IsEnabled = false });
+                return;
+            }
+
+            foreach (GmMultiClientSnapshotPreset preset in presets)
+            {
+                GmMultiClientSnapshotPreset capturedPreset = preset;
+                MenuItem presetItem = new MenuItem { Header = preset.Name };
+                presetItem.Click += (_, _) => DeleteClientPreset(capturedPreset);
+                deletePresetMenuItem.Items.Add(presetItem);
+            }
+        }
+
+        private void DeleteClientPreset(GmMultiClientSnapshotPreset preset)
+        {
+            MessageBoxResult confirm = OceanyaMessageBox.Show(
+                $"Delete the preset \"{preset.Name}\"?",
+                "Delete Client Preset",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+            if (confirm != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            SaveFile.Data.GMMultiClientSnapshotPresets?.Remove(preset);
+            SaveFile.Save();
+        }
+
+        private void SaveCurrentClientsAsPreset()
+        {
+            if (clients.Count == 0)
+            {
+                ShowMainWindowMessage(
+                    "There are no clients to save.",
+                    "Save Client Preset",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            Window? owner = HostWindow ?? Application.Current?.MainWindow;
+            string presetName = InputDialog.Show(
+                owner,
+                "Enter a name for this client preset:",
+                "Save Client Preset",
+                "Client Preset");
+            presetName = presetName?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(presetName))
+            {
+                return;
+            }
+
+            SaveFile.Data.GMMultiClientSnapshotPresets ??= new List<GmMultiClientSnapshotPreset>();
+            GmMultiClientSnapshotPreset? existingPreset = SaveFile.Data.GMMultiClientSnapshotPresets.FirstOrDefault(
+                preset => string.Equals(preset.Name?.Trim(), presetName, StringComparison.OrdinalIgnoreCase));
+            if (existingPreset != null)
+            {
+                MessageBoxResult overwrite = OceanyaMessageBox.Show(
+                    $"A client preset named \"{presetName}\" already exists. Replace it?",
+                    "Replace Client Preset",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+                if (overwrite != MessageBoxResult.Yes)
+                {
+                    return;
+                }
+            }
+
+            GmMultiClientSnapshot snapshot = BuildCurrentGmMultiClientSnapshot();
+            if (existingPreset == null)
+            {
+                SaveFile.Data.GMMultiClientSnapshotPresets.Add(new GmMultiClientSnapshotPreset
+                {
+                    Id = Guid.NewGuid().ToString("N"),
+                    Name = presetName,
+                    Snapshot = CloneSnapshot(snapshot),
+                    SavedUtc = DateTime.UtcNow
+                });
+            }
+            else
+            {
+                existingPreset.Name = presetName;
+                existingPreset.Snapshot = CloneSnapshot(snapshot);
+                existingPreset.SavedUtc = DateTime.UtcNow;
+            }
+
+            SaveFile.Save();
+        }
+
+        private async Task RestoreClientPresetAsync(GmMultiClientSnapshotPreset preset)
+        {
+            if (preset.Snapshot?.Clients == null || preset.Snapshot.Clients.Count == 0)
+            {
+                return;
+            }
+
+            if (clients.Count > 0)
+            {
+                MessageBoxResult replace = OceanyaMessageBox.Show(
+                    $"Restore \"{preset.Name}\" and disconnect the current clients?",
+                    "Restore Client Preset",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+                if (replace != MessageBoxResult.Yes)
+                {
+                    return;
+                }
+
+                await DisconnectAllClientsFromMenuAsync(confirm: false);
+            }
+
+            if (clients.Count > 0)
+            {
+                ShowMainWindowMessage(
+                    "Could not restore the preset because some clients are still connected.",
+                    "Restore Client Preset",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            await RestoreGmMultiClientSnapshotAsync(
+                CloneSnapshot(preset.Snapshot),
+                failureMessagePrefix: $"Could not restore client preset \"{preset.Name}\"",
+                logStartupTiming: false);
+        }
+
+        private async Task DisconnectAllClientsFromMenuAsync(bool confirm)
+        {
+            if (clients.Count == 0)
+            {
+                return;
+            }
+
+            if (confirm)
+            {
+                MessageBoxResult result = OceanyaMessageBox.Show(
+                    "Disconnect all currently connected clients?",
+                    "Disconnect All Clients",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+                if (result != MessageBoxResult.Yes)
+                {
+                    return;
+                }
+            }
+
+            List<AOClient> clientsToDisconnect = clientOrder
+                .Where(client => clients.Values.Contains(client))
+                .ToList();
+            suppressClientDisconnectNotifications = true;
+            try
+            {
+                foreach (AOClient client in clientsToDisconnect)
+                {
+                    await RemoveClientAsync(client);
+                }
+            }
+            finally
+            {
+                suppressClientDisconnectNotifications = false;
+            }
         }
 
         private static bool IsEligibleAltTabSwitchTarget(
@@ -4108,6 +4353,8 @@ namespace OceanyaClient
                         return;
                     }
 
+                    UpdateObservedPairStateFromIncomingIc(targetClient, singleInternalClient, icMessage);
+
                     bool isSentFromSelf = icMessage.CharId == singleInternalClient.iniPuppetID;
                     AddLoggedIcMessageWithContext(
                         targetClient,
@@ -4384,6 +4631,42 @@ namespace OceanyaClient
             }
         }
 
+        private static void UpdateObservedPairStateFromIncomingIc(AOClient profileClient, AOClient networkClient, ICMessage message)
+        {
+            if (message.CharId < 0)
+            {
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(message.Side))
+            {
+                profileClient.KnownPairTargetPositions[message.CharId] = message.Side;
+                networkClient.KnownPairTargetPositions[message.CharId] = message.Side;
+            }
+
+            bool isSelfEcho = message.CharId == profileClient.iniPuppetID || message.CharId == networkClient.iniPuppetID;
+            if (isSelfEcho)
+            {
+                return;
+            }
+
+            int profileSelfId = profileClient.iniPuppetID;
+            int networkSelfId = networkClient.iniPuppetID;
+            bool targetsThisClient = message.OtherCharId >= 0
+                && (message.OtherCharId == profileSelfId || message.OtherCharId == networkSelfId);
+
+            if (targetsThisClient)
+            {
+                profileClient.ConfirmedPairTargetCharIds.Add(message.CharId);
+                networkClient.ConfirmedPairTargetCharIds.Add(message.CharId);
+            }
+            else
+            {
+                profileClient.ConfirmedPairTargetCharIds.Remove(message.CharId);
+                networkClient.ConfirmedPairTargetCharIds.Remove(message.CharId);
+            }
+        }
+
         private async Task ConnectClientAsync(AOClient bot, bool autoSelectCharacter = true)
         {
             if (testConnectClientAsyncOverride != null)
@@ -4536,11 +4819,17 @@ namespace OceanyaClient
                 return;
             }
 
+            SaveFile.Data.GMMultiClientSnapshot = BuildCurrentGmMultiClientSnapshot();
+            SaveFile.Save();
+        }
+
+        private GmMultiClientSnapshot BuildCurrentGmMultiClientSnapshot()
+        {
             List<AOClient> clientList = clientOrder
                 .Where(client => clients.Values.Contains(client))
                 .ToList();
             int selectedIndex = currentClient == null ? -1 : clientList.IndexOf(currentClient);
-            SaveFile.Data.GMMultiClientSnapshot = new GmMultiClientSnapshot
+            return new GmMultiClientSnapshot
             {
                 Clients = clientList.Select(CreateSnapshotState).ToList(),
                 SelectedClientIndex = selectedIndex,
@@ -4549,7 +4838,45 @@ namespace OceanyaClient
                 ServerEndpoint = Globals.GetSelectedServerEndpoint()?.Trim() ?? string.Empty,
                 ServerName = SaveFile.Data.SelectedServerName?.Trim() ?? string.Empty
             };
-            SaveFile.Save();
+        }
+
+        private static GmMultiClientSnapshot CloneSnapshot(GmMultiClientSnapshot snapshot)
+        {
+            return new GmMultiClientSnapshot
+            {
+                Clients = (snapshot.Clients ?? new List<GmMultiClientSnapshotClient>())
+                    .Where(client => client != null)
+                    .Select(client => new GmMultiClientSnapshotClient
+                    {
+                        ClientName = client.ClientName,
+                        IniPuppetName = client.IniPuppetName,
+                        IniPuppetId = client.IniPuppetId,
+                        LocalCharacterName = client.LocalCharacterName,
+                        EmoteDisplayId = client.EmoteDisplayId,
+                        ICShowname = client.ICShowname,
+                        OOCShowname = client.OOCShowname,
+                        Position = client.Position,
+                        Background = client.Background,
+                        Sfx = client.Sfx,
+                        DeskMod = client.DeskMod,
+                        EmoteMod = client.EmoteMod,
+                        ShoutModifier = client.ShoutModifier,
+                        Flip = client.Flip,
+                        Effect = client.Effect,
+                        Screenshake = client.Screenshake,
+                        TextColor = client.TextColor,
+                        PreanimEnabled = client.PreanimEnabled,
+                        Immediate = client.Immediate,
+                        Additive = client.Additive,
+                        SwitchPosWhenChangingIni = client.SwitchPosWhenChangingIni
+                    })
+                    .ToList(),
+                SelectedClientIndex = snapshot.SelectedClientIndex,
+                SelectedClientName = snapshot.SelectedClientName,
+                UseSingleInternalClient = snapshot.UseSingleInternalClient,
+                ServerEndpoint = snapshot.ServerEndpoint,
+                ServerName = snapshot.ServerName
+            };
         }
 
         private void MoveClient(AOClient client, int offset)
@@ -4587,7 +4914,27 @@ namespace OceanyaClient
                 return;
             }
 
-            StartupTimingLogger.Log("snapshot_restore_begin", $"clients={snapshot.Clients.Count}");
+            await RestoreGmMultiClientSnapshotAsync(
+                snapshot,
+                failureMessagePrefix: "Could not restore the previous GM client snapshot",
+                logStartupTiming: true);
+        }
+
+        private async Task RestoreGmMultiClientSnapshotAsync(
+            GmMultiClientSnapshot snapshot,
+            string failureMessagePrefix,
+            bool logStartupTiming)
+        {
+            if (snapshot.Clients == null || snapshot.Clients.Count == 0)
+            {
+                return;
+            }
+
+            if (logStartupTiming)
+            {
+                StartupTimingLogger.Log("snapshot_restore_begin", $"clients={snapshot.Clients.Count}");
+            }
+
             isRestoringSnapshot = true;
             suppressSnapshotCapture = true;
             IsEnabled = false;
@@ -4665,15 +5012,19 @@ namespace OceanyaClient
             {
                 CustomConsole.Error("Failed to restore GM multi-client snapshot.", ex, CustomConsole.LogCategory.System);
                 ShowMainWindowMessage(
-                    $"Could not restore the previous GM client snapshot: {ex.Message}",
+                    $"{failureMessagePrefix}: {ex.Message}",
                     "Snapshot Restore Failed",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
             }
             finally
             {
-                StartupTimingLogger.Log("snapshot_restore_complete", $"clients={clients.Count}");
-                StartupTimingLogger.WriteLog();
+                if (logStartupTiming)
+                {
+                    StartupTimingLogger.Log("snapshot_restore_complete", $"clients={clients.Count}");
+                    StartupTimingLogger.WriteLog();
+                }
+
                 IsEnabled = true;
                 suppressSnapshotCapture = false;
                 isRestoringSnapshot = false;
@@ -5121,6 +5472,8 @@ namespace OceanyaClient
             {
                 Dispatcher.Invoke(() =>
                 {
+                    UpdateObservedPairStateFromIncomingIc(bot, bot, icMessage);
+
                     bool isSentFromSelf = clients.Select(x => x.Value.iniPuppetID).Contains(icMessage.CharId);
 
                     AddLoggedIcMessageWithContext(
@@ -5603,7 +5956,10 @@ namespace OceanyaClient
                         clientOrder.Remove(bot);
                         EmoteGrid.DeleteElement(button);
 
-                        OceanyaMessageBox.Show($"Client {bot.clientName} has disconnected.", "Client Disconnected", MessageBoxButton.OK, MessageBoxImage.Information);
+                        if (!suppressClientDisconnectNotifications)
+                        {
+                            OceanyaMessageBox.Show($"Client {bot.clientName} has disconnected.", "Client Disconnected", MessageBoxButton.OK, MessageBoxImage.Information);
+                        }
 
                         if(clients.Count == 0)
                         {

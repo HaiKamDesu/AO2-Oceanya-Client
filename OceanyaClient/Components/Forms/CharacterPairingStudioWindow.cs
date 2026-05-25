@@ -998,11 +998,6 @@ namespace OceanyaClient.Components
                 return;
             }
 
-            if (observedPairTargetId < 0)
-            {
-                return;
-            }
-
             if (observedPairTargetId == GetSelfPairTargetId())
             {
                 networkClient.ConfirmedPairTargetCharIds.Add(partnerCharacterId);
@@ -1026,8 +1021,6 @@ namespace OceanyaClient.Components
                 return;
             }
 
-            networkClient.ConfirmedPairTargetCharIds.Add(message.OtherCharId);
-            profileClient.ConfirmedPairTargetCharIds.Add(message.OtherCharId);
             partnerPreviewStates[message.OtherCharId] = new PartnerPreviewState(
                 message.OtherName ?? string.Empty,
                 (message.OtherOffset, message.OtherOffsetVertical),
@@ -1202,15 +1195,14 @@ namespace OceanyaClient.Components
                 return selectedCandidate != null && selectedCandidate.CharacterId == candidate.CharacterId;
             }
 
-            if (networkClient.ConfirmedPairTargetCharIds.Contains(candidate.CharacterId)
-                || profileClient.ConfirmedPairTargetCharIds.Contains(candidate.CharacterId))
+            int selfPairId = GetSelfPairTargetId();
+            if (partnerPreviewStates.TryGetValue(candidate.CharacterId, out PartnerPreviewState? state))
             {
-                return true;
+                return state.OtherCharId == selfPairId;
             }
 
-            int selfPairId = GetSelfPairTargetId();
-            if (partnerPreviewStates.TryGetValue(candidate.CharacterId, out PartnerPreviewState? state)
-                && state.OtherCharId == selfPairId)
+            if (networkClient.ConfirmedPairTargetCharIds.Contains(candidate.CharacterId)
+                || profileClient.ConfirmedPairTargetCharIds.Contains(candidate.CharacterId))
             {
                 return true;
             }
@@ -1844,7 +1836,7 @@ namespace OceanyaClient.Components
 
             bool samePosition = internalPeer == null
                 || string.Equals(internalPeer.curPos, client.curPos, StringComparison.OrdinalIgnoreCase);
-            bool canSelect = available && characterId >= 0 && samePosition;
+            bool canSelect = characterId >= 0;
             string status = fromCurrentArea
                 ? string.IsNullOrWhiteSpace(rawLine)
                     ? $"[{characterId}] {name}"
