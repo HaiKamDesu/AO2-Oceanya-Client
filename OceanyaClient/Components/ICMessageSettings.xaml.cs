@@ -1291,7 +1291,7 @@ namespace OceanyaClient.Components
             txtICMessage.Focus();
         }
 
-        private void btnPairingStudio_Click(object sender, RoutedEventArgs e)
+        private async void btnPairingStudio_Click(object sender, RoutedEventArgs e)
         {
             if (curClient == null || curClient.currentINI == null)
             {
@@ -1300,7 +1300,7 @@ namespace OceanyaClient.Components
             }
 
             CharacterPairingStudioWindow.PairingStudioResult? result =
-                CharacterPairingStudioWindow.ShowDialog(
+                await CharacterPairingStudioWindow.ShowDialogAsync(
                     Window.GetWindow(this),
                     curClient,
                     PairingNetworkClientProvider?.Invoke(curClient) ?? curClient,

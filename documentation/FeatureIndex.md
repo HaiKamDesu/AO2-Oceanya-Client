@@ -111,7 +111,7 @@ Use this file as the first stop before broad repository searches. It should poin
 
 ## AO2 Parity Gaps
 - Doc: `Documentation/AO2ParityGaps.md`
-- Notes: Point-in-time (2026-05-14, branch release/6-2) catalog of every user-facing AO2 feature absent or incomplete in OceanyaClient. Pairing UI (#1) now has a first working Pairing Studio (`CharacterPairingStudioWindow`, `btnPairingStudio`, `AOClient.PairTargetCharId` / `PairLayerOrder`); remaining pairing work is partner-readiness/sync polish. Other high-priority gaps: Evidence management (#2), Judge controls/HP bars (#3). Medium: Timer TI# (#4), Spectator (#5), Typing indicator (#6), Mute (#8), Mod call (#9), RT# sending (#19).
+- Notes: Point-in-time (2026-05-14, branch release/6-2) catalog of every user-facing AO2 feature absent or incomplete in OceanyaClient. Pairing UI (#1) lives in `CharacterPairingStudioWindow` and opens from `btnPairingStudio`; it preloads `/getarea` before showing candidates, auto-pairs reciprocal Oceanya internal clients, shows an internal-client switch pill for editing either side's offset/layer without rebuilding the dialog, clears both sides on internal unpair, and uses confirmed `MS#` pair echo `OtherName`/`OtherEmote` plus internal peer `currentINI` for live preview partner art. Other high-priority gaps: Evidence management (#2), Judge controls/HP bars (#3). Medium: Timer TI# (#4), Spectator (#5), Typing indicator (#6), Mute (#8), Mod call (#9), RT# sending (#19).
 
 ## UI Automation Tests (Smoke + Online)
 - Doc: `UiAutomationTests/README.md`

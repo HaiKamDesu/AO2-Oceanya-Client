@@ -33,7 +33,11 @@ namespace OceanyaClient.Components
         private readonly TextBox partnerYTextBox;
         private readonly ToggleButton meFrontButton;
         private readonly ToggleButton partnerFrontButton;
+        private readonly ToggleButton activeSelfButton;
+        private readonly ToggleButton activePartnerButton;
+        private readonly Border internalPairSwitchSection;
         private readonly TextBlock selfLineText;
+        private readonly TextBlock previewInfoText;
         private readonly StackPanel pairingStepsPanel;
         private readonly Button sendBlankpostButton;
         private readonly Button matchPartnerPositionButton;
@@ -45,6 +49,7 @@ namespace OceanyaClient.Components
         private (int Horizontal, int Vertical) myOffset;
         private (int Horizontal, int Vertical) partnerPreviewOffset;
         private bool partnerPreviewFlip;
+        private bool editingInternalPeer;
         private bool updatingText;
         private bool keyboardNudgeActive;
         private Window? keyboardHostWindow;
@@ -97,6 +102,12 @@ namespace OceanyaClient.Components
             ApplyDisabledPreviewFieldStyle(partnerYTextBox);
             meFrontButton = CreateSegmentButton("Me in front", "Your character appears over the paired character when you speak.", new CornerRadius(15, 0, 0, 15));
             partnerFrontButton = CreateSegmentButton("Partner in front", "The paired character appears over your character when you speak.", new CornerRadius(0, 15, 15, 0));
+            activeSelfButton = CreatePlainSegmentButton(string.Empty, "Edit this client's pairing state.", new CornerRadius(15, 0, 0, 15));
+            activePartnerButton = CreatePlainSegmentButton(string.Empty, "Edit this client's pairing state.", new CornerRadius(0, 15, 15, 0));
+            activeSelfButton.Checked += (_, _) => SetActiveInternalEditor(editPartner: false);
+            activePartnerButton.Checked += (_, _) => SetActiveInternalEditor(editPartner: true);
+            internalPairSwitchSection = BuildInternalPairSwitchSection();
+            internalPairSwitchSection.Visibility = Visibility.Collapsed;
             selfLineText = new TextBlock
             {
                 Text = BuildSelfLine(),
@@ -104,6 +115,13 @@ namespace OceanyaClient.Components
                 FontSize = 13,
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, 8, 0, 0)
+            };
+            previewInfoText = new TextBlock
+            {
+                Foreground = new SolidColorBrush(Color.FromRgb(198, 212, 226)),
+                FontSize = 12,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis
             };
             pairingStepsPanel = new StackPanel
             {
@@ -143,6 +161,8 @@ namespace OceanyaClient.Components
                 RefreshCandidateList();
                 SelectInitialCandidate();
                 UpdateOffsetText();
+                RefreshInternalPairSwitch();
+                RefreshPreviewInfo();
                 RefreshPreview();
                 AttachHostKeyboardHandler();
                 Focus();
@@ -187,6 +207,46 @@ namespace OceanyaClient.Components
             return result == true ? content.Result : null;
         }
 
+        public static async Task<PairingStudioResult?> ShowDialogAsync(Window? owner, AOClient profileClient, AOClient networkClient, IReadOnlyList<AOClient>? peerClients = null)
+        {
+            await RefreshAreaPlayersBeforeOpenAsync(profileClient, networkClient);
+            return ShowDialog(owner, profileClient, networkClient, peerClients);
+        }
+
+        private static async Task RefreshAreaPlayersBeforeOpenAsync(AOClient profileClient, AOClient networkClient)
+        {
+            if (!networkClient.IsTransportConnected)
+            {
+                return;
+            }
+
+            TaskCompletionSource<bool> refreshCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            void Handler(IReadOnlyList<Player> players, bool parsedSuccessfully)
+            {
+                refreshCompleted.TrySetResult(parsedSuccessfully);
+            }
+
+            networkClient.OnCurrentAreaPlayersUpdated += Handler;
+            try
+            {
+                CustomConsole.Info(
+                    $"[PAIR] Preloading current-area players before studio open. profile={profileClient.clientName} network={networkClient.clientName}",
+                    CustomConsole.LogCategory.PairingStudio);
+                await networkClient.RequestCurrentAreaPlayersRefreshAsync();
+                Task completed = await Task.WhenAny(refreshCompleted.Task, Task.Delay(TimeSpan.FromSeconds(2)));
+                if (!ReferenceEquals(completed, refreshCompleted.Task))
+                {
+                    CustomConsole.Warning(
+                        "[PAIR] Timed out waiting for /getarea before studio open. Opening with current cached pairing data.",
+                        category: CustomConsole.LogCategory.PairingStudio);
+                }
+            }
+            finally
+            {
+                networkClient.OnCurrentAreaPlayersUpdated -= Handler;
+            }
+        }
+
         private Grid BuildContent()
         {
             Grid root = new Grid
@@ -198,27 +258,35 @@ namespace OceanyaClient.Components
                 Focusable = true
             };
             root.MouseDown += (_, _) => root.Focus();
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(300) });
             root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(290) });
+            internalPairSwitchSection.Margin = new Thickness(14, 14, 14, 0);
+            Grid.SetRow(internalPairSwitchSection, 0);
+            Grid.SetColumnSpan(internalPairSwitchSection, 3);
+            root.Children.Add(internalPairSwitchSection);
 
             Border leftPanel = CreatePanel();
             leftPanel.Margin = new Thickness(14, 14, 7, 10);
             leftPanel.Child = BuildLeftPanel();
+            Grid.SetRow(leftPanel, 1);
             Grid.SetColumn(leftPanel, 0);
             root.Children.Add(leftPanel);
 
             Border previewPanel = CreatePanel();
             previewPanel.Margin = new Thickness(7, 14, 7, 10);
             previewPanel.Child = BuildPreviewPanel();
+            Grid.SetRow(previewPanel, 1);
             Grid.SetColumn(previewPanel, 1);
             root.Children.Add(previewPanel);
 
             Border stepsPanel = CreatePanel();
             stepsPanel.Margin = new Thickness(7, 14, 14, 10);
             stepsPanel.Child = BuildStepsPanel();
+            Grid.SetRow(stepsPanel, 1);
             Grid.SetColumn(stepsPanel, 2);
             root.Children.Add(stepsPanel);
 
@@ -230,7 +298,7 @@ namespace OceanyaClient.Components
                 Padding = new Thickness(14, 10, 14, 12),
                 Child = BuildCommandRow()
             };
-            Grid.SetRow(commandPanel, 1);
+            Grid.SetRow(commandPanel, 2);
             Grid.SetColumnSpan(commandPanel, 3);
             root.Children.Add(commandPanel);
 
@@ -353,6 +421,71 @@ namespace OceanyaClient.Components
             return shell;
         }
 
+        private Border BuildInternalPairSwitchSection()
+        {
+            Border shell = new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(236, 24, 30, 35)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(72, 90, 101)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(10, 8, 10, 10)
+            };
+
+            Grid root = new Grid();
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            Grid titleRow = new Grid
+            {
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+            titleRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            titleRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            titleRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            TextBlock title = CreatePanelTitle("Oceanya Internal Pairing");
+            title.FontSize = 14;
+            title.HorizontalAlignment = HorizontalAlignment.Center;
+            Grid.SetColumn(title, 1);
+            titleRow.Children.Add(title);
+            FrameworkElement help = CreateHelpBadge("Use this switch to edit either internal client's pairing settings from one Pairing Studio. Each side keeps its own offset and layer order. Send IC Blankpost updates both clients.");
+            help.HorizontalAlignment = HorizontalAlignment.Left;
+            Grid.SetColumn(help, 2);
+            titleRow.Children.Add(help);
+            Grid.SetRow(titleRow, 0);
+            root.Children.Add(titleRow);
+
+            Border pill = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(19, 24, 28)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(77, 96, 108)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(15),
+                Height = 34,
+                ClipToBounds = true
+            };
+            Grid pillGrid = new Grid();
+            pillGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            pillGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1) });
+            pillGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            Grid.SetColumn(activeSelfButton, 0);
+            Grid.SetColumn(activePartnerButton, 2);
+            Border divider = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(77, 96, 108))
+            };
+            Grid.SetColumn(divider, 1);
+            pillGrid.Children.Add(activeSelfButton);
+            pillGrid.Children.Add(divider);
+            pillGrid.Children.Add(activePartnerButton);
+            pill.Child = pillGrid;
+            Grid.SetRow(pill, 1);
+            root.Children.Add(pill);
+
+            shell.Child = root;
+            return shell;
+        }
+
         private UIElement BuildInfoRow()
         {
             DockPanel row = new DockPanel
@@ -369,18 +502,9 @@ namespace OceanyaClient.Components
             replayButton.ToolTip = "Restart the live preview animation.";
             replayButton.Click += (_, _) => RefreshPreview();
 
-            TextBlock info = new TextBlock
-            {
-                Text = $"{profileClient.currentINI?.Name ?? "Character"}  ·  {profileClient.currentEmote?.DisplayID ?? "current emote"}",
-                Foreground = new SolidColorBrush(Color.FromRgb(198, 212, 226)),
-                FontSize = 12,
-                VerticalAlignment = VerticalAlignment.Center,
-                TextTrimming = TextTrimming.CharacterEllipsis
-            };
-
             DockPanel.SetDock(replayButton, Dock.Left);
             row.Children.Add(replayButton);
-            row.Children.Add(info);
+            row.Children.Add(previewInfoText);
             return row;
         }
 
@@ -470,8 +594,7 @@ namespace OceanyaClient.Components
             clearButton.ToolTip = "Stop sending pair target data in future IC messages.";
             clearButton.Click += (_, _) =>
             {
-                profileClient.ConfirmedPairTargetCharIds.Clear();
-                networkClient.ConfirmedPairTargetCharIds.Clear();
+                ClearCurrentPairing();
                 Result = new PairingStudioResult(-1, string.Empty, 0, myOffset);
                 RequestHostClose(true);
             };
@@ -484,9 +607,11 @@ namespace OceanyaClient.Components
             saveButton.Click += (_, _) =>
             {
                 ApplyCurrentPairConfigToClients();
-                int targetId = selectedCandidate?.CharacterId ?? -1;
-                string targetName = selectedCandidate?.Name ?? string.Empty;
-                Result = new PairingStudioResult(targetId, targetName, CurrentLayerOrder, myOffset);
+                Result = new PairingStudioResult(
+                    profileClient.PairTargetCharId,
+                    profileClient.PairTargetCharacterName,
+                    Math.Clamp(profileClient.PairLayerOrder, 0, 1),
+                    profileClient.SelfOffset);
                 RequestHostClose(true);
             };
 
@@ -561,6 +686,7 @@ namespace OceanyaClient.Components
 
             RefreshCandidateList();
             SelectInitialCandidate();
+            RefreshInternalPairSwitch();
             RefreshStatus();
         }
 
@@ -586,8 +712,10 @@ namespace OceanyaClient.Components
             if (candidate != null)
             {
                 ApplyPartnerPreviewState(candidate, rerender: false);
+                ApplyInternalPeerPairing(candidate);
             }
 
+            RefreshInternalPairSwitch();
             RefreshCandidateStates();
             pairList.Items.Refresh();
             RefreshStatus();
@@ -596,6 +724,7 @@ namespace OceanyaClient.Components
 
         private void RefreshStatus()
         {
+            RefreshPreviewInfo();
             RefreshPairingSteps();
             RefreshPairingControlVisibility();
             RefreshSendBlankpostButton();
@@ -609,8 +738,52 @@ namespace OceanyaClient.Components
             partnerPreviewSection.Visibility = isPaired ? Visibility.Visible : Visibility.Collapsed;
         }
 
+        private void RefreshInternalPairSwitch()
+        {
+            bool visible = selectedCandidate?.InternalPeer != null;
+            internalPairSwitchSection.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+            if (!visible || selectedCandidate?.InternalPeer == null)
+            {
+                editingInternalPeer = false;
+                return;
+            }
+
+            activeSelfButton.Content = BuildClientPairLine(profileClient, appendOceanyaClient: true);
+            activePartnerButton.Content = BuildClientPairLine(selectedCandidate.InternalPeer, appendOceanyaClient: true);
+            activeSelfButton.IsChecked = !editingInternalPeer;
+            activePartnerButton.IsChecked = editingInternalPeer;
+        }
+
+        private void SetActiveInternalEditor(bool editPartner)
+        {
+            if (selectedCandidate?.InternalPeer == null)
+            {
+                editingInternalPeer = false;
+                return;
+            }
+
+            if (editingInternalPeer == editPartner)
+            {
+                return;
+            }
+
+            editingInternalPeer = editPartner;
+            AOClient activeSelf = GetActiveSelfClient();
+            myOffset = activeSelf.SelfOffset;
+            partnerPreviewOffset = GetActivePartnerClient()?.SelfOffset ?? (0, 0);
+            partnerPreviewFlip = GetActivePartnerClient()?.flip ?? false;
+            SetLayerOrder(Math.Clamp(activeSelf.PairLayerOrder, 0, 1));
+            UpdateOffsetText();
+            RefreshInternalPairSwitch();
+            RefreshCandidateStates();
+            pairList.Items.Refresh();
+            RefreshStatus();
+            RefreshPreview();
+        }
+
         private void RefreshPreview()
         {
+            ApplyPreviewSelfClient(GetActiveSelfClient());
             previewMessage.SelfOffset = myOffset;
             bool shouldPreviewPair = selectedCandidate != null && IsPartnerPairingBack(selectedCandidate);
             if (!shouldPreviewPair || selectedCandidate == null || selectedCandidate.CharacterId < 0)
@@ -624,10 +797,11 @@ namespace OceanyaClient.Components
             }
             else
             {
-                previewMessage.OtherCharId = selectedCandidate.CharacterId;
-                previewMessage.OtherCharIdRaw = $"{selectedCandidate.CharacterId}^{CurrentLayerOrder}";
-                previewMessage.OtherName = selectedCandidate.Name;
-                previewMessage.OtherEmote = ResolvePreviewEmoteName(selectedCandidate.Name);
+                int targetId = GetActiveTargetPairId();
+                previewMessage.OtherCharId = targetId;
+                previewMessage.OtherCharIdRaw = $"{targetId}^{CurrentLayerOrder}";
+                previewMessage.OtherName = ResolvePreviewCharacterName(selectedCandidate);
+                previewMessage.OtherEmote = ResolvePreviewEmoteName(selectedCandidate);
                 previewMessage.OtherOffset = partnerPreviewOffset.Horizontal;
                 previewMessage.OtherOffsetVertical = partnerPreviewOffset.Vertical;
                 previewMessage.OtherFlip = partnerPreviewFlip;
@@ -636,15 +810,96 @@ namespace OceanyaClient.Components
             viewport.PreviewMessage(previewMessage);
         }
 
+        private void ApplyPreviewSelfClient(AOClient client)
+        {
+            Emote emote = client.currentEmote
+                ?? client.currentINI?.configINI.Emotions.Values.FirstOrDefault()
+                ?? new Emote(0);
+            previewMessage.DeskMod = emote.DeskMod;
+            previewMessage.PreAnim = emote.PreAnimation;
+            previewMessage.Character = client.currentINI?.Name ?? previewMessage.Character;
+            previewMessage.Emote = emote.Animation;
+            previewMessage.Side = !string.IsNullOrWhiteSpace(client.curPos)
+                ? client.curPos
+                : client.currentINI?.configINI?.Side ?? "def";
+            previewMessage.SfxName = client.PreanimEnabled && !string.IsNullOrWhiteSpace(emote.sfxName)
+                ? emote.sfxName
+                : "1";
+            previewMessage.EmoteModifier = ICMessageSettings.ResolvePreviewEmoteModifier(emote.Modifier, client.PreanimEnabled, client.Immediate);
+            previewMessage.SfxDelay = emote.sfxDelay;
+            previewMessage.Flip = client.flip;
+            previewMessage.ShowName = client.GetCurrentShowNameForPreview();
+            previewMessage.NonInterruptingPreAnim = client.PreanimEnabled && client.Immediate;
+            previewMessage.FramesShake = $"{emote.PreAnimation}^(b){emote.Animation}^(a){emote.Animation}^";
+            previewMessage.FramesRealization = $"{emote.PreAnimation}^(b){emote.Animation}^(a){emote.Animation}^";
+            previewMessage.FramesSfx = $"{emote.PreAnimation}^(b){emote.Animation}^(a){emote.Animation}^";
+        }
+
+        private void RefreshPreviewInfo()
+        {
+            AOClient client = GetActiveSelfClient();
+            previewInfoText.Text = $"{client.currentINI?.Name ?? "Character"}  ·  {client.currentEmote?.DisplayID ?? "current emote"}";
+        }
+
         private void SetLayerOrder(int order)
         {
             meFrontButton.IsChecked = order == 0;
             partnerFrontButton.IsChecked = order == 1;
+            GetActiveSelfClient().PairLayerOrder = Math.Clamp(order, 0, 1);
             RefreshStatus();
             viewport.PreviewPairLayerOrder(CurrentLayerOrder);
         }
 
         private int CurrentLayerOrder => partnerFrontButton.IsChecked == true ? 1 : 0;
+
+        private AOClient GetActiveSelfClient()
+        {
+            return editingInternalPeer && selectedCandidate?.InternalPeer != null
+                ? selectedCandidate.InternalPeer
+                : profileClient;
+        }
+
+        private AOClient GetActiveNetworkClient()
+        {
+            return editingInternalPeer && selectedCandidate?.InternalPeer != null
+                ? selectedCandidate.InternalPeer
+                : networkClient;
+        }
+
+        private AOClient? GetActivePartnerClient()
+        {
+            return editingInternalPeer
+                ? profileClient
+                : selectedCandidate?.InternalPeer;
+        }
+
+        private int GetActiveSelfPairTargetId()
+        {
+            AOClient activeSelf = GetActiveSelfClient();
+            return activeSelf.iniPuppetID >= 0 ? activeSelf.iniPuppetID : GetSelfPairTargetId();
+        }
+
+        private int GetActiveTargetPairId()
+        {
+            AOClient? partner = GetActivePartnerClient();
+            if (partner?.iniPuppetID >= 0)
+            {
+                return partner.iniPuppetID;
+            }
+
+            return selectedCandidate?.CharacterId ?? -1;
+        }
+
+        private string GetActiveTargetPairName()
+        {
+            AOClient? partner = GetActivePartnerClient();
+            if (partner != null)
+            {
+                return ResolveSelfPairName(partner, partner);
+            }
+
+            return selectedCandidate?.Name ?? string.Empty;
+        }
 
         private void OffsetTextBox_TextChanged(object sender, TextChangedEventArgs e)
         {
@@ -675,6 +930,7 @@ namespace OceanyaClient.Components
         private void SetSelfOffset((int Horizontal, int Vertical) offset, bool updateText = true)
         {
             myOffset = offset;
+            GetActiveSelfClient().SelfOffset = myOffset;
             previewMessage.SelfOffset = myOffset;
             if (updateText)
             {
@@ -715,6 +971,7 @@ namespace OceanyaClient.Components
                 }
 
                 partnerPreviewStates[charId] = new PartnerPreviewState(
+                    message.Character ?? string.Empty,
                     message.SelfOffset,
                     message.Flip,
                     message.Emote ?? string.Empty,
@@ -772,6 +1029,7 @@ namespace OceanyaClient.Components
             networkClient.ConfirmedPairTargetCharIds.Add(message.OtherCharId);
             profileClient.ConfirmedPairTargetCharIds.Add(message.OtherCharId);
             partnerPreviewStates[message.OtherCharId] = new PartnerPreviewState(
+                message.OtherName ?? string.Empty,
                 (message.OtherOffset, message.OtherOffsetVertical),
                 message.OtherFlip,
                 message.OtherEmote ?? string.Empty,
@@ -796,7 +1054,17 @@ namespace OceanyaClient.Components
                 return;
             }
 
-            if (partnerPreviewStates.TryGetValue(candidate.CharacterId, out PartnerPreviewState? state))
+            AOClient? activePartner = GetActivePartnerClient();
+            if (candidate.InternalPeer != null && activePartner != null)
+            {
+                partnerPreviewOffset = activePartner.SelfOffset;
+                partnerPreviewFlip = activePartner.flip;
+                if (!string.IsNullOrWhiteSpace(activePartner.currentEmote?.Animation))
+                {
+                    previewMessage.OtherEmote = activePartner.currentEmote.Animation;
+                }
+            }
+            else if (partnerPreviewStates.TryGetValue(candidate.CharacterId, out PartnerPreviewState? state))
             {
                 partnerPreviewOffset = state.Offset;
                 partnerPreviewFlip = state.Flip;
@@ -860,19 +1128,39 @@ namespace OceanyaClient.Components
 
         private string BuildSelfLine()
         {
-            int selfId = GetSelfPairTargetId();
-            string selfName = ResolveSelfPairName(profileClient, networkClient);
+            return BuildClientPairLine(profileClient, appendOceanyaClient: HasOtherInternalClients());
+        }
+
+        private bool HasOtherInternalClients()
+        {
+            return peerClients.Any(peer =>
+                peer != null
+                && !ReferenceEquals(peer, profileClient)
+                && !ReferenceEquals(peer, networkClient));
+        }
+
+        private string BuildClientPairLine(AOClient client, bool appendOceanyaClient)
+        {
+            int selfId = client.iniPuppetID >= 0 ? client.iniPuppetID : GetSelfPairTargetId();
+            string selfName = ResolveSelfPairName(client, client);
             Player? player = networkClient.CurrentAreaPlayers.FirstOrDefault(areaPlayer =>
                 areaPlayer.CharacterId == selfId
                 || string.Equals(areaPlayer.ICCharacterName, selfName, StringComparison.OrdinalIgnoreCase));
+            string line;
             if (player != null)
             {
-                return string.IsNullOrWhiteSpace(player.RawGetAreaLine)
+                line = string.IsNullOrWhiteSpace(player.RawGetAreaLine)
                     ? $"[{player.CharacterId}] {player.ICCharacterName}"
                     : player.RawGetAreaLine;
             }
+            else
+            {
+                line = $"[{selfId}] {selfName}";
+            }
 
-            return $"[{selfId}] {selfName}";
+            return appendOceanyaClient
+                ? line + $" - Oceanya Client \"{client.clientName}\""
+                : line;
         }
 
         private static string ResolveSelfPairName(AOClient profileClient, AOClient client)
@@ -909,6 +1197,11 @@ namespace OceanyaClient.Components
 
         private bool IsPartnerPairingBack(PairCandidate candidate)
         {
+            if (candidate.InternalPeer != null)
+            {
+                return selectedCandidate != null && selectedCandidate.CharacterId == candidate.CharacterId;
+            }
+
             if (networkClient.ConfirmedPairTargetCharIds.Contains(candidate.CharacterId)
                 || profileClient.ConfirmedPairTargetCharIds.Contains(candidate.CharacterId))
             {
@@ -922,8 +1215,7 @@ namespace OceanyaClient.Components
                 return true;
             }
 
-            return candidate.InternalPeer != null
-                && candidate.InternalPeer.PairTargetCharId == selfPairId;
+            return false;
         }
 
         private void RefreshPairingSteps()
@@ -999,12 +1291,21 @@ namespace OceanyaClient.Components
                 return false;
             }
 
-            return string.Equals(partnerPosition, networkClient.curPos, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(partnerPosition, profileClient.curPos, StringComparison.OrdinalIgnoreCase);
+            AOClient activeSelf = GetActiveSelfClient();
+            return string.Equals(partnerPosition, activeSelf.curPos, StringComparison.OrdinalIgnoreCase);
         }
 
         private string GetKnownPartnerPosition(PairCandidate candidate)
         {
+            if (candidate.InternalPeer != null)
+            {
+                AOClient? activePartner = GetActivePartnerClient();
+                if (!string.IsNullOrWhiteSpace(activePartner?.curPos))
+                {
+                    return activePartner.curPos;
+                }
+            }
+
             if (partnerPreviewStates.TryGetValue(candidate.CharacterId, out PartnerPreviewState? state)
                 && !string.IsNullOrWhiteSpace(state.Position))
             {
@@ -1033,12 +1334,13 @@ namespace OceanyaClient.Components
 
         private bool IsCurrentPairConfigSent()
         {
-            int targetId = selectedCandidate?.CharacterId ?? -1;
+            int targetId = GetActiveTargetPairId();
             string currentPosition = ResolveCurrentSendPosition();
-            return networkClient.LastSentPairTargetCharId == targetId
-                && networkClient.LastSentPairLayerOrder == CurrentLayerOrder
-                && string.Equals(networkClient.LastSentPairPosition, currentPosition, StringComparison.OrdinalIgnoreCase)
-                && networkClient.LastSentPairSelfOffset == myOffset;
+            AOClient activeNetwork = GetActiveNetworkClient();
+            return activeNetwork.LastSentPairTargetCharId == targetId
+                && activeNetwork.LastSentPairLayerOrder == CurrentLayerOrder
+                && string.Equals(activeNetwork.LastSentPairPosition, currentPosition, StringComparison.OrdinalIgnoreCase)
+                && activeNetwork.LastSentPairSelfOffset == myOffset;
         }
 
         private void RefreshSendBlankpostButton()
@@ -1075,7 +1377,18 @@ namespace OceanyaClient.Components
 
             ApplyCurrentPairConfigToClients();
             sendBlankpostButton.IsEnabled = false;
-            await networkClient.SendICMessage(" ");
+            await GetActiveNetworkClient().SendICMessage(" ");
+            if (selectedCandidate.InternalPeer is AOClient internalPeer && internalPeer.currentINI != null)
+            {
+                AOClient otherClient = ReferenceEquals(GetActiveNetworkClient(), internalPeer)
+                    ? networkClient
+                    : internalPeer;
+                if (otherClient.currentINI != null)
+                {
+                    await otherClient.SendICMessage(" ");
+                }
+            }
+
             profileClient.LastSentPairTargetCharId = networkClient.LastSentPairTargetCharId;
             profileClient.LastSentPairLayerOrder = networkClient.LastSentPairLayerOrder;
             profileClient.LastSentPairPosition = networkClient.LastSentPairPosition;
@@ -1086,19 +1399,122 @@ namespace OceanyaClient.Components
 
         private void ApplyCurrentPairConfigToClients()
         {
-            int targetId = selectedCandidate?.CharacterId ?? -1;
-            string targetName = selectedCandidate?.Name ?? string.Empty;
-            profileClient.PairTargetCharId = targetId;
-            profileClient.PairTargetCharacterName = targetName;
-            profileClient.PairLayerOrder = CurrentLayerOrder;
-            profileClient.SelfOffset = myOffset;
-            networkClient.PairTargetCharId = targetId;
-            networkClient.PairTargetCharacterName = targetName;
-            networkClient.PairLayerOrder = CurrentLayerOrder;
-            networkClient.SelfOffset = myOffset;
+            int targetId = GetActiveTargetPairId();
+            string targetName = GetActiveTargetPairName();
+            AOClient activeSelf = GetActiveSelfClient();
+            AOClient activeNetwork = GetActiveNetworkClient();
+            activeSelf.PairTargetCharId = targetId;
+            activeSelf.PairTargetCharacterName = targetName;
+            activeSelf.PairLayerOrder = CurrentLayerOrder;
+            activeSelf.SelfOffset = myOffset;
+            activeNetwork.PairTargetCharId = targetId;
+            activeNetwork.PairTargetCharacterName = targetName;
+            activeNetwork.PairLayerOrder = CurrentLayerOrder;
+            activeNetwork.SelfOffset = myOffset;
             if (selectedCandidate != null)
             {
                 RememberKnownPartnerPosition(selectedCandidate.CharacterId, GetKnownPartnerPosition(selectedCandidate));
+                ApplyInternalPeerPairing(selectedCandidate);
+            }
+        }
+
+        private void ApplyInternalPeerPairing(PairCandidate candidate)
+        {
+            AOClient? internalPeer = candidate.InternalPeer;
+            if (internalPeer == null)
+            {
+                return;
+            }
+
+            int selfId = GetSelfPairTargetId();
+            int targetId = candidate.CharacterId;
+            if (selfId < 0 || targetId < 0)
+            {
+                return;
+            }
+
+            ClearConflictingInternalPairings(selfId, targetId);
+
+            string targetName = candidate.Name;
+            if (!editingInternalPeer)
+            {
+                profileClient.PairLayerOrder = CurrentLayerOrder;
+                profileClient.SelfOffset = myOffset;
+                networkClient.PairLayerOrder = CurrentLayerOrder;
+                networkClient.SelfOffset = myOffset;
+                partnerPreviewOffset = internalPeer.SelfOffset;
+            }
+            else
+            {
+                internalPeer.PairLayerOrder = CurrentLayerOrder;
+                internalPeer.SelfOffset = myOffset;
+                partnerPreviewOffset = profileClient.SelfOffset;
+            }
+
+            profileClient.PairTargetCharId = targetId;
+            profileClient.PairTargetCharacterName = targetName;
+            networkClient.PairTargetCharId = targetId;
+            networkClient.PairTargetCharacterName = targetName;
+            internalPeer.PairTargetCharId = selfId;
+            internalPeer.PairTargetCharacterName = ResolveSelfPairName(profileClient, networkClient);
+
+            profileClient.ConfirmedPairTargetCharIds.Add(targetId);
+            networkClient.ConfirmedPairTargetCharIds.Add(targetId);
+            internalPeer.ConfirmedPairTargetCharIds.Add(selfId);
+            partnerPreviewStates[targetId] = new PartnerPreviewState(
+                internalPeer.currentINI?.Name ?? candidate.Name,
+                internalPeer.SelfOffset,
+                internalPeer.flip,
+                internalPeer.currentEmote?.Animation ?? string.Empty,
+                internalPeer.curPos ?? string.Empty,
+                selfId);
+        }
+
+        private void ClearConflictingInternalPairings(int selfId, int targetId)
+        {
+            foreach (AOClient client in peerClients
+                         .Concat(new[] { profileClient, networkClient })
+                         .Where(client => client != null)
+                         .Distinct())
+            {
+                bool isEndpoint = client.iniPuppetID == selfId || client.iniPuppetID == targetId;
+                bool pointsAtEndpoint = client.PairTargetCharId == selfId || client.PairTargetCharId == targetId;
+                if (!isEndpoint && !pointsAtEndpoint)
+                {
+                    continue;
+                }
+
+                client.PairTargetCharId = -1;
+                client.PairTargetCharacterName = string.Empty;
+                client.PairLayerOrder = 0;
+                client.ConfirmedPairTargetCharIds.Clear();
+            }
+        }
+
+        private void ClearCurrentPairing()
+        {
+            int selfId = GetSelfPairTargetId();
+            int targetId = selectedCandidate?.CharacterId ?? profileClient.PairTargetCharId;
+            if (selectedCandidate?.InternalPeer != null || targetId >= 0)
+            {
+                ClearConflictingInternalPairings(selfId, targetId);
+            }
+
+            profileClient.PairTargetCharId = -1;
+            profileClient.PairTargetCharacterName = string.Empty;
+            profileClient.PairLayerOrder = 0;
+            profileClient.ConfirmedPairTargetCharIds.Clear();
+            networkClient.PairTargetCharId = -1;
+            networkClient.PairTargetCharacterName = string.Empty;
+            networkClient.PairLayerOrder = 0;
+            networkClient.ConfirmedPairTargetCharIds.Clear();
+
+            if (selectedCandidate?.InternalPeer is AOClient internalPeer)
+            {
+                internalPeer.PairTargetCharId = -1;
+                internalPeer.PairTargetCharacterName = string.Empty;
+                internalPeer.PairLayerOrder = 0;
+                internalPeer.ConfirmedPairTargetCharIds.Clear();
             }
         }
 
@@ -1142,8 +1558,13 @@ namespace OceanyaClient.Components
                 return;
             }
 
-            profileClient.curPos = partnerPosition;
-            networkClient.curPos = partnerPosition;
+            AOClient activeSelf = GetActiveSelfClient();
+            activeSelf.curPos = partnerPosition;
+            if (ReferenceEquals(activeSelf, profileClient))
+            {
+                networkClient.curPos = partnerPosition;
+            }
+
             previewSceneClient.curPos = partnerPosition;
             RememberKnownPartnerPosition(selectedCandidate.CharacterId, partnerPosition);
             RefreshStatus();
@@ -1164,9 +1585,11 @@ namespace OceanyaClient.Components
 
         private string ResolveCurrentSendPosition()
         {
-            return !string.IsNullOrWhiteSpace(networkClient.curPos)
-                ? networkClient.curPos
-                : profileClient.curPos ?? string.Empty;
+            AOClient activeNetwork = GetActiveNetworkClient();
+            AOClient activeSelf = GetActiveSelfClient();
+            return !string.IsNullOrWhiteSpace(activeNetwork.curPos)
+                ? activeNetwork.curPos
+                : activeSelf.curPos ?? string.Empty;
         }
 
         private void CharacterPairingStudioWindow_PreviewKeyDown(object sender, KeyEventArgs e)
@@ -1429,7 +1852,7 @@ namespace OceanyaClient.Components
                 : string.Empty;
             if (fromCurrentArea && internalPeer != null)
             {
-                status += " · internal client " + internalPeer.clientName;
+                status += $" - Oceanya Client \"{internalPeer.clientName}\"";
             }
 
             if (fromCurrentArea && !available)
@@ -1482,6 +1905,50 @@ namespace OceanyaClient.Components
             return CharacterFolder.FullList.FirstOrDefault(character =>
                 string.Equals(character.Name, name, StringComparison.OrdinalIgnoreCase)
                 || string.Equals(character.configINI?.Name, name, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private string ResolvePreviewCharacterName(PairCandidate candidate)
+        {
+            if (editingInternalPeer)
+            {
+                return profileClient.currentINI?.Name ?? ResolveSelfPairName(profileClient, networkClient);
+            }
+
+            if (candidate.InternalPeer?.currentINI != null)
+            {
+                return candidate.InternalPeer.currentINI.Name;
+            }
+
+            if (partnerPreviewStates.TryGetValue(candidate.CharacterId, out PartnerPreviewState? state)
+                && !string.IsNullOrWhiteSpace(state.CharacterName))
+            {
+                return state.CharacterName;
+            }
+
+            return candidate.Name;
+        }
+
+        private string ResolvePreviewEmoteName(PairCandidate candidate)
+        {
+            if (editingInternalPeer)
+            {
+                return profileClient.currentEmote?.Animation
+                    ?? profileClient.currentINI?.configINI.Emotions.Values.FirstOrDefault()?.Animation
+                    ?? string.Empty;
+            }
+
+            if (candidate.InternalPeer?.currentEmote != null)
+            {
+                return candidate.InternalPeer.currentEmote.Animation;
+            }
+
+            if (partnerPreviewStates.TryGetValue(candidate.CharacterId, out PartnerPreviewState? state)
+                && !string.IsNullOrWhiteSpace(state.Emote))
+            {
+                return state.Emote;
+            }
+
+            return ResolvePreviewEmoteName(candidate.Name);
         }
 
         private static string ResolvePreviewEmoteName(string characterName)
@@ -1608,6 +2075,22 @@ namespace OceanyaClient.Components
                 RefreshStatus();
             };
             return button;
+        }
+
+        private static ToggleButton CreatePlainSegmentButton(string text, string tooltip, CornerRadius cornerRadius)
+        {
+            return new ToggleButton
+            {
+                Content = text,
+                Height = 30,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Foreground = Brushes.White,
+                Background = Brushes.Transparent,
+                BorderBrush = new SolidColorBrush(Color.FromRgb(76, 94, 104)),
+                BorderThickness = new Thickness(0),
+                ToolTip = tooltip,
+                Template = CreateSegmentButtonTemplate(cornerRadius)
+            };
         }
 
         private static Button CreateSmallButton(string text, string tooltip, Action action)
@@ -2052,6 +2535,7 @@ namespace OceanyaClient.Components
         }
 
         private sealed record PartnerPreviewState(
+            string CharacterName,
             (int Horizontal, int Vertical) Offset,
             bool Flip,
             string Emote,
