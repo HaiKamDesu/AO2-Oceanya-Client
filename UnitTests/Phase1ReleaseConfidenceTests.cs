@@ -247,6 +247,36 @@ namespace UnitTests
         }
 
         [Test]
+        public void MainWindow_DirectClientReceiveHandlers_AttachOnceAndPreservePreconnectOoc()
+        {
+            CreateCharacterFolder("Phoenix", "Phoenix Wright", "def");
+            RefreshCharactersFromTempRoot();
+
+            MainWindow window = new MainWindow();
+            AOClient client = CreateClient("PacketClient", "Phoenix", "Phoenix Wright", "Phoenix OOC");
+
+            InvokePrivate(window, "AttachDirectClientMessageHandlers", client);
+            client.OnOOCMessageReceived?.Invoke("Server", "Welcome before restore UI", true);
+            AddClientToWindow(window, client);
+            InvokePrivate(window, "AttachDirectClientMessageHandlers", client);
+            InvokePrivate(window, "SelectClient", client);
+            client.OnOOCMessageReceived?.Invoke("Server", "After restore attach", true);
+
+            OOCLog oocLog = (OOCLog)window.FindName("OOCLogControl");
+            string logText = ReadDocumentText(oocLog.FindName("LogBox"));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(logText, Does.Contain("Welcome before restore UI"));
+                Assert.That(logText, Does.Contain("After restore attach"));
+                Assert.That(logText.IndexOf("After restore attach", StringComparison.Ordinal),
+                    Is.EqualTo(logText.LastIndexOf("After restore attach", StringComparison.Ordinal)));
+            });
+
+            window.Close();
+        }
+
+        [Test]
         public async Task AOCharacterFileCreator_GenerateButton_CopiesAssetsAndRespectsOutputOverrides()
         {
             string mountPath = Path.Combine(tempRoot, "mount");

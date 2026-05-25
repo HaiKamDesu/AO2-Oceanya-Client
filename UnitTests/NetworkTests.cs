@@ -252,6 +252,139 @@ public class NetworkTests
     }
 
     [Test]
+    public void ParseGetArea_SupportsTsuserver3LowercaseUsersOutput()
+    {
+        string output = "People in this area: 2\r\n=== Lobby ===\r\n[LOB]: [2 users][IDLE]\r\n[CM] [4] Judge (Host)\r\n [7] Witness";
+
+        AOBot_Testing.AO2Parser.GetAreaParseResult result = AOBot_Testing.AO2Parser.ParseGetAreaDetailed(output);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsGetAreaReport, Is.True);
+            Assert.That(result.AreaName, Is.EqualTo("Lobby"));
+            Assert.That(result.ParsedPlayers, Is.True);
+            Assert.That(result.Players.Select(player => player.ICCharacterName), Is.EqualTo(new[] { "Judge", "Witness" }));
+            Assert.That(result.Players.Select(player => player.CharacterId), Is.EqualTo(new[] { 4, 7 }));
+            Assert.That(result.Players[0].IsCM, Is.True);
+            Assert.That(result.Players[0].OOCShowname, Is.EqualTo("Host"));
+        });
+    }
+
+    [Test]
+    public void ParseGetArea_SupportsVidyaClientsInHeaderOutput()
+    {
+        string output = "$H: = Clients in [8] Lounge (users: 1) [IDLE] = \r\n  :white_medium_small_square: [4] Trucy ";
+
+        AOBot_Testing.AO2Parser.GetAreaParseResult result = AOBot_Testing.AO2Parser.ParseGetAreaDetailed(output);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsGetAreaReport, Is.True);
+            Assert.That(result.AreaName, Is.EqualTo("Lounge"));
+            Assert.That(result.ParsedPlayers, Is.True);
+            Assert.That(result.Players.Select(player => player.ICCharacterName), Is.EqualTo(new[] { "Trucy" }));
+            Assert.That(result.Players.Select(player => player.CharacterId), Is.EqualTo(new[] { 4 }));
+            Assert.That(result.Players[0].RawGetAreaLine, Is.EqualTo("[4] Trucy"));
+        });
+    }
+
+    [Test]
+    public void ParseGetArea_SupportsVanillaAreaHeadingOutput()
+    {
+        string output = "AO Official Server (Vanilla): === Basement ===\r\n\r\n"
+            + "[8 users][IDLE]\r\n\r\n"
+            + "[6] Spectator\r\n\r\n"
+            + "[15] Apollo\r\n\r\n"
+            + "[4] Adrian (Taura)\r\n\r\n"
+            + "[12] Alita (Baude)\r\n\r\n"
+            + "[5] Elise\r\n\r\n"
+            + "[2] Atmey\r\n\r\n"
+            + "[30] Polly\r\n\r\n"
+            + "[21] Franziska";
+
+        AOBot_Testing.AO2Parser.GetAreaParseResult result = AOBot_Testing.AO2Parser.ParseGetAreaDetailed(output);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsGetAreaReport, Is.True);
+            Assert.That(result.AreaName, Is.EqualTo("Basement"));
+            Assert.That(result.ParsedPlayers, Is.True);
+            Assert.That(result.Players.Select(player => player.ICCharacterName), Is.EqualTo(new[]
+            {
+                "Spectator",
+                "Apollo",
+                "Adrian",
+                "Alita",
+                "Elise",
+                "Atmey",
+                "Polly",
+                "Franziska"
+            }));
+            Assert.That(result.Players.Select(player => player.CharacterId), Is.EqualTo(new[] { 6, 15, 4, 12, 5, 2, 30, 21 }));
+            Assert.That(result.Players[2].OOCShowname, Is.EqualTo("Taura"));
+            Assert.That(result.Players[3].OOCShowname, Is.EqualTo("Baude"));
+        });
+    }
+
+    [Test]
+    public async Task HandleMessage_VidyaGetAreaUpdatesAreaAndRoster()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+        await client.HandleMessage("FA#Lounge#Courtroom#%");
+
+        await client.HandleMessage("CT#Server#$H: = Clients in [8] Lounge (users: 1) [IDLE] = \r\n  :white_medium_small_square: [4] Trucy #1#%");
+
+        AreaInfo lounge = client.AvailableAreaInfos.Single(area => area.Name == "Lounge");
+        Assert.Multiple(() =>
+        {
+            Assert.That(client.CurrentArea, Is.EqualTo("Lounge"));
+            Assert.That(lounge.Players, Is.EqualTo(1));
+            Assert.That(lounge.Status, Is.EqualTo("IDLE"));
+            Assert.That(client.CurrentAreaPlayers.Select(player => player.ICCharacterName), Is.EqualTo(new[] { "Trucy" }));
+            Assert.That(client.LastGetAreaParseSucceeded, Is.True);
+        });
+    }
+
+    [Test]
+    public async Task HandleMessage_VanillaGetAreaUpdatesAreaInfoAndRoster()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+        await client.HandleMessage("FA#Lobby#Basement#%");
+
+        await client.HandleMessage(
+            "CT#Server#AO Official Server (Vanilla): === Basement ===\r\n\r\n"
+            + "[8 users][IDLE]\r\n\r\n"
+            + "[6] Spectator\r\n\r\n"
+            + "[15] Apollo\r\n\r\n"
+            + "[4] Adrian (Taura)\r\n\r\n"
+            + "[12] Alita (Baude)\r\n\r\n"
+            + "[5] Elise\r\n\r\n"
+            + "[2] Atmey\r\n\r\n"
+            + "[30] Polly\r\n\r\n"
+            + "[21] Franziska#1#%");
+
+        AreaInfo basement = client.AvailableAreaInfos.Single(area => area.Name == "Basement");
+        Assert.Multiple(() =>
+        {
+            Assert.That(client.CurrentArea, Is.EqualTo("Basement"));
+            Assert.That(basement.Players, Is.EqualTo(8));
+            Assert.That(basement.Status, Is.EqualTo("IDLE"));
+            Assert.That(client.CurrentAreaPlayers.Select(player => player.ICCharacterName), Is.EqualTo(new[]
+            {
+                "Spectator",
+                "Apollo",
+                "Adrian",
+                "Alita",
+                "Elise",
+                "Atmey",
+                "Polly",
+                "Franziska"
+            }));
+            Assert.That(client.LastGetAreaParseSucceeded, Is.True);
+        });
+    }
+
+    [Test]
     public async Task HandleMessage_InternalGetAreaRefresh_UpdatesRosterWithoutLoggingOoc()
     {
         AOClient client = new AOClient("ws://localhost:10001/");
@@ -605,6 +738,32 @@ public class NetworkTests
             "Minimal IC packet (no feature flags) must have exactly 15 payload fields");
     }
 
+    [Test]
+    public async Task DisconnectWebsocket_ClearsTransientServerSceneState()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+        await client.HandleMessage("FL#cccc_ic_support#effects#%");
+        await client.HandleMessage("SC#Franziska#Trucy#%");
+        await client.HandleMessage("FA#Lounge#Courtroom#%");
+        await client.HandleMessage("BN#vidya_lounge#%");
+        await client.HandleMessage("CT#Server#$H: = Clients in [8] Lounge (users: 1) [IDLE] = \r\n  :white_medium_small_square: [0] Franziska #1#%");
+
+        await client.DisconnectWebsocket();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(client.ServerFeatures, Is.Empty);
+            Assert.That(client.ServerCharacterAvailability, Is.Empty);
+            Assert.That(client.AvailableAreas, Is.Empty);
+            Assert.That(client.AvailableAreaInfos, Is.Empty);
+            Assert.That(client.CurrentAreaPlayers, Is.Empty);
+            Assert.That(client.CurrentArea, Is.Empty);
+            Assert.That(client.curBG, Is.Empty);
+            Assert.That(client.playerID, Is.EqualTo(-1));
+            Assert.That(client.iniPuppetID, Is.EqualTo(-1));
+        });
+    }
+
     /// <summary>
     /// R-005 — When ICShowname is blank, the outgoing IC packet showname field must fall
     /// back to the char.ini ShowName value. Blank showname displayed as empty string was
@@ -695,7 +854,7 @@ public class NetworkTests
     }
 
     [Test]
-    public async Task ShowName_BlankShowname_FallsBackToIniPuppetShowname()
+    public async Task ShowName_BlankShowname_FallsBackToCurrentCharacterShowname()
     {
         string baseRoot = CreateAoBaseRoot();
         try
@@ -726,8 +885,8 @@ public class NetworkTests
 
             string? resolved = resolveMethod!.Invoke(client, null) as string;
 
-            Assert.That(resolved, Is.EqualTo("Von Karma"),
-                "Blank ICShowname must use the selected INI puppet showname, matching AO2 iniswap behavior");
+            Assert.That(resolved, Is.EqualTo("VydValkKam"),
+                "Blank ICShowname must use the current displayed character showname, matching AO2 iniswap behavior");
         }
         finally
         {
@@ -741,7 +900,7 @@ public class NetworkTests
     }
 
     [Test]
-    public async Task ShowName_BlankShowname_UsesIniPuppetEmoteShownameOverride()
+    public async Task ShowName_BlankShowname_UsesCurrentCharacterShownameOverride()
     {
         string baseRoot = CreateAoBaseRoot();
         try
@@ -758,6 +917,8 @@ public class NetworkTests
             File.WriteAllText(
                 Path.Combine(baseRoot, "characters", "KamLoremaster", "char.ini"),
                 "[Options]\nshowname=Loremaster\nside=jud\ngender=female\n"
+                + "[OptionsN]\n1=2\n"
+                + "[Options2]\nshowname=Judge Loremaster\n"
                 + "[Emotions]\nnumber=1\n1=normal#-#normal#0#../../background/default/defensedesk\n");
 
             Globals.BaseFolders = new List<string> { baseRoot };
@@ -776,7 +937,79 @@ public class NetworkTests
 
             string? resolved = resolveMethod!.Invoke(client, null) as string;
 
-            Assert.That(resolved, Is.EqualTo("von Karma"));
+            Assert.That(resolved, Is.EqualTo("Judge Loremaster"));
+        }
+        finally
+        {
+            Globals.BaseFolders = new List<string>();
+            CharacterFolder.RefreshCharacterList();
+            if (Directory.Exists(baseRoot))
+            {
+                Directory.Delete(baseRoot, true);
+            }
+        }
+    }
+
+    [Test]
+    public async Task SelectIniPuppet_DoesNotOverwriteIcShowname()
+    {
+        string baseRoot = CreateAoBaseRoot();
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(baseRoot, "characters", "Franziska"));
+            File.WriteAllText(
+                Path.Combine(baseRoot, "characters", "Franziska", "char.ini"),
+                "[Options]\nshowname=Von Karma\nside=pro\ngender=female\n[Emotions]\nnumber=1\n1=normal#-#normal#0#1\n");
+
+            Globals.BaseFolders = new List<string> { baseRoot };
+            CharacterFolder.RefreshCharacterList();
+
+            AOClient client = new AOClient("ws://localhost:10001/");
+            await client.HandleMessage("SC#Franziska#%");
+
+            client.ICShowname = string.Empty;
+            await client.SelectIniPuppet(0);
+            Assert.That(client.ICShowname, Is.Empty, "AO2 keeps an empty IC showname textbox empty after character selection.");
+
+            client.SetICShowname("Manual Name");
+            await client.SelectIniPuppet(0);
+            Assert.That(client.ICShowname, Is.EqualTo("Manual Name"), "Selecting an INIPuppet must not replace an explicit IC showname.");
+        }
+        finally
+        {
+            Globals.BaseFolders = new List<string>();
+            CharacterFolder.RefreshCharacterList();
+            if (Directory.Exists(baseRoot))
+            {
+                Directory.Delete(baseRoot, true);
+            }
+        }
+    }
+
+    [Test]
+    public async Task HandleMessage_PvUpdatesConfirmedIniPuppet()
+    {
+        string baseRoot = CreateAoBaseRoot();
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(baseRoot, "characters", "Franziska"));
+            File.WriteAllText(
+                Path.Combine(baseRoot, "characters", "Franziska", "char.ini"),
+                "[Options]\nshowname=Von Karma\nside=pro\ngender=female\n[Emotions]\nnumber=1\n1=normal#-#normal#0#1\n");
+
+            Globals.BaseFolders = new List<string> { baseRoot };
+            CharacterFolder.RefreshCharacterList();
+
+            AOClient client = new AOClient("ws://localhost:10001/");
+            client.playerID = 42;
+            await client.HandleMessage("SC#Franziska#Trucy#%");
+            await client.HandleMessage("PV#42#CID#0#%");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(client.iniPuppetID, Is.EqualTo(0));
+                Assert.That(client.iniPuppetName, Is.EqualTo("Franziska"));
+            });
         }
         finally
         {
@@ -830,6 +1063,50 @@ public class NetworkTests
             Assert.That(rmIndex, Is.GreaterThan(rcIndex), "Expected RM after SC.");
             Assert.That(rdIndex, Is.GreaterThan(rmIndex), "Expected RD after SM/FA.");
             Assert.That(ctIndex, Is.GreaterThan(rdIndex), "Expected empty CT bootstrap after RD.");
+        });
+    }
+
+    [Test]
+    [CancelAfter(15000)]
+    public async Task Connect_TcpEndpoint_DispatchesOocReceivedDuringHandshake()
+    {
+        using TcpListener listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        List<string> receivedPackets = new List<string>();
+        Task serverTask = RunAoCompatibleTcpServerAsync(
+            listener,
+            receivedPackets,
+            CancellationToken.None,
+            sendWelcomeBeforeDone: true);
+
+        AOClient client = new AOClient($"tcp://127.0.0.1:{port}");
+        string? receivedShowname = null;
+        string? receivedMessage = null;
+        bool? receivedFromServer = null;
+        client.OnOOCMessageReceived += (showname, message, fromServer) =>
+        {
+            receivedShowname = showname;
+            receivedMessage = message;
+            receivedFromServer = fromServer;
+        };
+
+        try
+        {
+            await client.Connect(0, 0, 0, 0);
+        }
+        finally
+        {
+            await client.Disconnect();
+            await serverTask;
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(receivedShowname, Is.EqualTo("Server"));
+            Assert.That(receivedMessage, Is.EqualTo("Welcome to the courtroom."));
+            Assert.That(receivedFromServer, Is.True);
         });
     }
 
@@ -953,11 +1230,80 @@ public class NetworkTests
         }
     }
 
+    [Test]
+    [CancelAfter(15000)]
+    public async Task SendICMessage_CcccEffectsOnly_EmitsAo2FeatureGatedPacket()
+    {
+        const string testCharName = "VidyaIcPacketTestChar";
+        string baseRoot = CreateAoBaseRoot();
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(baseRoot, "characters", testCharName));
+            File.WriteAllText(
+                Path.Combine(baseRoot, "characters", testCharName, "char.ini"),
+                "[Options]\nshowname=TestChar\nside=def\ngender=male\n[Emotions]\nnumber=1\n1=normal#-#normal#0#1\n");
+            Globals.BaseFolders = new List<string> { baseRoot };
+            CharacterFolder.RefreshCharacterList();
+
+            using TcpListener listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+
+            int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            List<string> receivedPackets = new List<string>();
+            Task serverTask = RunR002TcpServerAsync(
+                listener,
+                receivedPackets,
+                testCharName,
+                CancellationToken.None,
+                "FL#noencryption#cccc_ic_support#effects#y_offset#%");
+
+            AOClient client = new AOClient($"tcp://127.0.0.1:{port}");
+            try
+            {
+                await client.Connect(0, 0, 0, 0);
+                client.SetICShowname("Client1");
+                await client.SendICMessage("hello from oceanya");
+            }
+            finally
+            {
+                await client.Disconnect();
+                await serverTask;
+            }
+
+            string? msPacket = receivedPackets.FirstOrDefault(packet =>
+                packet.StartsWith("MS#", StringComparison.Ordinal));
+            Assert.That(msPacket, Is.Not.Null, "MS# packet must be emitted after SendICMessage");
+
+            string[] parts = msPacket!.Split('#');
+            Assert.Multiple(() =>
+            {
+                Assert.That(parts.Length, Is.EqualTo(22));
+                Assert.That(parts[16], Is.EqualTo("Client1"));
+                Assert.That(parts[17], Is.EqualTo("-1"));
+                Assert.That(parts[18], Is.EqualTo("0<and>0"));
+                Assert.That(parts[19], Is.EqualTo("0"));
+                Assert.That(parts[20], Is.EqualTo("||"));
+                Assert.That(parts[21], Is.EqualTo("%"));
+                Assert.That(parts, Does.Not.Contain("-^(b)normal^(a)normal^"));
+            });
+        }
+        finally
+        {
+            Globals.BaseFolders = new List<string>();
+            CharacterFolder.RefreshCharacterList();
+            if (Directory.Exists(baseRoot))
+            {
+                Directory.Delete(baseRoot, true);
+            }
+        }
+    }
+
     private static async Task RunR002TcpServerAsync(
         TcpListener listener,
         List<string> receivedPackets,
         string characterName,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string featurePacket = "FL#noencryption#%")
     {
         using TcpClient serverClient = await listener.AcceptTcpClientAsync(cancellationToken);
         using NetworkStream stream = serverClient.GetStream();
@@ -981,7 +1327,7 @@ public class NetworkTests
             else if (string.Equals(packet, "ID#AO2#2.11.0#%", StringComparison.Ordinal))
             {
                 await SendPacketAsync(stream, "PN#1#100#%", cancellationToken);
-                await SendPacketAsync(stream, "FL#noencryption#%", cancellationToken);
+                await SendPacketAsync(stream, featurePacket, cancellationToken);
             }
             else if (string.Equals(packet, "askchaa#%", StringComparison.Ordinal))
             {
@@ -1000,6 +1346,12 @@ public class NetworkTests
                 // Send CharsCheck marking the character as available (0 = available)
                 await SendPacketAsync(stream, "CharsCheck#0#%", cancellationToken);
                 await SendPacketAsync(stream, "DONE#%", cancellationToken);
+            }
+            else if (packet.StartsWith("CC#", StringComparison.Ordinal))
+            {
+                string[] parts = packet.Split('#');
+                string charId = parts.Length > 2 ? parts[2] : "0";
+                await SendPacketAsync(stream, $"PV#42#CID#{charId}#%", cancellationToken);
             }
         }
     }
@@ -1022,7 +1374,8 @@ public class NetworkTests
     private static async Task RunAoCompatibleTcpServerAsync(
         TcpListener listener,
         List<string> receivedPackets,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool sendWelcomeBeforeDone = false)
     {
         using TcpClient serverClient = await listener.AcceptTcpClientAsync(cancellationToken);
         using NetworkStream stream = serverClient.GetStream();
@@ -1062,6 +1415,11 @@ public class NetworkTests
             }
             else if (string.Equals(packet, "RD#%", StringComparison.Ordinal))
             {
+                if (sendWelcomeBeforeDone)
+                {
+                    await SendPacketAsync(stream, "CT#Server#Welcome to the courtroom.#1#%", cancellationToken);
+                }
+
                 await SendPacketAsync(stream, "DONE#%", cancellationToken);
             }
         }

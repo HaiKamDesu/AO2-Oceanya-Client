@@ -115,6 +115,42 @@ public class ICMessageTests
     }
 
     [Test]
+    public void GetCommand_CcccWithEffectsOnly_DoesNotInsertReceiveOnlyOrLoopingFields()
+    {
+        ICMessage message = CreateSampleMessage();
+        message.ShowName = "Client1";
+        message.OtherCharId = -1;
+        message.SelfOffset = (0, 0);
+        message.NonInterruptingPreAnim = false;
+        message.SfxLooping = true;
+        message.ScreenShake = true;
+        message.FramesShake = "should-not-send";
+        message.FramesRealization = "should-not-send";
+        message.FramesSfx = "should-not-send";
+        message.Additive = true;
+        message.EffectString = "impact||sfx-fan";
+
+        SerializationOptions options = new SerializationOptions
+        {
+            IncludeCcccIcSupport = true,
+            IncludeEffects = true,
+        };
+
+        string[] parts = ICMessage.GetCommand(message, options).Split('#');
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(parts[16], Is.EqualTo("Client1"));
+            Assert.That(parts[17], Is.EqualTo("-1"));
+            Assert.That(parts[18], Is.EqualTo("0<and>0"));
+            Assert.That(parts[19], Is.EqualTo("0"));
+            Assert.That(parts[20], Is.EqualTo("impact||sfx-fan"));
+            Assert.That(parts[21], Is.EqualTo("%"));
+            Assert.That(parts, Does.Not.Contain("should-not-send"));
+        });
+    }
+
+    [Test]
     public void GetCommand_OmitsVerticalOffsetWhenYOffsetExtensionIsDisabled()
     {
         ICMessage message = CreateSampleMessage();

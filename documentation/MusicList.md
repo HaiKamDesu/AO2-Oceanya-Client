@@ -24,6 +24,8 @@ music files under local `sounds/music` asset folders.
   folders first.
 - Playing a song sends `MC#<song>#<charId>#...#%`. With AO2 effects support, the last client-sent field is the AO2
   music effect flag bitmask: `FADE_IN=1`, `FADE_OUT=2`, `SYNC_POS=4`.
+- Incoming channel-0 music defaults to looping when the server omits the loop field, matching AO2 playback expectations
+  for older `MC#<song>#<charId>#%` style packets.
 - The music list context menu exposes the same AO2 effect toggles:
   - `Fade Out Previous`: when a new song starts, the old song fades away over about four seconds instead of stopping
     instantly.

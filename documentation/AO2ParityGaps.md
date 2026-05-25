@@ -71,9 +71,9 @@ Remaining improvement area: add a richer partner-readiness workflow based on liv
 - `SelfOffsetVertical` (int)
 
 **Implemented send-side behavior:**
-1. Pairing Studio lists current-area players from supported `/getarea` output such as newline AO2 reports and single-line `$ASG` reports. If parsing fails, it shows the server character roster instead of local AO asset folders.
+1. Pairing Studio lists current-area players from supported `/getarea` output such as newline AO2 reports and single-line `$ASG` reports. If parsing fails, it falls back to AO2's sorted server character roster, with no OOC/showname subtitles and without treating CharsCheck "taken" state as unselectable.
 2. The selected pair data is stored per-client in the GM snapshot (`GMMultiClientSnapshot`) through `PairTargetCharId`, `PairTargetCharacterName`, `PairLayerOrder`, and `SelfOffset`.
-3. `AOClient.SendICMessage()` fills outgoing compact `MS#` `OtherCharIdRaw` and `SelfOffset` from saved pair state. The server supplies `OtherName`, `OtherEmote`, `OtherOffset`, and `OtherFlip` in echoed legacy `MS#` packets after mutual pairing is confirmed.
+3. `AOClient.SendICMessage()` fills outgoing AO2-compatible legacy `MS#` pair fields, including placeholder `OtherName`, `OtherEmote`, `OtherOffset`, and `OtherFlip`, from saved pair state. The server supplies meaningful values for those fields in echoed legacy `MS#` packets after mutual pairing is confirmed.
 
 **Key constraint:** pairing requires `CCCC_IC_SUPPORT` in the server feature list (`AOClient.ServerFeatures`). Check before enabling the UI.
 

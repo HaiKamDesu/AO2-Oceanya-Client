@@ -396,7 +396,9 @@ namespace AOBot_Testing.Structures
                 fields.Add(string.IsNullOrWhiteSpace(message.OtherCharIdRaw)
                     ? message.OtherCharId.ToString(CultureInfo.InvariantCulture)
                     : message.OtherCharIdRaw);
+
                 fields.Add(BuildOffsetField(message.SelfOffset, effectiveOptions.IncludeVerticalOffset));
+
                 fields.Add(message.NonInterruptingPreAnim ? "1" : "0");
             }
 

@@ -18,13 +18,35 @@ namespace AOBot_Testing
         {
             List<Player> players = new List<Player>();
             string normalizedInput = input?.Trim() ?? string.Empty;
-            bool looksLikeGetArea = normalizedInput.Contains("People in this area:", StringComparison.OrdinalIgnoreCase)
-                && normalizedInput.Contains("===", StringComparison.Ordinal);
+            bool hasStandardPeopleHeader = normalizedInput.Contains("People in this area:", StringComparison.OrdinalIgnoreCase);
+            bool hasClientsInHeader = Regex.IsMatch(
+                normalizedInput,
+                @"\bClients\s+in\s+\[\d+\]\s+",
+                RegexOptions.IgnoreCase);
+            bool hasAreaHeading = Regex.IsMatch(
+                normalizedInput,
+                @"(?:^|[:\r\n])\s*===\s*.+?\s*===",
+                RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            bool hasUserStatusHeader = Regex.IsMatch(
+                normalizedInput,
+                @"\[\s*\d+\s+users?\s*\]\s*\[[^\]]+\]",
+                RegexOptions.IgnoreCase);
             string areaName = string.Empty;
             Match areaMatch = Regex.Match(normalizedInput, @"===\s*(?<area>.+?)\s*===", RegexOptions.IgnoreCase | RegexOptions.Singleline);
             if (areaMatch.Success)
             {
                 areaName = areaMatch.Groups["area"].Value.Trim();
+            }
+            else
+            {
+                Match clientsInAreaMatch = Regex.Match(
+                    normalizedInput,
+                    @"=\s*Clients\s+in\s+\[\d+\]\s*(?<area>.+?)\s*\(users:\s*\d+\)\s*(?:\[[^\]]*\])?\s*=",
+                    RegexOptions.IgnoreCase | RegexOptions.Singleline);
+                if (clientsInAreaMatch.Success)
+                {
+                    areaName = clientsInAreaMatch.Groups["area"].Value.Trim();
+                }
             }
 
             foreach (Match match in PlayerEntryRegex.Matches(normalizedInput))
@@ -51,6 +73,10 @@ namespace AOBot_Testing
                     RawGetAreaLine = match.Value.Trim()
                 });
             }
+
+            bool looksLikeGetArea = hasStandardPeopleHeader
+                || hasClientsInHeader
+                || (players.Count > 0 && (hasAreaHeading || hasUserStatusHeader));
 
             return new GetAreaParseResult
             {
@@ -79,6 +105,8 @@ namespace AOBot_Testing
             oocShowname = null;
             if (string.IsNullOrWhiteSpace(details)
                 || details.Contains("Users]", StringComparison.OrdinalIgnoreCase)
+                || details.Contains("(users:", StringComparison.OrdinalIgnoreCase)
+                || details.Contains("Clients in", StringComparison.OrdinalIgnoreCase)
                 || details.Contains("===", StringComparison.Ordinal))
             {
                 return false;

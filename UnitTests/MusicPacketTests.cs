@@ -172,7 +172,7 @@ public class MusicPacketTests
     }
 
     [Test]
-    public async Task HandleMessage_McPacket_LoopNotEnabled_WhenLoopFieldAbsent()
+    public async Task HandleMessage_McPacket_LoopEnabled_WhenLoopFieldAbsent()
     {
         AOClient client = new AOClient("ws://localhost:10001/");
         bool? capturedLoop = null;
@@ -181,6 +181,6 @@ public class MusicPacketTests
         // Minimal packet: just song + charId (no loop/channel/effects fields).
         await client.HandleMessage("MC#pwr/trial.mp3#0#%");
 
-        Assert.That(capturedLoop, Is.False);
+        Assert.That(capturedLoop, Is.True);
     }
 }

@@ -20,6 +20,9 @@ namespace AOBot_Testing.Agents
         private CountdownTimer? speakTimer;
         bool AbleToSpeak { get; set; } = true;
         private readonly HashSet<string> serverFeatures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private const int DefaultCharacterSelectionTimeoutMs = 5000;
+        private TaskCompletionSource<int>? pendingCharacterSelectionTcs;
+        private bool messageListenerStarted;
 
 
         /// <summary>
@@ -40,7 +43,7 @@ namespace AOBot_Testing.Agents
                 return serverCharacterList.ElementAt(iniPuppetID).Key;
             }
         }
-        public static string lastCharsCheck = string.Empty;
+        private string lastCharsCheck = string.Empty;
 
         string hdid = string.Empty;
 
@@ -147,6 +150,8 @@ namespace AOBot_Testing.Agents
         /// Injected by the host application to avoid a direct dependency on save-file infrastructure.
         /// </summary>
         public Func<IReadOnlyDictionary<string, int>>? FrequencyHintsProvider { get; set; }
+
+        public int CharacterSelectionTimeoutMs { get; set; } = DefaultCharacterSelectionTimeoutMs;
 
         public string CurrentArea
         {
@@ -271,6 +276,12 @@ namespace AOBot_Testing.Agents
                     return;
                 }
 
+                if (iniPuppetID < 0)
+                {
+                    CustomConsole.Error("Cannot send IC message without a server-confirmed INIPuppet.");
+                    return;
+                }
+
                 ICMessage msg = new ICMessage();
                 msg.DeskMod = ResolveDeskModForPacket(currentEmote.Modifier, currentEmote.DeskMod);
                 msg.PreAnim = currentEmote.PreAnimation;
@@ -350,21 +361,20 @@ namespace AOBot_Testing.Agents
                 bool includeAdditive = SupportsServerFeature("ADDITIVE");
                 bool includeEffects = SupportsServerFeature("EFFECTS");
                 bool includeCustomBlips = SupportsServerFeature("CUSTOM_BLIPS");
-                bool includeExtendedIcFields = includeLoopingSfx || includeAdditive || includeEffects || includeCustomBlips;
 
                 ICMessage.SerializationOptions serializationOptions = new ICMessage.SerializationOptions
                 {
                     IncludeCcccIcSupport = SupportsServerFeature("CCCC_IC_SUPPORT"),
-                    IncludeLoopingSfx = includeExtendedIcFields,
-                    IncludeAdditive = includeExtendedIcFields,
-                    IncludeEffects = includeExtendedIcFields,
+                    IncludeLoopingSfx = includeLoopingSfx,
+                    IncludeAdditive = includeAdditive,
+                    IncludeEffects = includeEffects,
                     IncludeCustomBlips = includeCustomBlips,
                     IncludeVerticalOffset = SupportsServerFeature("Y_OFFSET"),
                     IncludeSlide = includeCustomBlips
                 };
                 string command = ICMessage.GetCommand(msg, serializationOptions);
                 CustomConsole.Info(
-                    $"Outgoing IC packet metadata: character=\"{msg.Character}\" iniPuppet=\"{iniPuppetName}\" iniPuppetId={iniPuppetID} emote=\"{msg.Emote}\" showname=\"{msg.ShowName}\" pairTarget={msg.OtherCharIdRaw} selfOffset={ICMessage.BuildOffsetDebugString(msg.SelfOffset, serializationOptions.IncludeVerticalOffset)} cccc={serializationOptions.IncludeCcccIcSupport} extended={includeExtendedIcFields} connected={IsTransportConnected}",
+                    $"Outgoing IC packet metadata: character=\"{msg.Character}\" iniPuppet=\"{iniPuppetName}\" iniPuppetId={iniPuppetID} emote=\"{msg.Emote}\" showname=\"{msg.ShowName}\" pairTarget={msg.OtherCharIdRaw} selfOffset={ICMessage.BuildOffsetDebugString(msg.SelfOffset, serializationOptions.IncludeVerticalOffset)} cccc={serializationOptions.IncludeCcccIcSupport} loopingSfx={includeLoopingSfx} additive={includeAdditive} effects={includeEffects} customBlips={includeCustomBlips} connected={IsTransportConnected}",
                     Common.CustomConsole.LogCategory.IC);
                 CustomConsole.Info(
                     $"[PAIR] Outgoing IC pair state. client=\"{clientName}\" iniPuppetID={iniPuppetID} pairTarget={PairTargetCharId} pairRaw=\"{msg.OtherCharIdRaw}\" pairName=\"{PairTargetCharacterName}\" pairOrder={PairLayerOrder} selfOffset=({SelfOffset.Horizontal},{SelfOffset.Vertical}) cccc={serializationOptions.IncludeCcccIcSupport} effects={includeEffects} yOffset={serializationOptions.IncludeVerticalOffset}",
@@ -721,6 +731,10 @@ namespace AOBot_Testing.Agents
                 CustomConsole.Info("Server Character List updated.");
                 Volatile.Read(ref _characterListRefreshTcs)?.TrySetResult(true);
             }
+            else if (message.StartsWith("PV#"))
+            {
+                HandlePlayerVariablePacket(message);
+            }
             else if (message.StartsWith("FL#"))
             {
                 string[] featureParts = message.Substring(3).TrimEnd('#', '%')
@@ -906,15 +920,7 @@ namespace AOBot_Testing.Agents
         {
             aliveTime.Reset();
             dead = false;
-            lastCharsCheck = string.Empty;
-            serverFeatures.Clear();
-            serverCharacterList.Clear();
-            lock (availableStateLock)
-            {
-                availableAreas.Clear();
-                availableAreaInfos.Clear();
-                availableMusic.Clear();
-            }
+            ResetTransientServerState(clearCurrentArea: false, notifyScene: true);
 
             transport = AOClientTransportFactory.Create(serverUri);
             try
@@ -943,6 +949,7 @@ namespace AOBot_Testing.Agents
                     CustomConsole.Info("===========================");
                 }
 
+                messageListenerStarted = true;
                 _ = Task.Run(() => ListenForMessages());
                 _ = Task.Run(() => KeepAlive());
 
@@ -999,7 +1006,7 @@ namespace AOBot_Testing.Agents
                 return explicitShowName;
             }
 
-            CharacterFolder? showNameCharacter = ResolveIniPuppetCharacter() ?? CurrentINI;
+            CharacterFolder? showNameCharacter = CurrentINI ?? ResolveIniPuppetCharacter();
             if (showNameCharacter?.configINI != null)
             {
                 return showNameCharacter.configINI.ResolveShowNameForEmote(currentEmote?.ID ?? -1);
@@ -1217,7 +1224,11 @@ namespace AOBot_Testing.Agents
                 $"[MUSIC IN] song=\"{song}\" charId={characterId} isSelf={characterId == iniPuppetID} myIniPuppetID={iniPuppetID} raw={message}",
                 Common.CustomConsole.LogCategory.MusicList);
 
-            bool loopEnabled = fields.Length > 4 && fields[4].Trim() == "1";
+            bool loopEnabled = true;
+            if (fields.Length > 4)
+            {
+                loopEnabled = fields[4].Trim() != "0";
+            }
             int channel = 0;
             if (fields.Length > 5 && int.TryParse(fields[5].Trim(), out int parsedChannel))
             {
@@ -1748,6 +1759,21 @@ namespace AOBot_Testing.Agents
                 RegexOptions.IgnoreCase);
             if (!areaHeader.Success)
             {
+                areaHeader = Regex.Match(
+                    messageText,
+                    @"\bClients\s+in\s+\[\d+\]\s*.+?\s*\(users:\s*(?<players>\d+)\)\s*(?:\[(?<status>[^\]]*)\])?",
+                    RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            }
+            if (!areaHeader.Success)
+            {
+                areaHeader = Regex.Match(
+                    messageText,
+                    @"\[\s*(?<players>\d+)\s+users?\s*\]\s*\[(?<status>[^\]]*)\](?:\[(?<lock>[^\]]*)\])?",
+                    RegexOptions.IgnoreCase);
+            }
+
+            if (!areaHeader.Success)
+            {
                 return;
             }
 
@@ -2057,7 +2083,7 @@ namespace AOBot_Testing.Agents
                 CustomConsole.Info("Server connection is not active.");
             }
 
-            serverFeatures.Clear();
+            ResetTransientServerState(clearCurrentArea: true, notifyScene: true);
             OnDisconnect?.Invoke();
         }
 
@@ -2073,7 +2099,7 @@ namespace AOBot_Testing.Agents
                 CustomConsole.Info("Server connection is not active.");
             }
 
-            serverFeatures.Clear();
+            ResetTransientServerState(clearCurrentArea: true, notifyScene: true);
         }
 
         public async Task CloseForShutdownAsync()
@@ -2082,9 +2108,185 @@ namespace AOBot_Testing.Agents
             aliveTime.Stop();
             await DisconnectWebsocket();
         }
+
+        private void ResetTransientServerState(bool clearCurrentArea, bool notifyScene)
+        {
+            lastCharsCheck = string.Empty;
+            messageListenerStarted = false;
+            pendingCharacterSelectionTcs?.TrySetCanceled();
+            pendingCharacterSelectionTcs = null;
+            serverFeatures.Clear();
+            serverCharacterList.Clear();
+            playerID = -1;
+            iniPuppetID = -1;
+            serverAssetUrl = string.Empty;
+            serverSoftware = string.Empty;
+            lastGetAreaParseSucceeded = false;
+            Interlocked.Exchange(ref pendingInternalGetAreaRefreshes, 0);
+            curBG = string.Empty;
+            if (clearCurrentArea)
+            {
+                currentArea = string.Empty;
+            }
+
+            List<string> areaSnapshot;
+            List<AreaInfo> areaInfoSnapshot;
+            List<string> musicSnapshot;
+            lock (availableStateLock)
+            {
+                availableAreas.Clear();
+                availableAreaInfos.Clear();
+                availableMusic.Clear();
+                areaSnapshot = availableAreas.ToList();
+                areaInfoSnapshot = CloneAreaInfos(availableAreaInfos);
+                musicSnapshot = availableMusic.ToList();
+            }
+
+            currentAreaPlayers.Clear();
+            currentEvidenceNames.Clear();
+            currentEvidenceImages.Clear();
+            ConfirmedPairTargetCharIds.Clear();
+            KnownPairTargetPositions.Clear();
+            LastSentPairTargetCharId = -1;
+            LastSentPairLayerOrder = 0;
+            LastSentPairPosition = string.Empty;
+            LastSentPairSelfOffset = (int.MinValue, int.MinValue);
+
+            if (!notifyScene)
+            {
+                return;
+            }
+
+            OnBGChange?.Invoke(string.Empty);
+            if (clearCurrentArea)
+            {
+                OnCurrentAreaChanged?.Invoke(string.Empty);
+            }
+
+            OnAvailableAreasUpdated?.Invoke(areaSnapshot);
+            OnAvailableAreaInfosUpdated?.Invoke(areaInfoSnapshot);
+            OnAvailableMusicUpdated?.Invoke(musicSnapshot);
+            OnCurrentAreaPlayersUpdated?.Invoke(currentAreaPlayers.ToList().AsReadOnly(), false);
+            OnINIPuppetChange?.Invoke();
+        }
         #endregion
 
         #region Helper methods
+
+        private void HandlePlayerVariablePacket(string message)
+        {
+            string[] fields = message.TrimEnd('%').Split('#');
+            if (fields.Length < 4 || !string.Equals(fields[2], "CID", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            if (fields.Length > 1
+                && int.TryParse(fields[1], out int packetPlayerId)
+                && playerID >= 0
+                && packetPlayerId != playerID)
+            {
+                return;
+            }
+
+            if (!int.TryParse(fields[3], out int confirmedCharId))
+            {
+                return;
+            }
+
+            if (pendingCharacterSelectionTcs != null)
+            {
+                pendingCharacterSelectionTcs.TrySetResult(confirmedCharId);
+                return;
+            }
+
+            ApplyConfirmedIniPuppetSelection(confirmedCharId, iniswapToSelected: true);
+        }
+
+        private void ApplyConfirmedIniPuppetSelection(int serverCharID, bool iniswapToSelected)
+        {
+            if (serverCharID < -1 || serverCharID >= serverCharacterList.Count)
+            {
+                CustomConsole.Warning($"Server confirmed invalid INIPuppet index {serverCharID}.");
+                return;
+            }
+
+            iniPuppetID = serverCharID;
+            OnINIPuppetChange?.Invoke();
+
+            if (serverCharID == -1)
+            {
+                CustomConsole.Info("Selected INI Puppet: Spectator (Server Index: -1)");
+                return;
+            }
+
+            string characterName = serverCharacterList.ElementAt(serverCharID).Key;
+            CharacterFolder? ini = FindCharacterByFolderOrIniName(characterName);
+            if (iniswapToSelected && ini != null)
+            {
+                CurrentINI = ini;
+            }
+
+            CustomConsole.Info($"Selected INI Puppet: \"{characterName}\" (Server Index: {serverCharID})");
+        }
+
+        private async Task<int> WaitForCharacterSelectionConfirmationAsync(
+            TaskCompletionSource<int> confirmation,
+            int requestedCharId)
+        {
+            int timeoutMs = Math.Max(1, CharacterSelectionTimeoutMs);
+            if (!messageListenerStarted)
+            {
+                await WaitForPacketAsync(
+                    packet => packet.StartsWith("PV#", StringComparison.OrdinalIgnoreCase),
+                    "PV",
+                    timeoutMs,
+                    throwOnTimeout: false);
+
+                if (confirmation.Task.IsCompletedSuccessfully)
+                {
+                    return await confirmation.Task;
+                }
+
+                throw new TimeoutException($"Timed out waiting for server to confirm INIPuppet selection {requestedCharId}.");
+            }
+
+            Task completed = await Task.WhenAny(confirmation.Task, Task.Delay(timeoutMs));
+            if (ReferenceEquals(completed, confirmation.Task))
+            {
+                return await confirmation.Task;
+            }
+
+            throw new TimeoutException($"Timed out waiting for server to confirm INIPuppet selection {requestedCharId}.");
+        }
+
+        private async Task<bool> TrySelectIniPuppetCandidateAsync(int serverCharID, bool iniswapToSelected)
+        {
+            if (serverCharID < 0 || serverCharID >= serverCharacterList.Count)
+            {
+                return false;
+            }
+
+            string characterName = serverCharacterList.ElementAt(serverCharID).Key;
+            CharacterFolder? ini = FindCharacterByFolderOrIniName(characterName);
+            if (ini == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                await SelectIniPuppet(serverCharID, iniswapToSelected);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Warning(
+                    $"Server did not confirm INIPuppet \"{characterName}\" (index {serverCharID}). Trying next candidate.",
+                    ex);
+                return false;
+            }
+        }
 
         public async Task SelectFirstAvailableINIPuppet(bool iniswapToSelected = true)
         {
@@ -2127,11 +2329,8 @@ namespace AOBot_Testing.Agents
                         continue;
                     }
 
-                    var characterName = serverCharacterList.ElementAt(i).Key;
-                    var ini = CharacterFolder.FullList.FirstOrDefault(c => c.Name == characterName);
-                    if (ini != null)
+                    if (await TrySelectIniPuppetCandidateAsync(i, iniswapToSelected))
                     {
-                        await SelectIniPuppet(i, iniswapToSelected);
                         return;
                     }
                 }
@@ -2147,11 +2346,8 @@ namespace AOBot_Testing.Agents
                         continue;
                     }
 
-                    var characterName = serverCharacterList.ElementAt(i).Key;
-                    var ini = CharacterFolder.FullList.FirstOrDefault(c => c.Name == characterName);
-                    if (ini != null)
+                    if (await TrySelectIniPuppetCandidateAsync(i, iniswapToSelected))
                     {
-                        await SelectIniPuppet(i, iniswapToSelected);
                         return;
                     }
                 }
@@ -2196,22 +2392,33 @@ namespace AOBot_Testing.Agents
                     $"Requested server character index {serverCharID} but available range is 0..{Math.Max(0, serverCharacterList.Count - 1)}.");
             }
 
-            await SendPacket($"CC#{playerID}#{serverCharID}#{hdid}#%");
-
-            var characterName = serverCharacterList.ElementAt(serverCharID).Key;
-
-            var ini = CharacterFolder.FullList.FirstOrDefault(c => c.Name == characterName);
-
-            if (ini != null)
+            if (!IsTransportConnected)
             {
-                iniPuppetID = serverCharID;
-                OnINIPuppetChange?.Invoke();
-                if (iniswapToSelected)
+                ApplyConfirmedIniPuppetSelection(serverCharID, iniswapToSelected);
+                return;
+            }
+
+            TaskCompletionSource<int> confirmation = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+            pendingCharacterSelectionTcs = confirmation;
+            try
+            {
+                await SendPacket($"CC#{playerID}#{serverCharID}#{hdid}#%");
+                int confirmedCharId = await WaitForCharacterSelectionConfirmationAsync(confirmation, serverCharID);
+                if (confirmedCharId != serverCharID)
                 {
-                    CurrentINI = ini;
-                    ICShowname = CurrentINI?.configINI.ShowName ?? characterName;
+                    ApplyConfirmedIniPuppetSelection(confirmedCharId, iniswapToSelected);
+                    throw new InvalidOperationException(
+                        $"Server confirmed INIPuppet index {confirmedCharId} after requesting {serverCharID}.");
                 }
-                CustomConsole.Info($"Selected INI Puppet: \"{characterName}\" (Server Index: {serverCharID})");
+
+                ApplyConfirmedIniPuppetSelection(confirmedCharId, iniswapToSelected);
+            }
+            finally
+            {
+                if (ReferenceEquals(pendingCharacterSelectionTcs, confirmation))
+                {
+                    pendingCharacterSelectionTcs = null;
+                }
             }
         }
 
@@ -2305,6 +2512,7 @@ namespace AOBot_Testing.Agents
             }
             finally
             {
+                messageListenerStarted = false;
                 if (!IsTransportConnected)
                 {
                     aliveTime.Stop();

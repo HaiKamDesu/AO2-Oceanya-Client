@@ -237,25 +237,40 @@ namespace OceanyaClient.Components
             return root;
         }
 
-        private StackPanel BuildLeftPanel()
+        private Grid BuildLeftPanel()
         {
-            StackPanel panel = new StackPanel
+            Grid panel = new Grid
             {
                 Width = 248,
                 HorizontalAlignment = HorizontalAlignment.Center
             };
-            panel.Children.Add(CreatePanelTitle("Self"));
-            panel.Children.Add(selfLineText);
-            panel.Children.Add(CreateSectionLabel("Pairing Partner", "Choose the player/character you want to pair with. This sends the partner's server character slot in IC, not their /getarea player id."));
-            panel.Children.Add(pairList);
+            panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            int row = 0;
+            void Add(UIElement element)
+            {
+                Grid.SetRow(element, row++);
+                panel.Children.Add(element);
+            }
+
+            Add(CreatePanelTitle("Self"));
+            Add(selfLineText);
+            Add(CreateSectionLabel("Pairing Partner", "AO2 builds this list from the server character list. The selection sends that server character slot in IC."));
+            Add(pairList);
             layerOrderSection.Children.Add(CreateSectionLabel("Layer order", "Controls which paired character draws on top after the server confirms the pair."));
             layerOrderSection.Children.Add(BuildLayerOrderControl());
-            panel.Children.Add(layerOrderSection);
+            Add(layerOrderSection);
             partnerPreviewSection.Children.Add(CreateSectionLabel("Partner preview", "Read-only last known partner offset from their most recent IC or confirmed pair echo."));
             partnerPreviewSection.Children.Add(CreateOffsetRow(partnerXTextBox, partnerYTextBox));
-            panel.Children.Add(partnerPreviewSection);
-            panel.Children.Add(sendBlankpostButton);
-            panel.Children.Add(matchPartnerPositionButton);
+            Add(partnerPreviewSection);
+            Add(sendBlankpostButton);
+            Add(matchPartnerPositionButton);
             return panel;
         }
 
@@ -845,10 +860,11 @@ namespace OceanyaClient.Components
 
         private string BuildSelfLine()
         {
+            int selfId = GetSelfPairTargetId();
+            string selfName = ResolveSelfPairName(profileClient, networkClient);
             Player? player = networkClient.CurrentAreaPlayers.FirstOrDefault(areaPlayer =>
-                areaPlayer.CharacterId == networkClient.playerID
-                || areaPlayer.CharacterId == profileClient.playerID
-                || string.Equals(areaPlayer.ICCharacterName, profileClient.currentINI?.Name, StringComparison.OrdinalIgnoreCase));
+                areaPlayer.CharacterId == selfId
+                || string.Equals(areaPlayer.ICCharacterName, selfName, StringComparison.OrdinalIgnoreCase));
             if (player != null)
             {
                 return string.IsNullOrWhiteSpace(player.RawGetAreaLine)
@@ -856,24 +872,22 @@ namespace OceanyaClient.Components
                     : player.RawGetAreaLine;
             }
 
-            string name = profileClient.currentINI?.Name ?? profileClient.iniPuppetName;
-            int selfId = GetSelfPairId();
-            return $"[{selfId}] {name}";
+            return $"[{selfId}] {selfName}";
         }
 
-        private int GetSelfPairId()
+        private static string ResolveSelfPairName(AOClient profileClient, AOClient client)
         {
-            if (networkClient.playerID >= 0)
+            if (!string.IsNullOrWhiteSpace(client.iniPuppetName))
             {
-                return networkClient.playerID;
+                return client.iniPuppetName;
             }
 
-            if (profileClient.playerID >= 0)
+            if (!string.IsNullOrWhiteSpace(profileClient.iniPuppetName))
             {
-                return profileClient.playerID;
+                return profileClient.iniPuppetName;
             }
 
-            return profileClient.iniPuppetID;
+            return profileClient.currentINI?.Name ?? "Unknown";
         }
 
         private int GetSelfPairTargetId()
@@ -1329,8 +1343,8 @@ namespace OceanyaClient.Components
                         -1,
                         entry.Key,
                         displayName: entry.Key,
-                        rawLine: $"[{index}] {entry.Key}",
-                        available: entry.Value,
+                        rawLine: string.Empty,
+                        available: true,
                         fromCurrentArea: false,
                         internalByCharacterSlot.TryGetValue(index, out AOClient? internalPeer) ? internalPeer : null));
                 }
@@ -1394,11 +1408,11 @@ namespace OceanyaClient.Components
             AOClient? internalPeer)
         {
             CharacterFolder? local = ResolveLocalCharacter(name);
+            string selfName = ResolveSelfPairName(profileClient, client);
             bool isSelf = fromCurrentArea
-                ? areaPlayerId == client.playerID
-                    || areaPlayerId == profileClient.playerID
+                ? characterId == client.iniPuppetID
                     || characterId == profileClient.iniPuppetID
-                    || string.Equals(name, profileClient.currentINI?.Name, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(name, selfName, StringComparison.OrdinalIgnoreCase)
                 : characterId == profileClient.iniPuppetID;
             if (isSelf)
             {
@@ -1408,34 +1422,38 @@ namespace OceanyaClient.Components
             bool samePosition = internalPeer == null
                 || string.Equals(internalPeer.curPos, client.curPos, StringComparison.OrdinalIgnoreCase);
             bool canSelect = available && characterId >= 0 && samePosition;
-            string status = string.IsNullOrWhiteSpace(rawLine)
-                ? $"[{characterId}] {name}"
-                : rawLine;
-            if (internalPeer != null)
+            string status = fromCurrentArea
+                ? string.IsNullOrWhiteSpace(rawLine)
+                    ? $"[{characterId}] {name}"
+                    : rawLine
+                : string.Empty;
+            if (fromCurrentArea && internalPeer != null)
             {
                 status += " · internal client " + internalPeer.clientName;
             }
 
-            if (!available)
+            if (fromCurrentArea && !available)
             {
                 status += " · unavailable";
             }
 
-            if (!samePosition)
+            if (fromCurrentArea && !samePosition)
             {
                 status += " · different position";
             }
 
-            if (local == null)
+            if (fromCurrentArea && local == null)
             {
                 status += " · no local art";
             }
 
             string tooltip = !available
-                    ? "This server slot is unavailable in the fallback roster."
-                    : !samePosition
-                        ? "Different position: pairing will not appear until both clients share the same AO2 position."
-                        : "Select this character as your AO2 pair target.";
+                    ? "Unavailable: the server reported this character slot as taken in CharsCheck. Pairing fallback ignores CharsCheck, so this should only appear for parsed current-area entries."
+                    : characterId < 0
+                        ? "Unavailable: this entry did not resolve to a valid server character slot."
+                        : !samePosition
+                            ? "Unavailable: this internal client is in a different AO2 position. Pairing appears only when both clients use the same position."
+                            : "Select this character as your AO2 pair target.";
 
             return new PairCandidate(
                 characterId,
@@ -1487,7 +1505,8 @@ namespace OceanyaClient.Components
                 Background = new SolidColorBrush(Color.FromRgb(19, 24, 28)),
                 BorderBrush = new SolidColorBrush(Color.FromRgb(76, 94, 104)),
                 Foreground = Brushes.White,
-                Height = 190
+                MinHeight = 190,
+                VerticalAlignment = VerticalAlignment.Stretch
             };
             VirtualizingPanel.SetIsVirtualizing(list, true);
             VirtualizingPanel.SetVirtualizationMode(list, VirtualizationMode.Recycling);
@@ -1917,6 +1936,16 @@ namespace OceanyaClient.Components
             status.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding(nameof(PairCandidate.Status)));
             status.SetValue(TextBlock.ForegroundProperty, new SolidColorBrush(Color.FromRgb(154, 171, 181)));
             status.SetValue(TextBlock.FontSizeProperty, 11.0);
+            status.SetValue(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis);
+            Style statusStyle = new Style(typeof(TextBlock));
+            DataTrigger emptyStatusTrigger = new DataTrigger
+            {
+                Binding = new System.Windows.Data.Binding(nameof(PairCandidate.Status)),
+                Value = string.Empty
+            };
+            emptyStatusTrigger.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Collapsed));
+            statusStyle.Triggers.Add(emptyStatusTrigger);
+            status.SetValue(FrameworkElement.StyleProperty, statusStyle);
             stack.AppendChild(status);
             root.AppendChild(stack);
 

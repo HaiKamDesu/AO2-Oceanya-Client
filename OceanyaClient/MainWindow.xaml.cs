@@ -104,6 +104,7 @@ namespace OceanyaClient
         private readonly bool aiModeEnabled;
         private bool debug = false;
         private readonly HashSet<AOClient> areaListBootstrapCompletedClients = new HashSet<AOClient>();
+        private readonly HashSet<AOClient> directMessageHandlersAttached = new HashSet<AOClient>();
         private readonly Brush areaFreeBrush = CreateFrozenBrush(Color.FromRgb(77, 77, 77));
         private readonly Brush areaLfpBrush = CreateFrozenBrush(Color.FromRgb(76, 112, 63));
         private readonly Brush areaCasingBrush = CreateFrozenBrush(Color.FromRgb(113, 92, 53));
@@ -3250,20 +3251,26 @@ namespace OceanyaClient
 
         private AreaNavigatorListItem CreateAreaNavigatorListItem(AreaInfo areaInfo)
         {
-            string status = string.IsNullOrWhiteSpace(areaInfo.Status) ? "Unknown" : areaInfo.Status;
-            string caseManager = string.IsNullOrWhiteSpace(areaInfo.CaseManager) ? "Unknown" : areaInfo.CaseManager;
-            string lockState = string.IsNullOrWhiteSpace(areaInfo.LockState) ? "Unknown" : areaInfo.LockState;
+            string status = areaInfo.Status?.Trim() ?? string.Empty;
+            string caseManager = areaInfo.CaseManager?.Trim() ?? string.Empty;
+            string lockState = areaInfo.LockState?.Trim() ?? string.Empty;
+            bool hasKnownStatus = !IsUnknownAreaMetric(status);
+            bool hasKnownCaseManager = !IsUnknownAreaMetric(caseManager)
+                && !string.Equals(caseManager, "FREE", StringComparison.OrdinalIgnoreCase);
+            bool hasKnownLockState = !IsUnknownAreaMetric(lockState);
 
-            string statusAndCmLine = status;
-            if (!string.Equals(caseManager, "FREE", StringComparison.OrdinalIgnoreCase))
+            string statusAndCmLine = hasKnownStatus ? status : string.Empty;
+            if (hasKnownCaseManager)
             {
-                statusAndCmLine += $" | CM: {caseManager}";
+                statusAndCmLine = AppendAreaMetric(statusAndCmLine, $"CM: {caseManager}");
             }
 
-            string playersAndLockLine = lockState;
-            if (areaInfo.Players != -1)
+            string playersAndLockLine = areaInfo.Players != -1
+                ? $"{areaInfo.Players} users"
+                : string.Empty;
+            if (hasKnownLockState)
             {
-                playersAndLockLine = $"{areaInfo.Players} users | {lockState}";
+                playersAndLockLine = AppendAreaMetric(playersAndLockLine, lockState);
             }
 
             return new AreaNavigatorListItem
@@ -3271,8 +3278,21 @@ namespace OceanyaClient
                 Name = areaInfo.Name,
                 StatusAndCmLine = statusAndCmLine,
                 PlayersAndLockLine = playersAndLockLine,
-                RowBackground = GetAreaBrush(status, lockState),
+                RowBackground = GetAreaBrush(hasKnownStatus ? status : string.Empty, hasKnownLockState ? lockState : string.Empty),
             };
+        }
+
+        private static string AppendAreaMetric(string current, string metric)
+        {
+            return string.IsNullOrWhiteSpace(current)
+                ? metric
+                : current + " | " + metric;
+        }
+
+        private static bool IsUnknownAreaMetric(string? value)
+        {
+            return string.IsNullOrWhiteSpace(value)
+                || string.Equals(value.Trim(), "Unknown", StringComparison.OrdinalIgnoreCase);
         }
 
         private Brush GetAreaBrush(string status, string lockState)
@@ -4421,11 +4441,11 @@ namespace OceanyaClient
                 client.SetEmote(state.EmoteDisplayId);
             }
 
-            client.SetICShowname(state.ICShowname);
+            client.SetICShowname(NormalizeRestoredIcShowname(state));
             client.OOCShowname = string.IsNullOrWhiteSpace(state.OOCShowname)
                 ? client.clientName
                 : state.OOCShowname;
-            client.iniPuppetID = state.IniPuppetId;
+            client.iniPuppetID = useSingleInternalClient ? client.iniPuppetID : -1;
             client.curBG = state.Background;
             client.curSFX = state.Sfx;
             client.deskMod = Enum.IsDefined(typeof(ICMessage.DeskMods), state.DeskMod)
@@ -4484,9 +4504,19 @@ namespace OceanyaClient
             };
         }
 
+        private static string NormalizeRestoredIcShowname(GmMultiClientSnapshotClient state)
+        {
+            string icShowname = state.ICShowname?.Trim() ?? string.Empty;
+            string clientName = state.ClientName?.Trim() ?? string.Empty;
+            return !string.IsNullOrWhiteSpace(icShowname)
+                && string.Equals(icShowname, clientName, StringComparison.OrdinalIgnoreCase)
+                ? string.Empty
+                : icShowname;
+        }
+
         private static string NormalizeAreaMetric(string? value, string fallback)
         {
-            return string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+            return IsUnknownAreaMetric(value) ? fallback : value!.Trim();
         }
 
         private static AreaInfo? FindCurrentAreaInfo(AOClient? networkClient)
@@ -4601,6 +4631,7 @@ namespace OceanyaClient
                 {
                     AOClient firstConnectedClient = new AOClient(Globals.GetSelectedServerEndpoint());
                     firstConnectedClient.FrequencyHintsProvider = () => SaveFile.Data.FrequentlyUsedIniPuppets;
+                    AttachDirectClientMessageHandlers(firstConnectedClient);
                     await ConnectClientAsync(firstConnectedClient, autoSelectCharacter: false);
                     resolvedStates = ResolveSnapshotCharacterConflicts(
                         statesToRestore,
@@ -5029,6 +5060,11 @@ namespace OceanyaClient
 
         private void AttachDirectClientMessageHandlers(AOClient bot)
         {
+            if (!directMessageHandlersAttached.Add(bot))
+            {
+                return;
+            }
+
             bot.OnICMessageReceived += (ICMessage icMessage) =>
             {
                 Dispatcher.Invoke(() =>
@@ -5145,7 +5181,6 @@ namespace OceanyaClient
                     }
                 }
 
-                bot.SetICShowname(bot.clientName);
                 bot.OOCShowname = bot.clientName;
                 bot.switchPosWhenChangingINI = chkPosOnIniSwap.IsChecked == true;
                 bot.FrequencyHintsProvider = () => SaveFile.Data.FrequentlyUsedIniPuppets;
@@ -5252,6 +5287,46 @@ namespace OceanyaClient
                     }
                 };
                 contextMenu.Items.Add(manualIniPuppetChange);
+
+                MenuItem setCharacterToIniPuppet = new MenuItem();
+                setCharacterToIniPuppet.Click += (sender, args) =>
+                {
+                    AOClient? targetNetworkClient = GetTargetClientForNetwork(bot);
+                    string puppetName = targetNetworkClient?.iniPuppetName ?? bot.iniPuppetName;
+                    if (string.IsNullOrWhiteSpace(puppetName))
+                    {
+                        return;
+                    }
+
+                    CharacterFolder? localCharacter = CharacterFolder.FullList.FirstOrDefault(character =>
+                        string.Equals(character.Name, puppetName, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(character.configINI?.Name, puppetName, StringComparison.OrdinalIgnoreCase));
+                    if (localCharacter == null)
+                    {
+                        return;
+                    }
+
+                    bot.SetCharacter(localCharacter);
+                    if (ReferenceEquals(bot, currentClient))
+                    {
+                        ICMessageSettingsControl.SetClient(bot);
+                    }
+
+                    CaptureGmMultiClientSnapshot();
+                };
+                contextMenu.Items.Add(setCharacterToIniPuppet);
+
+                contextMenu.Opened += (_, _) =>
+                {
+                    AOClient? targetNetworkClient = GetTargetClientForNetwork(bot);
+                    string puppetName = targetNetworkClient?.iniPuppetName ?? bot.iniPuppetName;
+                    string visibleName = string.IsNullOrWhiteSpace(puppetName) ? "None" : puppetName.Trim();
+                    setCharacterToIniPuppet.Header = $"Set character to INIPuppet ({visibleName})";
+                    setCharacterToIniPuppet.IsEnabled = !string.IsNullOrWhiteSpace(puppetName)
+                        && CharacterFolder.FullList.Any(character =>
+                            string.Equals(character.Name, puppetName, StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(character.configINI?.Name, puppetName, StringComparison.OrdinalIgnoreCase));
+                };
 
                 ContextMenuSectionHelper.AddHeader(contextMenu, "Order", addLeadingSeparator: true);
                 MenuItem moveUpMenuItem = new MenuItem { Header = "Move UP" };
@@ -5443,7 +5518,6 @@ namespace OceanyaClient
                     if (!string.IsNullOrWhiteSpace(selection.SelectedClientName))
                     {
                         bot.clientName = selection.SelectedClientName;
-                        bot.SetICShowname(bot.clientName);
                         bot.OOCShowname = bot.clientName;
                         AutomationProperties.SetName(toggleBtn, bot.clientName);
                     }
@@ -5464,6 +5538,7 @@ namespace OceanyaClient
                     {
                         var button = clients.FirstOrDefault(x => x.Value == bot).Key;
                         areaListBootstrapCompletedClients.Remove(bot);
+                        directMessageHandlersAttached.Remove(bot);
                         viewportContent?.RemoveClient(bot);
                         profileIniPuppetNames.Remove(bot);
                         ClearAiClientState(bot);
