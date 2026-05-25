@@ -135,7 +135,7 @@ namespace UnitTests
         }
 
         [Test]
-        public void ResolveSnapshotRequestedPuppet_CrossServerPrefersLocalCharacterOverSavedPuppet()
+        public void ResolveSnapshotRequestedPuppet_PrefersLocalCharacterOverSavedPuppetWhenAvailable()
         {
             GmMultiClientSnapshotClient state = new GmMultiClientSnapshotClient
             {
@@ -162,7 +162,7 @@ namespace UnitTests
                         state,
                         serverAvailability,
                         snapshotMatchesCurrentServer: true),
-                    Is.EqualTo("OldServerPuppet"));
+                    Is.EqualTo("KamLoremaster"));
             });
         }
 

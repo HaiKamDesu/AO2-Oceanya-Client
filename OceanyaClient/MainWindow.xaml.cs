@@ -576,8 +576,8 @@ namespace OceanyaClient
         private void MainWindow_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
         {
             if (e.NewFocus is DependencyObject dependencyObject
-                && IsAncestorOf(dependencyObject)
-                && viewportContent?.IsAncestorOf(dependencyObject) != true)
+                && IsDependencyObjectAncestorOrSelf(this, dependencyObject)
+                && !IsDependencyObjectAncestorOrSelf(viewportContent, dependencyObject))
             {
                 lastMainWindowFocusedElement = e.NewFocus;
                 if (IsViewportUsingWindowsPreview())
@@ -4920,8 +4920,7 @@ namespace OceanyaClient
         {
             string savedPuppet = state.IniPuppetName?.Trim() ?? string.Empty;
             string localCharacter = state.LocalCharacterName?.Trim() ?? string.Empty;
-            if (!snapshotMatchesCurrentServer
-                && !string.IsNullOrWhiteSpace(localCharacter)
+            if (!string.IsNullOrWhiteSpace(localCharacter)
                 && serverAvailability.ContainsKey(localCharacter))
             {
                 return localCharacter;
@@ -7572,6 +7571,21 @@ namespace OceanyaClient
             }
 
             return null;
+        }
+
+        private static bool IsDependencyObjectAncestorOrSelf(DependencyObject? ancestor, DependencyObject? candidate)
+        {
+            while (candidate != null)
+            {
+                if (ReferenceEquals(candidate, ancestor))
+                {
+                    return true;
+                }
+
+                candidate = GetDependencyObjectParent(candidate);
+            }
+
+            return false;
         }
 
         private static T? FindDescendant<T>(DependencyObject? source) where T : DependencyObject

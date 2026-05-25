@@ -243,6 +243,8 @@ namespace AOBot_Testing.Agents
         /// </summary>
         public bool IsTsuServerCC => serverSoftware.IndexOf("cc", StringComparison.OrdinalIgnoreCase) >= 0;
 
+        private bool IsKfoServer => serverSoftware.IndexOf("KFO", StringComparison.OrdinalIgnoreCase) >= 0;
+
         public bool IsTransportConnected => transport != null && transport.IsConnected;
 
         private string TransportName => transport?.TransportName ?? ResolveTransportName(serverUri);
@@ -281,6 +283,8 @@ namespace AOBot_Testing.Agents
                     CustomConsole.Error("Cannot send IC message without a server-confirmed INIPuppet.");
                     return;
                 }
+
+                await AlignIniPuppetWithCurrentCharacterIfAvailableAsync();
 
                 ICMessage msg = new ICMessage();
                 msg.DeskMod = ResolveDeskModForPacket(currentEmote.Modifier, currentEmote.DeskMod);
@@ -360,7 +364,7 @@ namespace AOBot_Testing.Agents
                 bool includeLoopingSfx = SupportsServerFeature("LOOPING_SFX");
                 bool includeAdditive = SupportsServerFeature("ADDITIVE");
                 bool includeEffects = SupportsServerFeature("EFFECTS");
-                bool includeCustomBlips = SupportsServerFeature("CUSTOM_BLIPS");
+                bool includeCustomBlips = SupportsServerFeature("CUSTOM_BLIPS") && !IsKfoServer;
 
                 ICMessage.SerializationOptions serializationOptions = new ICMessage.SerializationOptions
                 {
@@ -1006,6 +1010,11 @@ namespace AOBot_Testing.Agents
                 return explicitShowName;
             }
 
+            if (IsKfoServer)
+            {
+                return string.Empty;
+            }
+
             CharacterFolder? showNameCharacter = CurrentINI ?? ResolveIniPuppetCharacter();
             if (showNameCharacter?.configINI != null)
             {
@@ -1024,6 +1033,57 @@ namespace AOBot_Testing.Agents
 
             string characterName = serverCharacterList.ElementAt(iniPuppetID).Key;
             return FindCharacterByFolderOrIniName(characterName);
+        }
+
+        private async Task AlignIniPuppetWithCurrentCharacterIfAvailableAsync()
+        {
+            string currentCharacterName = CurrentINI?.Name?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(currentCharacterName))
+            {
+                return;
+            }
+
+            if (iniPuppetID >= 0
+                && iniPuppetID < serverCharacterList.Count
+                && string.Equals(
+                    serverCharacterList.ElementAt(iniPuppetID).Key,
+                    currentCharacterName,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            int serverCharId = -1;
+            bool available = false;
+            for (int i = 0; i < serverCharacterList.Count; i++)
+            {
+                KeyValuePair<string, bool> entry = serverCharacterList.ElementAt(i);
+                if (!string.Equals(entry.Key, currentCharacterName, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                serverCharId = i;
+                available = entry.Value;
+                break;
+            }
+
+            if (serverCharId < 0 || !available)
+            {
+                return;
+            }
+
+            try
+            {
+                await SelectIniPuppet(serverCharId, iniswapToSelected: false);
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Warning(
+                    $"Could not align INIPuppet with current character \"{currentCharacterName}\" before IC send.",
+                    ex,
+                    CustomConsole.LogCategory.IC);
+            }
         }
 
         private string ResolveIncomingIcDisplayName(ICMessage icMessage)

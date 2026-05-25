@@ -7,3 +7,6 @@
 [submodule "tsuserverCC"]
 	path = tsuserverCC
 	url = https://github.com/RealKaiser/tsuserverCC.git
+[submodule "KFO-Server"]
+	path = KFO-Server
+	url = https://github.com/Crystalwarrior/KFO-Server.git

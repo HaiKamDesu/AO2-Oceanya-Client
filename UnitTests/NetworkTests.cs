@@ -1298,12 +1298,147 @@ public class NetworkTests
         }
     }
 
+    [Test]
+    [CancelAfter(15000)]
+    public async Task SendICMessage_KfoServer_OmitsImplicitShownameAndCustomBlips()
+    {
+        const string testCharName = "April";
+        string baseRoot = CreateAoBaseRoot();
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(baseRoot, "characters", testCharName));
+            File.WriteAllText(
+                Path.Combine(baseRoot, "characters", testCharName, "char.ini"),
+                "[Options]\nshowname=April\nside=wit\ngender=female\n[Emotions]\nnumber=1\n1=normal#bouncing#april-normal#0#1\n");
+            Globals.BaseFolders = new List<string> { baseRoot };
+            CharacterFolder.RefreshCharacterList();
+
+            using TcpListener listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+
+            int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            List<string> receivedPackets = new List<string>();
+            Task serverTask = RunR002TcpServerAsync(
+                listener,
+                receivedPackets,
+                testCharName,
+                CancellationToken.None,
+                "FL#noencryption#cccc_ic_support#looping_sfx#additive#effects#custom_blips#y_offset#%",
+                serverSoftware: "KFO-Server");
+
+            AOClient client = new AOClient($"tcp://127.0.0.1:{port}");
+            try
+            {
+                await client.Connect(0, 0, 0, 0);
+                await client.SendICMessage("a");
+            }
+            finally
+            {
+                await client.Disconnect();
+                await serverTask;
+            }
+
+            string? msPacket = receivedPackets.FirstOrDefault(packet =>
+                packet.StartsWith("MS#", StringComparison.Ordinal));
+            Assert.That(msPacket, Is.Not.Null, "MS# packet must be emitted after SendICMessage");
+
+            string[] parts = msPacket!.Split('#');
+            Assert.Multiple(() =>
+            {
+                Assert.That(parts.Length, Is.EqualTo(28));
+                Assert.That(parts[16], Is.EqualTo(string.Empty), "KFO showname field should stay blank unless user typed one.");
+                Assert.That(parts[17], Is.EqualTo("-1"));
+                Assert.That(parts[18], Is.EqualTo("0<and>0"));
+                Assert.That(parts[26], Is.EqualTo("||"));
+                Assert.That(parts[27], Is.EqualTo("%"), "KFO packet should stop after effects instead of appending custom_blips/slide.");
+            });
+        }
+        finally
+        {
+            Globals.BaseFolders = new List<string>();
+            CharacterFolder.RefreshCharacterList();
+            if (Directory.Exists(baseRoot))
+            {
+                Directory.Delete(baseRoot, true);
+            }
+        }
+    }
+
+    [Test]
+    [CancelAfter(15000)]
+    public async Task SendICMessage_CurrentCharacterAvailable_AlignsIniPuppetBeforeSending()
+    {
+        string baseRoot = CreateAoBaseRoot();
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(baseRoot, "characters", "Franziska"));
+            File.WriteAllText(
+                Path.Combine(baseRoot, "characters", "Franziska", "char.ini"),
+                "[Options]\nshowname=Von Karma\nside=pro\ngender=female\n[Emotions]\nnumber=1\n1=normal#-#normal#0#1\n");
+            Directory.CreateDirectory(Path.Combine(baseRoot, "characters", "KamLoremaster"));
+            File.WriteAllText(
+                Path.Combine(baseRoot, "characters", "KamLoremaster", "char.ini"),
+                "[Options]\nshowname=Kam\nside=jud\ngender=male\n[Emotions]\nnumber=1\n1=Backed#-#/Animations/Backed#0#1\n");
+            Globals.BaseFolders = new List<string> { baseRoot };
+            CharacterFolder.RefreshCharacterList();
+
+            using TcpListener listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+
+            int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            List<string> receivedPackets = new List<string>();
+            Task serverTask = RunR002TcpServerAsync(
+                listener,
+                receivedPackets,
+                "Franziska",
+                CancellationToken.None,
+                "FL#noencryption#cccc_ic_support#effects#y_offset#%",
+                characterListPacket: "SC#Franziska#KamLoremaster#%",
+                charsCheckPacket: "CharsCheck#0#0#%");
+
+            AOClient client = new AOClient($"tcp://127.0.0.1:{port}");
+            try
+            {
+                await client.Connect(0, 0, 0, 0);
+                client.SetCharacter("KamLoremaster");
+                await client.SendICMessage("test");
+            }
+            finally
+            {
+                await client.Disconnect();
+                await serverTask;
+            }
+
+            Assert.That(
+                receivedPackets.Any(packet => packet.StartsWith("CC#42#1#", StringComparison.Ordinal)),
+                Is.True,
+                "Client must request the current character's INIPuppet before sending IC.");
+            string? msPacket = receivedPackets.FirstOrDefault(packet =>
+                packet.StartsWith("MS#", StringComparison.Ordinal));
+            Assert.That(msPacket, Is.Not.Null);
+            string[] parts = msPacket!.Split('#');
+            Assert.That(parts[9], Is.EqualTo("1"), "MS# char_id must match the current character after auto-alignment.");
+        }
+        finally
+        {
+            Globals.BaseFolders = new List<string>();
+            CharacterFolder.RefreshCharacterList();
+            if (Directory.Exists(baseRoot))
+            {
+                Directory.Delete(baseRoot, true);
+            }
+        }
+    }
+
     private static async Task RunR002TcpServerAsync(
         TcpListener listener,
         List<string> receivedPackets,
         string characterName,
         CancellationToken cancellationToken,
-        string featurePacket = "FL#noencryption#%")
+        string featurePacket = "FL#noencryption#%",
+        string serverSoftware = "tsuserver",
+        string? characterListPacket = null,
+        string charsCheckPacket = "CharsCheck#0#%")
     {
         using TcpClient serverClient = await listener.AcceptTcpClientAsync(cancellationToken);
         using NetworkStream stream = serverClient.GetStream();
@@ -1322,7 +1457,7 @@ public class NetworkTests
 
             if (packet.StartsWith("HI#", StringComparison.Ordinal))
             {
-                await SendPacketAsync(stream, "ID#42#tsuserver#7#%", cancellationToken);
+                await SendPacketAsync(stream, $"ID#42#{serverSoftware}#7#%", cancellationToken);
             }
             else if (string.Equals(packet, "ID#AO2#2.11.0#%", StringComparison.Ordinal))
             {
@@ -1335,7 +1470,7 @@ public class NetworkTests
             }
             else if (string.Equals(packet, "RC#%", StringComparison.Ordinal))
             {
-                await SendPacketAsync(stream, $"SC#{characterName}#%", cancellationToken);
+                await SendPacketAsync(stream, characterListPacket ?? $"SC#{characterName}#%", cancellationToken);
             }
             else if (string.Equals(packet, "RM#%", StringComparison.Ordinal))
             {
@@ -1344,7 +1479,7 @@ public class NetworkTests
             else if (string.Equals(packet, "RD#%", StringComparison.Ordinal))
             {
                 // Send CharsCheck marking the character as available (0 = available)
-                await SendPacketAsync(stream, "CharsCheck#0#%", cancellationToken);
+                await SendPacketAsync(stream, charsCheckPacket, cancellationToken);
                 await SendPacketAsync(stream, "DONE#%", cancellationToken);
             }
             else if (packet.StartsWith("CC#", StringComparison.Ordinal))
