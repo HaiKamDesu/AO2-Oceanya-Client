@@ -12,6 +12,15 @@ namespace OceanyaClient.Features.Updates
 {
     public sealed class UpdateCheckService
     {
+        private static readonly string[] UpdaterRuntimeFiles =
+        {
+            "OceanyaUpdater.exe",
+            "OceanyaUpdater.dll",
+            "OceanyaUpdater.deps.json",
+            "OceanyaUpdater.runtimeconfig.json",
+            "Common.dll"
+        };
+
         private readonly GitHubUpdateClient githubClient;
         private readonly UpdateStagingService stagingService;
         private readonly UpdateEnvironment environment;
@@ -152,32 +161,24 @@ namespace OceanyaClient.Features.Updates
 
         private string PrepareExternalUpdaterRunner()
         {
-            string installUpdaterPath = Path.Combine(AppContext.BaseDirectory, "OceanyaUpdater.exe");
             ValidateUpdaterRuntimeFiles(AppContext.BaseDirectory);
 
             UpdateStoragePaths paths = new UpdateStoragePaths(environment);
             string runnerDirectory = Path.Combine(paths.Root, "runner");
             Directory.CreateDirectory(runnerDirectory);
 
-            CopyRequired(installUpdaterPath, Path.Combine(runnerDirectory, "OceanyaUpdater.exe"));
-            CopyRequired(Path.Combine(AppContext.BaseDirectory, "OceanyaUpdater.dll"), Path.Combine(runnerDirectory, "OceanyaUpdater.dll"));
-            CopyRequired(Path.Combine(AppContext.BaseDirectory, "OceanyaUpdater.deps.json"), Path.Combine(runnerDirectory, "OceanyaUpdater.deps.json"));
-            CopyRequired(Path.Combine(AppContext.BaseDirectory, "OceanyaUpdater.runtimeconfig.json"), Path.Combine(runnerDirectory, "OceanyaUpdater.runtimeconfig.json"));
+            foreach (string fileName in UpdaterRuntimeFiles)
+            {
+                CopyRequired(Path.Combine(AppContext.BaseDirectory, fileName), Path.Combine(runnerDirectory, fileName));
+            }
+
             ValidateUpdaterRuntimeFiles(runnerDirectory);
             return Path.Combine(runnerDirectory, "OceanyaUpdater.exe");
         }
 
         public static void ValidateUpdaterRuntimeFiles(string directory)
         {
-            string[] requiredFiles =
-            {
-                "OceanyaUpdater.exe",
-                "OceanyaUpdater.dll",
-                "OceanyaUpdater.deps.json",
-                "OceanyaUpdater.runtimeconfig.json"
-            };
-
-            string[] missing = requiredFiles
+            string[] missing = UpdaterRuntimeFiles
                 .Select(file => Path.Combine(directory, file))
                 .Where(path => !File.Exists(path))
                 .ToArray();
@@ -227,15 +228,7 @@ namespace OceanyaClient.Features.Updates
 
         private static void EnsureStagedUpdaterRuntime(string packageRoot)
         {
-            string[] updaterRuntimeFiles =
-            {
-                "OceanyaUpdater.exe",
-                "OceanyaUpdater.dll",
-                "OceanyaUpdater.deps.json",
-                "OceanyaUpdater.runtimeconfig.json"
-            };
-
-            foreach (string fileName in updaterRuntimeFiles)
+            foreach (string fileName in UpdaterRuntimeFiles)
             {
                 string stagedPath = Path.Combine(packageRoot, fileName);
                 string currentPath = Path.Combine(AppContext.BaseDirectory, fileName);

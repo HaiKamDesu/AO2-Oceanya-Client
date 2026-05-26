@@ -1,3 +1,4 @@
+using OceanyaClient;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -141,12 +142,6 @@ namespace OceanyaUpdater
 
     internal static class Program
     {
-        private const string HivemindAgentMutexName = @"Local\OceanyaClient.FileHivemind.Agent";
-        private const string HivemindAgentStopSignalEventName = @"Local\OceanyaClient.FileHivemind.Agent.Stop";
-        private const string HivemindAgentStoppedSignalEventName = @"Local\OceanyaClient.FileHivemind.Agent.Stopped";
-        private const string HivemindAgentProcessName = "OceanyaHivemindAgent";
-        private const string HivemindAgentExecutableFileName = "OceanyaHivemindAgent.exe";
-        private const string MainApplicationExecutableFileName = "OceanyaClient.exe";
         private static TextWriter? activeLog;
 
         [STAThread]
@@ -268,231 +263,37 @@ namespace OceanyaUpdater
 
         private static void StopHivemindAgent(UpdaterArguments options, TextWriter log, UpdaterStatusWindow? status)
         {
-            try
-            {
-                using EventWaitHandle stopSignal = new EventWaitHandle(false, EventResetMode.ManualReset, HivemindAgentStopSignalEventName);
-                stopSignal.Set();
-                WriteLog(log, "Hivemind stop signal sent.");
-            }
-            catch (Exception ex)
-            {
-                WriteLog(log, "Could not send Hivemind stop signal: " + ex.Message);
-            }
-
-            DateTime deadline = DateTime.UtcNow.AddSeconds(12);
-            while (DateTime.UtcNow < deadline)
-            {
-                if (WaitForHivemindStoppedSignal(TimeSpan.FromMilliseconds(250), log))
+            WriteLog(log, "Requesting File Hivemind stop through shared coordinator.");
+            FileHivemindAgentStopCoordinator stopCoordinator = new FileHivemindAgentStopCoordinator(
+                forceStopWaitTimeout: TimeSpan.FromSeconds(8),
+                beforeForceStop: () =>
                 {
-                    WriteLog(log, "Hivemind stopped signal received.");
-                    return;
-                }
+                    WriteLog(log, "Timed out waiting for Hivemind agent to stop after stop signal.");
+                    status?.ShowStatus("File Hivemind did not close. Forcing it to stop...");
+                },
+                installDirectory: options.Install);
 
-                if (!Mutex.TryOpenExisting(HivemindAgentMutexName, out Mutex? mutex))
-                {
-                    WriteLog(log, "Hivemind agent mutex is not present.");
-                    return;
-                }
-
-                mutex.Dispose();
-                PumpWpfEvents();
-            }
-
-            WriteLog(log, "Timed out waiting for Hivemind agent to stop after stop signal.");
-            status?.ShowStatus("File Hivemind did not close. Forcing it to stop...");
-            ForceStopHivemindProcesses(options, log);
-            DateTime killDeadline = DateTime.UtcNow.AddSeconds(8);
-            while (DateTime.UtcNow < killDeadline)
+            FileHivemindAgentStopResult result = stopCoordinator.RequestStopAndWait(TimeSpan.FromSeconds(12));
+            WriteLog(
+                log,
+                "Hivemind stop result: wasRunning="
+                + result.WasRunning
+                + "; stopRequested="
+                + result.StopRequested
+                + "; stopped="
+                + result.Stopped
+                + "; forcedProcessCount="
+                + result.ForcedProcessCount
+                + ".");
+            if (result.Stopped)
             {
-                if (WaitForHivemindStoppedSignal(TimeSpan.FromMilliseconds(250), log))
-                {
-                    WriteLog(log, "Hivemind stopped signal received after forced stop.");
-                    return;
-                }
-
-                if (!Mutex.TryOpenExisting(HivemindAgentMutexName, out Mutex? mutex))
-                {
-                    WriteLog(log, "Hivemind agent mutex cleared after forced stop.");
-                    return;
-                }
-
-                mutex.Dispose();
-                PumpWpfEvents();
-            }
-
-            WriteLog(log, "Hivemind agent mutex is still present after forced stop; update cannot safely replace files.");
-            throw new InvalidOperationException(
-                "The Oceanyan File Hivemind could not be stopped automatically. Close it from the tray icon and run the update again. "
-                + "If Windows refuses to close it, run Oceanya Client as administrator and retry the update.");
-        }
-
-        private static bool WaitForHivemindStoppedSignal(TimeSpan timeout, TextWriter log)
-        {
-            try
-            {
-                using EventWaitHandle stoppedSignal = new EventWaitHandle(false, EventResetMode.ManualReset, HivemindAgentStoppedSignalEventName);
-                return stoppedSignal.WaitOne(timeout);
-            }
-            catch (Exception ex)
-            {
-                WriteLog(log, "Could not wait for Hivemind stopped signal: " + ex.Message);
-                Thread.Sleep(timeout);
-                return false;
-            }
-        }
-
-        private static void ForceStopHivemindProcesses(UpdaterArguments options, TextWriter log)
-        {
-            List<Process> processes = FindHivemindProcesses(options, log);
-
-            if (processes.Count == 0)
-            {
-                WriteLog(log, "No Hivemind processes found for forced stop.");
                 return;
             }
 
-            foreach (Process process in processes)
-            {
-                using (process)
-                {
-                    try
-                    {
-                        if (process.HasExited)
-                        {
-                            continue;
-                        }
-
-                        WriteLog(log, "Forcing Hivemind process pid=" + process.Id + ".");
-                        try
-                        {
-                            if (process.CloseMainWindow() && process.WaitForExit(2500))
-                            {
-                                WriteLog(log, "Hivemind process exited after close request pid=" + SafeProcessId(process) + ".");
-                                continue;
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            WriteLog(log, "Could not close Hivemind main window pid=" + SafeProcessId(process) + ": " + ex.Message);
-                        }
-
-                        WriteLog(log, "Killing Hivemind process pid=" + SafeProcessId(process) + ".");
-                        process.Kill(entireProcessTree: true);
-                        if (!process.WaitForExit(5000))
-                        {
-                            WriteLog(log, "Hivemind process did not exit after kill pid=" + process.Id + ".");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        WriteLog(log, "Could not kill Hivemind process pid=" + SafeProcessId(process) + ": " + ex.Message);
-                    }
-                }
-            }
-        }
-
-        private static List<Process> FindHivemindProcesses(UpdaterArguments options, TextWriter log)
-        {
-            Dictionary<int, Process> candidates = new Dictionary<int, Process>();
-            AddProcessesByName(candidates, HivemindAgentProcessName, log);
-            AddInstallFolderProcesses(candidates, options.Install, log);
-            return candidates.Values.ToList();
-        }
-
-        private static void AddProcessesByName(Dictionary<int, Process> candidates, string processName, TextWriter log)
-        {
-            try
-            {
-                foreach (Process process in Process.GetProcessesByName(processName))
-                {
-                    AddCandidateProcess(candidates, process, log);
-                }
-            }
-            catch (Exception ex)
-            {
-                WriteLog(log, "Could not enumerate Hivemind processes by name: " + ex.Message);
-            }
-        }
-
-        private static void AddInstallFolderProcesses(Dictionary<int, Process> candidates, string installPath, TextWriter log)
-        {
-            string normalizedInstallPath = EnsureTrailingDirectorySeparatorForComparison(installPath);
-            foreach (Process process in Process.GetProcesses())
-            {
-                try
-                {
-                    if (process.HasExited)
-                    {
-                        process.Dispose();
-                        continue;
-                    }
-
-                    string? modulePath = process.MainModule?.FileName;
-                    if (string.IsNullOrWhiteSpace(modulePath))
-                    {
-                        process.Dispose();
-                        continue;
-                    }
-
-                    string fileName = Path.GetFileName(modulePath);
-                    bool isStandaloneAgent = string.Equals(fileName, HivemindAgentExecutableFileName, StringComparison.OrdinalIgnoreCase);
-                    bool isLegacyMainAgent = string.Equals(fileName, MainApplicationExecutableFileName, StringComparison.OrdinalIgnoreCase);
-                    bool isInInstallFolder = Path.GetFullPath(modulePath)
-                        .StartsWith(normalizedInstallPath, StringComparison.OrdinalIgnoreCase);
-
-                    if (isInInstallFolder && (isStandaloneAgent || isLegacyMainAgent))
-                    {
-                        AddCandidateProcess(candidates, process, log);
-                        continue;
-                    }
-
-                    process.Dispose();
-                }
-                catch (Exception)
-                {
-                    process.Dispose();
-                }
-            }
-        }
-
-        private static void AddCandidateProcess(Dictionary<int, Process> candidates, Process process, TextWriter log)
-        {
-            try
-            {
-                int processId = process.Id;
-                if (processId == Environment.ProcessId || candidates.ContainsKey(processId))
-                {
-                    process.Dispose();
-                    return;
-                }
-
-                candidates[processId] = process;
-                WriteLog(log, "Found Hivemind process candidate pid=" + processId + ".");
-            }
-            catch
-            {
-                process.Dispose();
-            }
-        }
-
-        private static string EnsureTrailingDirectorySeparatorForComparison(string path)
-        {
-            string fullPath = Path.GetFullPath(path);
-            return fullPath.EndsWith(Path.DirectorySeparatorChar)
-                ? fullPath
-                : fullPath + Path.DirectorySeparatorChar;
-        }
-
-        private static string SafeProcessId(Process process)
-        {
-            try
-            {
-                return process.Id.ToString();
-            }
-            catch
-            {
-                return "(unknown)";
-            }
+            WriteLog(log, "Hivemind agent mutex is still present after shared stop coordinator; update cannot safely replace files.");
+            throw new InvalidOperationException(
+                "The Oceanyan File Hivemind could not be stopped automatically. Close it from the tray icon and run the update again. "
+                + "If Windows refuses to close it, run Oceanya Client as administrator and retry the update.");
         }
 
         private static void ValidatePaths(UpdaterArguments options)
@@ -697,14 +498,6 @@ namespace OceanyaUpdater
             return path.EndsWith(Path.DirectorySeparatorChar) ? path : path + Path.DirectorySeparatorChar;
         }
 
-        private static void PumpWpfEvents()
-        {
-            DispatcherFrame frame = new DispatcherFrame();
-            Dispatcher.CurrentDispatcher.BeginInvoke(
-                DispatcherPriority.Background,
-                new Action(() => frame.Continue = false));
-            Dispatcher.PushFrame(frame);
-        }
     }
 
     internal sealed class UpdaterStatusWindow : Window

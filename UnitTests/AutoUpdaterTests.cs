@@ -312,12 +312,13 @@ namespace UnitTests
         {
             string root = CreateTempDir();
             File.WriteAllText(Path.Combine(root, "OceanyaUpdater.exe"), "stub");
+            File.WriteAllText(Path.Combine(root, "OceanyaUpdater.dll"), "stub");
             File.WriteAllText(Path.Combine(root, "OceanyaUpdater.deps.json"), "{}");
             File.WriteAllText(Path.Combine(root, "OceanyaUpdater.runtimeconfig.json"), "{}");
 
             FileNotFoundException ex = Assert.Throws<FileNotFoundException>(() =>
                 UpdateCheckService.ValidateUpdaterRuntimeFiles(root))!;
-            Assert.That(ex.Message, Does.Contain("OceanyaUpdater.dll"));
+            Assert.That(ex.Message, Does.Contain("Common.dll"));
         }
 
         [Test]
@@ -327,6 +328,7 @@ namespace UnitTests
             File.WriteAllText(Path.Combine(root, "OceanyaUpdater.exe"), "stub");
             File.WriteAllText(Path.Combine(root, "OceanyaUpdater.dll"), "stub");
             File.WriteAllText(Path.Combine(root, "OceanyaUpdater.deps.json"), "{}");
+            File.WriteAllText(Path.Combine(root, "Common.dll"), "stub");
             File.WriteAllText(
                 Path.Combine(root, "OceanyaUpdater.runtimeconfig.json"),
                 """
