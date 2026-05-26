@@ -1297,10 +1297,10 @@ namespace AOBot_Testing.Agents
                 $"[MUSIC IN] song=\"{song}\" charId={characterId} isSelf={characterId == iniPuppetID} myIniPuppetID={iniPuppetID} raw={message}",
                 Common.CustomConsole.LogCategory.MusicList);
 
-            bool loopEnabled = true;
+            bool loopEnabled = false;
             if (fields.Length > 4)
             {
-                loopEnabled = fields[4].Trim() != "0";
+                loopEnabled = fields[4].Trim() == "1";
             }
             int channel = 0;
             if (fields.Length > 5 && int.TryParse(fields[5].Trim(), out int parsedChannel))

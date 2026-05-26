@@ -53,7 +53,8 @@ namespace UnitTests
 
             Assert.That(launched, Is.True);
             Assert.That(registrar.LastEnabledValue, Is.True);
-            Assert.That(launchedArgument, Is.EqualTo(FileHivemindBackgroundAgentCommandLine.AgentArgument));
+            Assert.That(launchedArgument, Does.Contain(FileHivemindBackgroundAgentCommandLine.AgentArgument));
+            Assert.That(launchedArgument, Does.Contain("--test-savefile="));
         }
 
         [Test]
@@ -234,7 +235,20 @@ namespace UnitTests
 
             Assert.That(launched, Is.True);
             Assert.That(registrar.LastEnabledValue, Is.False);
-            Assert.That(launchedArgument, Is.EqualTo(FileHivemindBackgroundAgentCommandLine.AgentArgument));
+            Assert.That(launchedArgument, Does.Contain(FileHivemindBackgroundAgentCommandLine.AgentArgument));
+            Assert.That(launchedArgument, Does.Contain("--test-savefile="));
+        }
+
+        [Test]
+        public void BuildAgentArguments_IncludesActiveSaveFilePath()
+        {
+            string arguments = FileHivemindBackgroundAgentCommandLine.BuildAgentArguments(@"C:\Users\Test User\AppData\Roaming\OceanyaClientDev\savefile.json");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(arguments, Does.Contain(FileHivemindBackgroundAgentCommandLine.AgentArgument));
+                Assert.That(arguments, Does.Contain("--test-savefile=\"C:\\Users\\Test User\\AppData\\Roaming\\OceanyaClientDev\\savefile.json\""));
+            });
         }
 
         [Test]
@@ -275,6 +289,69 @@ namespace UnitTests
 
             Assert.That(stopped, Is.False);
             Assert.That(stopRequests, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void StopCoordinator_ReturnsStoppedWithoutSignalWhenAgentIsNotRunning()
+        {
+            int stopRequests = 0;
+            FileHivemindAgentStopCoordinator coordinator = new FileHivemindAgentStopCoordinator(
+                isAgentRunning: () => false,
+                requestAgentStop: () =>
+                {
+                    stopRequests++;
+                    return true;
+                });
+
+            FileHivemindAgentStopResult result = coordinator.RequestStopAndWait(TimeSpan.FromSeconds(1));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.WasRunning, Is.False);
+                Assert.That(result.StopRequested, Is.False);
+                Assert.That(result.Stopped, Is.True);
+                Assert.That(stopRequests, Is.EqualTo(0));
+            });
+        }
+
+        [Test]
+        public void StopCoordinator_WaitsUntilRunningStateClears()
+        {
+            int runningChecks = 0;
+            int stopRequests = 0;
+            FileHivemindAgentStopCoordinator coordinator = new FileHivemindAgentStopCoordinator(
+                isAgentRunning: () => ++runningChecks < 3,
+                requestAgentStop: () =>
+                {
+                    stopRequests++;
+                    return true;
+                },
+                waitForStoppedSignal: _ => false,
+                sleep: _ => { });
+
+            FileHivemindAgentStopResult result = coordinator.RequestStopAndWait(TimeSpan.FromSeconds(1));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.WasRunning, Is.True);
+                Assert.That(result.StopRequested, Is.True);
+                Assert.That(result.Stopped, Is.True);
+                Assert.That(stopRequests, Is.EqualTo(1));
+            });
+        }
+
+        [Test]
+        public void StopCoordinator_BlocksWhenAgentNeverStops()
+        {
+            FileHivemindAgentStopCoordinator coordinator = new FileHivemindAgentStopCoordinator(
+                isAgentRunning: () => true,
+                requestAgentStop: () => true,
+                waitForStoppedSignal: _ => false,
+                sleep: _ => { });
+
+            FileHivemindAgentStopResult result = coordinator.RequestStopAndWait(TimeSpan.FromMilliseconds(1));
+
+            Assert.That(result.Stopped, Is.False);
         }
 
         [Test]

@@ -1,4 +1,6 @@
 using OceanyaClient.AdvancedFeatures;
+using OceanyaClient.Features.FileHivemind;
+using OceanyaClient.Features.Startup;
 using System;
 using System.Collections.Generic;
 using System.Windows;
@@ -113,6 +115,75 @@ namespace OceanyaClient
         {
             DialogResult = false;
             Close();
+        }
+
+        private void DeleteSaveFileButton_Click(object sender, RoutedEventArgs e)
+        {
+            string saveDirectory;
+            try
+            {
+                saveDirectory = SaveFileDeletionService.ResolveCurrentSaveDirectory();
+            }
+            catch (Exception ex)
+            {
+                OceanyaMessageBox.Show(
+                    ex.Message,
+                    "Delete Savefile Blocked",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            MessageBoxResult confirm = OceanyaMessageBox.Show(
+                "This will permanently delete the entire Oceanya Client save folder:\n\n"
+                + saveDirectory
+                + "\n\nFile Hivemind will be closed first. Deletion will be cancelled if File Hivemind cannot be confirmed stopped. "
+                + "After deletion, Oceanya Client will close.",
+                "Delete Savefile",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            if (confirm != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            DeleteSaveFileButton.IsEnabled = false;
+            try
+            {
+                FileHivemindAgentStopCoordinator stopCoordinator = new FileHivemindAgentStopCoordinator();
+                FileHivemindAgentStopResult stopResult = stopCoordinator.RequestStopAndWait(TimeSpan.FromSeconds(20));
+                if (!stopResult.Stopped)
+                {
+                    OceanyaMessageBox.Show(
+                        "File Hivemind did not close in time. The save folder was not deleted.\n\n"
+                        + "Exit background sync from the tray icon, then try again.",
+                        "Delete Savefile Blocked",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
+                    return;
+                }
+
+                new WindowsFileHivemindAutoStartRegistrar().SetRegistered(false);
+                SaveFileDeletionService.DeleteCurrentSaveDirectory();
+                OceanyaMessageBox.Show(
+                    "Savefile folder deleted. Oceanya Client will now close.",
+                    "Delete Savefile",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                Application.Current.Shutdown();
+            }
+            catch (Exception ex)
+            {
+                OceanyaMessageBox.Show(
+                    "Savefile deletion failed:\n\n" + ex.Message,
+                    "Delete Savefile Failed",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+            finally
+            {
+                DeleteSaveFileButton.IsEnabled = true;
+            }
         }
 
         private void DragWindow(object sender, MouseButtonEventArgs e)

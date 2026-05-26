@@ -68,12 +68,17 @@ namespace OceanyaClient
             if (isUrl)
             {
                 FreeStreams();
-                // URL streaming (BASS_StreamCreateURL). Loop is not supported for URL streams.
-                int streamHandle = Bass.CreateStream(fullPath, 0, BassFlags.Default, null, IntPtr.Zero);
+                BassFlags urlFlags = loop ? BassFlags.Loop : BassFlags.Default;
+                int streamHandle = Bass.CreateStream(fullPath, 0, urlFlags, null, IntPtr.Zero);
                 streams[0] = streamHandle;
                 if (streamHandle != 0)
                 {
                     _ = Bass.ChannelSetAttribute(streamHandle, ChannelAttribute.Volume, volume);
+                    if (loop)
+                    {
+                        ApplyEndLoopToLoadedStreams();
+                    }
+
                     LastErrorMessage = string.Empty;
                     return true;
                 }
@@ -449,6 +454,26 @@ namespace OceanyaClient
 
                 Bass.ChannelSetSync(streams[i], SyncFlags.Position | SyncFlags.Mixtime,
                     loopEndBytes, activeLoopSyncProcedure, IntPtr.Zero);
+            }
+        }
+
+        private void ApplyEndLoopToLoadedStreams()
+        {
+            activeLoopSyncProcedure = (handle, channel, data, user) =>
+            {
+                _ = Bass.ChannelSetPosition(channel, 0);
+                _ = Bass.ChannelPlay(channel, false);
+            };
+
+            for (int i = 0; i < streamCount; i++)
+            {
+                if (streams[i] == 0)
+                {
+                    continue;
+                }
+
+                Bass.ChannelSetSync(streams[i], SyncFlags.End | SyncFlags.Mixtime,
+                    0, activeLoopSyncProcedure, IntPtr.Zero);
             }
         }
 

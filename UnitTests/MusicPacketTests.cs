@@ -108,6 +108,30 @@ public class MusicPacketTests
     }
 
     [Test]
+    public async Task HandleMessage_McPacket_UrlWithEscapedAmpersands_ParsesLoopAndEffects()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+        string? capturedSong = null;
+        bool? capturedLoop = null;
+        int capturedEffects = -1;
+        client.OnMusicChanged += (_, song, loopEnabled, _, effectFlags) =>
+        {
+            capturedSong = song;
+            capturedLoop = loopEnabled;
+            capturedEffects = effectFlags;
+        };
+
+        await client.HandleMessage("MC#https://cdn.discordapp.com/attachments/test/1UPSfx.mp3?ex=1<and>is=2<and>hm=3<and>#12##1#0#2#%");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(capturedSong, Is.EqualTo("https://cdn.discordapp.com/attachments/test/1UPSfx.mp3?ex=1&is=2&hm=3&"));
+            Assert.That(capturedLoop, Is.True);
+            Assert.That(capturedEffects, Is.EqualTo(2));
+        });
+    }
+
+    [Test]
     public async Task HandleMessage_McPacket_ChannelField_ParsedCorrectly()
     {
         AOClient client = new AOClient("ws://localhost:10001/");
@@ -172,15 +196,28 @@ public class MusicPacketTests
     }
 
     [Test]
-    public async Task HandleMessage_McPacket_LoopEnabled_WhenLoopFieldAbsent()
+    public async Task HandleMessage_McPacket_LoopDisabled_WhenLoopFieldAbsent()
     {
         AOClient client = new AOClient("ws://localhost:10001/");
         bool? capturedLoop = null;
         client.OnMusicChanged += (_, _, loopEnabled, _, _) => { capturedLoop = loopEnabled; };
 
-        // Minimal packet: just song + charId (no loop/channel/effects fields).
+        // AO2 parity: minimal packets from outdated servers do not loop.
         await client.HandleMessage("MC#pwr/trial.mp3#0#%");
 
-        Assert.That(capturedLoop, Is.True);
+        Assert.That(capturedLoop, Is.False);
+    }
+
+    [Test]
+    public async Task HandleMessage_McPacket_LoopDisabled_WhenLoopFieldIsLegacyLength()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+        bool? capturedLoop = null;
+        client.OnMusicChanged += (_, _, loopEnabled, _, _) => { capturedLoop = loopEnabled; };
+
+        // AO2 only treats literal "1" as client-side loop.
+        await client.HandleMessage("MC#pwr/trial.mp3#0#showname#345#0#0#%");
+
+        Assert.That(capturedLoop, Is.False);
     }
 }

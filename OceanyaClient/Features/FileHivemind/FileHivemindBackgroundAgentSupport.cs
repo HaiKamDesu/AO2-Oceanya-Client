@@ -15,6 +15,7 @@ namespace OceanyaClient.Features.FileHivemind
         public const string AutoStartValueName = "OceanyaClient.FileHivemindAgent";
         public const string AgentMutexName = @"Local\OceanyaClient.FileHivemind.Agent";
         public const string AgentStopSignalEventName = @"Local\OceanyaClient.FileHivemind.Agent.Stop";
+        public const string AgentStoppedSignalEventName = @"Local\OceanyaClient.FileHivemind.Agent.Stopped";
         public const string AgentExecutableFileName = "OceanyaHivemindAgent.exe";
         public const string MainApplicationExecutableFileName = "OceanyaClient.exe";
 
@@ -32,7 +33,21 @@ namespace OceanyaClient.Features.FileHivemind
                 throw new InvalidOperationException("The Oceanya executable path could not be resolved.");
             }
 
-            return "\"" + trimmedExecutablePath + "\" " + AgentArgument;
+            return "\"" + trimmedExecutablePath + "\" " + BuildAgentArguments();
+        }
+
+        public static string BuildAgentArguments(string? saveFilePath = null)
+        {
+            string path = string.IsNullOrWhiteSpace(saveFilePath)
+                ? global::OceanyaClient.SaveFile.CurrentStoragePath
+                : saveFilePath.Trim();
+            return AgentArgument + " --test-savefile=" + QuoteArgumentValue(path);
+        }
+
+        private static string QuoteArgumentValue(string value)
+        {
+            string escaped = (value ?? string.Empty).Replace("\"", "\\\"");
+            return "\"" + escaped + "\"";
         }
 
         public static string ResolveAgentExecutablePath(string? currentExecutablePath = null)
@@ -162,7 +177,7 @@ namespace OceanyaClient.Features.FileHivemind
             }
 
             ResetAgentStopRequest();
-            return startAgentProcess(FileHivemindBackgroundAgentCommandLine.AgentArgument);
+            return startAgentProcess(FileHivemindBackgroundAgentCommandLine.BuildAgentArguments());
         }
 
         public bool StartForCurrentSession(FileHivemindSettings settings)
@@ -179,7 +194,7 @@ namespace OceanyaClient.Features.FileHivemind
             }
 
             ResetAgentStopRequest();
-            return startAgentProcess(FileHivemindBackgroundAgentCommandLine.AgentArgument);
+            return startAgentProcess(FileHivemindBackgroundAgentCommandLine.BuildAgentArguments());
         }
 
         public bool RequestStopForCurrentSession()
@@ -282,6 +297,100 @@ namespace OceanyaClient.Features.FileHivemind
                 false,
                 EventResetMode.ManualReset,
                 FileHivemindBackgroundAgentCommandLine.AgentStopSignalEventName);
+        }
+    }
+
+    public readonly struct FileHivemindAgentStopResult
+    {
+        public FileHivemindAgentStopResult(bool wasRunning, bool stopRequested, bool stopped)
+        {
+            WasRunning = wasRunning;
+            StopRequested = stopRequested;
+            Stopped = stopped;
+        }
+
+        public bool WasRunning { get; }
+        public bool StopRequested { get; }
+        public bool Stopped { get; }
+    }
+
+    public sealed class FileHivemindAgentStopCoordinator
+    {
+        private readonly Func<bool> isAgentRunning;
+        private readonly Func<bool> requestAgentStop;
+        private readonly Func<TimeSpan, bool> waitForStoppedSignal;
+        private readonly Action<TimeSpan> sleep;
+
+        public FileHivemindAgentStopCoordinator(
+            Func<bool>? isAgentRunning = null,
+            Func<bool>? requestAgentStop = null,
+            Func<TimeSpan, bool>? waitForStoppedSignal = null,
+            Action<TimeSpan>? sleep = null)
+        {
+            this.isAgentRunning = isAgentRunning ?? IsAgentRunning;
+            this.requestAgentStop = requestAgentStop ?? SignalAgentStopRequest;
+            this.waitForStoppedSignal = waitForStoppedSignal ?? WaitForStoppedSignal;
+            this.sleep = sleep ?? Thread.Sleep;
+        }
+
+        public FileHivemindAgentStopResult RequestStopAndWait(TimeSpan timeout)
+        {
+            if (!isAgentRunning())
+            {
+                return new FileHivemindAgentStopResult(false, false, true);
+            }
+
+            bool requested = requestAgentStop();
+            DateTime deadline = DateTime.UtcNow.Add(timeout);
+            while (DateTime.UtcNow < deadline)
+            {
+                if (!isAgentRunning())
+                {
+                    return new FileHivemindAgentStopResult(true, requested, true);
+                }
+
+                TimeSpan remaining = deadline - DateTime.UtcNow;
+                TimeSpan waitSlice = remaining < TimeSpan.FromMilliseconds(250)
+                    ? remaining
+                    : TimeSpan.FromMilliseconds(250);
+                if (waitSlice > TimeSpan.Zero && waitForStoppedSignal(waitSlice))
+                {
+                    return new FileHivemindAgentStopResult(true, requested, true);
+                }
+
+                sleep(TimeSpan.FromMilliseconds(100));
+            }
+
+            return new FileHivemindAgentStopResult(true, requested, !isAgentRunning());
+        }
+
+        private static bool IsAgentRunning()
+        {
+            if (!Mutex.TryOpenExisting(FileHivemindBackgroundAgentCommandLine.AgentMutexName, out Mutex? mutex))
+            {
+                return false;
+            }
+
+            mutex.Dispose();
+            return true;
+        }
+
+        private static bool SignalAgentStopRequest()
+        {
+            using EventWaitHandle stopSignal = new EventWaitHandle(
+                false,
+                EventResetMode.ManualReset,
+                FileHivemindBackgroundAgentCommandLine.AgentStopSignalEventName);
+            return stopSignal.Set();
+        }
+
+        private static bool WaitForStoppedSignal(TimeSpan timeout)
+        {
+            using EventWaitHandle stoppedSignal = new EventWaitHandle(
+                false,
+                EventResetMode.ManualReset,
+                FileHivemindBackgroundAgentCommandLine.AgentStoppedSignalEventName);
+            return stoppedSignal.WaitOne(timeout);
         }
     }
 

@@ -32,6 +32,7 @@ namespace OceanyaHivemindAgent
         private readonly Forms.Timer completionTimer;
         private readonly Forms.Timer stopSignalTimer;
         private readonly EventWaitHandle stopRequestedEvent;
+        private readonly EventWaitHandle stoppedEvent;
         private readonly Task agentTask;
         private bool exitRequested;
 
@@ -44,7 +45,12 @@ namespace OceanyaHivemindAgent
                 false,
                 EventResetMode.ManualReset,
                 FileHivemindBackgroundAgentCommandLine.AgentStopSignalEventName);
+            stoppedEvent = new EventWaitHandle(
+                false,
+                EventResetMode.ManualReset,
+                FileHivemindBackgroundAgentCommandLine.AgentStoppedSignalEventName);
             stopRequestedEvent.Reset();
+            stoppedEvent.Reset();
             completionTimer = new Forms.Timer
             {
                 Interval = 500,
@@ -119,6 +125,8 @@ namespace OceanyaHivemindAgent
             trayIconController.Dispose();
             completionTimer.Dispose();
             stopSignalTimer.Dispose();
+            stoppedEvent.Set();
+            stoppedEvent.Dispose();
             stopRequestedEvent.Dispose();
             agent.Dispose();
             cancellationTokenSource.Dispose();

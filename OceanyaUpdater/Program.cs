@@ -143,6 +143,7 @@ namespace OceanyaUpdater
     {
         private const string HivemindAgentMutexName = @"Local\OceanyaClient.FileHivemind.Agent";
         private const string HivemindAgentStopSignalEventName = @"Local\OceanyaClient.FileHivemind.Agent.Stop";
+        private const string HivemindAgentStoppedSignalEventName = @"Local\OceanyaClient.FileHivemind.Agent.Stopped";
         private const string HivemindAgentProcessName = "OceanyaHivemindAgent";
         private const string HivemindAgentExecutableFileName = "OceanyaHivemindAgent.exe";
         private static TextWriter? activeLog;
@@ -280,6 +281,12 @@ namespace OceanyaUpdater
             DateTime deadline = DateTime.UtcNow.AddSeconds(12);
             while (DateTime.UtcNow < deadline)
             {
+                if (WaitForHivemindStoppedSignal(TimeSpan.FromMilliseconds(250), log))
+                {
+                    WriteLog(log, "Hivemind stopped signal received.");
+                    return;
+                }
+
                 if (!Mutex.TryOpenExisting(HivemindAgentMutexName, out Mutex? mutex))
                 {
                     WriteLog(log, "Hivemind agent mutex is not present.");
@@ -287,7 +294,6 @@ namespace OceanyaUpdater
                 }
 
                 mutex.Dispose();
-                Thread.Sleep(250);
                 PumpWpfEvents();
             }
 
@@ -297,6 +303,12 @@ namespace OceanyaUpdater
             DateTime killDeadline = DateTime.UtcNow.AddSeconds(8);
             while (DateTime.UtcNow < killDeadline)
             {
+                if (WaitForHivemindStoppedSignal(TimeSpan.FromMilliseconds(250), log))
+                {
+                    WriteLog(log, "Hivemind stopped signal received after forced stop.");
+                    return;
+                }
+
                 if (!Mutex.TryOpenExisting(HivemindAgentMutexName, out Mutex? mutex))
                 {
                     WriteLog(log, "Hivemind agent mutex cleared after forced stop.");
@@ -304,7 +316,6 @@ namespace OceanyaUpdater
                 }
 
                 mutex.Dispose();
-                Thread.Sleep(250);
                 PumpWpfEvents();
             }
 
@@ -312,6 +323,21 @@ namespace OceanyaUpdater
             throw new InvalidOperationException(
                 "The Oceanyan File Hivemind could not be stopped automatically. Close it from the tray icon and run the update again. "
                 + "If Windows refuses to close it, run Oceanya Client as administrator and retry the update.");
+        }
+
+        private static bool WaitForHivemindStoppedSignal(TimeSpan timeout, TextWriter log)
+        {
+            try
+            {
+                using EventWaitHandle stoppedSignal = new EventWaitHandle(false, EventResetMode.ManualReset, HivemindAgentStoppedSignalEventName);
+                return stoppedSignal.WaitOne(timeout);
+            }
+            catch (Exception ex)
+            {
+                WriteLog(log, "Could not wait for Hivemind stopped signal: " + ex.Message);
+                Thread.Sleep(timeout);
+                return false;
+            }
         }
 
         private static void ForceStopHivemindProcesses(UpdaterArguments options, TextWriter log)
