@@ -47,6 +47,34 @@ public class NetworkTests
     }
 
     [Test]
+    public async Task ServerCharacterAvailability_DeduplicatesCaseVariantServerNames()
+    {
+        var client = new AOClient("ws://localhost:10001/");
+        await client.HandleMessage("SC#Phoenix#Beppo#beppo#%");
+        await client.HandleMessage("CharsCheck#0#1#0#%");
+
+        IReadOnlyDictionary<string, bool> availability = client.ServerCharacterAvailability;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(availability.Keys, Is.EquivalentTo(new[] { "Phoenix", "Beppo" }));
+            Assert.That(availability["Beppo"], Is.True);
+        });
+    }
+
+    [Test]
+    public async Task SelectIniPuppet_UsesAvailableCaseVariantWhenFirstMatchTaken()
+    {
+        var client = new AOClient("ws://localhost:10001/");
+        await client.HandleMessage("SC#Phoenix#Beppo#beppo#%");
+        await client.HandleMessage("CharsCheck#0#1#0#%");
+
+        await client.SelectIniPuppet("Beppo", iniswapToSelected: false);
+
+        Assert.That(client.iniPuppetID, Is.EqualTo(2));
+    }
+
+    [Test]
     public async Task SelectFirstAvailableINIPuppet_DoesNotThrow_WhenCharsCheckHasMoreSlotsThanCharacterList()
     {
         AOClient client = new AOClient("ws://localhost:10001/");

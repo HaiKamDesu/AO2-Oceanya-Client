@@ -219,7 +219,20 @@ namespace AOBot_Testing.Agents
         {
             get
             {
-                return new Dictionary<string, bool>(serverCharacterList, StringComparer.OrdinalIgnoreCase);
+                Dictionary<string, bool> availability = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+                foreach (KeyValuePair<string, bool> entry in serverCharacterList)
+                {
+                    if (availability.TryGetValue(entry.Key, out bool existingAvailability))
+                    {
+                        availability[entry.Key] = existingAvailability || entry.Value;
+                    }
+                    else
+                    {
+                        availability[entry.Key] = entry.Value;
+                    }
+                }
+
+                return availability;
             }
         }
 
@@ -2450,25 +2463,31 @@ namespace AOBot_Testing.Agents
 
         public async Task SelectIniPuppet(string iniPuppetName, bool iniswapToSelected = true)
         {
-            var serverCharID = 0;
-            foreach (var kvp in serverCharacterList)
+            string requestedName = iniPuppetName.Trim();
+            int unavailableMatch = -1;
+            int serverCharID = 0;
+            foreach (KeyValuePair<string, bool> kvp in serverCharacterList)
             {
-                var name = kvp.Key;
-                var available = kvp.Value;
-                if (name.ToLower() == iniPuppetName.Trim().ToLower())
+                if (string.Equals(kvp.Key, requestedName, StringComparison.OrdinalIgnoreCase))
                 {
-                    if (!available)
-                    {
-                        throw new Exception($"Character \"{iniPuppetName}\" is already taken!");
-                    }
-                    else
+                    if (kvp.Value)
                     {
                         await SelectIniPuppet(serverCharID, iniswapToSelected);
                         return;
                     }
-                        
+
+                    if (unavailableMatch < 0)
+                    {
+                        unavailableMatch = serverCharID;
+                    }
                 }
+
                 serverCharID++;
+            }
+
+            if (unavailableMatch >= 0)
+            {
+                throw new Exception($"Character \"{iniPuppetName}\" is already taken!");
             }
 
             throw new Exception($"Character \"{iniPuppetName}\" not found in server character list.");
