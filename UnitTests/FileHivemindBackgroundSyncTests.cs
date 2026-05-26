@@ -348,7 +348,7 @@ namespace UnitTests
                 requestAgentStop: () => true,
                 waitForStoppedSignal: _ => false,
                 sleep: _ => { },
-                forceStopAgent: () => { },
+                forceStopAgent: () => 0,
                 forceStopWaitTimeout: TimeSpan.FromMilliseconds(1));
 
             FileHivemindAgentStopResult result = coordinator.RequestStopAndWait(TimeSpan.FromMilliseconds(1));
@@ -370,7 +370,7 @@ namespace UnitTests
                 requestAgentStop: () => true,
                 waitForStoppedSignal: _ => false,
                 sleep: _ => { },
-                forceStopAgent: () => forceStopRequests++);
+                forceStopAgent: () => ++forceStopRequests);
 
             FileHivemindAgentStopResult result = coordinator.RequestStopAndWait(TimeSpan.FromMilliseconds(1));
 
@@ -378,6 +378,7 @@ namespace UnitTests
             {
                 Assert.That(result.Stopped, Is.True);
                 Assert.That(forceStopRequests, Is.EqualTo(1));
+                Assert.That(result.ForcedProcessCount, Is.EqualTo(1));
                 Assert.That(runningChecks, Is.GreaterThanOrEqualTo(2));
             });
         }

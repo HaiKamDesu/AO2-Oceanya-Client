@@ -163,6 +163,8 @@ namespace OceanyaClient
                     await WaitForm.CloseFormAsync();
                     OceanyaMessageBox.Show(
                         "File Hivemind did not close in time. The save folder was not deleted.\n\n"
+                        + "Stop requested: " + (stopResult.StopRequested ? "yes" : "no") + "\n"
+                        + "Forced processes found: " + stopResult.ForcedProcessCount + "\n\n"
                         + "Exit background sync from the tray icon, then try again.",
                         "Delete Savefile Blocked",
                         MessageBoxButton.OK,

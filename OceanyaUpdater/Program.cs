@@ -146,6 +146,7 @@ namespace OceanyaUpdater
         private const string HivemindAgentStoppedSignalEventName = @"Local\OceanyaClient.FileHivemind.Agent.Stopped";
         private const string HivemindAgentProcessName = "OceanyaHivemindAgent";
         private const string HivemindAgentExecutableFileName = "OceanyaHivemindAgent.exe";
+        private const string MainApplicationExecutableFileName = "OceanyaClient.exe";
         private static TextWriter? activeLog;
 
         [STAThread]
@@ -435,10 +436,11 @@ namespace OceanyaUpdater
 
                     string fileName = Path.GetFileName(modulePath);
                     bool isStandaloneAgent = string.Equals(fileName, HivemindAgentExecutableFileName, StringComparison.OrdinalIgnoreCase);
+                    bool isLegacyMainAgent = string.Equals(fileName, MainApplicationExecutableFileName, StringComparison.OrdinalIgnoreCase);
                     bool isInInstallFolder = Path.GetFullPath(modulePath)
                         .StartsWith(normalizedInstallPath, StringComparison.OrdinalIgnoreCase);
 
-                    if (isInInstallFolder && isStandaloneAgent)
+                    if (isInInstallFolder && (isStandaloneAgent || isLegacyMainAgent))
                     {
                         AddCandidateProcess(candidates, process, log);
                         continue;

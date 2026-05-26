@@ -302,16 +302,22 @@ namespace OceanyaClient.Features.FileHivemind
 
     public readonly struct FileHivemindAgentStopResult
     {
-        public FileHivemindAgentStopResult(bool wasRunning, bool stopRequested, bool stopped)
+        public FileHivemindAgentStopResult(
+            bool wasRunning,
+            bool stopRequested,
+            bool stopped,
+            int forcedProcessCount = 0)
         {
             WasRunning = wasRunning;
             StopRequested = stopRequested;
             Stopped = stopped;
+            ForcedProcessCount = forcedProcessCount;
         }
 
         public bool WasRunning { get; }
         public bool StopRequested { get; }
         public bool Stopped { get; }
+        public int ForcedProcessCount { get; }
     }
 
     public sealed class FileHivemindAgentStopCoordinator
@@ -320,7 +326,7 @@ namespace OceanyaClient.Features.FileHivemind
         private readonly Func<bool> requestAgentStop;
         private readonly Func<TimeSpan, bool> waitForStoppedSignal;
         private readonly Action<TimeSpan> sleep;
-        private readonly Action forceStopAgent;
+        private readonly Func<int> forceStopAgent;
         private readonly TimeSpan forceStopWaitTimeout;
 
         public FileHivemindAgentStopCoordinator(
@@ -328,7 +334,7 @@ namespace OceanyaClient.Features.FileHivemind
             Func<bool>? requestAgentStop = null,
             Func<TimeSpan, bool>? waitForStoppedSignal = null,
             Action<TimeSpan>? sleep = null,
-            Action? forceStopAgent = null,
+            Func<int>? forceStopAgent = null,
             TimeSpan? forceStopWaitTimeout = null)
         {
             this.isAgentRunning = isAgentRunning ?? IsAgentRunning;
@@ -367,13 +373,13 @@ namespace OceanyaClient.Features.FileHivemind
                 sleep(TimeSpan.FromMilliseconds(100));
             }
 
-            forceStopAgent();
+            int forcedProcessCount = forceStopAgent();
             DateTime forceDeadline = DateTime.UtcNow.Add(forceStopWaitTimeout);
             while (DateTime.UtcNow < forceDeadline)
             {
                 if (!isAgentRunning())
                 {
-                    return new FileHivemindAgentStopResult(true, requested, true);
+                    return new FileHivemindAgentStopResult(true, requested, true, forcedProcessCount);
                 }
 
                 TimeSpan remaining = forceDeadline - DateTime.UtcNow;
@@ -382,13 +388,13 @@ namespace OceanyaClient.Features.FileHivemind
                     : TimeSpan.FromMilliseconds(250);
                 if (waitSlice > TimeSpan.Zero && waitForStoppedSignal(waitSlice))
                 {
-                    return new FileHivemindAgentStopResult(true, requested, true);
+                    return new FileHivemindAgentStopResult(true, requested, true, forcedProcessCount);
                 }
 
                 sleep(TimeSpan.FromMilliseconds(100));
             }
 
-            return new FileHivemindAgentStopResult(true, requested, !isAgentRunning());
+            return new FileHivemindAgentStopResult(true, requested, !isAgentRunning(), forcedProcessCount);
         }
 
         private static bool IsAgentRunning()
@@ -420,10 +426,10 @@ namespace OceanyaClient.Features.FileHivemind
             return stoppedSignal.WaitOne(timeout);
         }
 
-        private static void ForceStopAgentProcesses()
+        private static int ForceStopAgentProcesses()
         {
-            foreach (Process process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(
-                FileHivemindBackgroundAgentCommandLine.AgentExecutableFileName)))
+            int forcedProcessCount = 0;
+            foreach (Process process in FindAgentProcessCandidates())
             {
                 using (process)
                 {
@@ -434,6 +440,7 @@ namespace OceanyaClient.Features.FileHivemind
                             continue;
                         }
 
+                        forcedProcessCount++;
                         try
                         {
                             if (process.CloseMainWindow() && process.WaitForExit(2500))
@@ -452,6 +459,74 @@ namespace OceanyaClient.Features.FileHivemind
                     {
                     }
                 }
+            }
+
+            return forcedProcessCount;
+        }
+
+        private static List<Process> FindAgentProcessCandidates()
+        {
+            Dictionary<int, Process> candidates = new Dictionary<int, Process>();
+            AddProcessCandidatesByName(
+                candidates,
+                Path.GetFileNameWithoutExtension(FileHivemindBackgroundAgentCommandLine.AgentExecutableFileName),
+                requireCurrentExecutableDirectory: false);
+            AddProcessCandidatesByName(
+                candidates,
+                Path.GetFileNameWithoutExtension(FileHivemindBackgroundAgentCommandLine.MainApplicationExecutableFileName),
+                requireCurrentExecutableDirectory: true);
+            return candidates.Values.ToList();
+        }
+
+        private static void AddProcessCandidatesByName(
+            Dictionary<int, Process> candidates,
+            string processName,
+            bool requireCurrentExecutableDirectory)
+        {
+            foreach (Process process in Process.GetProcessesByName(processName))
+            {
+                try
+                {
+                    int processId = process.Id;
+                    if (processId == Environment.ProcessId || candidates.ContainsKey(processId))
+                    {
+                        process.Dispose();
+                        continue;
+                    }
+
+                    if (requireCurrentExecutableDirectory && !IsProcessInCurrentExecutableDirectory(process))
+                    {
+                        process.Dispose();
+                        continue;
+                    }
+
+                    candidates[processId] = process;
+                }
+                catch
+                {
+                    process.Dispose();
+                }
+            }
+        }
+
+        private static bool IsProcessInCurrentExecutableDirectory(Process process)
+        {
+            try
+            {
+                string? currentPath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName;
+                string? currentDirectory = Path.GetDirectoryName(currentPath ?? string.Empty);
+                string? processPath = process.MainModule?.FileName;
+                string? processDirectory = Path.GetDirectoryName(processPath ?? string.Empty);
+                return !string.IsNullOrWhiteSpace(currentDirectory)
+                    && !string.IsNullOrWhiteSpace(processDirectory)
+                    && string.Equals(
+                        Path.GetFullPath(currentDirectory),
+                        Path.GetFullPath(processDirectory),
+                        StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
             }
         }
     }
