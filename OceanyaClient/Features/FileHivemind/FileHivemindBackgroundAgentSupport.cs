@@ -320,17 +320,23 @@ namespace OceanyaClient.Features.FileHivemind
         private readonly Func<bool> requestAgentStop;
         private readonly Func<TimeSpan, bool> waitForStoppedSignal;
         private readonly Action<TimeSpan> sleep;
+        private readonly Action forceStopAgent;
+        private readonly TimeSpan forceStopWaitTimeout;
 
         public FileHivemindAgentStopCoordinator(
             Func<bool>? isAgentRunning = null,
             Func<bool>? requestAgentStop = null,
             Func<TimeSpan, bool>? waitForStoppedSignal = null,
-            Action<TimeSpan>? sleep = null)
+            Action<TimeSpan>? sleep = null,
+            Action? forceStopAgent = null,
+            TimeSpan? forceStopWaitTimeout = null)
         {
             this.isAgentRunning = isAgentRunning ?? IsAgentRunning;
             this.requestAgentStop = requestAgentStop ?? SignalAgentStopRequest;
             this.waitForStoppedSignal = waitForStoppedSignal ?? WaitForStoppedSignal;
             this.sleep = sleep ?? Thread.Sleep;
+            this.forceStopAgent = forceStopAgent ?? ForceStopAgentProcesses;
+            this.forceStopWaitTimeout = forceStopWaitTimeout ?? TimeSpan.FromSeconds(5);
         }
 
         public FileHivemindAgentStopResult RequestStopAndWait(TimeSpan timeout)
@@ -350,6 +356,27 @@ namespace OceanyaClient.Features.FileHivemind
                 }
 
                 TimeSpan remaining = deadline - DateTime.UtcNow;
+                TimeSpan waitSlice = remaining < TimeSpan.FromMilliseconds(250)
+                    ? remaining
+                    : TimeSpan.FromMilliseconds(250);
+                if (waitSlice > TimeSpan.Zero && waitForStoppedSignal(waitSlice))
+                {
+                    return new FileHivemindAgentStopResult(true, requested, true);
+                }
+
+                sleep(TimeSpan.FromMilliseconds(100));
+            }
+
+            forceStopAgent();
+            DateTime forceDeadline = DateTime.UtcNow.Add(forceStopWaitTimeout);
+            while (DateTime.UtcNow < forceDeadline)
+            {
+                if (!isAgentRunning())
+                {
+                    return new FileHivemindAgentStopResult(true, requested, true);
+                }
+
+                TimeSpan remaining = forceDeadline - DateTime.UtcNow;
                 TimeSpan waitSlice = remaining < TimeSpan.FromMilliseconds(250)
                     ? remaining
                     : TimeSpan.FromMilliseconds(250);
@@ -391,6 +418,41 @@ namespace OceanyaClient.Features.FileHivemind
                 EventResetMode.ManualReset,
                 FileHivemindBackgroundAgentCommandLine.AgentStoppedSignalEventName);
             return stoppedSignal.WaitOne(timeout);
+        }
+
+        private static void ForceStopAgentProcesses()
+        {
+            foreach (Process process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(
+                FileHivemindBackgroundAgentCommandLine.AgentExecutableFileName)))
+            {
+                using (process)
+                {
+                    try
+                    {
+                        if (process.HasExited)
+                        {
+                            continue;
+                        }
+
+                        try
+                        {
+                            if (process.CloseMainWindow() && process.WaitForExit(2500))
+                            {
+                                continue;
+                            }
+                        }
+                        catch
+                        {
+                        }
+
+                        process.Kill(entireProcessTree: true);
+                        _ = process.WaitForExit(5000);
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
         }
     }
 

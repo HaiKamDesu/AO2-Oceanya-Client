@@ -3,6 +3,7 @@ using OceanyaClient.Features.FileHivemind;
 using OceanyaClient.Features.Startup;
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -117,7 +118,7 @@ namespace OceanyaClient
             Close();
         }
 
-        private void DeleteSaveFileButton_Click(object sender, RoutedEventArgs e)
+        private async void DeleteSaveFileButton_Click(object sender, RoutedEventArgs e)
         {
             string saveDirectory;
             try
@@ -148,12 +149,18 @@ namespace OceanyaClient
             }
 
             DeleteSaveFileButton.IsEnabled = false;
+            await WaitForm.ShowFormAsync("Deleting savefile...", Window.GetWindow(this) ?? Application.Current.MainWindow);
             try
             {
-                FileHivemindAgentStopCoordinator stopCoordinator = new FileHivemindAgentStopCoordinator();
-                FileHivemindAgentStopResult stopResult = stopCoordinator.RequestStopAndWait(TimeSpan.FromSeconds(20));
+                WaitForm.SetSubtitle("Stopping File Hivemind...");
+                FileHivemindAgentStopResult stopResult = await Task.Run(() =>
+                {
+                    FileHivemindAgentStopCoordinator stopCoordinator = new FileHivemindAgentStopCoordinator();
+                    return stopCoordinator.RequestStopAndWait(TimeSpan.FromSeconds(20));
+                });
                 if (!stopResult.Stopped)
                 {
+                    await WaitForm.CloseFormAsync();
                     OceanyaMessageBox.Show(
                         "File Hivemind did not close in time. The save folder was not deleted.\n\n"
                         + "Exit background sync from the tray icon, then try again.",
@@ -163,8 +170,15 @@ namespace OceanyaClient
                     return;
                 }
 
-                new WindowsFileHivemindAutoStartRegistrar().SetRegistered(false);
-                SaveFileDeletionService.DeleteCurrentSaveDirectory();
+                WaitForm.SetSubtitle("Removing background sync startup...");
+                await Task.Run(() =>
+                {
+                    new WindowsFileHivemindAutoStartRegistrar().SetRegistered(false);
+                });
+
+                WaitForm.SetSubtitle("Deleting save folder...");
+                await Task.Run(SaveFileDeletionService.DeleteCurrentSaveDirectory);
+                await WaitForm.CloseFormAsync();
                 OceanyaMessageBox.Show(
                     "Savefile folder deleted. Oceanya Client will now close.",
                     "Delete Savefile",
@@ -174,6 +188,7 @@ namespace OceanyaClient
             }
             catch (Exception ex)
             {
+                await WaitForm.CloseFormAsync();
                 OceanyaMessageBox.Show(
                     "Savefile deletion failed:\n\n" + ex.Message,
                     "Delete Savefile Failed",

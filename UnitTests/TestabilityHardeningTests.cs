@@ -1181,7 +1181,7 @@ namespace UnitTests
                 Assert.That(longSize.Width, Is.GreaterThan(shortSize.Width));
                 Assert.That(longSize.Height, Is.GreaterThan(shortSize.Height));
                 Assert.That(longSize.Width, Is.LessThanOrEqualTo(900));
-                Assert.That(longSize.Height, Is.LessThanOrEqualTo(620));
+                Assert.That(longSize.Height, Is.LessThanOrEqualTo(648));
             });
         }
 
@@ -1200,7 +1200,7 @@ namespace UnitTests
             Assert.Multiple(() =>
             {
                 Assert.That(size.Width, Is.LessThanOrEqualTo(720));
-                Assert.That(size.Height, Is.LessThanOrEqualTo(432));
+                Assert.That(size.Height, Is.LessThanOrEqualTo(540));
                 Assert.That(size.Width, Is.GreaterThanOrEqualTo(398));
                 Assert.That(size.Height, Is.GreaterThanOrEqualTo(168));
             });

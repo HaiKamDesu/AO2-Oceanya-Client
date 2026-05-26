@@ -347,11 +347,39 @@ namespace UnitTests
                 isAgentRunning: () => true,
                 requestAgentStop: () => true,
                 waitForStoppedSignal: _ => false,
-                sleep: _ => { });
+                sleep: _ => { },
+                forceStopAgent: () => { },
+                forceStopWaitTimeout: TimeSpan.FromMilliseconds(1));
 
             FileHivemindAgentStopResult result = coordinator.RequestStopAndWait(TimeSpan.FromMilliseconds(1));
 
             Assert.That(result.Stopped, Is.False);
+        }
+
+        [Test]
+        public void StopCoordinator_ForceStopsAfterGracefulTimeout()
+        {
+            int runningChecks = 0;
+            int forceStopRequests = 0;
+            FileHivemindAgentStopCoordinator coordinator = new FileHivemindAgentStopCoordinator(
+                isAgentRunning: () =>
+                {
+                    runningChecks++;
+                    return forceStopRequests == 0;
+                },
+                requestAgentStop: () => true,
+                waitForStoppedSignal: _ => false,
+                sleep: _ => { },
+                forceStopAgent: () => forceStopRequests++);
+
+            FileHivemindAgentStopResult result = coordinator.RequestStopAndWait(TimeSpan.FromMilliseconds(1));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.Stopped, Is.True);
+                Assert.That(forceStopRequests, Is.EqualTo(1));
+                Assert.That(runningChecks, Is.GreaterThanOrEqualTo(2));
+            });
         }
 
         [Test]

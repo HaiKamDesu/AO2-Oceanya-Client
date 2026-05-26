@@ -1,6 +1,7 @@
 using Common;
 using OceanyaClient;
 using OceanyaClient.Features.FileHivemind;
+using System.Threading;
 using System.Threading.Tasks;
 using Forms = System.Windows.Forms;
 
@@ -34,6 +35,7 @@ namespace OceanyaHivemindAgent
         private readonly EventWaitHandle stopRequestedEvent;
         private readonly EventWaitHandle stoppedEvent;
         private readonly Task agentTask;
+        private readonly RegisteredWaitHandle stopSignalRegistration;
         private bool exitRequested;
 
         public FileHivemindAgentApplicationContext(string[] args)
@@ -63,6 +65,12 @@ namespace OceanyaHivemindAgent
                 Enabled = true
             };
             stopSignalTimer.Tick += StopSignalTimer_Tick;
+            stopSignalRegistration = ThreadPool.RegisterWaitForSingleObject(
+                stopRequestedEvent,
+                (_, _) => RequestExit(),
+                null,
+                Timeout.InfiniteTimeSpan,
+                executeOnlyOnce: false);
             agentTask = Task.Run(() => agent.RunAsync(cancellationTokenSource.Token));
         }
 
@@ -108,6 +116,7 @@ namespace OceanyaHivemindAgent
         {
             completionTimer.Stop();
             stopSignalTimer.Stop();
+            stopSignalRegistration.Unregister(null);
             cancellationTokenSource.Cancel();
 
             try

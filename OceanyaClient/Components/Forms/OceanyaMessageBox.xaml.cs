@@ -58,11 +58,11 @@ namespace OceanyaClient
         private const double MinContentWidth = 398d;
         private const double MinContentHeight = 168d;
         private const double DefaultMaxContentWidth = 900d;
-        private const double DefaultMaxContentHeight = 620d;
+        private const double DefaultMaxContentHeight = 1240d;
         private const double MaxScreenWidthRatio = 0.72d;
-        private const double MaxScreenHeightRatio = 0.72d;
+        private const double MaxScreenHeightRatio = 0.90d;
         private const double MessageHorizontalChrome = 40d;
-        private const double MessageVerticalChrome = 66d;
+        private const double MessageVerticalChrome = 90d;
         private const double MessageTextFontSize = 13d;
 
         private MessageBoxResult result = MessageBoxResult.None;
