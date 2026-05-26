@@ -1,4 +1,3 @@
-using OceanyaClient;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -179,8 +178,6 @@ namespace OceanyaUpdater
                 WriteLog(log, $"Updater parsed args. channel={options.Channel}; version={options.Version}; source={options.Source}; install={options.Install}; backup={options.Backup}; clientExe={options.ClientExe}; handoff={options.Handoff}; download={options.Download}; extractionRoot={options.ExtractionRoot}");
                 status?.ShowStatus("Waiting for Oceanya Client to close...");
                 WaitForParentExit(options.ParentPid, log);
-                status?.ShowStatus("Stopping File Hivemind...");
-                StopHivemindAgent(options, log, status);
                 status?.ShowStatus("Checking update files...");
                 ValidatePaths(options);
                 status?.ShowStatus("Backing up current files...");
@@ -259,41 +256,6 @@ namespace OceanyaUpdater
             {
                 WriteLog(log, "Parent process " + parentPid + " is already gone.");
             }
-        }
-
-        private static void StopHivemindAgent(UpdaterArguments options, TextWriter log, UpdaterStatusWindow? status)
-        {
-            WriteLog(log, "Requesting File Hivemind stop through shared coordinator.");
-            FileHivemindAgentStopCoordinator stopCoordinator = new FileHivemindAgentStopCoordinator(
-                forceStopWaitTimeout: TimeSpan.FromSeconds(8),
-                beforeForceStop: () =>
-                {
-                    WriteLog(log, "Timed out waiting for Hivemind agent to stop after stop signal.");
-                    status?.ShowStatus("File Hivemind did not close. Forcing it to stop...");
-                },
-                installDirectory: options.Install);
-
-            FileHivemindAgentStopResult result = stopCoordinator.RequestStopAndWait(TimeSpan.FromSeconds(12));
-            WriteLog(
-                log,
-                "Hivemind stop result: wasRunning="
-                + result.WasRunning
-                + "; stopRequested="
-                + result.StopRequested
-                + "; stopped="
-                + result.Stopped
-                + "; forcedProcessCount="
-                + result.ForcedProcessCount
-                + ".");
-            if (result.Stopped)
-            {
-                return;
-            }
-
-            WriteLog(log, "Hivemind agent mutex is still present after shared stop coordinator; update cannot safely replace files.");
-            throw new InvalidOperationException(
-                "The Oceanyan File Hivemind could not be stopped automatically. Close it from the tray icon and run the update again. "
-                + "If Windows refuses to close it, run Oceanya Client as administrator and retry the update.");
         }
 
         private static void ValidatePaths(UpdaterArguments options)

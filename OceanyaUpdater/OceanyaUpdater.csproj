@@ -9,8 +9,4 @@
     <ApplicationIcon>..\OceanyaClient\Resources\OceanyaO.ico</ApplicationIcon>
   </PropertyGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\Common\Common.csproj" />
-  </ItemGroup>
-
 </Project>

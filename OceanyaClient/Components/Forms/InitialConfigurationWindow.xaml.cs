@@ -855,19 +855,28 @@ namespace OceanyaClient
         private async Task StartUpdateAsync(UpdateRelease release, bool explicitUserAction)
         {
             Window? owner = HostWindow ?? Window.GetWindow(this) ?? Application.Current?.MainWindow;
+            bool stoppedHivemindForUpdate = false;
+            bool updaterHandoffStarted = false;
+            List<string> hivemindStopTrace = new List<string>();
             try
             {
                 if (owner != null && !OceanyaTestMode.Current.DisableWaitForms)
                 {
-                    await WaitForm.ShowFormAsync("Downloading update...", owner);
-                    WaitForm.SetSubtitle("Starting download...");
+                    await WaitForm.ShowFormAsync("Preparing update...", owner);
+                    WaitForm.SetSubtitle("Stopping File Hivemind...");
                 }
+
+                FileHivemindAgentStopResult preDownloadStop = await updateCheckService.StopFileHivemindForUpdateAsync(
+                    message => hivemindStopTrace.Add(message),
+                    CancellationToken.None);
+                stoppedHivemindForUpdate = preDownloadStop.WasRunning;
 
                 Progress<double> progress = new Progress<double>(value =>
                 {
                     int percent = (int)Math.Round(Math.Clamp(value, 0d, 1d) * 100d);
                     WaitForm.SetSubtitle($"Downloading update... {percent}%");
                 });
+                WaitForm.SetSubtitle("Starting download...");
                 UpdateStagingResult staging = await updateCheckService.StageUpdateAsync(
                     release,
                     progress,
@@ -875,10 +884,21 @@ namespace OceanyaClient
 
                 if (owner != null && !OceanyaTestMode.Current.DisableWaitForms)
                 {
+                    WaitForm.SetSubtitle("Confirming File Hivemind is stopped...");
+                }
+
+                FileHivemindAgentStopResult preHandoffStop = await updateCheckService.StopFileHivemindForUpdateAsync(
+                    message => hivemindStopTrace.Add(message),
+                    CancellationToken.None);
+                stoppedHivemindForUpdate |= preHandoffStop.WasRunning;
+
+                if (owner != null && !OceanyaTestMode.Current.DisableWaitForms)
+                {
                     WaitForm.SetSubtitle("Applying update... Oceanya will close and reopen automatically.");
                 }
 
                 updateCheckService.LaunchUpdaterAndExit(release, staging);
+                updaterHandoffStarted = true;
             }
             catch (UnauthorizedAccessException ex)
             {
@@ -887,9 +907,15 @@ namespace OceanyaClient
                     await WaitForm.CloseFormAsync();
                 }
 
+                string restartMessage = RestartFileHivemindIfUpdatePreparationFailed(
+                    stoppedHivemindForUpdate,
+                    updaterHandoffStarted);
+
                 MessageBoxResult openDecision = OceanyaMessageBox.Show(
                     owner,
-                    ex.Message + "\n\nOpen the GitHub release page for a manual update?",
+                    ex.Message
+                    + restartMessage
+                    + "\n\nOpen the GitHub release page for a manual update?",
                     "Manual Update Required",
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Warning);
@@ -905,18 +931,52 @@ namespace OceanyaClient
                     await WaitForm.CloseFormAsync();
                 }
 
+                string restartMessage = RestartFileHivemindIfUpdatePreparationFailed(
+                    stoppedHivemindForUpdate,
+                    updaterHandoffStarted);
+
                 if (explicitUserAction)
                 {
+                    string traceDetails = hivemindStopTrace.Count == 0
+                        ? string.Empty
+                        : "\n\nFile Hivemind stop details:\n" + string.Join("\n", hivemindStopTrace);
                     OceanyaMessageBox.Show(
                         owner,
                         "Update failed before Oceanya could hand off to the updater:\n"
                         + ex.Message
-                        + "\n\nOceanya is still open. Check the updater logs and handoff files under the Updates folder.",
+                        + restartMessage
+                        + "\n\nOceanya is still open."
+                        + traceDetails,
                         "Update Failed",
                         MessageBoxButton.OK,
                         MessageBoxImage.Error);
                 }
             }
+        }
+
+        private string RestartFileHivemindIfUpdatePreparationFailed(
+            bool stoppedHivemindForUpdate,
+            bool updaterHandoffStarted)
+        {
+            if (!stoppedHivemindForUpdate || updaterHandoffStarted)
+            {
+                return string.Empty;
+            }
+
+            bool restarted = false;
+            try
+            {
+                restarted = updateCheckService.RestartFileHivemindAfterFailedUpdatePreparation();
+            }
+            catch (Exception restartEx)
+            {
+                return "\n\nFile Hivemind was stopped for the update, but could not be restarted: "
+                    + restartEx.Message;
+            }
+
+            return restarted
+                ? "\n\nFile Hivemind was restarted because the update did not hand off to the updater."
+                : "\n\nFile Hivemind was stopped for the update, but no eligible auto-sync connection was available to restart.";
         }
 
         private static void OpenReleasePage(string url)

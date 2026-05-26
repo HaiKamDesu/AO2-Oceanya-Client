@@ -7,7 +7,12 @@ using System.Threading;
 
 namespace OceanyaClient
 {
-    public static class FileHivemindAgentProcessContract
+#if OCEANYA_UPDATER_EMBEDDED_COORDINATOR
+    internal
+#else
+    public
+#endif
+    static class FileHivemindAgentProcessContract
     {
         public const string AgentMutexName = @"Local\OceanyaClient.FileHivemind.Agent";
         public const string AgentStopSignalEventName = @"Local\OceanyaClient.FileHivemind.Agent.Stop";
@@ -16,7 +21,12 @@ namespace OceanyaClient
         public const string MainApplicationExecutableFileName = "OceanyaClient.exe";
     }
 
-    public readonly struct FileHivemindAgentStopResult
+#if OCEANYA_UPDATER_EMBEDDED_COORDINATOR
+    internal
+#else
+    public
+#endif
+    readonly struct FileHivemindAgentStopResult
     {
         public FileHivemindAgentStopResult(
             bool wasRunning,
@@ -36,7 +46,12 @@ namespace OceanyaClient
         public int ForcedProcessCount { get; }
     }
 
-    public sealed class FileHivemindAgentStopCoordinator
+#if OCEANYA_UPDATER_EMBEDDED_COORDINATOR
+    internal
+#else
+    public
+#endif
+    sealed class FileHivemindAgentStopCoordinator
     {
         private readonly Func<bool> isAgentRunning;
         private readonly Func<bool> requestAgentStop;
@@ -45,6 +60,7 @@ namespace OceanyaClient
         private readonly Func<int> forceStopAgent;
         private readonly TimeSpan forceStopWaitTimeout;
         private readonly Action? beforeForceStop;
+        private readonly Action<string>? trace;
 
         public FileHivemindAgentStopCoordinator(
             Func<bool>? isAgentRunning = null,
@@ -54,30 +70,37 @@ namespace OceanyaClient
             Func<int>? forceStopAgent = null,
             TimeSpan? forceStopWaitTimeout = null,
             Action? beforeForceStop = null,
-            string? installDirectory = null)
+            string? installDirectory = null,
+            Action<string>? trace = null)
         {
             this.isAgentRunning = isAgentRunning ?? IsAgentRunning;
             this.requestAgentStop = requestAgentStop ?? SignalAgentStopRequest;
             this.waitForStoppedSignal = waitForStoppedSignal ?? WaitForStoppedSignal;
             this.sleep = sleep ?? Thread.Sleep;
-            this.forceStopAgent = forceStopAgent ?? (() => ForceStopAgentProcesses(installDirectory));
+            this.forceStopAgent = forceStopAgent ?? (() => ForceStopAgentProcesses(installDirectory, trace));
             this.forceStopWaitTimeout = forceStopWaitTimeout ?? TimeSpan.FromSeconds(5);
             this.beforeForceStop = beforeForceStop;
+            this.trace = trace;
         }
 
         public FileHivemindAgentStopResult RequestStopAndWait(TimeSpan timeout)
         {
+            trace?.Invoke("Checking File Hivemind agent mutex.");
             if (!isAgentRunning())
             {
+                trace?.Invoke("File Hivemind agent mutex is absent; treating agent as stopped.");
                 return new FileHivemindAgentStopResult(false, false, true);
             }
 
+            trace?.Invoke("File Hivemind agent mutex is present; sending stop signal.");
             bool requested = requestAgentStop();
+            trace?.Invoke("Stop signal Set() returned " + requested + ".");
             DateTime deadline = DateTime.UtcNow.Add(timeout);
             while (DateTime.UtcNow < deadline)
             {
                 if (!isAgentRunning())
                 {
+                    trace?.Invoke("File Hivemind agent mutex disappeared during graceful wait.");
                     return new FileHivemindAgentStopResult(true, requested, true);
                 }
 
@@ -87,6 +110,7 @@ namespace OceanyaClient
                     : TimeSpan.FromMilliseconds(250);
                 if (waitSlice > TimeSpan.Zero && waitForStoppedSignal(waitSlice))
                 {
+                    trace?.Invoke("File Hivemind stopped ack was signaled during graceful wait.");
                     return new FileHivemindAgentStopResult(true, requested, true);
                 }
 
@@ -94,12 +118,15 @@ namespace OceanyaClient
             }
 
             beforeForceStop?.Invoke();
+            trace?.Invoke("Graceful wait timed out after " + timeout.TotalSeconds.ToString("0.###") + " seconds; enumerating force-stop candidates.");
             int forcedProcessCount = forceStopAgent();
+            trace?.Invoke("Force-stop candidate count handled: " + forcedProcessCount + ".");
             DateTime forceDeadline = DateTime.UtcNow.Add(forceStopWaitTimeout);
             while (DateTime.UtcNow < forceDeadline)
             {
                 if (!isAgentRunning())
                 {
+                    trace?.Invoke("File Hivemind agent mutex disappeared during force-stop wait.");
                     return new FileHivemindAgentStopResult(true, requested, true, forcedProcessCount);
                 }
 
@@ -109,13 +136,16 @@ namespace OceanyaClient
                     : TimeSpan.FromMilliseconds(250);
                 if (waitSlice > TimeSpan.Zero && waitForStoppedSignal(waitSlice))
                 {
+                    trace?.Invoke("File Hivemind stopped ack was signaled during force-stop wait.");
                     return new FileHivemindAgentStopResult(true, requested, true, forcedProcessCount);
                 }
 
                 sleep(TimeSpan.FromMilliseconds(100));
             }
 
-            return new FileHivemindAgentStopResult(true, requested, !isAgentRunning(), forcedProcessCount);
+            bool stopped = !isAgentRunning();
+            trace?.Invoke("Final File Hivemind mutex check after force-stop wait: stopped=" + stopped + ".");
+            return new FileHivemindAgentStopResult(true, requested, stopped, forcedProcessCount);
         }
 
         private static bool IsAgentRunning()
@@ -147,7 +177,7 @@ namespace OceanyaClient
             return stoppedSignal.WaitOne(timeout);
         }
 
-        private static int ForceStopAgentProcesses(string? installDirectory)
+        private static int ForceStopAgentProcesses(string? installDirectory, Action<string>? trace)
         {
             int forcedProcessCount = 0;
             foreach (Process process in FindAgentProcessCandidates(installDirectory))
@@ -162,10 +192,12 @@ namespace OceanyaClient
                         }
 
                         forcedProcessCount++;
+                        trace?.Invoke("Force-stop candidate pid=" + process.Id + "; name=" + SafeProcessName(process) + "; path=" + SafeProcessPath(process) + ".");
                         try
                         {
                             if (process.CloseMainWindow() && process.WaitForExit(2500))
                             {
+                                trace?.Invoke("Candidate exited after CloseMainWindow pid=" + SafeProcessId(process) + ".");
                                 continue;
                             }
                         }
@@ -175,14 +207,64 @@ namespace OceanyaClient
 
                         process.Kill(entireProcessTree: true);
                         _ = process.WaitForExit(5000);
+                        trace?.Invoke("Kill requested for candidate pid=" + SafeProcessId(process) + "; hasExited=" + SafeHasExited(process) + ".");
                     }
-                    catch
+                    catch (Exception ex)
                     {
+                        trace?.Invoke("Force-stop candidate handling failed: " + ex.GetType().Name + ": " + ex.Message);
                     }
                 }
             }
 
             return forcedProcessCount;
+        }
+
+        private static int SafeProcessId(Process process)
+        {
+            try
+            {
+                return process.Id;
+            }
+            catch
+            {
+                return -1;
+            }
+        }
+
+        private static string SafeProcessName(Process process)
+        {
+            try
+            {
+                return process.ProcessName;
+            }
+            catch
+            {
+                return "(unknown)";
+            }
+        }
+
+        private static string SafeProcessPath(Process process)
+        {
+            try
+            {
+                return process.MainModule?.FileName ?? "(unknown)";
+            }
+            catch
+            {
+                return "(unavailable)";
+            }
+        }
+
+        private static bool SafeHasExited(Process process)
+        {
+            try
+            {
+                return process.HasExited;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static List<Process> FindAgentProcessCandidates(string? installDirectory)

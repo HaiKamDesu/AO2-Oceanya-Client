@@ -99,6 +99,7 @@ namespace OceanyaHivemindAgent
             }
 
             exitRequested = true;
+            CustomConsole.Info("The Oceanyan File Hivemind agent received a stop request.");
             cancellationTokenSource.Cancel();
         }
 
@@ -114,6 +115,7 @@ namespace OceanyaHivemindAgent
 
         protected override void ExitThreadCore()
         {
+            CustomConsole.Info("The Oceanyan File Hivemind agent is shutting down.");
             completionTimer.Stop();
             stopSignalTimer.Stop();
             stopSignalRegistration.Unregister(null);

@@ -533,12 +533,29 @@ namespace OceanyaClient
                 bool isRunning = backgroundAgentLauncher.IsAgentRunning();
                 if (isRunning)
                 {
-                    bool stopRequested = backgroundAgentLauncher.RequestStopForCurrentSession();
+                    BackgroundAgentSessionButton.IsEnabled = false;
+                    AppendStatus("Stopping the hidden Hivemind background agent...", StatusLogLevel.Action);
+                    List<string> stopTrace = new List<string>();
+                    FileHivemindAgentStopResult stopResult = await Task.Run(() =>
+                    {
+                        FileHivemindAgentStopCoordinator stopCoordinator = new FileHivemindAgentStopCoordinator(
+                            trace: message => stopTrace.Add(message));
+                        return stopCoordinator.RequestStopAndWait(TimeSpan.FromSeconds(20));
+                    });
+                    foreach (string message in stopTrace)
+                    {
+                        AppendStatus("[Agent stop] " + message, StatusLogLevel.Info);
+                    }
+
                     AppendStatus(
-                        stopRequested
-                            ? "Requested the hidden Hivemind background agent to stop for this Windows session."
-                            : "The hidden Hivemind background agent is not running.",
-                        stopRequested ? StatusLogLevel.Info : StatusLogLevel.Warning);
+                        stopResult.Stopped
+                            ? "The hidden Hivemind background agent stopped."
+                            : "The hidden Hivemind background agent did not stop. Stop requested: "
+                                + (stopResult.StopRequested ? "yes" : "no")
+                                + "; forced processes found: "
+                                + stopResult.ForcedProcessCount
+                                + ".",
+                        stopResult.Stopped ? StatusLogLevel.Success : StatusLogLevel.Error);
                 }
                 else
                 {
@@ -562,9 +579,11 @@ namespace OceanyaClient
                 RefreshBackgroundAgentControls();
                 await Task.Delay(900);
                 RefreshBackgroundAgentControls();
+                BackgroundAgentSessionButton.IsEnabled = true;
             }
             catch (Exception ex)
             {
+                BackgroundAgentSessionButton.IsEnabled = true;
                 AppendStatus("Background agent session control failed: " + ex.Message, StatusLogLevel.Error);
             }
         }

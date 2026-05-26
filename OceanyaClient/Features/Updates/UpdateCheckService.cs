@@ -1,4 +1,5 @@
 using Common;
+using OceanyaClient.Features.FileHivemind;
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -17,8 +18,7 @@ namespace OceanyaClient.Features.Updates
             "OceanyaUpdater.exe",
             "OceanyaUpdater.dll",
             "OceanyaUpdater.deps.json",
-            "OceanyaUpdater.runtimeconfig.json",
-            "Common.dll"
+            "OceanyaUpdater.runtimeconfig.json"
         };
 
         private readonly GitHubUpdateClient githubClient;
@@ -103,6 +103,43 @@ namespace OceanyaClient.Features.Updates
             }
 
             return await stagingService.DownloadVerifyAndStageAsync(release, progress, cancellationToken).ConfigureAwait(false);
+        }
+
+        public async Task<FileHivemindAgentStopResult> StopFileHivemindForUpdateAsync(
+            Action<string>? trace,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return await Task.Run(() =>
+            {
+                FileHivemindAgentStopCoordinator stopCoordinator = new FileHivemindAgentStopCoordinator(
+                    installDirectory: AppContext.BaseDirectory,
+                    trace: trace);
+                FileHivemindAgentStopResult result = stopCoordinator.RequestStopAndWait(TimeSpan.FromSeconds(20));
+                if (!result.Stopped)
+                {
+                    throw new InvalidOperationException(
+                        "The Oceanyan File Hivemind could not be stopped. Update cancelled before download. "
+                        + "Stop requested: "
+                        + (result.StopRequested ? "yes" : "no")
+                        + "; forced processes found: "
+                        + result.ForcedProcessCount
+                        + ".");
+                }
+
+                return result;
+            }, cancellationToken).ConfigureAwait(false);
+        }
+
+        public bool RestartFileHivemindAfterFailedUpdatePreparation()
+        {
+            FileHivemindBackgroundAgentLauncher launcher = new FileHivemindBackgroundAgentLauncher();
+            if (!FileHivemindBackgroundAgentLauncher.HasEligibleConnections(SaveFile.Data.FileHivemind))
+            {
+                return false;
+            }
+
+            return launcher.StartForCurrentSession(SaveFile.Data.FileHivemind);
         }
 
         public void LaunchUpdaterAndExit(UpdateRelease release, UpdateStagingResult staging)
