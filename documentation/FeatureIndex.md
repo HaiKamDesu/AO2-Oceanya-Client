@@ -93,7 +93,7 @@ Use this file as the first stop before broad repository searches. It should poin
 ## Release Packaging
 - Doc: `Documentation/ReleasePackaging.md`
 - Main code: `Directory.Build.props`, `OceanyaHivemindAgent/OceanyaHivemindAgent.csproj`, `OceanyaClient/OceanyaClient.csproj`, `OceanyaUpdater/OceanyaUpdater.csproj`, `.github/workflows/release.yml`
-- Notes: Release builds emit `OceanyaClient/bin/Release/Github Release/Oceanya Client <version>/` with `Oceanya.Client.win-x64.v<version>.zip`, `.sha256`, and stable `update-manifest.json`. Debug builds emit `OceanyaClient/bin/Debug/Github Release Test/Oceanya Client <version>-test/` with `Oceanya.Client.win-x64.test-v<version>.zip`, `.sha256`, and test `update-manifest.json`. The release workflow consumes those generated assets and publishes GitHub provenance attestation.
+- Notes: Release builds emit `OceanyaClient/bin/Release/Github Release/Oceanya Client <version>/` with `Oceanya.Client.win-x64.v<version>.zip`, `.sha256`, and stable `update-manifest.json`. Debug builds emit `OceanyaClient/bin/Debug/Github Release Test/Oceanya Client <version>-test/` with `Oceanya.Client.win-x64.test-v<version>.zip`, `.sha256`, and test `update-manifest.json`. Packaging clears generated `Github Release*` and `PackagedApp` folders for the active configuration before writing current assets, so old package versions do not accumulate. The release workflow consumes those generated assets and publishes GitHub provenance attestation.
 
 ## File Hivemind
 - Doc: `Documentation/AgentDocumentationWorkflow.md`

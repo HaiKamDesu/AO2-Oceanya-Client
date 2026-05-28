@@ -18,7 +18,8 @@
     <GithubReleaseRoot Condition="'$(GithubReleaseRoot)' == ''">..\OceanyaClient\bin\$(Configuration)\Github Release\</GithubReleaseRoot>
     <GithubReleaseDir>$(GithubReleaseRoot)$(UpdatePackageFolderName)\</GithubReleaseDir>
     <ReleasePackageStagingDir>..\OceanyaClient\bin\$(Configuration)\ReleaseZipStaging\</ReleasePackageStagingDir>
-    <ReleasePackageDir>..\OceanyaClient\bin\$(Configuration)\PackagedApp\$(UpdatePackageFolderName)\</ReleasePackageDir>
+    <ReleasePackageRoot>..\OceanyaClient\bin\$(Configuration)\PackagedApp\</ReleasePackageRoot>
+    <ReleasePackageDir>$(ReleasePackageRoot)$(UpdatePackageFolderName)\</ReleasePackageDir>
     <ReleasePackageAssetName>Oceanya.Client.win-x64.$(UpdatePackageTag).zip</ReleasePackageAssetName>
     <ReleasePackageZipPath>$(GithubReleaseDir)$(ReleasePackageAssetName)</ReleasePackageZipPath>
     <ReleaseManifestPath>$(GithubReleaseDir)update-manifest.json</ReleaseManifestPath>
@@ -59,6 +60,8 @@
   </Target>
 
   <Target Name="CreateReleasePackageZip" AfterTargets="CopyHivemindAgentIntoClientOutput" Condition="'$(Configuration)' == 'Release' Or '$(Configuration)' == 'Debug'">
+    <RemoveDir Directories="$(GithubReleaseRoot)" Condition="Exists('$(GithubReleaseRoot)')" ContinueOnError="WarnAndContinue" />
+    <RemoveDir Directories="$(ReleasePackageRoot)" Condition="Exists('$(ReleasePackageRoot)')" ContinueOnError="WarnAndContinue" />
     <RemoveDir Directories="$(ReleasePackageDir)" Condition="Exists('$(ReleasePackageDir)')" />
     <Delete Files="$(ReleasePackageZipPath)" Condition="Exists('$(ReleasePackageZipPath)')" />
     <RemoveDir Directories="$(ReleasePackageStagingDir)" Condition="Exists('$(ReleasePackageStagingDir)')" />

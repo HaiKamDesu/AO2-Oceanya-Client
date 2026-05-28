@@ -20,6 +20,12 @@ Release packaging collects the built client output, copies the Hivemind agent an
 7. Zip the staging directory to the channel-specific GitHub release folder.
 8. Compute SHA-256 from that exact zip and write `update-manifest.json` beside it.
 
+Each packaging build clears the generated `Github Release*` and `PackagedApp`
+folders for that configuration before writing the new version, so `bin/Debug`
+and `bin/Release` keep only the latest generated package results. If Windows
+has one of those generated folders open or locked, the build logs a warning and
+continues with the files it can overwrite.
+
 ## Stable vs Test Outputs
 - Release builds produce stable/public assets:
   - `OceanyaClient/bin/Release/Github Release/Oceanya Client <version>/`
