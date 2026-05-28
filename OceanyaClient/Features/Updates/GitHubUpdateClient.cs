@@ -14,7 +14,6 @@ namespace OceanyaClient.Features.Updates
         public const string Owner = "HaiKamDesu";
         public const string Repository = "AO2-Oceanya-Client";
         public const string RepositoryFullName = Owner + "/" + Repository;
-        private const string LatestReleaseUrl = "https://api.github.com/repos/HaiKamDesu/AO2-Oceanya-Client/releases/latest";
         private const string ReleasesUrl = "https://api.github.com/repos/HaiKamDesu/AO2-Oceanya-Client/releases?per_page=30";
 
         private readonly HttpClient httpClient;
@@ -36,11 +35,7 @@ namespace OceanyaClient.Features.Updates
             UpdateVersion currentVersion,
             CancellationToken cancellationToken)
         {
-            using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, LatestReleaseUrl);
-            if (environment.Channel == UpdateChannel.Test)
-            {
-                request.RequestUri = new Uri(ReleasesUrl);
-            }
+            using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, ReleasesUrl);
 
             request.Headers.UserAgent.Add(new ProductInfoHeaderValue("OceanyaClient", AppVersionInfo.DisplayVersion));
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
@@ -48,12 +43,7 @@ namespace OceanyaClient.Features.Updates
             using HttpResponseMessage response = await httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
             string json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            if (environment.Channel == UpdateChannel.Test)
-            {
-                return await ParseReleaseListAsync(json, environment, currentVersion, cancellationToken).ConfigureAwait(false);
-            }
-
-            return await ParseReleaseAsync(json, environment, currentVersion, cancellationToken).ConfigureAwait(false);
+            return await ParseReleaseListAsync(json, environment, currentVersion, cancellationToken).ConfigureAwait(false);
         }
 
         public async Task<UpdateRelease?> ParseReleaseAsync(
@@ -87,20 +77,37 @@ namespace OceanyaClient.Features.Updates
                 throw new InvalidOperationException("The GitHub releases response was not an array.");
             }
 
+            List<string> releaseNoteSections = new List<string>();
+            UpdateRelease? selectedRelease = null;
             foreach (JsonElement releaseElement in document.RootElement.EnumerateArray())
             {
-                UpdateRelease? release = await ParseReleaseElementAsync(
-                    releaseElement.Clone(),
-                    environment,
-                    currentVersion,
-                    cancellationToken).ConfigureAwait(false);
-                if (release != null)
+                JsonElement releaseRoot = releaseElement.Clone();
+                if (TryBuildReleaseNoteSection(releaseRoot, environment.Channel, currentVersion, out string releaseNoteSection))
                 {
-                    return release;
+                    releaseNoteSections.Add(releaseNoteSection);
+                }
+
+                if (selectedRelease == null)
+                {
+                    UpdateRelease? release = await ParseReleaseElementAsync(
+                        releaseRoot,
+                        environment,
+                        currentVersion,
+                        cancellationToken).ConfigureAwait(false);
+                    if (release != null)
+                    {
+                        selectedRelease = release;
+                    }
                 }
             }
 
-            return null;
+            if (selectedRelease != null
+                && releaseNoteSections.Count > 0)
+            {
+                selectedRelease.Body = string.Join("\n\n", releaseNoteSections);
+            }
+
+            return selectedRelease;
         }
 
         private async Task<UpdateRelease?> ParseReleaseElementAsync(
@@ -207,6 +214,41 @@ namespace OceanyaClient.Features.Updates
             }
 
             return assets;
+        }
+
+        private static bool TryBuildReleaseNoteSection(
+            JsonElement root,
+            UpdateChannel channel,
+            UpdateVersion currentVersion,
+            out string section)
+        {
+            section = string.Empty;
+            bool prerelease = GetBoolean(root, "prerelease");
+            if (GetBoolean(root, "draft")
+                || (channel == UpdateChannel.Stable && prerelease)
+                || (channel == UpdateChannel.Test && !prerelease))
+            {
+                return false;
+            }
+
+            string tag = GetString(root, "tag_name");
+            if (!UpdateVersion.TryParseForChannel(tag, channel, out UpdateVersion releaseVersion)
+                || releaseVersion <= currentVersion)
+            {
+                return false;
+            }
+
+            string title = string.IsNullOrWhiteSpace(GetString(root, "name"))
+                ? tag
+                : tag + " - " + GetString(root, "name");
+            string body = GetString(root, "body").Trim();
+            section = "## " + title;
+            if (!string.IsNullOrWhiteSpace(body))
+            {
+                section += "\n\n" + body;
+            }
+
+            return true;
         }
 
         private static string GetString(JsonElement element, string name)

@@ -109,6 +109,97 @@ namespace UnitTests
         }
 
         [Test]
+        public async Task GitHubClient_StableReleaseListStacksReleaseNotesNewerThanCurrent()
+        {
+            string manifest = ValidManifestJson();
+            int manifestRequests = 0;
+            using HttpClient httpClient = new HttpClient(new FakeHandler(request =>
+            {
+                if (request.RequestUri?.ToString() == "https://example.invalid/update-manifest.json")
+                {
+                    manifestRequests++;
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(manifest)
+                    };
+                }
+
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }));
+
+            GitHubUpdateClient client = new GitHubUpdateClient(httpClient);
+            Assert.That(UpdateVersion.TryParse("6.2", out UpdateVersion current), Is.True);
+
+            UpdateRelease? release = await client.ParseReleaseListAsync(
+                "["
+                + ReleaseJson()
+                + ",{\"tag_name\":\"v6.4\",\"name\":\"Oceanya Client v6.4\",\"html_url\":\"https://example.invalid/v6.4\",\"body\":\"# Notes 6.4\",\"draft\":false,\"prerelease\":false,\"published_at\":\"2026-05-14T00:00:00Z\",\"assets\":[]}"
+                + ",{\"tag_name\":\"v6.3\",\"name\":\"Oceanya Client v6.3 beta\",\"html_url\":\"https://example.invalid/v6.3\",\"body\":\"# Beta Notes\",\"draft\":false,\"prerelease\":true,\"published_at\":\"2026-05-07T00:00:00Z\",\"assets\":[]}"
+                + ",{\"tag_name\":\"v6.2\",\"name\":\"Oceanya Client v6.2\",\"html_url\":\"https://example.invalid/v6.2\",\"body\":\"# Current Notes\",\"draft\":false,\"prerelease\":false,\"published_at\":\"2026-04-30T00:00:00Z\",\"assets\":[]}"
+                + "]",
+                UpdateEnvironment.Stable,
+                current,
+                CancellationToken.None);
+
+            Assert.That(release, Is.Not.Null);
+            Assert.That(release!.Manifest.Tag, Is.EqualTo("v6.5"));
+            Assert.That(release.Body, Does.Contain("## v6.5 - Oceanya Client v6.5"));
+            Assert.That(release.Body, Does.Contain("# Notes"));
+            Assert.That(release.Body, Does.Contain("## v6.4 - Oceanya Client v6.4"));
+            Assert.That(release.Body, Does.Contain("# Notes 6.4"));
+            Assert.That(release.Body, Does.Not.Contain("Beta Notes"));
+            Assert.That(release.Body, Does.Not.Contain("Current Notes"));
+            Assert.That(release.Body.IndexOf("v6.5", StringComparison.Ordinal), Is.LessThan(release.Body.IndexOf("v6.4", StringComparison.Ordinal)));
+            Assert.That(manifestRequests, Is.EqualTo(1));
+        }
+
+        [Test]
+        public async Task GitHubClient_TestReleaseListStacksPrereleaseNotesNewerThanCurrent()
+        {
+            int manifestRequests = 0;
+            using HttpClient httpClient = new HttpClient(new FakeHandler(request =>
+            {
+                if (request.RequestUri?.ToString() == "https://example.invalid/update-manifest.json")
+                {
+                    manifestRequests++;
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(TestManifestJson())
+                    };
+                }
+
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }));
+
+            GitHubUpdateClient client = new GitHubUpdateClient(httpClient);
+            Assert.That(UpdateVersion.TryParseForChannel("test-v6.4", UpdateChannel.Test, out UpdateVersion current), Is.True);
+
+            UpdateRelease? release = await client.ParseReleaseListAsync(
+                "["
+                + TestReleaseJson()
+                + ",{\"tag_name\":\"test-v6.5\",\"name\":\"Oceanya Client test-v6.5\",\"html_url\":\"https://example.invalid/test-v6.5\",\"body\":\"# Test Notes 6.5\",\"draft\":false,\"prerelease\":true,\"published_at\":\"2026-05-14T00:00:00Z\",\"assets\":[]}"
+                + ",{\"tag_name\":\"v6.5\",\"name\":\"Oceanya Client v6.5 stable\",\"html_url\":\"https://example.invalid/v6.5\",\"body\":\"# Stable Notes\",\"draft\":false,\"prerelease\":false,\"published_at\":\"2026-05-07T00:00:00Z\",\"assets\":[]}"
+                + ",{\"tag_name\":\"test-v6.4\",\"name\":\"Oceanya Client test-v6.4\",\"html_url\":\"https://example.invalid/test-v6.4\",\"body\":\"# Current Test Notes\",\"draft\":false,\"prerelease\":true,\"published_at\":\"2026-04-30T00:00:00Z\",\"assets\":[]}"
+                + "]",
+                UpdateEnvironment.Test,
+                current,
+                CancellationToken.None);
+
+            Assert.That(release, Is.Not.Null);
+            Assert.That(release!.Manifest.Tag, Is.EqualTo("test-v6.5.1"));
+            Assert.That(release.Body, Does.Contain("## test-v6.5.1 - Oceanya Client test-v6.5.1"));
+            Assert.That(release.Body, Does.Contain("# Test Notes"));
+            Assert.That(release.Body, Does.Contain("## test-v6.5 - Oceanya Client test-v6.5"));
+            Assert.That(release.Body, Does.Contain("# Test Notes 6.5"));
+            Assert.That(release.Body, Does.Not.Contain("Stable Notes"));
+            Assert.That(release.Body, Does.Not.Contain("Current Test Notes"));
+            Assert.That(
+                release.Body.IndexOf("## test-v6.5.1 - Oceanya Client test-v6.5.1", StringComparison.Ordinal),
+                Is.LessThan(release.Body.IndexOf("## test-v6.5 - Oceanya Client test-v6.5", StringComparison.Ordinal)));
+            Assert.That(manifestRequests, Is.EqualTo(1));
+        }
+
+        [Test]
         public async Task GitHubClient_StableIgnoresPrereleaseAndTestAcceptsPrerelease()
         {
             using HttpClient httpClient = new HttpClient(new FakeHandler(request =>
