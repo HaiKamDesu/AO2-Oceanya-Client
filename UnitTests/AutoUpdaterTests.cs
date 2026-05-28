@@ -308,6 +308,15 @@ namespace UnitTests
         }
 
         [Test]
+        public void UpdaterArguments_NoArgumentsShowsStandaloneLaunchMessage()
+        {
+            bool parsed = UpdaterArguments.TryParse(Array.Empty<string>(), out _, out string error);
+
+            Assert.That(parsed, Is.False);
+            Assert.That(error, Is.EqualTo(UpdaterArguments.StandaloneLaunchMessage));
+        }
+
+        [Test]
         public void UpdateCheckService_RequiresUpdaterRuntimeFilesBeforeLaunch()
         {
             string root = CreateTempDir();

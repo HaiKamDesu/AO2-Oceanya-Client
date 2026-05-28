@@ -5675,6 +5675,11 @@ namespace OceanyaClient
 
                         WaitForm.SetSubtitle("Building character list...");
                         await Task.Yield();
+                        if (waitFormShown)
+                        {
+                            await WaitForm.CloseFormAsync();
+                            waitFormShown = false;
+                        }
 
                         ClientCharacterSelectionResult result =
                             await ShowCharacterSelectorForClientSelectionAsync(bot, skipWaitForm: true);

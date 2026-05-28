@@ -23,6 +23,9 @@ namespace OceanyaUpdater
 
     public sealed class UpdaterArguments
     {
+        public const string StandaloneLaunchMessage =
+            "Oceanya Updater.exe is not meant to run on its own. Run Oceanya Client.exe instead. Updates will be checked automatically.";
+
         public string Source { get; init; } = string.Empty;
         public string Install { get; init; } = string.Empty;
         public string Backup { get; init; } = string.Empty;
@@ -41,6 +44,12 @@ namespace OceanyaUpdater
         {
             parsed = new UpdaterArguments();
             error = string.Empty;
+            if (args.Length == 0)
+            {
+                error = StandaloneLaunchMessage;
+                return false;
+            }
+
             Dictionary<string, string> values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             HashSet<string> flags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             for (int index = 0; index < args.Length; index++)
