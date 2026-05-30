@@ -112,7 +112,7 @@ namespace OceanyaClient
                 List<CustomConsole.LogEntry> entriesCopy;
                 try
                 {
-                    entriesCopy = new List<CustomConsole.LogEntry>(CustomConsole.logEntries);
+                    entriesCopy = CustomConsole.GetLogEntriesSnapshot();
                 }
                 catch (Exception ex)
                 {
@@ -235,7 +235,7 @@ namespace OceanyaClient
             _lineCount = 0;
 
             List<CustomConsole.LogEntry> snapshot;
-            try { snapshot = new List<CustomConsole.LogEntry>(CustomConsole.logEntries); }
+            try { snapshot = CustomConsole.GetLogEntriesSnapshot(); }
             catch { return; }
 
             int startIndex = Math.Max(0, snapshot.Count - MAX_DOCUMENT_LINES);
@@ -254,7 +254,7 @@ namespace OceanyaClient
         {
             if (_pendingEntries.IsEmpty) return;
 
-            int batchSize = 100;
+            int batchSize = 5000;
             int processed = 0;
 
             while (_pendingEntries.TryDequeue(out CustomConsole.LogEntry? entry) && processed < batchSize)
@@ -318,7 +318,7 @@ namespace OceanyaClient
         private void AddEntryToDocument(CustomConsole.LogEntry entry)
         {
             if (_lineCount >= MAX_DOCUMENT_LINES)
-                TrimDocument();
+                TrimDocument(Math.Max(1, MAX_DOCUMENT_LINES / 5));
 
             AppendColorizedEntry(entry);
             _lineCount++;
@@ -394,21 +394,39 @@ namespace OceanyaClient
             _currentParagraph.Inlines.Add(run);
         }
 
-        private void TrimDocument()
+        private void TrimDocument(int linesToRemove)
         {
-            int linesToRemove = MAX_DOCUMENT_LINES / 5;
-            int runCount = _currentParagraph.Inlines.Count;
-            int removeCount = Math.Min(linesToRemove * 2, runCount - 10);
-
-            if (removeCount > 0)
+            int removedLines = 0;
+            while (removedLines < linesToRemove && _currentParagraph.Inlines.FirstInline is Inline first)
             {
-                for (int i = 0; i < removeCount; i++)
+                if (first is Run run)
                 {
-                    if (_currentParagraph.Inlines.FirstInline != null)
-                        _currentParagraph.Inlines.Remove(_currentParagraph.Inlines.FirstInline);
+                    removedLines += CountNewLines(run.Text);
                 }
-                _lineCount -= removeCount / 2;
+
+                _currentParagraph.Inlines.Remove(first);
             }
+
+            _lineCount = Math.Max(0, _lineCount - removedLines);
+        }
+
+        private static int CountNewLines(string? text)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return 0;
+            }
+
+            int count = 0;
+            foreach (char c in text)
+            {
+                if (c == '\n')
+                {
+                    count++;
+                }
+            }
+
+            return count;
         }
 
         private void QueueEntry(CustomConsole.LogEntry entry)

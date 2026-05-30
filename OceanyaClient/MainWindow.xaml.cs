@@ -4307,7 +4307,7 @@ namespace OceanyaClient
                     {
                         if (viewportWindow == null || viewportWindow.Visibility != Visibility.Visible)
                         {
-                            mainMusicAudioManager.PlayAmbientMusic(channel, songPath, loop);
+                            mainMusicAudioManager.PlayAmbientMusic(channel, songPath, loop, networkClient.ServerAssetUrl);
                         }
                     }, DispatcherPriority.Background);
                     return;
@@ -4325,7 +4325,7 @@ namespace OceanyaClient
                     }
                     else if (viewportWindow == null || viewportWindow.Visibility != Visibility.Visible)
                     {
-                        mainMusicAudioManager.PlayMusic(currentMusicToken, loop, effectFlags);
+                        mainMusicAudioManager.PlayMusic(currentMusicToken, loop, effectFlags, networkClient.ServerAssetUrl);
                     }
 
                     RefreshMusicListForCurrentClient();

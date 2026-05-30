@@ -560,7 +560,7 @@ namespace OceanyaClient.Features.Viewport
                         return;
                     }
 
-                    audioManager.PlayAmbientMusic(channel, songPath, loop);
+                    audioManager.PlayAmbientMusic(channel, songPath, loop, messageSourceClient?.ServerAssetUrl);
                 });
                 return;
             }
@@ -583,7 +583,7 @@ namespace OceanyaClient.Features.Viewport
                     return;
                 }
 
-                audioManager.PlayMusic(songPath, loop, effectFlags);
+                audioManager.PlayMusic(songPath, loop, effectFlags, messageSourceClient?.ServerAssetUrl);
             });
         }
 

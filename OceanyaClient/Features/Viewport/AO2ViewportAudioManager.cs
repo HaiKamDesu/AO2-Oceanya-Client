@@ -214,9 +214,9 @@ namespace OceanyaClient.Features.Viewport
         /// Plays an AO2-style music token, applying the effect flags from the MC# packet.
         /// effectFlags bits: FADE_IN=1, FADE_OUT=2, SYNC_POS=4.
         /// </summary>
-        public void PlayMusic(string? token, bool loop = true, int effectFlags = 0)
+        public void PlayMusic(string? token, bool loop = true, int effectFlags = 0, string? serverAssetUrl = null)
         {
-            string? path = AO2ViewportAudioResolver.ResolveMusicPath(token);
+            string? path = AO2ViewportAudioResolver.ResolveMusicPath(token, serverAssetUrl);
             bool fadeOut = (effectFlags & 2) != 0;
             bool fadeIn = (effectFlags & 1) != 0;
             bool synchronize = (effectFlags & 4) != 0;
@@ -226,7 +226,9 @@ namespace OceanyaClient.Features.Viewport
                 if (AO2ViewportAudioResolver.IsStreamingUrl(token))
                     CustomConsole.Info($"[AUDIO] URL stream: {token}", Common.CustomConsole.LogCategory.MusicList);
                 else if (!string.IsNullOrWhiteSpace(path))
-                    CustomConsole.Info($"[AUDIO] Local file resolved: token={token} → {path}", Common.CustomConsole.LogCategory.MusicList);
+                    CustomConsole.Info(AO2ViewportAudioResolver.IsStreamingUrl(path)
+                        ? $"[AUDIO] Server asset stream: token={token} -> {path}"
+                        : $"[AUDIO] Local file resolved: token={token} -> {path}", Common.CustomConsole.LogCategory.MusicList);
                 else
                     CustomConsole.Warning($"[AUDIO] Token not found locally: {token}", category: Common.CustomConsole.LogCategory.MusicList);
             }
@@ -342,7 +344,7 @@ namespace OceanyaClient.Features.Viewport
         /// Passing a null or empty song path stops the channel.
         /// AO2 parity: MC# channel field &gt; 0 routes to ambient layers, independent of channel 0.
         /// </summary>
-        public void PlayAmbientMusic(int channel, string? songPath, bool loop)
+        public void PlayAmbientMusic(int channel, string? songPath, bool loop, string? serverAssetUrl = null)
         {
             if (channel <= 0)
             {
@@ -355,7 +357,7 @@ namespace OceanyaClient.Features.Viewport
                 return;
             }
 
-            string? path = AO2ViewportAudioResolver.ResolveMusicPath(songPath);
+            string? path = AO2ViewportAudioResolver.ResolveMusicPath(songPath, serverAssetUrl);
             if (string.IsNullOrWhiteSpace(path))
             {
                 return;

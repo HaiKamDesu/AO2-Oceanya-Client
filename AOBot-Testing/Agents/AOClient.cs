@@ -778,7 +778,6 @@ namespace AOBot_Testing.Agents
             }
             else if (message.StartsWith("MS#"))
             {
-                CustomConsole.Info("Incoming IC packet: " + message, Common.CustomConsole.LogCategory.Network);
                 ICMessage? icMessage = ICMessage.FromConsoleLine(message);
                 if (icMessage != null)
                 {
@@ -2564,6 +2563,7 @@ namespace AOBot_Testing.Agents
         {
             if (transport != null && transport.IsConnected)
             {
+                LogNetworkPacket("OUT", packet);
                 await transport.SendPacketAsync(packet, CancellationToken.None);
             }
             else
@@ -2592,12 +2592,48 @@ namespace AOBot_Testing.Agents
                 string? message = await transport.ReceivePacketAsync(cancellationToken);
                 if (!string.IsNullOrEmpty(message))
                 {
+                    LogNetworkPacket("IN", message);
                     await HandleMessage(message);
                     return message;
                 }
             }
 
             return string.Empty;
+        }
+
+        private static void LogNetworkPacket(string direction, string packet)
+        {
+            string opcode = GetPacketOpcode(packet);
+            string label = opcode switch
+            {
+                "MS" => "IC",
+                "CT" => "OOC",
+                "MC" => "Music/Area",
+                "RT" => "Testimony",
+                "LE" => "Evidence",
+                "ASS" => "AssetUrl",
+                "SM" or "FM" => "MusicList",
+                "FA" or "ARUP" or "RM" => "AreaList",
+                "SC" or "CharsCheck" or "CC" or "PV" => "Character",
+                "FL" => "FeatureFlags",
+                "ID" or "HI" or "PN" or "DONE" or "decryptor" or "askchaa" => "Handshake",
+                _ => "Packet"
+            };
+
+            CustomConsole.Info($"Packet {direction} [{opcode}/{label}] {packet}", Common.CustomConsole.LogCategory.Network);
+        }
+
+        private static string GetPacketOpcode(string packet)
+        {
+            if (string.IsNullOrWhiteSpace(packet))
+            {
+                return "EMPTY";
+            }
+
+            int index = packet.IndexOf('#');
+            return index <= 0
+                ? packet.Trim()
+                : packet.Substring(0, index).Trim();
         }
 
         private async Task ListenForMessages()

@@ -55,6 +55,10 @@ namespace Common
         /// </summary>
         public record LogEntry(string Text, LogLevel Level, LogCategory Category, DateTime Timestamp);
 
+        public const int MaxStoredEntries = 1_000_000;
+        private const int StoredEntryTrimBatch = 10_000;
+        private static readonly object syncRoot = new object();
+
         /// <summary>
         /// Collection of raw formatted log strings (kept for backward compat / test capture)
         /// </summary>
@@ -75,6 +79,14 @@ namespace Common
         /// </summary>
         public static Action<LogEntry>? OnLogEntry;
 
+        public static List<LogEntry> GetLogEntriesSnapshot()
+        {
+            lock (syncRoot)
+            {
+                return new List<LogEntry>(logEntries);
+            }
+        }
+
         /// <summary>
         /// Base method for all logging - writes a message to the console with timestamp
         /// </summary>
@@ -84,7 +96,11 @@ namespace Common
             Console.WriteLine(timestampedMessage);
             System.Diagnostics.Debug.WriteLine(timestampedMessage);
 
-            lines.Add(timestampedMessage);
+            lock (syncRoot)
+            {
+                lines.Add(timestampedMessage);
+                TrimStoredLinesIfNeeded();
+            }
             OnWriteLine?.Invoke(timestampedMessage);
         }
 
@@ -114,13 +130,17 @@ namespace Common
             }
 
             var entry = new LogEntry(formattedMessage, level, category, DateTime.Now);
-            logEntries.Add(entry);
+            AddStoredEntry(entry);
             OnLogEntry?.Invoke(entry);
 
             string timestampedMessage = $"[{entry.Timestamp:yyyy-MM-dd HH:mm:ss}] {formattedMessage}";
             Console.WriteLine(timestampedMessage);
             System.Diagnostics.Debug.WriteLine(timestampedMessage);
-            lines.Add(timestampedMessage);
+            lock (syncRoot)
+            {
+                lines.Add(timestampedMessage);
+                TrimStoredLinesIfNeeded();
+            }
             OnWriteLine?.Invoke(timestampedMessage);
 
             if (exception != null)
@@ -150,14 +170,42 @@ namespace Common
         private static void LogExceptionLine(string text, LogLevel level, LogCategory category, DateTime timestamp)
         {
             var entry = new LogEntry(text, level, category, timestamp);
-            logEntries.Add(entry);
+            AddStoredEntry(entry);
             OnLogEntry?.Invoke(entry);
 
             string timestampedMessage = $"[{timestamp:yyyy-MM-dd HH:mm:ss}] {text}";
             Console.WriteLine(timestampedMessage);
             System.Diagnostics.Debug.WriteLine(timestampedMessage);
-            lines.Add(timestampedMessage);
+            lock (syncRoot)
+            {
+                lines.Add(timestampedMessage);
+                TrimStoredLinesIfNeeded();
+            }
             OnWriteLine?.Invoke(timestampedMessage);
+        }
+
+        private static void AddStoredEntry(LogEntry entry)
+        {
+            lock (syncRoot)
+            {
+                logEntries.Add(entry);
+                if (logEntries.Count > MaxStoredEntries)
+                {
+                    int removeCount = Math.Min(StoredEntryTrimBatch, logEntries.Count - MaxStoredEntries);
+                    logEntries.RemoveRange(0, removeCount);
+                }
+            }
+        }
+
+        private static void TrimStoredLinesIfNeeded()
+        {
+            if (lines.Count <= MaxStoredEntries)
+            {
+                return;
+            }
+
+            int removeCount = Math.Min(StoredEntryTrimBatch, lines.Count - MaxStoredEntries);
+            lines.RemoveRange(0, removeCount);
         }
 
         /// <summary>

@@ -1,5 +1,10 @@
 using AOBot_Testing.Agents;
+using Common;
 using NUnit.Framework;
+using OceanyaClient.Features.Viewport;
+using System.Collections.Generic;
+using System.IO;
+using System.Reflection;
 using System.Threading.Tasks;
 
 namespace UnitTests;
@@ -28,6 +33,92 @@ public class MusicPacketTests
             Assert.That(eventFired, Is.True);
             Assert.That(capturedSong, Is.EqualTo("pwr/trial.mp3"));
         });
+    }
+
+    [Test]
+    public void ResolveMusicPath_MissingLocalServerMusic_StreamsFromServerAssetUrl()
+    {
+        List<string>? originalBaseFolders = Globals.BaseFolders;
+        string tempRoot = Path.Combine(Path.GetTempPath(), "OceanyaMusicAssetUrlTest_" + Path.GetRandomFileName());
+
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(tempRoot, "sounds", "music"));
+            Globals.BaseFolders = new List<string> { tempRoot };
+
+            string? resolved = AO2ViewportAudioResolver.ResolveMusicPath(
+                "pwr/trial.mp3",
+                "https://assets.example.test/base");
+
+            Assert.That(resolved, Is.EqualTo("https://assets.example.test/base/sounds/music/pwr/trial.mp3"));
+        }
+        finally
+        {
+            Globals.BaseFolders = originalBaseFolders;
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    [Test]
+    public void ResolveMusicPath_LocalMusicWinsOverServerAssetUrl()
+    {
+        List<string>? originalBaseFolders = Globals.BaseFolders;
+        string tempRoot = Path.Combine(Path.GetTempPath(), "OceanyaMusicLocalWinsTest_" + Path.GetRandomFileName());
+        string localMusic = Path.Combine(tempRoot, "sounds", "music", "pwr", "trial.mp3");
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(localMusic)!);
+            File.WriteAllBytes(localMusic, new byte[] { 0 });
+            Globals.BaseFolders = new List<string> { tempRoot };
+
+            string? resolved = AO2ViewportAudioResolver.ResolveMusicPath(
+                "pwr/trial.mp3",
+                "https://assets.example.test/base/");
+
+            Assert.That(resolved, Is.EqualTo(localMusic));
+        }
+        finally
+        {
+            Globals.BaseFolders = originalBaseFolders;
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    [Test]
+    public void NetworkPacketLog_LabelsMusicPacketAndKeepsRawPacket()
+    {
+        List<CustomConsole.LogEntry> originalEntries = CustomConsole.GetLogEntriesSnapshot();
+        try
+        {
+            CustomConsole.logEntries.Clear();
+            MethodInfo? logMethod = typeof(AOClient).GetMethod(
+                "LogNetworkPacket",
+                BindingFlags.NonPublic | BindingFlags.Static);
+
+            Assert.That(logMethod, Is.Not.Null);
+            logMethod!.Invoke(null, new object[] { "IN", "MC#pwr/trial.mp3#0#showname#0#0#0#%" });
+
+            List<CustomConsole.LogEntry> entries = CustomConsole.GetLogEntriesSnapshot();
+            Assert.That(entries, Has.Count.EqualTo(1));
+            Assert.Multiple(() =>
+            {
+                Assert.That(entries[0].Category, Is.EqualTo(CustomConsole.LogCategory.Network));
+                Assert.That(entries[0].Text, Does.Contain("Packet IN [MC/Music/Area]"));
+                Assert.That(entries[0].Text, Does.Contain("MC#pwr/trial.mp3#0#showname#0#0#0#%"));
+            });
+        }
+        finally
+        {
+            CustomConsole.logEntries.Clear();
+            CustomConsole.logEntries.AddRange(originalEntries);
+        }
     }
 
     [Test]

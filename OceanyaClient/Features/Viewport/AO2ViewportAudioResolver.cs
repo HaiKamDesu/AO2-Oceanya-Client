@@ -79,14 +79,32 @@ namespace OceanyaClient.Features.Viewport
         /// Uses exact token matching so Oceanya has the same play/no-play behavior as AO2.
         /// Direct HTTP/HTTPS/FTP URLs are returned as-is for URL streaming.
         /// </summary>
-        public static string? ResolveMusicPath(string? token)
+        public static string? ResolveMusicPath(string? token, string? serverAssetUrl = null)
         {
             if (IsStreamingUrl(token))
                 return token;
-            return ResolveSoundPath("music", token);
+
+            string? localPath = ResolveSoundPath("music", token);
+            if (!string.IsNullOrWhiteSpace(localPath))
+            {
+                return localPath;
+            }
+
+            string normalizedToken = token?.Trim().Replace('\\', '/') ?? string.Empty;
+            string normalizedAssetUrl = serverAssetUrl?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(normalizedToken)
+                || string.Equals(normalizedToken, "~stop.mp3", StringComparison.OrdinalIgnoreCase)
+                || string.IsNullOrWhiteSpace(normalizedAssetUrl))
+            {
+                return null;
+            }
+
+            // AO2 parity: missing server-listed music streams from ASS# asset_url + sounds/music/<token>.
+            string separator = normalizedAssetUrl.EndsWith("/", StringComparison.Ordinal) ? string.Empty : "/";
+            return (normalizedAssetUrl + separator + "sounds/music/" + normalizedToken).ToLowerInvariant();
         }
 
-        public static string ResolveMusicDisplayPath(string? token)
+        public static string ResolveMusicDisplayPath(string? token, string? serverAssetUrl = null)
         {
             string normalized = token?.Trim().Replace('\\', '/') ?? string.Empty;
             if (string.IsNullOrWhiteSpace(normalized))
@@ -99,7 +117,7 @@ namespace OceanyaClient.Features.Viewport
                 return normalized;
             }
 
-            string? resolved = ResolveMusicPath(normalized);
+            string? resolved = ResolveMusicPath(normalized, serverAssetUrl);
             if (!string.IsNullOrWhiteSpace(resolved))
             {
                 return resolved;
