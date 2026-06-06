@@ -232,6 +232,45 @@ namespace OceanyaClient
             return false;
         }
 
+        public static bool TryEstimateAnimationDuration(
+            string? path,
+            TimeSpan maximumFrameDuration,
+            out TimeSpan duration)
+        {
+            duration = TimeSpan.Zero;
+            string? resolvedPath = ResolveAo2ImagePath(path);
+            if (string.IsNullOrWhiteSpace(resolvedPath) || !File.Exists(resolvedPath))
+            {
+                return false;
+            }
+
+            if (!TryDecodeAnimationFrames(resolvedPath, out List<BitmapSource>? frames, out List<TimeSpan>? durations)
+                || frames == null
+                || durations == null
+                || frames.Count <= 1
+                || durations.Count != frames.Count)
+            {
+                return false;
+            }
+
+            double maximumFrameMilliseconds = maximumFrameDuration.TotalMilliseconds;
+            double totalMilliseconds = durations.Sum(frameDuration =>
+            {
+                double milliseconds = Math.Max(0, frameDuration.TotalMilliseconds);
+                return maximumFrameMilliseconds > 0
+                    ? Math.Min(maximumFrameMilliseconds, milliseconds)
+                    : milliseconds;
+            });
+
+            if (totalMilliseconds <= 0)
+            {
+                return false;
+            }
+
+            duration = TimeSpan.FromMilliseconds(totalMilliseconds);
+            return true;
+        }
+
         public static bool TryCreateAnimationPlayer(
             string? sourcePath,
             bool loop,

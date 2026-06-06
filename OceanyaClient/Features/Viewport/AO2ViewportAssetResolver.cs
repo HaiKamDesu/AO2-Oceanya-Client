@@ -52,6 +52,7 @@ namespace OceanyaClient.Features.Viewport
 
         private static readonly string[] ImageExtensions = { ".webp", ".apng", ".gif", ".png", ".jpg", ".jpeg" };
         private static readonly TimeSpan DefaultShoutDuration = TimeSpan.FromMilliseconds(724);
+        private static readonly TimeSpan MaximumShoutFrameDuration = TimeSpan.FromMilliseconds(1500);
         private static readonly TimeSpan DefaultPreAnimationDuration = TimeSpan.FromMilliseconds(1000);
         private static readonly Dictionary<string, CachedImageSize> ImageSizeCache = new(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, ParsedDesignIni> DesignIniCache = new(StringComparer.OrdinalIgnoreCase);
@@ -960,6 +961,27 @@ namespace OceanyaClient.Features.Viewport
         /// Returns the approximate duration used before continuing after a static shout overlay.
         /// </summary>
         public static TimeSpan GetShoutDuration() => DefaultShoutDuration;
+
+        /// <summary>
+        /// Returns AO2-style shout playback time: animated overlays play all frames,
+        /// with each frame capped to AO2's 1500 ms maximum; static images use 724 ms.
+        /// </summary>
+        public static TimeSpan GetShoutDuration(
+            ICMessage.ShoutModifiers shoutModifier,
+            string? characterName,
+            string? miscName)
+        {
+            string? shoutPath = ResolveShoutOverlayImage(shoutModifier, characterName, miscName);
+            if (Ao2AnimationPreview.TryEstimateAnimationDuration(
+                    shoutPath,
+                    MaximumShoutFrameDuration,
+                    out TimeSpan animationDuration))
+            {
+                return animationDuration;
+            }
+
+            return DefaultShoutDuration;
+        }
 
         /// <summary>
         /// Returns the approximate preanimation duration from char.ini, or a fallback for static preview rendering.

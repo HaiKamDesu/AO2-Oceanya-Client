@@ -171,6 +171,37 @@ namespace UnitTests
             File.WriteAllBytes(filePath, new byte[0]);
         }
 
+        private static void WriteAnimatedGif(string filePath, IReadOnlyList<int> frameDurationsMs)
+        {
+            List<byte> bytes = new List<byte>
+            {
+                0x47, 0x49, 0x46, 0x38, 0x39, 0x61,
+                0x01, 0x00, 0x01, 0x00,
+                0x80, 0x00, 0x00,
+                0x00, 0x00, 0x00,
+                0xff, 0xff, 0xff
+            };
+
+            foreach (int durationMs in frameDurationsMs)
+            {
+                ushort delay = (ushort)Math.Max(0, durationMs / 10);
+                bytes.AddRange(new byte[]
+                {
+                    0x21, 0xf9, 0x04, 0x00,
+                    (byte)(delay & 0xff), (byte)(delay >> 8),
+                    0x00, 0x00,
+                    0x2c,
+                    0x00, 0x00, 0x00, 0x00,
+                    0x01, 0x00, 0x01, 0x00,
+                    0x00,
+                    0x02, 0x02, 0x44, 0x01, 0x00
+                });
+            }
+
+            bytes.Add(0x3b);
+            File.WriteAllBytes(filePath, bytes.ToArray());
+        }
+
         private CharacterFolder CreateViewportTestCharacter()
         {
             string characterDirectory = Path.Combine(_tempDir, "characters", "ViewportPhoenix");
@@ -1008,6 +1039,22 @@ namespace UnitTests
             Assert.That(
                 AO2ViewportAssetResolver.GetShoutDuration(),
                 Is.EqualTo(TimeSpan.FromMilliseconds(724)));
+        }
+
+        [Test]
+        public void Test_AO2ViewportAssetResolver_ShoutDurationUsesFullAnimationWithAo2FrameCap()
+        {
+            string themeDirectory = Path.Combine(_tempDir, "themes", "default");
+            Directory.CreateDirectory(themeDirectory);
+            string themeShoutPath = Path.Combine(themeDirectory, "objection_bubble.gif");
+            WriteAnimatedGif(themeShoutPath, new[] { 2000, 800 });
+
+            Assert.That(
+                AO2ViewportAssetResolver.GetShoutDuration(
+                    ICMessage.ShoutModifiers.Objection,
+                    null,
+                    null),
+                Is.EqualTo(TimeSpan.FromMilliseconds(2300)));
         }
 
         [Test]

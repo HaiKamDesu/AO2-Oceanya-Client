@@ -737,8 +737,13 @@ namespace OceanyaClient.Features.Viewport
 
             if (message.ShoutModifier != ICMessage.ShoutModifiers.Nothing)
             {
-                ShowShoutOverlay(message);
-                ScheduleContinuation(AO2ViewportAssetResolver.GetShoutDuration(), renderAo2Message);
+                IAnimationPlayer? shoutPlayer = ShowShoutOverlay(message);
+                string shoutMiscToken = AO2ViewportAssetResolver.ResolveCharacterChatToken(character);
+                TimeSpan shoutDuration = AO2ViewportAssetResolver.GetShoutDuration(
+                    message.ShoutModifier,
+                    message.Character,
+                    shoutMiscToken);
+                ScheduleShoutContinuation(shoutPlayer, shoutDuration, renderAo2Message, sequence);
                 return;
             }
 
@@ -1062,9 +1067,9 @@ namespace OceanyaClient.Features.Viewport
             }
         }
 
-        private void ShowShoutOverlay(ICMessage message)
+        private IAnimationPlayer? ShowShoutOverlay(ICMessage message)
         {
-            RenderShoutOverlay(message, ViewportPhase.Shout);
+            IAnimationPlayer? player = RenderShoutOverlay(message, ViewportPhase.Shout);
             if (ShouldPlayViewportAudio)
             {
                 string shoutToken = ResolveShoutSfxToken(message);
@@ -1076,6 +1081,7 @@ namespace OceanyaClient.Features.Viewport
             StopChatTextTimer();
             ChatPreview.Visibility = Visibility.Collapsed;
             ChatPreview.ShowMessage = false;
+            return player;
         }
 
         private void ClearScene()
@@ -1857,22 +1863,23 @@ namespace OceanyaClient.Features.Viewport
             Panel.SetZIndex(EffectImage, zIndex);
         }
 
-        private void RenderShoutOverlay(ICMessage? message, ViewportPhase phase)
+        private IAnimationPlayer? RenderShoutOverlay(ICMessage? message, ViewportPhase phase)
         {
             if (message == null || phase != ViewportPhase.Shout)
             {
                 StopAnimation(ShoutOverlayImage);
                 ShoutOverlayImage.Visibility = Visibility.Collapsed;
-                return;
+                return null;
             }
 
             string? shoutPath = AO2ViewportAssetResolver.ResolveShoutOverlayImage(
                 message.ShoutModifier,
                 message.Character,
                 AO2ViewportAssetResolver.ResolveCharacterChatToken(AO2ViewportAssetResolver.ResolveCharacter(message.Character)));
-            SetAnimatedImage(ShoutOverlayImage, shoutPath, !string.IsNullOrWhiteSpace(shoutPath), loop: false);
+            IAnimationPlayer? player = SetAnimatedImage(ShoutOverlayImage, shoutPath, !string.IsNullOrWhiteSpace(shoutPath), loop: false);
             ApplyHeightBasedShoutScaling();
             Panel.SetZIndex(ShoutOverlayImage, 9);
+            return player;
         }
 
         // AO2 parity: shout overlays scale so the image height fills the viewport height exactly,
@@ -2286,6 +2293,53 @@ namespace OceanyaClient.Features.Viewport
                 StopPendingMessageTimer();
                 continuation();
             };
+            pendingMessageTimer.Start();
+        }
+
+        private void ScheduleShoutContinuation(
+            IAnimationPlayer? shoutPlayer,
+            TimeSpan fallbackInterval,
+            Action continuation,
+            int sequence)
+        {
+            StopPendingMessageTimer();
+            if (shoutPlayer == null)
+            {
+                ScheduleContinuation(fallbackInterval, continuation);
+                return;
+            }
+
+            bool continued = false;
+            void ContinueOnce()
+            {
+                if (continued || sequence != messageSequence)
+                {
+                    return;
+                }
+
+                continued = true;
+                StopPendingMessageTimer();
+                shoutPlayer.PlaybackFinished -= OnPlaybackFinished;
+                continuation();
+            }
+
+            void OnPlaybackFinished()
+            {
+                if (!Dispatcher.CheckAccess())
+                {
+                    Dispatcher.BeginInvoke((Action)ContinueOnce);
+                    return;
+                }
+
+                ContinueOnce();
+            }
+
+            shoutPlayer.PlaybackFinished += OnPlaybackFinished;
+            pendingMessageTimer = new DispatcherTimer(DispatcherPriority.Normal, Dispatcher)
+            {
+                Interval = fallbackInterval + TimeSpan.FromMilliseconds(100)
+            };
+            pendingMessageTimer.Tick += (_, _) => ContinueOnce();
             pendingMessageTimer.Start();
         }
 
