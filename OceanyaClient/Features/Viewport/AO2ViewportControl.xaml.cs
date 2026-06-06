@@ -737,13 +737,24 @@ namespace OceanyaClient.Features.Viewport
 
             if (message.ShoutModifier != ICMessage.ShoutModifiers.Nothing)
             {
-                IAnimationPlayer? shoutPlayer = ShowShoutOverlay(message);
-                string shoutMiscToken = AO2ViewportAssetResolver.ResolveCharacterChatToken(character);
-                TimeSpan shoutDuration = AO2ViewportAssetResolver.GetShoutDuration(
-                    message.ShoutModifier,
-                    message.Character,
-                    shoutMiscToken);
-                ScheduleShoutContinuation(shoutPlayer, shoutDuration, renderAo2Message, sequence);
+                bool continuationScheduled = false;
+                ShowShoutOverlay(message, shoutPlayer =>
+                {
+                    if (continuationScheduled || sequence != messageSequence)
+                    {
+                        return;
+                    }
+
+                    continuationScheduled = true;
+                    if (shoutPlayer != null)
+                    {
+                        ScheduleShoutContinuation(shoutPlayer, renderAo2Message, sequence);
+                    }
+                    else
+                    {
+                        ScheduleContinuation(AO2ViewportAssetResolver.GetShoutDuration(), renderAo2Message);
+                    }
+                });
                 return;
             }
 
@@ -1067,9 +1078,9 @@ namespace OceanyaClient.Features.Viewport
             }
         }
 
-        private IAnimationPlayer? ShowShoutOverlay(ICMessage message)
+        private void ShowShoutOverlay(ICMessage message, Action<IAnimationPlayer?> onPlayerReady)
         {
-            IAnimationPlayer? player = RenderShoutOverlay(message, ViewportPhase.Shout);
+            RenderShoutOverlay(message, ViewportPhase.Shout, onPlayerReady);
             if (ShouldPlayViewportAudio)
             {
                 string shoutToken = ResolveShoutSfxToken(message);
@@ -1081,7 +1092,6 @@ namespace OceanyaClient.Features.Viewport
             StopChatTextTimer();
             ChatPreview.Visibility = Visibility.Collapsed;
             ChatPreview.ShowMessage = false;
-            return player;
         }
 
         private void ClearScene()
@@ -1269,6 +1279,224 @@ namespace OceanyaClient.Features.Viewport
             image.Source = source;
             image.Visibility = source != null ? Visibility.Visible : Visibility.Collapsed;
             return null;
+        }
+
+        private void SetShoutAnimatedImageAsync(
+            Image image,
+            string? path,
+            bool visible,
+            bool loop = false,
+            Action<IAnimationPlayer?>? onPlayerReady = null)
+        {
+            CancelPendingLoad(image);
+
+            if (!visible || string.IsNullOrWhiteSpace(path))
+            {
+                StopAnimation(image);
+                image.Source = null;
+                image.Visibility = Visibility.Collapsed;
+                onPlayerReady?.Invoke(null);
+                return;
+            }
+
+            string? resolvedPath = Ao2AnimationPreview.ResolveAo2ImagePath(path);
+            if (string.IsNullOrWhiteSpace(resolvedPath) || !File.Exists(resolvedPath))
+            {
+                IAnimationPlayer? syncPlayer = SetAnimatedImage(image, path, visible, loop);
+                ApplyHeightBasedShoutScaling();
+                onPlayerReady?.Invoke(syncPlayer);
+                return;
+            }
+
+            DateTime lastWriteTimeUtc = File.GetLastWriteTimeUtc(resolvedPath);
+            bool isAnimated = Ao2AnimationPreview.IsPotentialAnimatedPath(resolvedPath);
+            int targetHeight = AO2ViewportAssetResolver.ViewportHeight;
+            bool isCached = isAnimated && Ao2AnimationPreview.IsAnimationCached(
+                resolvedPath,
+                lastWriteTimeUtc,
+                targetHeight,
+                cacheDimensionIsTargetHeight: true);
+
+            if (!isAnimated)
+            {
+                IAnimationPlayer? syncPlayer = SetAnimatedImage(image, resolvedPath, visible, loop);
+                ApplyHeightBasedShoutScaling();
+                onPlayerReady?.Invoke(syncPlayer);
+                return;
+            }
+
+            if (isCached)
+            {
+                StopAnimation(image);
+                if (Ao2AnimationPreview.TryCreateAnimationPlayerFromCachedTargetHeight(
+                        resolvedPath,
+                        loop,
+                        targetHeight,
+                        out IAnimationPlayer? cachedPlayer)
+                    && cachedPlayer != null)
+                {
+                    animationPlayers[image] = cachedPlayer;
+                    cachedPlayer.FrameChanged += frame =>
+                    {
+                        image.Source = frame;
+                        ApplyHeightBasedShoutScaling();
+                    };
+
+                    image.Source = cachedPlayer.CurrentFrame;
+                    ApplyHeightBasedShoutScaling();
+                    image.Visibility = Visibility.Visible;
+                    onPlayerReady?.Invoke(cachedPlayer);
+                    return;
+                }
+            }
+
+            StopAnimation(image);
+            image.Source = null;
+            image.Visibility = Visibility.Collapsed;
+
+            CancellationTokenSource cts = new CancellationTokenSource();
+            pendingAsyncLoads[image] = cts;
+            string capturedPath = resolvedPath;
+            bool capturedLoop = loop;
+            Action<IAnimationPlayer?>? capturedOnPlayerReady = onPlayerReady;
+            string capturedExt = Path.GetExtension(capturedPath).ToLowerInvariant();
+
+            if (capturedExt == ".webp" || capturedExt == ".gif")
+            {
+                BitmapFrameAnimationPlayer streamPlayer = BitmapFrameAnimationPlayer.CreateForStreaming(capturedLoop);
+                bool firstFrameDispatched = false;
+
+                Task.Run(() =>
+                {
+                    void HandleFrame(BitmapSource frame, TimeSpan duration)
+                    {
+                        if (cts.Token.IsCancellationRequested)
+                        {
+                            return;
+                        }
+
+                        streamPlayer.EnqueueStreamedFrame(frame, duration);
+                        if (firstFrameDispatched)
+                        {
+                            return;
+                        }
+
+                        firstFrameDispatched = true;
+                        Dispatcher.BeginInvoke(() =>
+                        {
+                            if (!pendingAsyncLoads.TryGetValue(image, out CancellationTokenSource? currentCts)
+                                || !ReferenceEquals(currentCts, cts))
+                            {
+                                return;
+                            }
+
+                            StopAnimation(image);
+                            animationPlayers[image] = streamPlayer;
+                            streamPlayer.FrameChanged += frameSource =>
+                            {
+                                image.Source = frameSource;
+                                ApplyHeightBasedShoutScaling();
+                            };
+
+                            streamPlayer.BeginStreamedPlayback();
+                            image.Source = streamPlayer.CurrentFrame;
+                            ApplyHeightBasedShoutScaling();
+                            image.Visibility = Visibility.Visible;
+                            capturedOnPlayerReady?.Invoke(streamPlayer);
+                        });
+                    }
+
+                    _ = capturedExt == ".webp"
+                        ? Ao2AnimationPreview.TryStreamWebPFrames(
+                            capturedPath,
+                            HandleFrame,
+                            cts.Token,
+                            targetHeight)
+                        : Ao2AnimationPreview.TryStreamGifFrames(
+                            capturedPath,
+                            HandleFrame,
+                            cts.Token,
+                            targetHeight);
+
+                    streamPlayer.SignalStreamingComplete();
+                    bool dispatched = firstFrameDispatched;
+                    Dispatcher.BeginInvoke(() =>
+                    {
+                        if (pendingAsyncLoads.TryGetValue(image, out CancellationTokenSource? currentCts)
+                            && ReferenceEquals(currentCts, cts))
+                        {
+                            pendingAsyncLoads.Remove(image);
+                            cts.Dispose();
+                        }
+
+                        if (!dispatched)
+                        {
+                            ImageSource? source = AO2ViewportAssetResolver.LoadImage(capturedPath, decodePixelWidth: 0);
+                            image.Source = source;
+                            ApplyHeightBasedShoutScaling();
+                            image.Visibility = source != null ? Visibility.Visible : Visibility.Collapsed;
+                            capturedOnPlayerReady?.Invoke(null);
+                        }
+                    });
+                });
+
+                return;
+            }
+
+            Task.Run(() =>
+            {
+                Ao2AnimationPreview.TryCreateAnimationPlayer(
+                    capturedPath,
+                    capturedLoop,
+                    out IAnimationPlayer? player,
+                    usePreviewLimits: false,
+                    maxDimensionOverride: null);
+                return player;
+            }).ContinueWith(task =>
+            {
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (!pendingAsyncLoads.TryGetValue(image, out CancellationTokenSource? currentCts)
+                        || !ReferenceEquals(currentCts, cts))
+                    {
+                        return;
+                    }
+
+                    pendingAsyncLoads.Remove(image);
+                    cts.Dispose();
+
+                    if (task.IsFaulted || task.IsCanceled)
+                    {
+                        capturedOnPlayerReady?.Invoke(null);
+                        return;
+                    }
+
+                    StopAnimation(image);
+                    IAnimationPlayer? player = task.Result;
+                    if (player != null)
+                    {
+                        animationPlayers[image] = player;
+                        player.FrameChanged += frame =>
+                        {
+                            image.Source = frame;
+                            ApplyHeightBasedShoutScaling();
+                        };
+
+                        image.Source = player.CurrentFrame;
+                        ApplyHeightBasedShoutScaling();
+                        image.Visibility = Visibility.Visible;
+                    }
+                    else
+                    {
+                        ImageSource? source = AO2ViewportAssetResolver.LoadImage(capturedPath, decodePixelWidth: 0);
+                        image.Source = source;
+                        ApplyHeightBasedShoutScaling();
+                        image.Visibility = source != null ? Visibility.Visible : Visibility.Collapsed;
+                    }
+
+                    capturedOnPlayerReady?.Invoke(player);
+                });
+            }, TaskScheduler.Default);
         }
 
         /// <summary>
@@ -1863,23 +2091,26 @@ namespace OceanyaClient.Features.Viewport
             Panel.SetZIndex(EffectImage, zIndex);
         }
 
-        private IAnimationPlayer? RenderShoutOverlay(ICMessage? message, ViewportPhase phase)
+        private void RenderShoutOverlay(
+            ICMessage? message,
+            ViewportPhase phase,
+            Action<IAnimationPlayer?>? onPlayerReady = null)
         {
             if (message == null || phase != ViewportPhase.Shout)
             {
                 StopAnimation(ShoutOverlayImage);
                 ShoutOverlayImage.Visibility = Visibility.Collapsed;
-                return null;
+                onPlayerReady?.Invoke(null);
+                return;
             }
 
             string? shoutPath = AO2ViewportAssetResolver.ResolveShoutOverlayImage(
                 message.ShoutModifier,
                 message.Character,
                 AO2ViewportAssetResolver.ResolveCharacterChatToken(AO2ViewportAssetResolver.ResolveCharacter(message.Character)));
-            IAnimationPlayer? player = SetAnimatedImage(ShoutOverlayImage, shoutPath, !string.IsNullOrWhiteSpace(shoutPath), loop: false);
+            SetShoutAnimatedImageAsync(ShoutOverlayImage, shoutPath, !string.IsNullOrWhiteSpace(shoutPath), loop: false, onPlayerReady: onPlayerReady);
             ApplyHeightBasedShoutScaling();
             Panel.SetZIndex(ShoutOverlayImage, 9);
-            return player;
         }
 
         // AO2 parity: shout overlays scale so the image height fills the viewport height exactly,
@@ -2298,14 +2529,13 @@ namespace OceanyaClient.Features.Viewport
 
         private void ScheduleShoutContinuation(
             IAnimationPlayer? shoutPlayer,
-            TimeSpan fallbackInterval,
             Action continuation,
             int sequence)
         {
             StopPendingMessageTimer();
             if (shoutPlayer == null)
             {
-                ScheduleContinuation(fallbackInterval, continuation);
+                ScheduleContinuation(AO2ViewportAssetResolver.GetShoutDuration(), continuation);
                 return;
             }
 
@@ -2335,12 +2565,6 @@ namespace OceanyaClient.Features.Viewport
             }
 
             shoutPlayer.PlaybackFinished += OnPlaybackFinished;
-            pendingMessageTimer = new DispatcherTimer(DispatcherPriority.Normal, Dispatcher)
-            {
-                Interval = fallbackInterval + TimeSpan.FromMilliseconds(100)
-            };
-            pendingMessageTimer.Tick += (_, _) => ContinueOnce();
-            pendingMessageTimer.Start();
         }
 
         private void StopPendingMessageTimer()
