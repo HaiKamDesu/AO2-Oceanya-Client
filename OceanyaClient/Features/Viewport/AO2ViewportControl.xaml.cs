@@ -1550,16 +1550,51 @@ namespace OceanyaClient.Features.Viewport
                 characterDecodeTargetHeight,
                 cacheDimensionIsTargetHeight: true);
 
-            // Fast path: static image or viewport-sized frames already cached — assign synchronously.
+            // Fast path: static image already cached — assign synchronously.
             if (!isAnimated)
             {
-                IAnimationPlayer? syncPlayer = SetAnimatedImage(image, resolvedPath, visible, loop, onFrameChanged);
-                if (syncPlayer != null)
+                if (Ao2AnimationPreview.TryLoadCachedStaticPreviewImage(resolvedPath, decodePixelWidth: 0, out ImageSource? cachedStatic)
+                    && cachedStatic != null)
                 {
-                    syncPlayer.FrameChanged += _ => ApplyHeightBasedCharacterGeometry(image);
+                    StopAnimation(image);
+                    image.Source = cachedStatic;
+                    ApplyHeightBasedCharacterGeometry(image);
+                    image.Visibility = Visibility.Visible;
+                    onPlayerReady?.Invoke(null);
+                    return;
                 }
+
+                StopAnimation(image);
+                image.Source = null;
+                image.Visibility = Visibility.Collapsed;
+
+                CancellationTokenSource staticCts = new CancellationTokenSource();
+                pendingAsyncLoads[image] = staticCts;
+                string capturedStaticPath = resolvedPath;
+                Action<IAnimationPlayer?>? capturedStaticOnPlayerReady = onPlayerReady;
+                Task.Run(() => AO2ViewportAssetResolver.LoadImage(capturedStaticPath, decodePixelWidth: 0))
+                    .ContinueWith(task =>
+                    {
+                        Dispatcher.BeginInvoke(() =>
+                        {
+                            if (!pendingAsyncLoads.TryGetValue(image, out CancellationTokenSource? currentCts)
+                                || !ReferenceEquals(currentCts, staticCts))
+                            {
+                                return;
+                            }
+
+                            pendingAsyncLoads.Remove(image);
+                            staticCts.Dispose();
+
+                            ImageSource? source = task.IsFaulted || task.IsCanceled ? null : task.Result;
+                            image.Source = source;
+                            ApplyHeightBasedCharacterGeometry(image);
+                            image.Visibility = source != null ? Visibility.Visible : Visibility.Collapsed;
+                            capturedStaticOnPlayerReady?.Invoke(null);
+                        });
+                    }, TaskScheduler.Default);
+
                 ApplyHeightBasedCharacterGeometry(image);
-                onPlayerReady?.Invoke(syncPlayer);
                 return;
             }
 
@@ -1899,7 +1934,70 @@ namespace OceanyaClient.Features.Viewport
                 return null;
             }
 
-            // Sync path: already cached or non-animated (instant decode).
+            ImageSource? cachedStatic = null;
+            bool hasCachedStatic = !isAnimated
+                && Ao2AnimationPreview.TryLoadCachedStaticPreviewImage(path, decodePixelWidth: 0, out cachedStatic)
+                && cachedStatic != null;
+            if (!isAnimated && !hasCachedStatic)
+            {
+                string capturedPath = path;
+                DateTime capturedWrite = lastWriteTimeUtc;
+                double capturedLeft = placement.Left;
+                double capturedTop = placement.Top;
+                double capturedWidth = placement.Width;
+                double capturedHeight = placement.Height;
+                Stretch capturedStretch = stretch;
+
+                StopAnimation(image);
+                image.Source = null;
+                image.Visibility = Visibility.Collapsed;
+
+                CancellationTokenSource cts = new CancellationTokenSource();
+                pendingAsyncLoads[image] = cts;
+
+                Task.Run(() => AO2ViewportAssetResolver.LoadImage(capturedPath, decodePixelWidth: 0))
+                    .ContinueWith(task =>
+                    {
+                        Dispatcher.BeginInvoke(() =>
+                        {
+                            if (!pendingAsyncLoads.TryGetValue(image, out CancellationTokenSource? currentCts)
+                                || !ReferenceEquals(currentCts, cts))
+                            {
+                                return;
+                            }
+
+                            pendingAsyncLoads.Remove(image);
+                            cts.Dispose();
+
+                            image.Width = capturedWidth;
+                            image.Height = capturedHeight;
+                            image.Stretch = capturedStretch;
+                            Canvas.SetLeft(image, capturedLeft);
+                            Canvas.SetTop(image, capturedTop);
+
+                            ImageSource? source = task.IsFaulted || task.IsCanceled ? null : task.Result;
+                            image.Source = source;
+                            image.Visibility = source != null ? Visibility.Visible : Visibility.Collapsed;
+                            if (source != null)
+                            {
+                                placedImageStates[image] = new PlacedImageState(capturedPath, capturedWrite);
+                            }
+                        });
+                    }, TaskScheduler.Default);
+
+                return null;
+            }
+
+            if (hasCachedStatic)
+            {
+                StopAnimation(image);
+                image.Source = cachedStatic;
+                image.Visibility = Visibility.Visible;
+                placedImageStates[image] = new PlacedImageState(path, lastWriteTimeUtc);
+                return null;
+            }
+
+            // Sync path: already cached animation.
             IAnimationPlayer? syncPlayer = SetAnimatedImage(image, path, true);
             if (image.Source != null)
             {

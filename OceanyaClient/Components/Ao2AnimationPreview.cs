@@ -199,6 +199,20 @@ namespace OceanyaClient
             return result;
         }
 
+        public static bool TryLoadCachedStaticPreviewImage(string? path, int decodePixelWidth, out ImageSource? image, int maxDimension = MaxAnimatedPreviewDimension)
+        {
+            image = null;
+            string? resolvedPath = ResolveAo2ImagePath(path);
+            if (string.IsNullOrWhiteSpace(resolvedPath) || !File.Exists(resolvedPath))
+            {
+                return false;
+            }
+
+            int normalizedDecodeWidth = Math.Max(0, decodePixelWidth);
+            return TryGetCachedStaticPreview(resolvedPath, normalizedDecodeWidth, maxDimension, out image)
+                && image != null;
+        }
+
         public static bool TryEstimateAnimationDuration(string? path, out TimeSpan duration)
         {
             duration = TimeSpan.Zero;
