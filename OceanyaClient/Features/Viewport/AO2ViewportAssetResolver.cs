@@ -297,7 +297,7 @@ namespace OceanyaClient.Features.Viewport
 
             foreach (string candidate in new[] { "(c)" + animationName, "(c)/" + animationName })
             {
-                string resolved = CharacterAssetPathResolver.ResolveCharacterAssetPath(characterDirectory, candidate);
+                string resolved = ResolveCharacterImageAsset(character, candidate);
                 if (!string.IsNullOrWhiteSpace(resolved))
                 {
                     return new ResolvedCharacterAnimation(resolved, candidate);
@@ -352,7 +352,7 @@ namespace OceanyaClient.Features.Viewport
 
             foreach (string candidate in orderedCandidates)
             {
-                string resolved = CharacterAssetPathResolver.ResolveCharacterAssetPath(characterDirectory, candidate);
+                string resolved = ResolveCharacterImageAsset(character, candidate);
                 if (!string.IsNullOrWhiteSpace(resolved))
                 {
                     return new ResolvedCharacterAnimation(resolved, candidate);
@@ -434,7 +434,7 @@ namespace OceanyaClient.Features.Viewport
                 return new ResolvedCharacterAnimation(null, string.Empty);
             }
 
-            string resolved = CharacterAssetPathResolver.ResolveCharacterAssetPath(characterDirectory, normalizedPreAnim);
+            string resolved = ResolveCharacterImageAsset(character, normalizedPreAnim);
             return string.IsNullOrWhiteSpace(resolved)
                 ? new ResolvedCharacterAnimation(null, string.Empty)
                 : new ResolvedCharacterAnimation(resolved, normalizedPreAnim);
@@ -709,9 +709,9 @@ namespace OceanyaClient.Features.Viewport
         public static string? ResolveSpeedlinesImage(string? position, CharacterFolder? character)
         {
             string name = ResolveSpeedlinesName(position);
-            foreach (string root in EnumerateMiscRoots(character?.configINI.EffectsFolder))
+            foreach (string relativeStem in EnumerateMiscRelativeImageStems(name, character?.configINI.EffectsFolder))
             {
-                string? resolved = ResolveImageStem(root, name);
+                string? resolved = ResolveImageVfs(relativeStem);
                 if (!string.IsNullOrWhiteSpace(resolved))
                 {
                     return resolved;
@@ -764,15 +764,12 @@ namespace OceanyaClient.Features.Viewport
                 ? characterFolder.Name.Trim()
                 : characterName?.Trim() ?? string.Empty;
             string misc = miscName?.Trim() ?? string.Empty;
-            foreach (string baseFolder in Globals.BaseFolders ?? new List<string>())
+            foreach (string relativeStem in EnumerateAo2ImageAssetRelativeStems(stem, character, misc))
             {
-                foreach (string root in EnumerateAo2ImageAssetRoots(baseFolder, character, misc))
+                string? resolved = ResolveImageVfs(relativeStem);
+                if (!string.IsNullOrWhiteSpace(resolved))
                 {
-                    string? resolved = ResolveImageStem(root, stem);
-                    if (!string.IsNullOrWhiteSpace(resolved))
-                    {
-                        return resolved;
-                    }
+                    return resolved;
                 }
             }
 
@@ -798,15 +795,12 @@ namespace OceanyaClient.Features.Viewport
             }
 
             string bgMisc = GetBackgroundMiscFolder(backgroundName);
-            foreach (string baseFolder in Globals.BaseFolders ?? new List<string>())
+            foreach (string relativeStem in EnumerateWtceImageRelativeStems(assetStem, bgMisc))
             {
-                foreach (string root in EnumerateWtceImageRoots(baseFolder, bgMisc))
+                string? resolved = ResolveImageVfs(relativeStem);
+                if (!string.IsNullOrWhiteSpace(resolved))
                 {
-                    string? resolved = ResolveImageStem(root, assetStem);
-                    if (!string.IsNullOrWhiteSpace(resolved))
-                    {
-                        return resolved;
-                    }
+                    return resolved;
                 }
             }
 
@@ -825,15 +819,12 @@ namespace OceanyaClient.Features.Viewport
 
             string stem = "sticker/" + characterName.Trim();
             string misc = miscName?.Trim() ?? string.Empty;
-            foreach (string baseFolder in Globals.BaseFolders ?? new List<string>())
+            foreach (string relativeStem in EnumerateAo2ImageAssetRelativeStems(stem, string.Empty, misc))
             {
-                foreach (string root in EnumerateAo2ImageAssetRoots(baseFolder, string.Empty, misc))
+                string? resolved = ResolveImageVfs(relativeStem);
+                if (!string.IsNullOrWhiteSpace(resolved))
                 {
-                    string? resolved = ResolveImageStem(root, stem);
-                    if (!string.IsNullOrWhiteSpace(resolved))
-                    {
-                        return resolved;
-                    }
+                    return resolved;
                 }
             }
 
@@ -847,15 +838,12 @@ namespace OceanyaClient.Features.Viewport
         {
             string stem = leftSide ? "evidence_appear_left" : "evidence_appear_right";
             string bgMisc = GetBackgroundMiscFolder(backgroundName);
-            foreach (string baseFolder in Globals.BaseFolders ?? new List<string>())
+            foreach (string relativeStem in EnumerateWtceImageRelativeStems(stem, bgMisc))
             {
-                foreach (string root in EnumerateWtceImageRoots(baseFolder, bgMisc))
+                string? resolved = ResolveImageVfs(relativeStem);
+                if (!string.IsNullOrWhiteSpace(resolved))
                 {
-                    string? resolved = ResolveImageStem(root, stem);
-                    if (!string.IsNullOrWhiteSpace(resolved))
-                    {
-                        return resolved;
-                    }
+                    return resolved;
                 }
             }
 
@@ -1708,7 +1696,9 @@ namespace OceanyaClient.Features.Viewport
                 return null;
             }
 
-            string normalizedStem = stem.Trim();
+            string normalizedStem = stem.Trim()
+                .Replace('/', Path.DirectorySeparatorChar)
+                .Replace('\\', Path.DirectorySeparatorChar);
 
             // AO2 parity: AO2 treats design.ini values as VPaths (relative), so absolute paths
             // (e.g. from mis-authored design.ini files) are never resolved. Match that behavior.
@@ -1738,6 +1728,124 @@ namespace OceanyaClient.Features.Viewport
             }
 
             return null;
+        }
+
+        private static string ResolveRelativeStem(params string[] parts)
+        {
+            return string.Join(
+                "/",
+                parts
+                    .Where(part => !string.IsNullOrWhiteSpace(part))
+                    .Select(part => part.Trim().Replace('\\', '/').Trim('/')));
+        }
+
+        private static string? ResolveImageVfs(string relativeStem)
+        {
+            string normalized = (relativeStem ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                return null;
+            }
+
+            foreach (string baseFolder in Globals.BaseFolders ?? Enumerable.Empty<string>())
+            {
+                string? resolved = ResolveImageStem(baseFolder, normalized);
+                if (!string.IsNullOrWhiteSpace(resolved))
+                {
+                    return resolved;
+                }
+            }
+
+            return null;
+        }
+
+        private static string ResolveCharacterImageAsset(CharacterFolder? character, string token)
+        {
+            string characterName = character?.Name?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(characterName))
+            {
+                return string.Empty;
+            }
+
+            string? resolved = ResolveImageVfs(ResolveRelativeStem("characters", characterName, token));
+            if (!string.IsNullOrWhiteSpace(resolved))
+            {
+                return resolved;
+            }
+
+            string localDirectory = !string.IsNullOrWhiteSpace(character?.PathToConfigIni)
+                ? Path.GetDirectoryName(character.PathToConfigIni) ?? string.Empty
+                : !string.IsNullOrWhiteSpace(character?.configINI?.PathToConfigINI)
+                    ? Path.GetDirectoryName(character.configINI.PathToConfigINI) ?? string.Empty
+                    : string.Empty;
+            return CharacterAssetPathResolver.ResolveCharacterAssetPath(localDirectory, token);
+        }
+
+        private static IEnumerable<string> EnumerateAo2ImageAssetRelativeStems(
+            string stem,
+            string character,
+            string misc)
+        {
+            string normalizedStem = (stem ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
+            if (string.IsNullOrWhiteSpace(normalizedStem))
+            {
+                yield break;
+            }
+
+            string normalizedCharacter = (character ?? string.Empty).Trim();
+            string normalizedMisc = (misc ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
+
+            if (!string.IsNullOrWhiteSpace(normalizedCharacter))
+            {
+                yield return ResolveRelativeStem("characters", normalizedCharacter, normalizedStem);
+            }
+
+            if (!string.IsNullOrWhiteSpace(normalizedMisc))
+            {
+                yield return ResolveRelativeStem("themes", "default", "misc", normalizedMisc, normalizedStem);
+                yield return ResolveRelativeStem("misc", normalizedMisc, normalizedStem);
+            }
+
+            yield return ResolveRelativeStem("themes", "default", normalizedStem);
+            yield return normalizedStem;
+        }
+
+        private static IEnumerable<string> EnumerateWtceImageRelativeStems(string stem, string bgMisc)
+        {
+            string normalizedStem = (stem ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
+            if (string.IsNullOrWhiteSpace(normalizedStem))
+            {
+                yield break;
+            }
+
+            string normalizedMisc = (bgMisc ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
+            if (!string.IsNullOrWhiteSpace(normalizedMisc))
+            {
+                yield return ResolveRelativeStem("misc", normalizedMisc, normalizedStem);
+                yield return ResolveRelativeStem("themes", "default", "misc", normalizedMisc, normalizedStem);
+            }
+
+            yield return ResolveRelativeStem("misc", "default", normalizedStem);
+            yield return ResolveRelativeStem("themes", "default", normalizedStem);
+            yield return normalizedStem;
+        }
+
+        private static IEnumerable<string> EnumerateMiscRelativeImageStems(string stem, string? effectFolder)
+        {
+            string normalizedStem = (stem ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
+            if (string.IsNullOrWhiteSpace(normalizedStem))
+            {
+                yield break;
+            }
+
+            yield return ResolveRelativeStem("misc", "default", normalizedStem);
+            if (!string.IsNullOrWhiteSpace(effectFolder))
+            {
+                yield return ResolveRelativeStem("misc", effectFolder, normalizedStem);
+            }
+
+            yield return ResolveRelativeStem("themes", "default", "misc", normalizedStem);
+            yield return ResolveRelativeStem("themes", "CC", "misc", normalizedStem);
         }
 
         private static string? ResolvePathCaseInsensitive(string path)

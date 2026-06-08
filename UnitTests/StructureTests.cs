@@ -633,6 +633,57 @@ namespace UnitTests
         }
 
         [Test]
+        public void Test_AO2ViewportAssetResolver_DialogAnimationSearchesAllMountsBeforePlaceholder()
+        {
+            string highMount = Path.Combine(_tempDir, "high_mount");
+            string lowMount = Path.Combine(_tempDir, "low_mount");
+            string highCharacterDirectory = Path.Combine(highMount, "characters", "Pearl");
+            string lowCharacterDirectory = Path.Combine(lowMount, "characters", "Pearl");
+            Directory.CreateDirectory(highCharacterDirectory);
+            Directory.CreateDirectory(lowCharacterDirectory);
+            File.WriteAllText(
+                Path.Combine(highCharacterDirectory, "char.ini"),
+                "[Options]\nshowname=Pearl\nside=def\n[Emotions]\nnumber=1\n1=normal#-#normal#0#0\n");
+            CreateEmptyFile(Path.Combine(highCharacterDirectory, "placeholder.png"));
+            string expectedPath = Path.Combine(lowCharacterDirectory, "(b)normal.png");
+            CreateEmptyFile(expectedPath);
+            Globals.BaseFolders = new List<string> { highMount, lowMount };
+
+            CharacterFolder character = CharacterFolder.Create(Path.Combine(highCharacterDirectory, "char.ini"));
+            string? resolved = AO2ViewportAssetResolver.ResolveCharacterDialogAnimation(character, "normal", talking: true);
+
+            Assert.That(resolved, Is.EqualTo(expectedPath));
+        }
+
+        [Test]
+        public void Test_AO2ViewportAssetResolver_ShoutSearchesAllMountsBeforeThemeFallback()
+        {
+            string highMount = Path.Combine(_tempDir, "high_mount");
+            string lowMount = Path.Combine(_tempDir, "low_mount");
+            string highCharacterDirectory = Path.Combine(highMount, "characters", "Lyria");
+            string lowCharacterDirectory = Path.Combine(lowMount, "characters", "Lyria");
+            Directory.CreateDirectory(highCharacterDirectory);
+            Directory.CreateDirectory(lowCharacterDirectory);
+            Directory.CreateDirectory(Path.Combine(highMount, "themes", "default"));
+            File.WriteAllText(
+                Path.Combine(highCharacterDirectory, "char.ini"),
+                "[Options]\nshowname=Lyria\nside=def\n[Emotions]\nnumber=1\n1=normal#-#normal#0#0\n");
+            CreateEmptyFile(Path.Combine(highMount, "themes", "default", "objection_bubble.gif"));
+            string expectedPath = Path.Combine(lowCharacterDirectory, "objection_bubble.gif");
+            CreateEmptyFile(expectedPath);
+            Globals.BaseFolders = new List<string> { highMount, lowMount };
+
+            CharacterFolder character = CharacterFolder.Create(Path.Combine(highCharacterDirectory, "char.ini"));
+            string? resolved = AO2ViewportAssetResolver.ResolveShoutOverlayImage(
+                ICMessage.ShoutModifiers.Objection,
+                character,
+                "Lyria",
+                string.Empty);
+
+            Assert.That(resolved, Is.EqualTo(expectedPath));
+        }
+
+        [Test]
         public void Test_AO2ViewportAssetResolver_NormalizesAo2EmoteModifiers()
         {
             Assert.That(
