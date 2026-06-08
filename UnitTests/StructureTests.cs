@@ -472,6 +472,48 @@ namespace UnitTests
         }
 
         [Test]
+        public void Test_AO2ViewportAssetResolver_MissingBackgroundDoesNotFallbackToDefaultFolder()
+        {
+            string defaultBgDir = Path.Combine(_tempDir, "background", "default");
+            Directory.CreateDirectory(defaultBgDir);
+            CreateEmptyFile(Path.Combine(defaultBgDir, "defenseempty.png"));
+            Background.RefreshCache();
+
+            string? backgroundPath = AO2ViewportAssetResolver.ResolveBackgroundImage("missingbg", "def");
+
+            Assert.That(backgroundPath, Is.Null);
+        }
+
+        [Test]
+        public void Test_AO2ViewportAssetResolver_MissingCurrentBackgroundImageStaysTransparent()
+        {
+            string emptyBgDir = Path.Combine(_tempDir, "background", "emptybg");
+            string defaultBgDir = Path.Combine(_tempDir, "background", "default");
+            Directory.CreateDirectory(emptyBgDir);
+            Directory.CreateDirectory(defaultBgDir);
+            CreateEmptyFile(Path.Combine(defaultBgDir, "defenseempty.png"));
+            Background.RefreshCache();
+
+            string? backgroundPath = AO2ViewportAssetResolver.ResolveBackgroundImage("emptybg", "def");
+
+            Assert.That(backgroundPath, Is.Null);
+        }
+
+        [Test]
+        public void Test_AO2ViewportAssetResolver_MissingPositionFallsBackToSameBackgroundWit()
+        {
+            string fallbackBgDir = Path.Combine(_tempDir, "background", "witonly");
+            Directory.CreateDirectory(fallbackBgDir);
+            string witPath = Path.Combine(fallbackBgDir, "wit.png");
+            CreateEmptyFile(witPath);
+            Background.RefreshCache();
+
+            string? backgroundPath = AO2ViewportAssetResolver.ResolveBackgroundImage("witonly", "def");
+
+            Assert.That(backgroundPath, Is.EqualTo(witPath));
+        }
+
+        [Test]
         public void Test_AO2ViewportAssetResolver_ResolvesDesignOverlayWithExtension()
         {
             string testBgDir = Path.Combine(_tempDir, "background", "testbg");
@@ -1079,6 +1121,41 @@ namespace UnitTests
                 "default");
 
             Assert.That(resolved, Is.EqualTo(characterShoutPath));
+        }
+
+        [Test]
+        public void Test_AO2ViewportAssetResolver_ResolvesCharacterShoutOverlayFromResolvedShowname()
+        {
+            string characterDirectory = Path.Combine(_tempDir, "characters", "Lyria");
+            Directory.CreateDirectory(characterDirectory);
+            File.WriteAllText(
+                Path.Combine(characterDirectory, "char.ini"),
+                "[Options]\nname=Lyria\nshowname=Lyria Astral\nside=def\n[Emotions]\nnumber=1\n1=normal#-#normal#0#0\n");
+            string characterShoutPath = Path.Combine(characterDirectory, "objection_bubble.gif");
+            File.WriteAllBytes(characterShoutPath, new byte[] { 1, 2, 3, 4 });
+
+            List<CharacterFolder> characterList = CharacterFolder.FullList;
+            List<CharacterFolder> originalCharacters = characterList.ToList();
+            try
+            {
+                characterList.Clear();
+                characterList.Add(CharacterFolder.Create(Path.Combine(characterDirectory, "char.ini")));
+
+                CharacterFolder? resolvedCharacter = AO2ViewportAssetResolver.ResolveCharacter("Lyria Astral");
+                string? resolved = AO2ViewportAssetResolver.ResolveShoutOverlayImage(
+                    ICMessage.ShoutModifiers.Objection,
+                    resolvedCharacter,
+                    "Lyria Astral",
+                    "default");
+
+                Assert.That(resolvedCharacter?.Name, Is.EqualTo("Lyria"));
+                Assert.That(resolved, Is.EqualTo(characterShoutPath));
+            }
+            finally
+            {
+                characterList.Clear();
+                characterList.AddRange(originalCharacters);
+            }
         }
 
         [Test]

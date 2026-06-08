@@ -328,6 +328,9 @@ namespace OceanyaClient
                     client = currentClient;
                 }
 
+                string rawSendMessage = sendMessage ?? string.Empty;
+                bool sendMessageIsOnlyWhitespace = rawSendMessage.Length > 0 && string.IsNullOrWhiteSpace(rawSendMessage);
+
                 if (!string.IsNullOrWhiteSpace(sendMessage))
                 {
                     sendMessage = sendMessage.Trim();
@@ -374,15 +377,7 @@ namespace OceanyaClient
                     (icMessage.Message == "~"+sendMessage+"~" || icMessage.Message == sendMessage || icMessage.Message == sendMessage+"~"))
                     {
                         // Message was received by server.
-                        ICMessageSettingsControl.Dispatcher.Invoke(() =>
-                        {
-                            ICMessageSettingsControl.txtICMessage.Text = "";
-
-                            if (!ICMessageSettingsControl.stickyEffects)
-                            {
-                                ICMessageSettingsControl.ResetMessageEffects();
-                            }
-                        });
+                        ClearIcInputAndTransientEffects();
 
                         // Unsubscribe from the event
                         targetNetworkClient.OnICMessageReceived -= OnICMessageReceivedHandler;
@@ -409,15 +404,7 @@ namespace OceanyaClient
 
                 if (OceanyaTestMode.Current.IsEnabled && !networkClient.IsTransportConnected)
                 {
-                    ICMessageSettingsControl.Dispatcher.Invoke(() =>
-                    {
-                        ICMessageSettingsControl.txtICMessage.Text = string.Empty;
-
-                        if (!ICMessageSettingsControl.stickyEffects)
-                        {
-                            ICMessageSettingsControl.ResetMessageEffects();
-                        }
-                    });
+                    ClearIcInputAndTransientEffects();
                     return;
                 }
 
@@ -429,6 +416,11 @@ namespace OceanyaClient
                 try
                 {
                     await networkClient.SendICMessage(sendMessage);
+                    if (sendMessageIsOnlyWhitespace)
+                    {
+                        networkClient.OnICMessageReceived -= OnICMessageReceivedHandler;
+                        ClearIcInputAndTransientEffects();
+                    }
                     SyncPairSendStateFromNetworkClient(client, networkClient);
                     CaptureGmMultiClientSnapshot();
                 }
@@ -437,6 +429,19 @@ namespace OceanyaClient
                     CustomConsole.Error("IC send failed before packet write completed.", ex, CustomConsole.LogCategory.IC);
                     networkClient.OnICMessageReceived -= OnICMessageReceivedHandler;
                     throw;
+                }
+
+                void ClearIcInputAndTransientEffects()
+                {
+                    ICMessageSettingsControl.Dispatcher.Invoke(() =>
+                    {
+                        ICMessageSettingsControl.txtICMessage.Text = string.Empty;
+
+                        if (!ICMessageSettingsControl.stickyEffects)
+                        {
+                            ICMessageSettingsControl.ResetMessageEffects();
+                        }
+                    });
                 }
             };
 

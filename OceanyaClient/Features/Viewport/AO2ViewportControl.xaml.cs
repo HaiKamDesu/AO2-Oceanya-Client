@@ -2104,10 +2104,13 @@ namespace OceanyaClient.Features.Viewport
                 return;
             }
 
+            CharacterFolder? shoutCharacter = AO2ViewportAssetResolver.ResolveCharacter(message.Character);
+            string shoutMiscToken = AO2ViewportAssetResolver.ResolveCharacterChatToken(shoutCharacter);
             string? shoutPath = AO2ViewportAssetResolver.ResolveShoutOverlayImage(
                 message.ShoutModifier,
+                shoutCharacter,
                 message.Character,
-                AO2ViewportAssetResolver.ResolveCharacterChatToken(AO2ViewportAssetResolver.ResolveCharacter(message.Character)));
+                shoutMiscToken);
             SetShoutAnimatedImageAsync(ShoutOverlayImage, shoutPath, !string.IsNullOrWhiteSpace(shoutPath), loop: false, onPlayerReady: onPlayerReady);
             ApplyHeightBasedShoutScaling();
             Panel.SetZIndex(ShoutOverlayImage, 9);

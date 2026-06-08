@@ -216,33 +216,13 @@ namespace OceanyaClient.Features.Viewport
             }
 
             BackgroundPositionResolution resolution = ResolveBackgroundPosition(background, position);
-            string? imagePath = ResolveImageStem(background.PathToFile, resolution.BackgroundStem)
-                ?? background.GetBGImage(NormalizePosition(position))
-                ?? background.bgImages.FirstOrDefault(File.Exists);
+            string? imagePath = ResolveAo2BackgroundImagePath(background, resolution.BackgroundStem);
 
             if (string.IsNullOrWhiteSpace(imagePath))
             {
                 CustomConsole.Warning(
                     $"No image for bg=\"{backgroundName}\" pos=\"{position}\" stem=\"{resolution.BackgroundStem}\" pathToFile=\"{background.PathToFile}\"",
                     category: CustomConsole.LogCategory.Viewport);
-                // AO2 parity: when the named background exists but has no image for this position,
-                // fall back to background/default/ — same as AO2's missing-position behavior.
-                Background? defaultBg = Background.FromBGPath("default");
-                if (defaultBg != null
-                    && !string.Equals(defaultBg.PathToFile, background.PathToFile, StringComparison.OrdinalIgnoreCase))
-                {
-                    BackgroundPositionResolution defaultResolution = ResolveBackgroundPosition(defaultBg, position);
-                    string? defaultImagePath = ResolveImageStem(defaultBg.PathToFile, defaultResolution.BackgroundStem)
-                        ?? defaultBg.GetBGImage(NormalizePosition(position))
-                        ?? defaultBg.bgImages.FirstOrDefault(File.Exists);
-                    CustomConsole.Info(
-                        $"Default bg fallback: stem=\"{defaultResolution.BackgroundStem}\" imagePath=\"{defaultImagePath}\"",
-                        CustomConsole.LogCategory.Viewport);
-                    return BuildPlacement(
-                        defaultImagePath,
-                        defaultResolution.Origin,
-                        ResolveBackgroundStretchToFit(defaultBg.PathToFile));
-                }
             }
 
             return BuildPlacement(
@@ -269,9 +249,7 @@ namespace OceanyaClient.Features.Viewport
             // rect as ui_vp_background (scaled_frame_size and scaled_pos are computed from the
             // background image's frame size, then applied to both widgets). The desk image is
             // then stretched to fill that rect — it never drives its own placement dimensions.
-            string? bgImagePath = ResolveImageStem(background.PathToFile, resolution.BackgroundStem)
-                ?? background.GetBGImage(NormalizePosition(position))
-                ?? background.bgImages.FirstOrDefault(File.Exists);
+            string? bgImagePath = ResolveAo2BackgroundImagePath(background, resolution.BackgroundStem);
             bool stretchToFit = ResolveBackgroundStretchToFit(background.PathToFile);
             ViewportImagePlacement bgPlacement = BuildPlacement(
                 bgImagePath,
@@ -759,6 +737,15 @@ namespace OceanyaClient.Features.Viewport
             string? characterName,
             string? miscName)
         {
+            return ResolveShoutOverlayImage(shoutModifier, ResolveCharacter(characterName), characterName, miscName);
+        }
+
+        public static string? ResolveShoutOverlayImage(
+            ICMessage.ShoutModifiers shoutModifier,
+            CharacterFolder? characterFolder,
+            string? characterName,
+            string? miscName)
+        {
             string stem = shoutModifier switch
             {
                 ICMessage.ShoutModifiers.HoldIt => "holdit_bubble",
@@ -773,7 +760,9 @@ namespace OceanyaClient.Features.Viewport
                 return null;
             }
 
-            string character = characterName?.Trim() ?? string.Empty;
+            string character = !string.IsNullOrWhiteSpace(characterFolder?.Name)
+                ? characterFolder.Name.Trim()
+                : characterName?.Trim() ?? string.Empty;
             string misc = miscName?.Trim() ?? string.Empty;
             foreach (string baseFolder in Globals.BaseFolders ?? new List<string>())
             {
@@ -1227,19 +1216,25 @@ namespace OceanyaClient.Features.Viewport
             return Ao2AnimationPreview.LoadStaticPreviewImage(path, decodePixelWidth: decodePixelWidth, fallback: null);
         }
 
+        private static string? ResolveAo2BackgroundImagePath(Background background, string backgroundStem)
+        {
+            string? imagePath = ResolveImageStem(background.PathToFile, backgroundStem);
+            if (!string.IsNullOrWhiteSpace(imagePath))
+            {
+                return imagePath;
+            }
+
+            // AO2 set_scene fallback is same-background wit.* only. It does not fall back
+            // to another background folder, including background/default.
+            return ResolveImageStem(background.PathToFile, "wit");
+        }
+
         private static Background? ResolveBackground(string? backgroundName)
         {
             string normalized = (backgroundName ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(normalized))
             {
-                Background? defaultResult = Background.FromBGPath("default");
-                if (defaultResult == null)
-                {
-                    CustomConsole.Warning(
-                        $"Background.FromBGPath(\"default\") returned null. BaseFolders={string.Join(";", Globals.BaseFolders ?? new System.Collections.Generic.List<string>())}",
-                        category: CustomConsole.LogCategory.Viewport);
-                }
-                return defaultResult;
+                return null;
             }
 
             Background? background = Background.FromBGPath(normalized);
@@ -1248,17 +1243,9 @@ namespace OceanyaClient.Features.Viewport
                 return background;
             }
 
-            // AO2 parity: when the named background directory is not found, fall back to
-            // background/default/ — resolved from the user's AO2 installation mount paths.
-            if (!string.Equals(normalized, "default", StringComparison.OrdinalIgnoreCase))
-            {
-                Background? fallback = Background.FromBGPath("default");
-                CustomConsole.Info(
-                    $"BG \"{normalized}\" not found locally, falling back to default. fallback={fallback?.PathToFile ?? "null"}",
-                    CustomConsole.LogCategory.Viewport);
-                return fallback;
-            }
-
+            CustomConsole.Info(
+                $"BG \"{normalized}\" not found locally; viewport background stays transparent.",
+                CustomConsole.LogCategory.Viewport);
             return null;
         }
 
