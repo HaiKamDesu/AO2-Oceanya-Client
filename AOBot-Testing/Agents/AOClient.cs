@@ -1799,8 +1799,17 @@ namespace AOBot_Testing.Agents
 
         private void ParseAreaUpdate(string message)
         {
-            string[] content = message.Substring(5).TrimEnd('#', '%')
-                .Split('#');
+            string contentText = message.Substring(5);
+            if (contentText.EndsWith("#%", StringComparison.Ordinal))
+            {
+                contentText = contentText.Substring(0, contentText.Length - 2);
+            }
+            else if (contentText.EndsWith("%", StringComparison.Ordinal))
+            {
+                contentText = contentText.Substring(0, contentText.Length - 1);
+            }
+
+            string[] content = contentText.Split('#');
 
             if (content.Length == 0)
             {
@@ -1836,24 +1845,15 @@ namespace AOBot_Testing.Agents
                     }
                     else if (updateType == 1)
                     {
-                        if (!string.IsNullOrWhiteSpace(value))
-                        {
-                            targetArea.Status = value;
-                        }
+                        targetArea.Status = string.IsNullOrWhiteSpace(value) ? "IDLE" : value;
                     }
                     else if (updateType == 2)
                     {
-                        if (!string.IsNullOrWhiteSpace(value))
-                        {
-                            targetArea.CaseManager = value;
-                        }
+                        targetArea.CaseManager = string.IsNullOrWhiteSpace(value) ? "FREE" : value;
                     }
                     else if (updateType == 3)
                     {
-                        if (!string.IsNullOrWhiteSpace(value))
-                        {
-                            targetArea.LockState = value;
-                        }
+                        targetArea.LockState = string.IsNullOrWhiteSpace(value) ? "OPEN" : value;
                     }
                 }
 
@@ -1919,6 +1919,10 @@ namespace AOBot_Testing.Agents
                     if (!string.IsNullOrWhiteSpace(caseManager))
                     {
                         targetArea.CaseManager = caseManager;
+                    }
+                    else if (IsKfoAreaListLine(areaLine))
+                    {
+                        targetArea.CaseManager = "FREE";
                     }
 
                     string lockState = areaLine.Groups["lock"].Value.Trim().Trim('[', ']');
@@ -2125,18 +2129,26 @@ namespace AOBot_Testing.Agents
                 {
                     targetArea.CaseManager = caseManager;
                 }
+                else
+                {
+                    targetArea.CaseManager = "FREE";
+                }
 
                 string icons = changedArea.Groups["icons"].Value;
-                if (icons.Contains("\ud83d\udd12", StringComparison.Ordinal))
-                {
-                    targetArea.LockState = "LOCKED";
-                }
+                targetArea.LockState = icons.Contains("\ud83d\udd12", StringComparison.Ordinal)
+                    ? "LOCKED"
+                    : "OPEN";
 
                 areaInfoSnapshot = CloneAreaInfos(availableAreaInfos);
             }
 
             SetCurrentArea(areaName);
             OnAvailableAreaInfosUpdated?.Invoke(areaInfoSnapshot);
+        }
+
+        private static bool IsKfoAreaListLine(Match areaLine)
+        {
+            return areaLine.Groups["id"].Success;
         }
 
         private AreaInfo EnsureAreaInfo(string areaName)

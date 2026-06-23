@@ -32,8 +32,8 @@ Use this file as the first stop before broad repository searches. It should poin
 ## GM Multi-Client Area Navigator
 - Doc: `Documentation/AreaNavigator.md`
 - Main code: `OceanyaClient/MainWindow.xaml`, `OceanyaClient/MainWindow.xaml.cs`, `AOBot-Testing/Agents/AOClient.cs`, `AOBot-Testing/Structures/AreaInfo.cs`
-- AO2/server reference: `AO2-Client/src/courtroom.cpp`, `AO2-Client/src/packet_distribution.cpp`, `tsuserver3/server/area_manager.py`, `tsuserver3/server/client_manager.py`, `tsuserverCC/server/area_manager.py`, `tsuserverCC/server/client_manager.py`
-- Notes: `FA`/`SM` define visible area rows; `ARUP` updates player counts/status/CM/lock by current row index. `RM` refreshes `FA` without a fresh ARUP snapshot, so the AO client preserves known row state by area name and treats new area counts as unknown until ARUP, `/getarea`, or `=== Areas ===` OOC data arrives. The popup is dark themed and its dimensions persist across sessions.
+- AO2/server reference: `AO2-Client/src/courtroom.cpp`, `AO2-Client/src/packet_distribution.cpp`, `tsuserver3/server/area_manager.py`, `tsuserver3/server/client_manager.py`, `tsuserverCC/server/area_manager.py`, `tsuserverCC/server/client_manager.py`, `KFO-Server/server/area_manager.py`, `KFO-Server/server/client_manager.py`, `KFO-Server/server/network/aoprotocol.py`
+- Notes: `FA`/`SM` define visible area rows; `ARUP` updates player counts/status/CM/lock by current row index. Empty `ARUP` status/CM/lock cells are meaningful clears (`IDLE`, `FREE`, `OPEN`), matching AO2 replacement behavior and KFO unlock/uncm/status-clear packets. `RM` refreshes `FA` without a fresh ARUP snapshot, so the AO client preserves known row state by area name and treats new area counts as unknown until ARUP, `/getarea`, KFO `🗺️ Areas 🗺️`, or tsuserver `=== Areas ===` OOC data arrives. The popup is dark themed and its dimensions persist across sessions.
 
 ## GM Multi-Client Position Dropdown
 - Doc: `Documentation/AO2Viewport.md`

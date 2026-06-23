@@ -200,6 +200,26 @@ public class NetworkTests
         });
     }
 
+    [Test]
+    public async Task HandleMessage_KfoChangedAreaOocClearsMissingCmAndLock()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+        await client.HandleMessage("FA#Main#Private Room 2#%");
+        await client.HandleMessage("CT#Paradise of Despots#\ud83d\udeb6Changed to area: [2] Private Room 2 (users: 1) [CASING][CM(s): Franziska]\ud83d\udd12#1#%");
+
+        await client.HandleMessage("CT#Paradise of Despots#\ud83d\udeb6Changed to area: [2] Private Room 2 (users: 0) [IDLE]#1#%");
+
+        AreaInfo privateRoom = client.AvailableAreaInfos.Single(area => area.Name == "Private Room 2");
+        Assert.Multiple(() =>
+        {
+            Assert.That(client.CurrentArea, Is.EqualTo("Private Room 2"));
+            Assert.That(privateRoom.Players, Is.EqualTo(0));
+            Assert.That(privateRoom.Status, Is.EqualTo("IDLE"));
+            Assert.That(privateRoom.CaseManager, Is.EqualTo("FREE"));
+            Assert.That(privateRoom.LockState, Is.EqualTo("OPEN"));
+        });
+    }
+
     private static CharacterFolder CreateCharacterFolder(string name, string side)
     {
         return new CharacterFolder
@@ -507,22 +527,32 @@ public class NetworkTests
     }
 
     [Test]
-    public async Task HandleMessage_AreaUpdatePreservesEmptySlots()
+    public async Task HandleMessage_AreaUpdateClearsEmptyStatusCmAndLockSlots()
     {
         AOClient client = new AOClient("ws://localhost:10001/");
         await client.HandleMessage("FA#Lobby#Courtroom#Basement#%");
 
         await client.HandleMessage("ARUP#0#3##7#%");
+        await client.HandleMessage("ARUP#1#CASING#RECESS#RP#%");
         await client.HandleMessage("ARUP#2#FREE##Franziska#%");
+        await client.HandleMessage("ARUP#3#LOCKED##SPECTATABLE#%");
+        await client.HandleMessage("ARUP#1##GAMING##%");
+        await client.HandleMessage("ARUP#3##LOCKED##%");
 
         Assert.Multiple(() =>
         {
             Assert.That(client.AvailableAreaInfos[0].Players, Is.EqualTo(3));
             Assert.That(client.AvailableAreaInfos[1].Players, Is.EqualTo(-1));
             Assert.That(client.AvailableAreaInfos[2].Players, Is.EqualTo(7));
+            Assert.That(client.AvailableAreaInfos[0].Status, Is.EqualTo("IDLE"));
+            Assert.That(client.AvailableAreaInfos[1].Status, Is.EqualTo("GAMING"));
+            Assert.That(client.AvailableAreaInfos[2].Status, Is.EqualTo("IDLE"));
             Assert.That(client.AvailableAreaInfos[0].CaseManager, Is.EqualTo("FREE"));
-            Assert.That(client.AvailableAreaInfos[1].CaseManager, Is.EqualTo("Unknown"));
+            Assert.That(client.AvailableAreaInfos[1].CaseManager, Is.EqualTo("FREE"));
             Assert.That(client.AvailableAreaInfos[2].CaseManager, Is.EqualTo("Franziska"));
+            Assert.That(client.AvailableAreaInfos[0].LockState, Is.EqualTo("OPEN"));
+            Assert.That(client.AvailableAreaInfos[1].LockState, Is.EqualTo("LOCKED"));
+            Assert.That(client.AvailableAreaInfos[2].LockState, Is.EqualTo("OPEN"));
         });
     }
 
@@ -824,6 +854,27 @@ public class NetworkTests
             Assert.That(lounge.Status, Is.EqualTo("CASING"));
             Assert.That(lounge.CaseManager, Is.EqualTo("Franziska"));
             Assert.That(lounge.LockState, Is.EqualTo("LOCKED"));
+        });
+    }
+
+    [Test]
+    public async Task HandleMessage_KfoAreaListOocClearsMissingCmAndLock()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+        await client.HandleMessage("FA#[0] Lobby#[8] Lounge#%");
+        await client.HandleMessage("CT#Server#\ud83d\uddfa\ufe0f Areas \ud83d\uddfa\ufe0f\r\n"
+            + "\u00A0\u25FD [8] Lounge (users: 2) [CASING][CM(s): Franziska]\ud83d\udd12#1#%");
+
+        await client.HandleMessage("CT#Server#\ud83d\uddfa\ufe0f Areas \ud83d\uddfa\ufe0f\r\n"
+            + "\u00A0\u25FD [8] Lounge (users: 1) [IDLE]#1#%");
+
+        AreaInfo lounge = client.AvailableAreaInfos.Single(area => area.Name == "Lounge");
+        Assert.Multiple(() =>
+        {
+            Assert.That(lounge.Players, Is.EqualTo(1));
+            Assert.That(lounge.Status, Is.EqualTo("IDLE"));
+            Assert.That(lounge.CaseManager, Is.EqualTo("FREE"));
+            Assert.That(lounge.LockState, Is.EqualTo("OPEN"));
         });
     }
 
