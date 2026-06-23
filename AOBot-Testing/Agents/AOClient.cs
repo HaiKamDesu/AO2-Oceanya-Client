@@ -52,6 +52,7 @@ namespace AOBot_Testing.Agents
         private readonly object availableStateLock = new object();
         private readonly List<string> availableAreas = new List<string>();
         private readonly List<AreaInfo> availableAreaInfos = new List<AreaInfo>();
+        private readonly Dictionary<string, string> areaSwitchTokens = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private readonly List<string> availableMusic = new List<string>();
         private readonly List<Player> currentAreaPlayers = new List<Player>();
         private int pendingInternalGetAreaRefreshes;
@@ -510,14 +511,13 @@ namespace AOBot_Testing.Agents
                 string[] areas = areaName.Split('/');
                 foreach (var area in areas)
                 {
-                    string switchRoomCommand = $"MC#{area}#{playerID}#%";
+                    string switchToken = ResolveAreaSwitchToken(area);
+                    string switchRoomCommand = $"MC#{switchToken}#{playerID}#%";
                     await SendPacket(switchRoomCommand);
-                    CustomConsole.Info($"Switched to room: {area}");
+                    CustomConsole.Info($"Requested room switch: {area}");
                     // Allow some time between room switches  
                     await Task.Delay(delayBetweenAreas);
                 }
-
-                SetCurrentArea(areaName);
             }
             else
             {
@@ -880,7 +880,9 @@ namespace AOBot_Testing.Agents
 
                     OnCurrentAreaPlayersUpdated?.Invoke(currentAreaPlayers.ToList().AsReadOnly(), lastGetAreaParseSucceeded);
                 }
-                else if (fromServer && messageText.Contains("=== Areas ===", StringComparison.OrdinalIgnoreCase))
+                else if (fromServer
+                    && (messageText.Contains("=== Areas ===", StringComparison.OrdinalIgnoreCase)
+                        || messageText.Contains("Areas", StringComparison.OrdinalIgnoreCase)))
                 {
                     ApplyAreaInfosFromAreaListMessage(messageText);
                 }
@@ -1549,6 +1551,11 @@ namespace AOBot_Testing.Agents
 
         private void ReplaceAvailableAreas(IEnumerable<string> areas)
         {
+            ReplaceAvailableAreas(areas.Select(area => new AreaListEntry(area, area)));
+        }
+
+        private void ReplaceAvailableAreas(IEnumerable<AreaListEntry> areas)
+        {
             List<string> areaSnapshot;
             List<AreaInfo> areaInfoSnapshot;
             string? defaultArea = null;
@@ -1561,16 +1568,21 @@ namespace AOBot_Testing.Agents
 
                 availableAreas.Clear();
                 availableAreaInfos.Clear();
+                areaSwitchTokens.Clear();
 
-                foreach (string area in areas)
+                foreach (AreaListEntry area in areas)
                 {
-                    if (string.IsNullOrWhiteSpace(area))
+                    if (string.IsNullOrWhiteSpace(area.DisplayName))
                     {
                         continue;
                     }
 
-                    string areaName = area.Trim();
+                    string areaName = area.DisplayName.Trim();
                     availableAreas.Add(areaName);
+                    string switchToken = string.IsNullOrWhiteSpace(area.SwitchToken)
+                        ? areaName
+                        : area.SwitchToken.Trim();
+                    areaSwitchTokens[areaName] = switchToken;
                     if (previousAreaInfos.TryGetValue(areaName, out AreaInfo? previousAreaInfo))
                     {
                         previousAreaInfo.Name = areaName;
@@ -1600,8 +1612,11 @@ namespace AOBot_Testing.Agents
 
         private void ParseAreaListFromFa(string message)
         {
-            string[] content = message.Substring(3).TrimEnd('#', '%')
-                .Split('#', StringSplitOptions.RemoveEmptyEntries);
+            AreaListEntry[] content = message.Substring(3).TrimEnd('#', '%')
+                .Split('#', StringSplitOptions.RemoveEmptyEntries)
+                .Select(entry => CreateAreaListEntry(Globals.ReplaceTextForSymbols(entry)))
+                .Where(entry => !string.IsNullOrWhiteSpace(entry.DisplayName))
+                .ToArray();
 
             ReplaceAvailableAreas(content);
         }
@@ -1611,12 +1626,13 @@ namespace AOBot_Testing.Agents
             string[] content = message.Substring(3).TrimEnd('#', '%')
                 .Split('#', StringSplitOptions.RemoveEmptyEntries);
 
-            List<string> areas = new List<string>();
+            List<AreaListEntry> areas = new List<AreaListEntry>();
             List<string> music = new List<string>();
             bool musicStarted = false;
             foreach (string entry in content)
             {
-                string decodedEntry = Globals.ReplaceTextForSymbols(entry).Trim();
+                AreaListEntry decodedAreaEntry = CreateAreaListEntry(Globals.ReplaceTextForSymbols(entry));
+                string decodedEntry = decodedAreaEntry.DisplayName;
                 if (musicStarted)
                 {
                     music.Add(decodedEntry);
@@ -1628,7 +1644,7 @@ namespace AOBot_Testing.Agents
                     musicStarted = true;
                     if (areas.Count > 0)
                     {
-                        string previousArea = areas[^1];
+                        string previousArea = areas[^1].DisplayName;
                         areas.RemoveAt(areas.Count - 1);
                         music.Add(previousArea);
                     }
@@ -1637,7 +1653,7 @@ namespace AOBot_Testing.Agents
                     continue;
                 }
 
-                areas.Add(decodedEntry);
+                areas.Add(decodedAreaEntry);
             }
 
             ReplaceAvailableAreas(areas);
@@ -1654,6 +1670,44 @@ namespace AOBot_Testing.Agents
 
             ReplaceAvailableMusic(content);
         }
+
+        private static string NormalizeAreaListEntryForDisplay(string entry)
+        {
+            string trimmedEntry = entry?.Trim() ?? string.Empty;
+            Match kfoAreaEntry = Regex.Match(trimmedEntry, @"^\[(?<id>\d+)\]\s+(?<name>.+)$");
+            if (kfoAreaEntry.Success
+                && !trimmedEntry.Contains("(users:", StringComparison.OrdinalIgnoreCase))
+            {
+                return kfoAreaEntry.Groups["name"].Value.Trim();
+            }
+
+            return trimmedEntry;
+        }
+
+        private static AreaListEntry CreateAreaListEntry(string entry)
+        {
+            string trimmedEntry = entry?.Trim() ?? string.Empty;
+            return new AreaListEntry(NormalizeAreaListEntryForDisplay(trimmedEntry), trimmedEntry);
+        }
+
+        private string ResolveAreaSwitchToken(string areaName)
+        {
+            string normalizedArea = areaName?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(normalizedArea))
+            {
+                return string.Empty;
+            }
+
+            lock (availableStateLock)
+            {
+                return areaSwitchTokens.TryGetValue(normalizedArea, out string? switchToken)
+                    && !string.IsNullOrWhiteSpace(switchToken)
+                        ? switchToken
+                        : normalizedArea;
+            }
+        }
+
+        private readonly record struct AreaListEntry(string DisplayName, string SwitchToken);
 
         private void ReplaceAvailableMusic(IEnumerable<string> music)
         {
@@ -1762,6 +1816,14 @@ namespace AOBot_Testing.Agents
                         RegexOptions.IgnoreCase);
                     if (!areaLine.Success)
                     {
+                        areaLine = Regex.Match(
+                            line,
+                            @"^\s*(?<current>\u25FD)?\s*(?:\u25FE)?\s*(?:\u274C)?\[(?<id>\d+)\]\s*(?<name>.*?)(?=\s*\(users:|\s*\[[^\]]*\]|[\uD83D\uDCE6\uD83D\uDD12\uD83D\uDEA7\uD83D\uDD11\uD83D\uDD07\uD83C\uDF11]|$)(?:\s*\(users:\s*(?<players>\d*)\)\s*)?(?:\[(?<status>[^\]]*)\])?(?:\[(?:CM\(s\)|CMs?):\s*(?<cm>[^\]]*)\])?(?<icons>.*)$",
+                            RegexOptions.IgnoreCase);
+                    }
+
+                    if (!areaLine.Success)
+                    {
                         continue;
                     }
 
@@ -1795,7 +1857,15 @@ namespace AOBot_Testing.Agents
                     }
 
                     string lockState = areaLine.Groups["lock"].Value.Trim().Trim('[', ']');
-                    targetArea.LockState = string.IsNullOrWhiteSpace(lockState) ? "OPEN" : lockState;
+                    if (string.IsNullOrWhiteSpace(lockState))
+                    {
+                        string icons = areaLine.Groups["icons"].Value;
+                        lockState = icons.Contains("\ud83d\udd12", StringComparison.Ordinal)
+                            ? "LOCKED"
+                            : "OPEN";
+                    }
+
+                    targetArea.LockState = lockState;
                     updated = true;
 
                     if (areaLine.Groups["current"].Success
@@ -1843,6 +1913,13 @@ namespace AOBot_Testing.Agents
                     @"\[\s*(?<players>\d+)\s+users?\s*\]\s*\[(?<status>[^\]]*)\](?:\[(?<lock>[^\]]*)\])?",
                     RegexOptions.IgnoreCase);
             }
+            if (!areaHeader.Success)
+            {
+                areaHeader = Regex.Match(
+                    messageText,
+                    @"(?:^|\r?\n)\s*[^\r\n]*\[\d+\]\s*.+?\s*\(users:\s*(?<players>\d+)\)\s*(?:\[(?<status>[^\]]*)\])?(?:\[(?:CM\(s\)|CMs?):\s*(?<cm>[^\]]*)\])?(?<icons>[^\r\n:]*):\s*(?:\r?\n|$)",
+                    RegexOptions.IgnoreCase);
+            }
 
             if (!areaHeader.Success)
             {
@@ -1865,9 +1942,23 @@ namespace AOBot_Testing.Agents
                 }
 
                 string lockState = areaHeader.Groups["lock"].Value.Trim();
+                if (string.IsNullOrWhiteSpace(lockState))
+                {
+                    string icons = areaHeader.Groups["icons"].Value;
+                    lockState = icons.Contains("\ud83d\udd12", StringComparison.Ordinal)
+                        ? "LOCKED"
+                        : string.Empty;
+                }
+
                 if (!string.IsNullOrWhiteSpace(lockState))
                 {
                     targetArea.LockState = lockState;
+                }
+
+                string caseManager = areaHeader.Groups["cm"].Value.Trim();
+                if (!string.IsNullOrWhiteSpace(caseManager))
+                {
+                    targetArea.CaseManager = caseManager;
                 }
 
                 areaInfoSnapshot = CloneAreaInfos(availableAreaInfos);
@@ -2208,6 +2299,7 @@ namespace AOBot_Testing.Agents
             {
                 availableAreas.Clear();
                 availableAreaInfos.Clear();
+                areaSwitchTokens.Clear();
                 availableMusic.Clear();
                 areaSnapshot = availableAreas.ToList();
                 areaInfoSnapshot = CloneAreaInfos(availableAreaInfos);

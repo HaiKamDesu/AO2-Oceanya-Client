@@ -317,6 +317,27 @@ public class NetworkTests
     }
 
     [Test]
+    public void ParseGetArea_SupportsKfoAreaHeaderAndQuotedPlayers()
+    {
+        string output = "\u00A0\u25FD [8] Lounge (users: 2) [CASING][CM(s): Franziska]\ud83d\udd12:\r\n"
+            + "\u00A0\u00A0\u25FD [GM][1] \"Kam\" (KamLoremaster) <pro> (127.0.0.1): Usuario\r\n"
+            + "\u00A0\u00A0\u25FE [CM][4] Trucy <wit>";
+
+        AOBot_Testing.AO2Parser.GetAreaParseResult result = AOBot_Testing.AO2Parser.ParseGetAreaDetailed(output);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsGetAreaReport, Is.True);
+            Assert.That(result.AreaName, Is.EqualTo("Lounge"));
+            Assert.That(result.ParsedPlayers, Is.True);
+            Assert.That(result.Players.Select(player => player.ICCharacterName), Is.EqualTo(new[] { "KamLoremaster", "Trucy" }));
+            Assert.That(result.Players.Select(player => player.CharacterId), Is.EqualTo(new[] { 1, 4 }));
+            Assert.That(result.Players[0].OOCShowname, Is.EqualTo("Kam"));
+            Assert.That(result.Players[1].IsCM, Is.True);
+        });
+    }
+
+    [Test]
     public void ParseGetArea_SupportsVanillaAreaHeadingOutput()
     {
         string output = "AO Official Server (Vanilla): === Basement ===\r\n\r\n"
@@ -369,6 +390,32 @@ public class NetworkTests
             Assert.That(lounge.Players, Is.EqualTo(1));
             Assert.That(lounge.Status, Is.EqualTo("IDLE"));
             Assert.That(client.CurrentAreaPlayers.Select(player => player.ICCharacterName), Is.EqualTo(new[] { "Trucy" }));
+            Assert.That(client.LastGetAreaParseSucceeded, Is.True);
+        });
+    }
+
+    [Test]
+    public async Task HandleMessage_KfoGetAreaUpdatesAreaInfoAndRoster()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+        await client.HandleMessage("FA#[8] Lounge#Courtroom#%");
+
+        await client.HandleMessage("CT#Server#\u00A0\u25FD [8] Lounge (users: 2) [CASING][CM(s): Franziska]\ud83d\udd12:\r\n"
+            + "\u00A0\u00A0\u25FD [GM][1] \"Kam\" (KamLoremaster) <pro> (127.0.0.1): Usuario\r\n"
+            + "\u00A0\u00A0\u25FE [CM][4] Trucy <wit>#1#%");
+
+        AreaInfo lounge = client.AvailableAreaInfos.Single(area => area.Name == "Lounge");
+        Assert.Multiple(() =>
+        {
+            Assert.That(client.AvailableAreas, Does.Contain("Lounge"));
+            Assert.That(client.AvailableAreas, Does.Not.Contain("[8] Lounge"));
+            Assert.That(client.CurrentArea, Is.EqualTo("Lounge"));
+            Assert.That(lounge.Players, Is.EqualTo(2));
+            Assert.That(lounge.Status, Is.EqualTo("CASING"));
+            Assert.That(lounge.CaseManager, Is.EqualTo("Franziska"));
+            Assert.That(lounge.LockState, Is.EqualTo("LOCKED"));
+            Assert.That(client.CurrentAreaPlayers.Select(player => player.ICCharacterName), Is.EqualTo(new[] { "KamLoremaster", "Trucy" }));
+            Assert.That(client.CurrentAreaPlayers[0].OOCShowname, Is.EqualTo("Kam"));
             Assert.That(client.LastGetAreaParseSucceeded, Is.True);
         });
     }
@@ -494,6 +541,50 @@ public class NetworkTests
     }
 
     [Test]
+    [CancelAfter(15000)]
+    public async Task SetArea_KfoIndexedAreaUsesOriginalSwitchTokenAndWaitsForServerConfirmation()
+    {
+        using TcpListener listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        List<string> receivedPackets = new List<string>();
+        Task serverTask = RunR002TcpServerAsync(
+            listener,
+            receivedPackets,
+            "Franziska",
+            CancellationToken.None,
+            serverSoftware: "KFO-Server");
+
+        AOClient client = new AOClient($"tcp://127.0.0.1:{port}");
+        try
+        {
+            await client.Connect(0, 0, 0, 0);
+            await client.HandleMessage("FA#[0] Lobby#[8] Lounge#%");
+
+            Assert.That(client.CurrentArea, Is.EqualTo("Lobby"));
+
+            await client.SetArea("Lounge", delayBetweenAreas: 1);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(receivedPackets, Does.Contain("MC#[8] Lounge#42#%"));
+                Assert.That(client.CurrentArea, Is.EqualTo("Lobby"));
+            });
+
+            await client.HandleMessage("CT#Server#\u00A0\u25FD [8] Lounge (users: 1) [IDLE]:\r\n"
+                + "\u00A0\u00A0\u25FD [1] Franziska#1#%");
+
+            Assert.That(client.CurrentArea, Is.EqualTo("Lounge"));
+        }
+        finally
+        {
+            await client.Disconnect();
+            await serverTask;
+        }
+    }
+
+    [Test]
     public async Task HandleMessage_SmSplitsAreasAndMusicLikeAo2Client()
     {
         AOClient client = new AOClient("ws://localhost:10001/");
@@ -552,6 +643,30 @@ public class NetworkTests
             Assert.That(courtroom.Status, Is.EqualTo("CASING"));
             Assert.That(courtroom.CaseManager, Is.EqualTo("Franziska"));
             Assert.That(courtroom.LockState, Is.EqualTo("LOCKED"));
+        });
+    }
+
+    [Test]
+    public async Task HandleMessage_KfoAreaListOocUpdatesAreaInfos()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+        await client.HandleMessage("FA#[0] Lobby#[8] Lounge#%");
+
+        await client.HandleMessage("CT#Server#\ud83d\uddfa\ufe0f Areas \ud83d\uddfa\ufe0f\r\n"
+            + "\u00A0\u25FE [0] Lobby (users: 1) [IDLE]\r\n"
+            + "\u00A0\u25FD [8] Lounge (users: 2) [CASING][CM(s): Franziska]\ud83d\udd12#1#%");
+
+        AreaInfo lobby = client.AvailableAreaInfos.Single(area => area.Name == "Lobby");
+        AreaInfo lounge = client.AvailableAreaInfos.Single(area => area.Name == "Lounge");
+        Assert.Multiple(() =>
+        {
+            Assert.That(client.CurrentArea, Is.EqualTo("Lounge"));
+            Assert.That(lobby.Players, Is.EqualTo(1));
+            Assert.That(lobby.Status, Is.EqualTo("IDLE"));
+            Assert.That(lounge.Players, Is.EqualTo(2));
+            Assert.That(lounge.Status, Is.EqualTo("CASING"));
+            Assert.That(lounge.CaseManager, Is.EqualTo("Franziska"));
+            Assert.That(lounge.LockState, Is.EqualTo("LOCKED"));
         });
     }
 

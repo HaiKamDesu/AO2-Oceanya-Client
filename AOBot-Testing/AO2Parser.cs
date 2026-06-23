@@ -6,7 +6,7 @@ namespace AOBot_Testing
     public class AO2Parser
     {
         private static readonly Regex PlayerEntryRegex = new Regex(
-            @"(?:^|\r?\n|\s)(?<flags>(?:\[(?:CM|RCM|M|AFK|Hidden)\]\s*)*)\[(?<id>\d+)\]\s*(?<details>.*?)(?=(?:\s+(?:\[(?:CM|RCM|M|AFK|Hidden)\]\s*)*\[\d+\]\s*)|\r?\n|$)",
+            @"(?:^|\r?\n|\s)(?<flags>(?:\[(?:CM|RCM|GM|M|AFK|Hidden)\]\s*)*)\[(?<id>\d+)\]\s*(?<details>.*?)(?=(?:\s+(?:\[(?:CM|RCM|GM|M|AFK|Hidden)\]\s*)*\[\d+\]\s*)|\r?\n|$)",
             RegexOptions.Compiled);
 
         public static List<Player> ParseGetArea(string input)
@@ -31,6 +31,10 @@ namespace AOBot_Testing
                 normalizedInput,
                 @"\[\s*\d+\s+users?\s*\]\s*\[[^\]]+\]",
                 RegexOptions.IgnoreCase);
+            bool hasKfoAreaHeader = Regex.IsMatch(
+                normalizedInput,
+                @"(?:^|\r?\n)\s*[^\r\n]*\[\d+\]\s+.+?\(users:\s*\d+\)[^\r\n]*:\s*(?:\r?\n|$)",
+                RegexOptions.IgnoreCase);
             string areaName = string.Empty;
             Match areaMatch = Regex.Match(normalizedInput, @"===\s*(?<area>.+?)\s*===", RegexOptions.IgnoreCase | RegexOptions.Singleline);
             if (areaMatch.Success)
@@ -46,6 +50,17 @@ namespace AOBot_Testing
                 if (clientsInAreaMatch.Success)
                 {
                     areaName = clientsInAreaMatch.Groups["area"].Value.Trim();
+                }
+                else
+                {
+                    Match kfoAreaMatch = Regex.Match(
+                        normalizedInput,
+                        @"(?:^|\r?\n)\s*[^\r\n]*\[\d+\]\s*(?<area>.+?)\s*\(users:\s*\d+\)[^\r\n]*:\s*(?:\r?\n|$)",
+                        RegexOptions.IgnoreCase);
+                    if (kfoAreaMatch.Success)
+                    {
+                        areaName = kfoAreaMatch.Groups["area"].Value.Trim();
+                    }
                 }
             }
 
@@ -76,6 +91,7 @@ namespace AOBot_Testing
 
             bool looksLikeGetArea = hasStandardPeopleHeader
                 || hasClientsInHeader
+                || hasKfoAreaHeader
                 || (players.Count > 0 && (hasAreaHeading || hasUserStatusHeader));
 
             return new GetAreaParseResult
@@ -113,6 +129,15 @@ namespace AOBot_Testing
             }
 
             string trimmed = details.Trim();
+            Match quotedKfoName = Regex.Match(trimmed, "^\"(?<show>[^\"]*)\"\\s+\\((?<char>[^()]*)\\)(?:\\s+<[^>]*>)*(?:\\s+\\([^()]*\\))?(?::.*)?$");
+            if (quotedKfoName.Success)
+            {
+                characterName = quotedKfoName.Groups["char"].Value.Trim();
+                oocShowname = quotedKfoName.Groups["show"].Value.Trim();
+                return !string.IsNullOrWhiteSpace(characterName);
+            }
+
+            trimmed = Regex.Replace(trimmed, @"\s+<[^>]*>\s*$", string.Empty).Trim();
             Match withShowname = Regex.Match(trimmed, @"^(?<char>.*?)(?:\s+\((?<show>[^()]*)\)(?::.*)?(?:\s+\[[^\]]+\])?)?$");
             if (withShowname.Success)
             {
