@@ -605,8 +605,23 @@ namespace OceanyaClient
         {
             try
             {
+                bool viewportPreviewMode = IsViewportUsingWindowsPreview();
+                if (viewportPreviewMode)
+                {
+                    viewportPreviewInputProxyActive = true;
+                }
+
                 if (e.OriginalSource is not DependencyObject source)
                 {
+                    if (viewportPreviewMode)
+                    {
+                        Dispatcher.BeginInvoke(
+                            new Action(() => EnsureViewportIsForegroundShellRepresentative(
+                                "main mouse target unknown returned to viewport shell",
+                                allowExternalForegroundOverride: true)),
+                            DispatcherPriority.Input);
+                    }
+
                     return;
                 }
 
@@ -615,7 +630,9 @@ namespace OceanyaClient
                 {
                     SetViewportPreviewInputProxyTarget(textBox, "main mouse target");
                     Dispatcher.BeginInvoke(
-                        new Action(() => EnsureViewportIsForegroundShellRepresentative("main mouse target returned to viewport shell")),
+                        new Action(() => EnsureViewportIsForegroundShellRepresentative(
+                            "main mouse target returned to viewport shell",
+                            allowExternalForegroundOverride: true)),
                         DispatcherPriority.Input);
                     LogViewportPreviewState("main mouse target=" + textBox!.Name);
                 }
@@ -627,12 +644,20 @@ namespace OceanyaClient
                         new Action(() => RestoreMainInputFocusTarget(lastTextBox)),
                         DispatcherPriority.ApplicationIdle);
                 }
-                else if (IsViewportUsingWindowsPreview()
+                else if (viewportPreviewMode
                          && lastMainWindowFocusedElement is TextBox proxyTextBox
                          && IsProxyEligibleMainInput(proxyTextBox))
                 {
                     viewportPreviewInputProxyActive = true;
                     SetViewportPreviewInputProxyTarget(proxyTextBox, "main mouse target retained proxy");
+                    Dispatcher.BeginInvoke(
+                        new Action(() => EnsureViewportIsForegroundShellRepresentative(
+                            "main non-input mouse target returned to viewport shell",
+                            allowExternalForegroundOverride: true)),
+                        DispatcherPriority.Input);
+                }
+                else if (viewportPreviewMode)
+                {
                     Dispatcher.BeginInvoke(
                         new Action(() => EnsureViewportIsForegroundShellRepresentative(
                             "main non-input mouse target returned to viewport shell",

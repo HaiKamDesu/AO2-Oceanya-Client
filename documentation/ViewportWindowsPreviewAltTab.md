@@ -561,6 +561,26 @@ Result:
 
 Outcome: pending manual verification.
 
+### 26. Main-Window Click Hands Foreground To Viewport Shell
+Approach:
+- keep attempt 25's viewport-shell/input-proxy architecture
+- when preview mode is active, any main-window `PreviewMouseDown` enables the input proxy and schedules `EnsureViewportIsForegroundShellRepresentative(..., allowExternalForegroundOverride: true)`
+- IC/OOC input clicks still update the logical proxy target first, but no mouse event is marked handled, so the original click continues through normal WPF routing
+- non-input main-window clicks also hand foreground to the viewport so a fullscreen external game is unfocused without requiring a separate viewport click
+
+Expected:
+- clicking the main IC/OOC input from a fullscreen game makes the viewport the foreground shell HWND and routes typed text to the clicked input
+- clicking other main-window controls from a fullscreen game unfocuses the game while preserving the clicked control's normal mouse behavior
+- main HWND remains `WS_EX_NOACTIVATE` and hidden from the shell; viewport remains the Windows preview representative
+
+Risk:
+- manual desktop verification is still required because Windows foreground permission depends on real mouse activation timing
+
+Result:
+- implementation complete; requires manual Windows verification against the regression checklist
+
+Outcome: pending manual verification.
+
 ## DWM Notes
 `DwmSetIconicThumbnail` and `WM_DWMSENDICONICTHUMBNAIL` are useful for replacing the thumbnail bitmap of a specific HWND, but they do not change which HWND owns the shell preview. When the main window owns the taskbar entry, Windows still applies shell preview behavior around the main HWND. This is why custom viewport bitmaps on the main HWND produced pillarboxing/stretching.
 
