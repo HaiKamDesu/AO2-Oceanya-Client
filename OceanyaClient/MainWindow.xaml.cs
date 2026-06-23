@@ -3504,7 +3504,8 @@ namespace OceanyaClient
             string status = areaInfo.Status?.Trim() ?? string.Empty;
             string caseManager = areaInfo.CaseManager?.Trim() ?? string.Empty;
             string lockState = areaInfo.LockState?.Trim() ?? string.Empty;
-            bool hasKnownStatus = !IsUnknownAreaMetric(status);
+            bool hasKnownStatus = !IsUnknownAreaMetric(status)
+                && !string.Equals(status, "IDLE", StringComparison.OrdinalIgnoreCase);
             bool hasKnownCaseManager = !IsUnknownAreaMetric(caseManager)
                 && !string.Equals(caseManager, "FREE", StringComparison.OrdinalIgnoreCase);
             bool hasKnownLockState = !IsUnknownAreaMetric(lockState);
@@ -10387,14 +10388,19 @@ namespace OceanyaClient
             treeMusic.Items.Refresh();
         }
 
-        private async void btnGoToArea_Click(object sender, RoutedEventArgs e)
+        private void btnGoToArea_Click(object sender, RoutedEventArgs e)
         {
-            await JoinSelectedAreaAsync();
+            QueueJoinSelectedArea();
         }
 
-        private async void lstAreas_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        private void lstAreas_MouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
-            await JoinSelectedAreaAsync();
+            QueueJoinSelectedArea();
+        }
+
+        private void QueueJoinSelectedArea()
+        {
+            _ = JoinSelectedAreaAsync();
         }
 
         private async Task JoinSelectedAreaAsync()
@@ -10431,8 +10437,14 @@ namespace OceanyaClient
                 return;
             }
 
-            await networkClient.SetArea(selectedAreaItem.Name);
-            RefreshAreaNavigatorForCurrentClient();
+            try
+            {
+                await networkClient.SetArea(selectedAreaItem.Name).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Warning("Failed to request area switch.", ex, CustomConsole.LogCategory.AreaVisualizer);
+            }
         }
 
         private bool _altGrActive = false;

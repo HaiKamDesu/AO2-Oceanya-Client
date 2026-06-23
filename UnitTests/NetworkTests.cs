@@ -165,7 +165,7 @@ public class NetworkTests
     }
 
     [Test]
-    public async Task HandleMessage_FaListDoesNotInferCurrentArea_WhenServerSendsNoExplicitArea()
+    public async Task HandleMessage_FaListInfersDefaultCurrentArea_WhenServerSendsNoExplicitArea()
     {
         AOClient client = new AOClient("ws://localhost:10001/");
 
@@ -176,8 +176,8 @@ public class NetworkTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(client.CurrentArea, Is.Empty);
-            Assert.That(currentArea, Is.Null);
+            Assert.That(client.CurrentArea, Is.EqualTo("Lobby"));
+            Assert.That(currentArea, Is.EqualTo("Lobby"));
         });
     }
 
@@ -584,18 +584,155 @@ public class NetworkTests
 
             Assert.That(client.CurrentArea, Is.EqualTo("Lobby"));
 
-            await client.SetArea("Lounge", delayBetweenAreas: 1);
+            DateTime beforeSwitch = DateTime.UtcNow;
+            await client.SetArea("Lounge", delayBetweenAreas: 500);
+            TimeSpan switchElapsed = DateTime.UtcNow - beforeSwitch;
 
             Assert.Multiple(() =>
             {
                 Assert.That(receivedPackets, Does.Contain("MC#[8] Lounge#42#%"));
                 Assert.That(client.CurrentArea, Is.EqualTo("Lobby"));
+                Assert.That(switchElapsed, Is.LessThan(TimeSpan.FromMilliseconds(250)));
             });
 
             await client.HandleMessage("CT#Server#\u00A0\u25FD [8] Lounge (users: 1) [IDLE]:\r\n"
                 + "\u00A0\u00A0\u25FD [1] Franziska#1#%");
 
             Assert.That(client.CurrentArea, Is.EqualTo("Lounge"));
+        }
+        finally
+        {
+            await client.Disconnect();
+            await serverTask;
+        }
+    }
+
+    [Test]
+    [CancelAfter(15000)]
+    public async Task HandleMessage_KfoInitialHubListAutoExitsOnlyOnce()
+    {
+        string hubHeader = "\ud83c\udf10 Hubs \ud83c\udf10\n Double-Click me to see Areas\n  _______";
+        using TcpListener listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        List<string> receivedPackets = new List<string>();
+        Task serverTask = RunR002TcpServerAsync(
+            listener,
+            receivedPackets,
+            "Franziska",
+            CancellationToken.None,
+            serverSoftware: "KFO-Server",
+            roomListPacket: $"FA#{hubHeader}#[0] Main (users: 1)#%");
+
+        AOClient client = new AOClient($"tcp://127.0.0.1:{port}");
+        try
+        {
+            await client.Connect(0, 0, 0, 0);
+
+            Assert.That(SpinWait.SpinUntil(
+                () => SnapshotPackets(receivedPackets).Any(packet => packet == $"MC#{hubHeader}#42#%"),
+                TimeSpan.FromSeconds(1)), Is.True);
+
+            int hubAutoExitPackets = SnapshotPackets(receivedPackets).Count(packet => packet == $"MC#{hubHeader}#42#%");
+
+            await client.HandleMessage($"FA#{hubHeader}#[0] Main (users: 1)#[1] RP (users: 0)#%");
+            await Task.Delay(100);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(SnapshotPackets(receivedPackets).Count(packet => packet == $"MC#{hubHeader}#42#%"), Is.EqualTo(hubAutoExitPackets));
+                Assert.That(client.CurrentArea, Is.Empty);
+                Assert.That(client.AvailableAreas[0], Is.EqualTo(hubHeader));
+                Assert.That(client.AvailableAreas[1], Is.EqualTo("[0] Main (users: 1)"));
+            });
+        }
+        finally
+        {
+            await client.Disconnect();
+            await serverTask;
+        }
+    }
+
+    [Test]
+    [CancelAfter(15000)]
+    public async Task HandleMessage_KfoInitialHubListFromSmAutoExitsOnce()
+    {
+        string hubHeader = "\ud83c\udf10 Hubs \ud83c\udf10\n Double-Click me to see Areas\n  _______";
+        using TcpListener listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        List<string> receivedPackets = new List<string>();
+        Task serverTask = RunR002TcpServerAsync(
+            listener,
+            receivedPackets,
+            "Franziska",
+            CancellationToken.None,
+            serverSoftware: "KFO-Server",
+            roomListPacket: $"SM#{hubHeader}#[0] Main (users: 1)#%");
+
+        AOClient client = new AOClient($"tcp://127.0.0.1:{port}");
+        try
+        {
+            await client.Connect(0, 0, 0, 0);
+
+            Assert.That(SpinWait.SpinUntil(
+                () => SnapshotPackets(receivedPackets).Any(packet => packet == $"MC#{hubHeader}#42#%"),
+                TimeSpan.FromSeconds(1)), Is.True);
+
+            int hubAutoExitPackets = SnapshotPackets(receivedPackets).Count(packet => packet == $"MC#{hubHeader}#42#%");
+
+            await client.HandleMessage($"SM#{hubHeader}#[0] Main (users: 1)#[1] RP (users: 0)#%");
+            await Task.Delay(100);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(SnapshotPackets(receivedPackets).Count(packet => packet == $"MC#{hubHeader}#42#%"), Is.EqualTo(hubAutoExitPackets));
+                Assert.That(client.CurrentArea, Is.Empty);
+                Assert.That(client.AvailableAreas[0], Is.EqualTo(hubHeader));
+                Assert.That(client.AvailableAreas[1], Is.EqualTo("[0] Main (users: 1)"));
+            });
+        }
+        finally
+        {
+            await client.Disconnect();
+            await serverTask;
+        }
+    }
+
+    [Test]
+    [CancelAfter(15000)]
+    public async Task HandleMessage_KfoUserOpenedHubListDoesNotAutoReturnAfterNormalStartupList()
+    {
+        string hubHeader = "\ud83c\udf10 Hubs \ud83c\udf10\n Double-Click me to see Areas\n  _______";
+        using TcpListener listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        List<string> receivedPackets = new List<string>();
+        Task serverTask = RunR002TcpServerAsync(
+            listener,
+            receivedPackets,
+            "Franziska",
+            CancellationToken.None,
+            serverSoftware: "KFO-Server",
+            roomListPacket: "SM#Lobby#%");
+
+        AOClient client = new AOClient($"tcp://127.0.0.1:{port}");
+        try
+        {
+            await client.Connect(0, 0, 0, 0);
+
+            await client.HandleMessage($"FA#{hubHeader}#[0] Main (users: 1)#[1] RP (users: 0)#%");
+            await Task.Delay(100);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(SnapshotPackets(receivedPackets), Has.No.EqualTo($"MC#{hubHeader}#42#%"));
+                Assert.That(client.AvailableAreas[0], Is.EqualTo(hubHeader));
+                Assert.That(client.AvailableAreas[1], Is.EqualTo("[0] Main (users: 1)"));
+            });
         }
         finally
         {
@@ -688,6 +825,110 @@ public class NetworkTests
             Assert.That(lounge.CaseManager, Is.EqualTo("Franziska"));
             Assert.That(lounge.LockState, Is.EqualTo("LOCKED"));
         });
+    }
+
+    [Test]
+    public async Task HandleMessage_Tsuserver3ChangedAreaOocUpdatesCurrentAreaAndStatus()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+        await client.HandleMessage("FA#Basement#Lobby#Courtroom#%");
+
+        string? currentAreaEvent = null;
+        client.OnCurrentAreaChanged += area => currentAreaEvent = area;
+
+        await client.HandleMessage("CT#Server#Changed area to Courtroom [CASING].#1#%");
+
+        AreaInfo courtroom = client.AvailableAreaInfos.Single(area => area.Name == "Courtroom");
+        Assert.Multiple(() =>
+        {
+            Assert.That(client.CurrentArea, Is.EqualTo("Courtroom"));
+            Assert.That(currentAreaEvent, Is.EqualTo("Courtroom"));
+            Assert.That(courtroom.Status, Is.EqualTo("CASING"));
+        });
+    }
+
+    [Test]
+    public async Task HandleMessage_Tsuserver3ChangedAreaOocDoesNotTriggerOnUnrelatedOoc()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+        await client.HandleMessage("FA#Basement#Lobby#%");
+
+        // FA sets initial current area to the first area
+        string? currentAreaEvent = null;
+        client.OnCurrentAreaChanged += area => currentAreaEvent = area;
+
+        await client.HandleMessage("CT#Server#Welcome! Use /area to see all areas.#1#%");
+
+        Assert.Multiple(() =>
+        {
+            // Unrelated OOC must not fire OnCurrentAreaChanged
+            Assert.That(currentAreaEvent, Is.Null);
+            // Current area unchanged from FA default
+            Assert.That(client.CurrentArea, Is.EqualTo("Basement"));
+        });
+    }
+
+    [Test]
+    public async Task HandleMessage_Tsuserver3ChangedAreaOocFires_AfterKfoAreaListAlreadySet()
+    {
+        // tsuserver3 OOC should also work if areas were loaded via tsuserver3-style FA (plain names)
+        AOClient client = new AOClient("ws://localhost:10001/");
+        await client.HandleMessage("FA#Lobby#Courtroom#Basement#%");
+
+        await client.HandleMessage("CT#Server#Changed area to Lobby [IDLE].#1#%");
+        Assert.That(client.CurrentArea, Is.EqualTo("Lobby"));
+
+        await client.HandleMessage("CT#Server#Changed area to Courtroom [RECESS].#1#%");
+
+        AreaInfo courtroom = client.AvailableAreaInfos.Single(area => area.Name == "Courtroom");
+        Assert.Multiple(() =>
+        {
+            Assert.That(client.CurrentArea, Is.EqualTo("Courtroom"));
+            Assert.That(courtroom.Status, Is.EqualTo("RECESS"));
+        });
+    }
+
+    [Test]
+    [CancelAfter(10000)]
+    public async Task SetArea_VanillaServer_BnFallbackSetsCurrentAreaWhenServerSendsNoOoc()
+    {
+        using TcpListener listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        List<string> receivedPackets = new List<string>();
+        Task serverTask = RunR002TcpServerAsync(
+            listener,
+            receivedPackets,
+            "Franziska",
+            CancellationToken.None);
+
+        AOClient client = new AOClient($"tcp://127.0.0.1:{port}");
+        try
+        {
+            await client.Connect(0, 0, 0, 0);
+            await client.HandleMessage("FA#Lobby#Courtroom#Basement#%");
+
+            string? currentAreaEvent = null;
+            client.OnCurrentAreaChanged += area => currentAreaEvent = area;
+
+            await client.SetArea("Courtroom", delayBetweenAreas: 0);
+
+            // Simulate vanilla server: no OOC, just BN# (background) sent after area switch
+            await client.HandleMessage("BN#courthouse_bg#%");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(client.CurrentArea, Is.EqualTo("Courtroom"));
+                Assert.That(currentAreaEvent, Is.EqualTo("Courtroom"));
+                Assert.That(receivedPackets, Does.Contain("MC#Courtroom#42#%"));
+            });
+        }
+        finally
+        {
+            await client.Disconnect();
+            await serverTask;
+        }
     }
 
     [Test]
@@ -1601,7 +1842,8 @@ public class NetworkTests
         string featurePacket = "FL#noencryption#%",
         string serverSoftware = "tsuserver",
         string? characterListPacket = null,
-        string charsCheckPacket = "CharsCheck#0#%")
+        string charsCheckPacket = "CharsCheck#0#%",
+        string roomListPacket = "SM#Lobby#%")
     {
         using TcpClient serverClient = await listener.AcceptTcpClientAsync(cancellationToken);
         using NetworkStream stream = serverClient.GetStream();
@@ -1616,7 +1858,10 @@ public class NetworkTests
                 return;
             }
 
-            receivedPackets.Add(packet);
+            lock (receivedPackets)
+            {
+                receivedPackets.Add(packet);
+            }
 
             if (packet.StartsWith("HI#", StringComparison.Ordinal))
             {
@@ -1637,7 +1882,7 @@ public class NetworkTests
             }
             else if (string.Equals(packet, "RM#%", StringComparison.Ordinal))
             {
-                await SendPacketAsync(stream, "SM#Lobby#%", cancellationToken);
+                await SendPacketAsync(stream, roomListPacket, cancellationToken);
             }
             else if (string.Equals(packet, "RD#%", StringComparison.Ordinal))
             {
@@ -1658,6 +1903,14 @@ public class NetworkTests
     {
         FieldInfo? field = typeof(AOClient).GetField("serverCharacterList", BindingFlags.NonPublic | BindingFlags.Instance);
         return (Dictionary<string, bool>)field!.GetValue(client)!;
+    }
+
+    private static string[] SnapshotPackets(List<string> packets)
+    {
+        lock (packets)
+        {
+            return packets.ToArray();
+        }
     }
 
     private static string CreateAoBaseRoot()

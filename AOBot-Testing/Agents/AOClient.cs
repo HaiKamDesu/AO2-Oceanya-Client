@@ -57,6 +57,7 @@ namespace AOBot_Testing.Agents
         private readonly List<Player> currentAreaPlayers = new List<Player>();
         private int pendingInternalGetAreaRefreshes;
         private bool lastGetAreaParseSucceeded;
+        private bool kfoInitialHubListAutoExitPending;
         private readonly List<string> currentEvidenceNames = new List<string>();
         private readonly List<string> currentEvidenceImages = new List<string>();
         private string serverAssetUrl = string.Empty;
@@ -72,6 +73,7 @@ namespace AOBot_Testing.Agents
         public string curPos = "";
         public string curBG = "";
         public string curSFX = "";
+        private string pendingAreaSwitchDisplayName = string.Empty;
 
         public ICMessage.DeskMods deskMod = ICMessage.DeskMods.Chat;
         public ICMessage.EmoteModifiers emoteMod = ICMessage.EmoteModifiers.NoPreanimation;
@@ -509,14 +511,28 @@ namespace AOBot_Testing.Agents
             if (IsTransportConnected)
             {
                 string[] areas = areaName.Split('/');
-                foreach (var area in areas)
+                for (int areaIndex = 0; areaIndex < areas.Length; areaIndex++)
                 {
+                    string area = areas[areaIndex];
                     string switchToken = ResolveAreaSwitchToken(area);
                     string switchRoomCommand = $"MC#{switchToken}#{playerID}#%";
+                    lock (availableStateLock)
+                    {
+                        string? knownDisplayName = availableAreas.FirstOrDefault(
+                            a => string.Equals(a, area, StringComparison.OrdinalIgnoreCase));
+                        if (knownDisplayName != null)
+                        {
+                            pendingAreaSwitchDisplayName = knownDisplayName;
+                        }
+                    }
+
                     await SendPacket(switchRoomCommand);
                     CustomConsole.Info($"Requested room switch: {area}");
-                    // Allow some time between room switches  
-                    await Task.Delay(delayBetweenAreas);
+                    // Allow time only between chained room switches, never after the final click target.
+                    if (areaIndex < areas.Length - 1 && delayBetweenAreas > 0)
+                    {
+                        await Task.Delay(delayBetweenAreas);
+                    }
                 }
             }
             else
@@ -811,7 +827,13 @@ namespace AOBot_Testing.Agents
             }
             else if (message.StartsWith("SM#"))
             {
-                ParseAreaListFromSm(message);
+                AreaListEntry[] areaEntries = ParseAreaListFromSm(message);
+                if (ShouldAutoExitKfoHubList(areaEntries))
+                {
+                    _ = SendPacket($"MC#{areaEntries[0].SwitchToken}#{playerID}#%");
+                }
+
+                ConsumeInitialKfoHubListAutoExit();
             }
             else if (message.StartsWith("FA#"))
             {
@@ -820,6 +842,8 @@ namespace AOBot_Testing.Agents
                 {
                     _ = SendPacket($"MC#{areaEntries[0].SwitchToken}#{playerID}#%");
                 }
+
+                ConsumeInitialKfoHubListAutoExit();
             }
             else if (message.StartsWith("FM#"))
             {
@@ -886,13 +910,13 @@ namespace AOBot_Testing.Agents
                 }
                 else if (fromServer
                     && (messageText.Contains("=== Areas ===", StringComparison.OrdinalIgnoreCase)
-                        || messageText.Contains("Areas", StringComparison.OrdinalIgnoreCase)))
+                        || messageText.Contains("🗺️ Areas", StringComparison.OrdinalIgnoreCase)))
                 {
                     ApplyAreaInfosFromAreaListMessage(messageText);
                 }
                 else if (fromServer)
                 {
-                    ApplyAreaInfoFromKfoChangedAreaMessage(messageText);
+                    ApplyAreaInfoFromChangedAreaOoc(messageText);
                 }
 
                 if (suppressInternalGetAreaMessage)
@@ -920,6 +944,14 @@ namespace AOBot_Testing.Agents
 
                 curBG = newBG;
                 OnBGChange?.Invoke(newBG);
+
+                // Fallback for servers that don't send OOC on area switch (no "Changed area to" message).
+                // BN# is always sent by every server type after a successful MC#-initiated area change.
+                string pendingArea = Interlocked.Exchange(ref pendingAreaSwitchDisplayName, string.Empty);
+                if (!string.IsNullOrWhiteSpace(pendingArea))
+                {
+                    SetCurrentArea(pendingArea);
+                }
             }
             else if (message.StartsWith("RT#"))
             {
@@ -1566,6 +1598,7 @@ namespace AOBot_Testing.Agents
         {
             List<string> areaSnapshot;
             List<AreaInfo> areaInfoSnapshot;
+            string? defaultArea = null;
             lock (availableStateLock)
             {
                 Dictionary<string, AreaInfo> previousAreaInfos = availableAreaInfos
@@ -1603,10 +1636,20 @@ namespace AOBot_Testing.Agents
 
                 areaSnapshot = availableAreas.ToList();
                 areaInfoSnapshot = CloneAreaInfos(availableAreaInfos);
+                if (string.IsNullOrWhiteSpace(currentArea)
+                    && availableAreas.Count > 0
+                    && !IsKfoHubListHeader(availableAreas[0]))
+                {
+                    defaultArea = availableAreas[0];
+                }
             }
 
             OnAvailableAreasUpdated?.Invoke(areaSnapshot);
             OnAvailableAreaInfosUpdated?.Invoke(areaInfoSnapshot);
+            if (!string.IsNullOrWhiteSpace(defaultArea))
+            {
+                SetCurrentArea(defaultArea);
+            }
         }
 
         private AreaListEntry[] ParseAreaListFromFa(string message)
@@ -1621,7 +1664,7 @@ namespace AOBot_Testing.Agents
             return content;
         }
 
-        private void ParseAreaListFromSm(string message)
+        private AreaListEntry[] ParseAreaListFromSm(string message)
         {
             string[] content = message.Substring(3).TrimEnd('#', '%')
                 .Split('#', StringSplitOptions.RemoveEmptyEntries);
@@ -1658,6 +1701,7 @@ namespace AOBot_Testing.Agents
 
             ReplaceAvailableAreas(areas);
             ReplaceAvailableMusic(music);
+            return areas.ToArray();
         }
 
         private void ParseMusicListFromFm(string message)
@@ -1693,8 +1737,22 @@ namespace AOBot_Testing.Agents
         private bool ShouldAutoExitKfoHubList(IReadOnlyList<AreaListEntry> areaEntries)
         {
             return IsKfoServer
+                && kfoInitialHubListAutoExitPending
                 && areaEntries.Count > 0
-                && areaEntries[0].SwitchToken.StartsWith("\ud83c\udf10 Hubs", StringComparison.Ordinal);
+                && IsKfoHubListHeader(areaEntries[0].SwitchToken);
+        }
+
+        private static bool IsKfoHubListHeader(string value)
+        {
+            return (value ?? string.Empty).TrimStart().StartsWith("\ud83c\udf10 Hubs", StringComparison.Ordinal);
+        }
+
+        private void ConsumeInitialKfoHubListAutoExit()
+        {
+            if (kfoInitialHubListAutoExitPending)
+            {
+                kfoInitialHubListAutoExitPending = false;
+            }
         }
 
         private string ResolveAreaSwitchToken(string areaName)
@@ -1974,14 +2032,68 @@ namespace AOBot_Testing.Agents
             OnAvailableAreaInfosUpdated?.Invoke(areaInfoSnapshot);
         }
 
-        private void ApplyAreaInfoFromKfoChangedAreaMessage(string messageText)
+        private void ApplyAreaInfoFromChangedAreaOoc(string messageText)
         {
+            CustomConsole.Info(
+                $"[Area] OOC → ApplyAreaInfoFromChangedAreaOoc: \"{TruncateForLog(messageText, 120)}\"",
+                CustomConsole.LogCategory.AreaVisualizer);
+
+            // tsuserver3 / tsuserverCC: "Changed area to {name} [{status}]."
+            Match tsuMatch = Regex.Match(
+                messageText,
+                @"Changed area to (?<name>.+?) \[(?<status>[^\]]*)\]\.?\s*$",
+                RegexOptions.Multiline | RegexOptions.IgnoreCase);
+            if (tsuMatch.Success)
+            {
+                string tsuAreaName = tsuMatch.Groups["name"].Value.Trim();
+                if (string.IsNullOrWhiteSpace(tsuAreaName))
+                {
+                    return;
+                }
+
+                string tsuStatus = tsuMatch.Groups["status"].Value.Trim();
+                List<AreaInfo> tsuAreaInfoSnapshot;
+                string tsuChangedArea = string.Empty;
+                lock (availableStateLock)
+                {
+                    AreaInfo tsuTargetArea = EnsureAreaInfo(tsuAreaName);
+                    if (!string.IsNullOrWhiteSpace(tsuStatus))
+                    {
+                        tsuTargetArea.Status = tsuStatus;
+                    }
+
+                    if (!string.Equals(currentArea, tsuAreaName, StringComparison.Ordinal))
+                    {
+                        currentArea = tsuAreaName;
+                        currentAreaPlayers.Clear();
+                        tsuChangedArea = tsuAreaName;
+                    }
+
+                    tsuAreaInfoSnapshot = CloneAreaInfos(availableAreaInfos);
+                }
+
+                if (!string.IsNullOrWhiteSpace(tsuChangedArea))
+                {
+                    CustomConsole.Info(
+                        $"[Area] tsu/CC OOC matched → currentArea=\"{tsuChangedArea}\" status=\"{tsuStatus}\"",
+                        CustomConsole.LogCategory.AreaVisualizer);
+                    OnCurrentAreaChanged?.Invoke(tsuChangedArea);
+                }
+
+                OnAvailableAreaInfosUpdated?.Invoke(tsuAreaInfoSnapshot);
+                return;
+            }
+
+            // KFO: "\ud83d\uDEB6Changed to area: [id] name (users: N) [status]..."
             Match changedArea = Regex.Match(
                 messageText,
-                @"Changed\s+to\s+area:\s*[^\r\n]*\[(?<id>\d+)\]\s*(?<name>.*?)(?=\s*\(users:|\s*\[[^\]]*\]|[\uD83D\uDCE6\uD83D\uDD12\uD83D\uDEA7\uD83D\uDD11\uD83D\uDD07\uD83C\uDF11]|\r?\n|$)(?:\s*\(users:\s*(?<players>\d*)\)\s*)?(?:\[(?<status>[^\]]*)\])?(?:\[(?:CM\(s\)|CMs?):\s*(?<cm>[^\]]*)\])?(?<icons>[^\r\n]*)",
+                @"Changed\s+to\s+area:\s*[^\r\n]*\[(?<id>\d+)\]\s*(?<name>.*?)(?=\s*\(users:|\s*\[[^\]]*\]|[\ud83d\uDCE6\ud83d\udd12\ud83d\uDEA7\ud83d\uDD11\ud83d\uDD07\uD83C\uDF11]|\r?\n|$)(?:\s*\(users:\s*(?<players>\d*)\)\s*)?(?:\[(?<status>[^\]]*)\])?(?:\[(?:CM\(s\)|CMs?):\s*(?<cm>[^\]]*)\])?(?<icons>[^\r\n]*)",
                 RegexOptions.IgnoreCase);
             if (!changedArea.Success)
             {
+                CustomConsole.Info(
+                    $"[Area] OOC did not match any area-change pattern: \"{TruncateForLog(messageText, 120)}\"",
+                    CustomConsole.LogCategory.AreaVisualizer);
                 return;
             }
 
@@ -2157,6 +2269,7 @@ namespace AOBot_Testing.Agents
             {
                 playerID = parsedPlayerId;
                 serverSoftware = parts[2];
+                kfoInitialHubListAutoExitPending = IsKfoServer;
                 string serverVersion = parts.Length >= 4 ? parts[3] : string.Empty;
                 CustomConsole.Info($"Assigned Player ID: {playerID} | Server Software: {serverSoftware} | Server Version: {serverVersion}");
             }
@@ -2344,7 +2457,9 @@ namespace AOBot_Testing.Agents
             iniPuppetID = -1;
             serverAssetUrl = string.Empty;
             serverSoftware = string.Empty;
+            kfoInitialHubListAutoExitPending = false;
             lastGetAreaParseSucceeded = false;
+            pendingAreaSwitchDisplayName = string.Empty;
             Interlocked.Exchange(ref pendingInternalGetAreaRefreshes, 0);
             curBG = string.Empty;
             if (clearCurrentArea)
