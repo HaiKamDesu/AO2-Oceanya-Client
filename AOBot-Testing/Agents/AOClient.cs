@@ -815,7 +815,11 @@ namespace AOBot_Testing.Agents
             }
             else if (message.StartsWith("FA#"))
             {
-                ParseAreaListFromFa(message);
+                AreaListEntry[] areaEntries = ParseAreaListFromFa(message);
+                if (ShouldAutoExitKfoHubList(areaEntries))
+                {
+                    _ = SendPacket($"MC#{areaEntries[0].SwitchToken}#{playerID}#%");
+                }
             }
             else if (message.StartsWith("FM#"))
             {
@@ -885,6 +889,10 @@ namespace AOBot_Testing.Agents
                         || messageText.Contains("Areas", StringComparison.OrdinalIgnoreCase)))
                 {
                     ApplyAreaInfosFromAreaListMessage(messageText);
+                }
+                else if (fromServer)
+                {
+                    ApplyAreaInfoFromKfoChangedAreaMessage(messageText);
                 }
 
                 if (suppressInternalGetAreaMessage)
@@ -1558,7 +1566,6 @@ namespace AOBot_Testing.Agents
         {
             List<string> areaSnapshot;
             List<AreaInfo> areaInfoSnapshot;
-            string? defaultArea = null;
             lock (availableStateLock)
             {
                 Dictionary<string, AreaInfo> previousAreaInfos = availableAreaInfos
@@ -1596,21 +1603,13 @@ namespace AOBot_Testing.Agents
 
                 areaSnapshot = availableAreas.ToList();
                 areaInfoSnapshot = CloneAreaInfos(availableAreaInfos);
-                if (string.IsNullOrWhiteSpace(currentArea) && availableAreas.Count > 0)
-                {
-                    defaultArea = availableAreas[0];
-                }
             }
 
             OnAvailableAreasUpdated?.Invoke(areaSnapshot);
             OnAvailableAreaInfosUpdated?.Invoke(areaInfoSnapshot);
-            if (!string.IsNullOrWhiteSpace(defaultArea))
-            {
-                SetCurrentArea(defaultArea);
-            }
         }
 
-        private void ParseAreaListFromFa(string message)
+        private AreaListEntry[] ParseAreaListFromFa(string message)
         {
             AreaListEntry[] content = message.Substring(3).TrimEnd('#', '%')
                 .Split('#', StringSplitOptions.RemoveEmptyEntries)
@@ -1619,6 +1618,7 @@ namespace AOBot_Testing.Agents
                 .ToArray();
 
             ReplaceAvailableAreas(content);
+            return content;
         }
 
         private void ParseAreaListFromSm(string message)
@@ -1688,6 +1688,13 @@ namespace AOBot_Testing.Agents
         {
             string trimmedEntry = entry?.Trim() ?? string.Empty;
             return new AreaListEntry(NormalizeAreaListEntryForDisplay(trimmedEntry), trimmedEntry);
+        }
+
+        private bool ShouldAutoExitKfoHubList(IReadOnlyList<AreaListEntry> areaEntries)
+        {
+            return IsKfoServer
+                && areaEntries.Count > 0
+                && areaEntries[0].SwitchToken.StartsWith("\ud83c\udf10 Hubs", StringComparison.Ordinal);
         }
 
         private string ResolveAreaSwitchToken(string areaName)
@@ -1964,6 +1971,59 @@ namespace AOBot_Testing.Agents
                 areaInfoSnapshot = CloneAreaInfos(availableAreaInfos);
             }
 
+            OnAvailableAreaInfosUpdated?.Invoke(areaInfoSnapshot);
+        }
+
+        private void ApplyAreaInfoFromKfoChangedAreaMessage(string messageText)
+        {
+            Match changedArea = Regex.Match(
+                messageText,
+                @"Changed\s+to\s+area:\s*[^\r\n]*\[(?<id>\d+)\]\s*(?<name>.*?)(?=\s*\(users:|\s*\[[^\]]*\]|[\uD83D\uDCE6\uD83D\uDD12\uD83D\uDEA7\uD83D\uDD11\uD83D\uDD07\uD83C\uDF11]|\r?\n|$)(?:\s*\(users:\s*(?<players>\d*)\)\s*)?(?:\[(?<status>[^\]]*)\])?(?:\[(?:CM\(s\)|CMs?):\s*(?<cm>[^\]]*)\])?(?<icons>[^\r\n]*)",
+                RegexOptions.IgnoreCase);
+            if (!changedArea.Success)
+            {
+                return;
+            }
+
+            string areaName = changedArea.Groups["name"].Value.Trim();
+            if (string.IsNullOrWhiteSpace(areaName))
+            {
+                return;
+            }
+
+            string switchToken = $"[{changedArea.Groups["id"].Value}] {areaName}";
+            List<AreaInfo> areaInfoSnapshot;
+            lock (availableStateLock)
+            {
+                areaSwitchTokens[areaName] = switchToken;
+                AreaInfo targetArea = EnsureAreaInfo(areaName);
+                if (int.TryParse(changedArea.Groups["players"].Value, out int players))
+                {
+                    targetArea.Players = players;
+                }
+
+                string status = changedArea.Groups["status"].Value.Trim();
+                if (!string.IsNullOrWhiteSpace(status))
+                {
+                    targetArea.Status = status;
+                }
+
+                string caseManager = changedArea.Groups["cm"].Value.Trim();
+                if (!string.IsNullOrWhiteSpace(caseManager))
+                {
+                    targetArea.CaseManager = caseManager;
+                }
+
+                string icons = changedArea.Groups["icons"].Value;
+                if (icons.Contains("\ud83d\udd12", StringComparison.Ordinal))
+                {
+                    targetArea.LockState = "LOCKED";
+                }
+
+                areaInfoSnapshot = CloneAreaInfos(availableAreaInfos);
+            }
+
+            SetCurrentArea(areaName);
             OnAvailableAreaInfosUpdated?.Invoke(areaInfoSnapshot);
         }
 

@@ -165,7 +165,7 @@ public class NetworkTests
     }
 
     [Test]
-    public async Task HandleMessage_FaListInfersDefaultCurrentArea_WhenServerSendsNoExplicitArea()
+    public async Task HandleMessage_FaListDoesNotInferCurrentArea_WhenServerSendsNoExplicitArea()
     {
         AOClient client = new AOClient("ws://localhost:10001/");
 
@@ -176,8 +176,27 @@ public class NetworkTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(client.CurrentArea, Is.EqualTo("Lobby"));
-            Assert.That(currentArea, Is.EqualTo("Lobby"));
+            Assert.That(client.CurrentArea, Is.Empty);
+            Assert.That(currentArea, Is.Null);
+        });
+    }
+
+    [Test]
+    public async Task HandleMessage_KfoChangedAreaOocUpdatesCurrentAreaAndAreaInfo()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+        await client.HandleMessage("FA#Main#Private Room 2#%");
+
+        await client.HandleMessage("CT#Paradise of Despots#\ud83d\udeb6Changed to area: [2] Private Room 2 (users: 1) [CASING][CM(s): Franziska]\ud83d\udd12\r\nClients in area:\r\n\u00A0\u00A0\u25FD [1] Franziska#1#%");
+
+        AreaInfo privateRoom = client.AvailableAreaInfos.Single(area => area.Name == "Private Room 2");
+        Assert.Multiple(() =>
+        {
+            Assert.That(client.CurrentArea, Is.EqualTo("Private Room 2"));
+            Assert.That(privateRoom.Players, Is.EqualTo(1));
+            Assert.That(privateRoom.Status, Is.EqualTo("CASING"));
+            Assert.That(privateRoom.CaseManager, Is.EqualTo("Franziska"));
+            Assert.That(privateRoom.LockState, Is.EqualTo("LOCKED"));
         });
     }
 
@@ -561,6 +580,7 @@ public class NetworkTests
         {
             await client.Connect(0, 0, 0, 0);
             await client.HandleMessage("FA#[0] Lobby#[8] Lounge#%");
+            await client.HandleMessage("CT#Server#\ud83d\udeb6Changed to area: [0] Lobby (users: 1) [IDLE]#1#%");
 
             Assert.That(client.CurrentArea, Is.EqualTo("Lobby"));
 

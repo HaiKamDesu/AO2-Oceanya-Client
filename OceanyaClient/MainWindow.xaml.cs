@@ -3602,7 +3602,10 @@ namespace OceanyaClient
 
             try
             {
-                await networkClient.RequestAreaList();
+                if (networkClient.AvailableAreaInfos.Count == 0)
+                {
+                    await networkClient.RequestAreaList();
+                }
             }
             catch (Exception ex)
             {
@@ -9662,7 +9665,10 @@ namespace OceanyaClient
             {
                 try
                 {
-                    await networkClient.RequestAreaList();
+                    if (networkClient.AvailableAreaInfos.Count == 0)
+                    {
+                        await networkClient.RequestAreaList();
+                    }
                 }
                 catch (Exception ex)
                 {
