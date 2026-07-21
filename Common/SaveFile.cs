@@ -83,6 +83,15 @@ namespace OceanyaClient
         public string Endpoint { get; set; } = "";
     }
 
+    /// <summary>Tracks how many times a server endpoint has actually been launched into, for the quickselect combobox.</summary>
+    public class ServerConnectionHistoryEntry
+    {
+        public string Name { get; set; } = "";
+        public string Endpoint { get; set; } = "";
+        public string Description { get; set; } = "";
+        public int ConnectCount { get; set; }
+    }
+
     public enum FolderVisualizerLayoutMode
     {
         Normal,
@@ -467,6 +476,10 @@ namespace OceanyaClient
         // Legacy list kept for migration from endpoint-only storage.
         public List<string> CustomServerEndpoints { get; set; } = new List<string>();
         public List<CustomServerEntry> CustomServerEntries { get; set; } = new List<CustomServerEntry>();
+
+        /// <summary>Keyed by server endpoint. Powers the InitialConfigurationWindow quickselect combobox, ordered by ConnectCount descending.</summary>
+        public Dictionary<string, ServerConnectionHistoryEntry> ServerConnectionHistory { get; set; } =
+            new Dictionary<string, ServerConnectionHistoryEntry>(StringComparer.OrdinalIgnoreCase);
 
         // Advanced feature flags and configs.
         public AdvancedFeatureFlagStore AdvancedFeatures { get; set; } = new AdvancedFeatureFlagStore();

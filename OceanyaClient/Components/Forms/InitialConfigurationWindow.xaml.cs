@@ -6,6 +6,7 @@ using OceanyaClient.Features.Startup;
 using OceanyaClient.Utilities;
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -31,6 +32,8 @@ namespace OceanyaClient
         private static Func<Window, TargetedAssetRefreshPlan, Task>? testRefreshTargetedAssetsAsyncOverride = null;
 
         private ServerEndpointDefinition? selectedServer;
+        private readonly ObservableCollection<ServerEndpointDefinition> serverHistoryItems = new ObservableCollection<ServerEndpointDefinition>();
+        private bool ignoreServerHistorySelectionChanged;
         private bool ignoreStartupFunctionalitySelectionChanged;
         private bool autoLaunchQueued;
         private bool updateCheckStarted;
@@ -171,10 +174,9 @@ namespace OceanyaClient
                             return;
                         }
 
-                        selectedServer = validatedServer;
+                        ApplySelectedServer(validatedServer);
                         selectedServerEndpoint = validatedServer.Endpoint.Trim();
                         selectedServerName = validatedServer.Name.Trim();
-                        UpdateSelectedServerDisplay();
                     }
                 }
 
@@ -234,6 +236,11 @@ namespace OceanyaClient
                     }
 
                     shouldRefreshAssets = true;
+                }
+
+                if (selectedFunctionality.RequiresServerEndpoint)
+                {
+                    RecordServerConnectionUsage(selectedServerEndpoint, selectedServerName, selectedServer?.Description);
                 }
 
                 SaveConfiguration(
@@ -469,8 +476,7 @@ namespace OceanyaClient
                 return;
             }
 
-            selectedServer = dialog.SelectedServer;
-            UpdateSelectedServerDisplay();
+            ApplySelectedServer(dialog.SelectedServer);
         }
 
         private void LoadSavefile()
@@ -493,6 +499,7 @@ namespace OceanyaClient
                 CleanupLegacyCustomServerData();
                 BindStartupFunctionalitySelection();
                 ApplyTestStartupOverrides();
+                PopulateServerHistoryComboBox();
 
                 selectedServer = ResolveInitialSelectedServer();
                 selectedServer = ApplyTestSelectedServerOverride(selectedServer);
@@ -610,6 +617,20 @@ namespace OceanyaClient
                     return knownMatch;
                 }
 
+                if (SaveFile.Data.ServerConnectionHistory.TryGetValue(savedEndpoint, out ServerConnectionHistoryEntry? historyMatch)
+                    && !string.IsNullOrWhiteSpace(historyMatch.Name))
+                {
+                    return new ServerEndpointDefinition
+                    {
+                        Name = historyMatch.Name,
+                        Endpoint = savedEndpoint,
+                        Description = historyMatch.Description,
+                        Source = ServerEndpointSource.ConnectionHistory,
+                        IsLegacy = ServerEndpointCatalog.IsLegacyEndpoint(savedEndpoint),
+                        ConnectCount = historyMatch.ConnectCount
+                    };
+                }
+
                 string savedName = SaveFile.Data.SelectedServerName?.Trim() ?? string.Empty;
                 if (string.IsNullOrWhiteSpace(savedName))
                 {
@@ -643,15 +664,227 @@ namespace OceanyaClient
             SaveFile.Save();
         }
 
-        private void UpdateSelectedServerDisplay()
+        private void PopulateServerHistoryComboBox()
         {
-            string serverNameText = selectedServer?.Name ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(serverNameText))
+            serverHistoryItems.Clear();
+
+            List<ServerConnectionHistoryEntry> historyEntries = SaveFile.Data.ServerConnectionHistory.Values
+                .Where(entry => !string.IsNullOrWhiteSpace(entry.Endpoint) && entry.ConnectCount > 0)
+                .OrderByDescending(entry => entry.ConnectCount)
+                .ToList();
+
+            foreach (ServerConnectionHistoryEntry entry in historyEntries)
             {
-                serverNameText = "No server selected.";
+                serverHistoryItems.Add(new ServerEndpointDefinition
+                {
+                    Name = string.IsNullOrWhiteSpace(entry.Name) ? entry.Endpoint : entry.Name,
+                    Endpoint = entry.Endpoint,
+                    Description = entry.Description,
+                    Source = ServerEndpointSource.ConnectionHistory,
+                    IsLegacy = ServerEndpointCatalog.IsLegacyEndpoint(entry.Endpoint),
+                    ConnectCount = entry.ConnectCount
+                });
             }
 
-            SelectedServerTextBox.Text = serverNameText;
+            SelectedServerComboBox.ItemsSource = serverHistoryItems;
+
+            foreach (ServerEndpointDefinition item in serverHistoryItems.ToList())
+            {
+                _ = ProbeServerHistoryItemAsync(item);
+            }
+        }
+
+        private async Task ProbeServerHistoryItemAsync(ServerEndpointDefinition server)
+        {
+            if (!server.SupportsDirectConnection)
+            {
+                return;
+            }
+
+            try
+            {
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    server.OnlinePlayers = null;
+                    server.MaxPlayers = null;
+                    server.LatencyMilliseconds = null;
+                    server.PingStatus = ServerPingStatus.Pinging;
+                });
+
+                Stopwatch stopwatch = Stopwatch.StartNew();
+                (bool success, int? players, int? maxPlayers, bool incompatibleClient) =
+                    await ServerEndpointCatalog.ProbeEndpointAsync(server.Endpoint, CancellationToken.None);
+                stopwatch.Stop();
+
+                int? latency = (success || incompatibleClient)
+                    ? Math.Max(0, (int)Math.Round(stopwatch.Elapsed.TotalMilliseconds))
+                    : null;
+
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    server.OnlinePlayers = success ? players : null;
+                    server.MaxPlayers = success ? maxPlayers : null;
+                    server.LatencyMilliseconds = latency;
+                    server.PingStatus = incompatibleClient
+                        ? ServerPingStatus.IncompatibleClient
+                        : success
+                            ? ServerPingStatus.Online
+                            : ServerPingStatus.Offline;
+                });
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Warning("Failed to probe recent server for the quickselect combobox.", ex);
+            }
+        }
+
+        private void ApplySelectedServer(ServerEndpointDefinition server)
+        {
+            selectedServer = server;
+            UpdateSelectedServerDisplay();
+        }
+
+        private void ServerHistoryComboBoxItem_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (sender is not ComboBoxItem item || item.DataContext is not ServerEndpointDefinition server)
+            {
+                return;
+            }
+
+            ContextMenu menu = new ContextMenu();
+            ContextMenuSectionHelper.AddHeader(menu, "Server History", addLeadingSeparator: false);
+            MenuItem removeMenuItem = new MenuItem { Header = "Remove from list" };
+            removeMenuItem.Click += (_, _) => RemoveServerHistoryEntry(server);
+            menu.Items.Add(removeMenuItem);
+
+            item.ContextMenu = menu;
+            menu.PlacementTarget = item;
+            menu.IsOpen = true;
+            e.Handled = true;
+        }
+
+        private void RemoveServerHistoryEntry(ServerEndpointDefinition server)
+        {
+            if (SaveFile.Data.ServerConnectionHistory.TryGetValue(server.Endpoint, out ServerConnectionHistoryEntry? entry))
+            {
+                entry.ConnectCount = 0;
+                SaveFile.Save();
+            }
+
+            serverHistoryItems.Remove(server);
+        }
+
+        private void SelectedServerComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (ignoreServerHistorySelectionChanged)
+            {
+                return;
+            }
+
+            if (SelectedServerComboBox.SelectedItem is ServerEndpointDefinition server)
+            {
+                selectedServer = server;
+            }
+        }
+
+        private static void RecordServerConnectionUsage(string endpoint, string name, string? description)
+        {
+            string trimmedEndpoint = endpoint?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(trimmedEndpoint))
+            {
+                return;
+            }
+
+            if (!SaveFile.Data.ServerConnectionHistory.TryGetValue(trimmedEndpoint, out ServerConnectionHistoryEntry? entry))
+            {
+                entry = new ServerConnectionHistoryEntry { Endpoint = trimmedEndpoint };
+                SaveFile.Data.ServerConnectionHistory[trimmedEndpoint] = entry;
+            }
+
+            entry.Name = string.IsNullOrWhiteSpace(name) ? trimmedEndpoint : name.Trim();
+            entry.Description = description ?? string.Empty;
+            entry.ConnectCount++;
+        }
+
+        /// <summary>
+        /// When a server's endpoint also exists as a Default/Favorite catalog entry, resolving the current
+        /// selection can hand back a catalog-sourced object with ConnectCount 0, even though the same endpoint
+        /// already has real launch history. Keep whichever ConnectCount is higher so the combobox never
+        /// regresses a real history entry back down to "Joined 0 times".
+        /// </summary>
+        private static ServerEndpointDefinition PreserveHigherHistoryConnectCount(
+            ServerEndpointDefinition incoming,
+            ServerEndpointDefinition existing)
+        {
+            if (existing.ConnectCount <= incoming.ConnectCount)
+            {
+                return incoming;
+            }
+
+            return new ServerEndpointDefinition
+            {
+                Name = incoming.Name,
+                Endpoint = incoming.Endpoint,
+                Description = incoming.Description,
+                Source = ServerEndpointSource.ConnectionHistory,
+                IsLegacy = incoming.IsLegacy,
+                FavoriteStoreIndex = incoming.FavoriteStoreIndex,
+                ListIndex = incoming.ListIndex,
+                ConnectCount = existing.ConnectCount,
+                PingStatus = incoming.PingStatus,
+                OnlinePlayers = incoming.OnlinePlayers,
+                MaxPlayers = incoming.MaxPlayers,
+                LatencyMilliseconds = incoming.LatencyMilliseconds
+            };
+        }
+
+        private void UpdateSelectedServerDisplay()
+        {
+            if (selectedServer == null)
+            {
+                ignoreServerHistorySelectionChanged = true;
+                try
+                {
+                    SelectedServerComboBox.SelectedItem = null;
+                }
+                finally
+                {
+                    ignoreServerHistorySelectionChanged = false;
+                }
+
+                return;
+            }
+
+            ignoreServerHistorySelectionChanged = true;
+            try
+            {
+                int existingIndex = serverHistoryItems.ToList().FindIndex(item =>
+                    string.Equals(item.Endpoint, selectedServer.Endpoint, StringComparison.OrdinalIgnoreCase));
+
+                if (existingIndex >= 0)
+                {
+                    selectedServer = PreserveHigherHistoryConnectCount(selectedServer, serverHistoryItems[existingIndex]);
+                    serverHistoryItems[existingIndex] = selectedServer;
+                }
+                else
+                {
+                    serverHistoryItems.Insert(0, selectedServer);
+                }
+
+                // The replacement/insert above may have swapped in a fresh, not-yet-probed
+                // instance in place of one that was already probing/probed — re-probe it so
+                // the row doesn't get stuck showing no players/ping.
+                if (selectedServer.PingStatus == ServerPingStatus.Unknown)
+                {
+                    _ = ProbeServerHistoryItemAsync(selectedServer);
+                }
+
+                SelectedServerComboBox.SelectedItem = selectedServer;
+            }
+            finally
+            {
+                ignoreServerHistorySelectionChanged = false;
+            }
         }
 
         private void SaveConfiguration(

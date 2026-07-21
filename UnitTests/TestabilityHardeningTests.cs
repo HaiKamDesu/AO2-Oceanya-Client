@@ -913,7 +913,9 @@ namespace UnitTests
                 Assert.That(((TextBox)window.FindName("ConfigINIPathTextBox")).Text, Is.EqualTo(configIniPath));
                 Assert.That(((ComboBox)window.FindName("StartupFunctionalityComboBox")).SelectedValue?.ToString(),
                     Is.EqualTo(StartupFunctionalityIds.CharacterDatabaseViewer));
-                Assert.That(((TextBox)window.FindName("SelectedServerTextBox")).Text, Is.EqualTo("ws://127.0.0.1:27016"));
+                ServerEndpointDefinition? selectedServer =
+                    ((ComboBox)window.FindName("SelectedServerComboBox")).SelectedItem as ServerEndpointDefinition;
+                Assert.That(selectedServer?.Name, Is.EqualTo("ws://127.0.0.1:27016"));
             });
         }
 
@@ -1015,12 +1017,84 @@ namespace UnitTests
                 Assert.That(GetAutomationId(window, "ConfigINIPathTextBox"), Is.EqualTo("InitialConfig.ConfigIniPath"));
                 Assert.That(GetAutomationId(window, "BrowseButton"), Is.EqualTo("InitialConfig.BrowseConfigIni"));
                 Assert.That(GetAutomationId(window, "StartupFunctionalityComboBox"), Is.EqualTo("InitialConfig.StartupFunctionality"));
-                Assert.That(GetAutomationId(window, "SelectedServerTextBox"), Is.EqualTo("InitialConfig.SelectedServerText"));
+                Assert.That(GetAutomationId(window, "SelectedServerComboBox"), Is.EqualTo("InitialConfig.SelectedServerCombo"));
                 Assert.That(GetAutomationId(window, "SelectServerButton"), Is.EqualTo("InitialConfig.SelectServer"));
                 Assert.That(GetAutomationId(window, "RefreshInfoCheckBox"), Is.EqualTo("InitialConfig.RefreshAssets"));
                 Assert.That(GetAutomationId(window, "UseSingleClientCheckBox"), Is.EqualTo("InitialConfig.UseSingleInternalClient"));
                 Assert.That(GetAutomationId(window, "OkButton"), Is.EqualTo("InitialConfig.Launch"));
             });
+        }
+
+        [Test]
+        public void RecordServerConnectionUsage_IncrementsCountAndPersistsAcrossReload()
+        {
+            SaveFile.ResetForTests(new SaveData(), persist: false);
+
+            MethodInfo? recordMethod = typeof(InitialConfigurationWindow).GetMethod(
+                "RecordServerConnectionUsage",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.That(recordMethod, Is.Not.Null);
+
+            recordMethod!.Invoke(null, new object?[] { "ws://127.0.0.1:27016", "My Server", "A cozy server." });
+            recordMethod.Invoke(null, new object?[] { "ws://127.0.0.1:27016", "My Server", "A cozy server." });
+            recordMethod.Invoke(null, new object?[] { "ws://127.0.0.1:50001", "Other Server", "" });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(SaveFile.Data.ServerConnectionHistory.ContainsKey("ws://127.0.0.1:27016"), Is.True);
+                Assert.That(SaveFile.Data.ServerConnectionHistory["ws://127.0.0.1:27016"].ConnectCount, Is.EqualTo(2));
+                Assert.That(SaveFile.Data.ServerConnectionHistory["ws://127.0.0.1:27016"].Name, Is.EqualTo("My Server"));
+                Assert.That(SaveFile.Data.ServerConnectionHistory["ws://127.0.0.1:50001"].ConnectCount, Is.EqualTo(1));
+            });
+
+            SaveFile.Save();
+            SaveData reloaded = SaveFile.LoadSnapshotFromDisk();
+            Assert.That(reloaded.ServerConnectionHistory["ws://127.0.0.1:27016"].ConnectCount, Is.EqualTo(2));
+        }
+
+        [Test]
+        public void InitialConfigurationWindow_ServerHistoryComboBox_OrdersByConnectCountDescending()
+        {
+            string configIniPath = CreateConfigIni();
+            SaveFile.ResetForTests(
+                new SaveData
+                {
+                    ConfigIniPath = configIniPath,
+                    StartupFunctionalityId = StartupFunctionalityIds.GmMultiClient,
+                    SelectedServerEndpoint = "ws://127.0.0.1:27016",
+                    ServerConnectionHistory = new Dictionary<string, ServerConnectionHistoryEntry>
+                    {
+                        ["ws://127.0.0.1:27016"] = new ServerConnectionHistoryEntry
+                        {
+                            Endpoint = "ws://127.0.0.1:27016",
+                            Name = "Least Used",
+                            ConnectCount = 1
+                        },
+                        ["ws://127.0.0.1:27017"] = new ServerConnectionHistoryEntry
+                        {
+                            Endpoint = "ws://127.0.0.1:27017",
+                            Name = "Most Used",
+                            ConnectCount = 9
+                        },
+                        ["ws://127.0.0.1:27018"] = new ServerConnectionHistoryEntry
+                        {
+                            Endpoint = "ws://127.0.0.1:27018",
+                            Name = "Middle Used",
+                            ConnectCount = 4
+                        }
+                    }
+                },
+                persist: false);
+
+            InitialConfigurationWindow window = new InitialConfigurationWindow();
+
+            ComboBox comboBox = (ComboBox)window.FindName("SelectedServerComboBox");
+            List<ServerEndpointDefinition> historyItems = comboBox.ItemsSource
+                .Cast<ServerEndpointDefinition>()
+                .Where(item => item.Source == ServerEndpointSource.ConnectionHistory)
+                .ToList();
+
+            Assert.That(historyItems.Select(item => item.Name), Is.EqualTo(new[] { "Most Used", "Middle Used", "Least Used" }));
         }
 
         [Test]

@@ -59,9 +59,9 @@ public sealed class FirstWaveSmokeTests
         InvokeWhenEnabled(app.WaitForDescendantById(serverSelectionWindow, "ServerSelection.Select").AsButton());
 
         Window returnedInitialConfigWindow = app.WaitForReadyWindow("InitialConfig.Launch");
-        string selectedServerText = app.WaitForDescendantById(returnedInitialConfigWindow, "InitialConfig.SelectedServerText")
-            .AsTextBox()
-            .Text;
+        string? selectedServerText = app.WaitForDescendantById(returnedInitialConfigWindow, "InitialConfig.SelectedServerCombo")
+            .AsComboBox()
+            .SelectedItem?.Text;
 
         Assert.That(selectedServerText, Is.EqualTo("Smoke Favorite"));
     }

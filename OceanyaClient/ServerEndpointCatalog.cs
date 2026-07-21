@@ -20,7 +20,8 @@ namespace OceanyaClient
     {
         Defaults,
         AoServerPoll,
-        Favorites
+        Favorites,
+        ConnectionHistory
     }
 
     internal enum ServerPingStatus
@@ -48,6 +49,12 @@ namespace OceanyaClient
         public required ServerEndpointSource Source { get; init; }
         public required bool IsLegacy { get; init; }
         public int? FavoriteStoreIndex { get; init; }
+
+        /// <summary>Number of times this server has actually been launched into. Only meaningful for <see cref="ServerEndpointSource.ConnectionHistory"/> rows.</summary>
+        public int ConnectCount { get; init; }
+
+        /// <summary>Tooltip text for the server quickselect combobox, e.g. "My Server - Joined 3 times".</summary>
+        public string ConnectCountTooltip => $"{Name} - Joined {ConnectCount} time{(ConnectCount == 1 ? string.Empty : "s")}";
 
         /// <summary>
         /// Zero-based position in the original source list (JSON array index, enum order, or favorites INI index).
@@ -146,6 +153,7 @@ namespace OceanyaClient
             ServerEndpointSource.Defaults => "Defaults",
             ServerEndpointSource.AoServerPoll => "AO Server Poll",
             ServerEndpointSource.Favorites => "Favorites",
+            ServerEndpointSource.ConnectionHistory => "Recent",
             _ => "Unknown"
         };
 
