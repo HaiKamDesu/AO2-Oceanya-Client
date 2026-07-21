@@ -685,10 +685,7 @@ namespace OceanyaClient
 
         private static void EnsureFolderTagCacheFilePath()
         {
-            string cacheRoot = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "OceanyaClient",
-                "cache");
+            string cacheRoot = CacheEnvironment.GetCacheRoot();
             Directory.CreateDirectory(cacheRoot);
             string desiredPath = Path.Combine(cacheRoot, "character_folder_tags.json");
             if (!folderTagCachePathInitialized || !string.Equals(folderTagCacheFilePath, desiredPath, StringComparison.OrdinalIgnoreCase))
@@ -3764,10 +3761,7 @@ namespace OceanyaClient
 
         private static void EnsureDiskCacheFilePath()
         {
-            string cacheRoot = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "OceanyaClient",
-                "cache");
+            string cacheRoot = CacheEnvironment.GetCacheRoot();
             Directory.CreateDirectory(cacheRoot);
             string cacheKeyPayload = $"{Globals.PathToConfigINI}|{string.Join("|", Globals.BaseFolders)}";
             string cacheKey = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(cacheKeyPayload))).ToLowerInvariant();
@@ -3777,6 +3771,8 @@ namespace OceanyaClient
                 diskCacheFilePath = desiredPath;
                 diskCachePathInitialized = true;
             }
+
+            CacheFilePruner.PruneStaleCacheFiles(cacheRoot, "folder_visualizer_", diskCacheFilePath);
         }
 
         private bool TryLoadProjectedItemsFromDisk(string signature, out List<FolderVisualizerItem> projectedItems)

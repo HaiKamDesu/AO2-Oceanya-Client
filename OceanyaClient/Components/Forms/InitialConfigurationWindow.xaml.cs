@@ -329,13 +329,16 @@ namespace OceanyaClient
 
             try
             {
+                StartupTimingLogger.Log("startup_window_construct_begin");
                 Window startupWindow = StartupWindowLauncher.CreateStartupWindow(
                     selectedFunctionality.Id,
                     onFunctionalityReady: HandleStartupFunctionalityReady,
                     onFunctionalityClosed: HandleStartupFunctionalityClosed,
                     useSharedStartupWaitForm: true);
+                StartupTimingLogger.Log("startup_window_construct_end");
 
                 startupWindow.Show();
+                StartupTimingLogger.Log("startup_window_show_end");
                 if (launchWaitFormShown)
                 {
                     WaitForm.SetSubtitle("Loading startup tasks...");

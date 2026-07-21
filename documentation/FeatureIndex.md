@@ -78,6 +78,11 @@ Use this file as the first stop before broad repository searches. It should poin
 - Tests: `UnitTests/GoogleDriveSyncTests.cs` (`ClientAssetRefreshServiceTests`)
 - Notes: Startup forced-refresh prompts come from `%APPDATA%/OceanyaClient/cache/asset_refresh_marker.json`. Reasons distinguish missing/unreadable markers, marker schema changes, app version changes, selected `config.ini` plus mount-list changes, and mount/base-folder list changes without blaming `config.ini` when only mounts changed.
 
+## Character Cache Cold-Launch Performance
+- Doc: `Documentation/CharacterCacheColdLaunch.md`
+- Main code: `AOBot-Testing/Structures/CharacterFolder.cs`, `Common/CacheEnvironment.cs`, `Common/CacheFilePruner.cs`, `AOBot-Testing/Structures/Background.cs`, `OceanyaClient/Components/Forms/CharacterFolderVisualizerWindow.xaml.cs`, `OceanyaClient/StartupTimingLogger.cs`
+- Notes: First-launch-after-reboot stall was `BuildSourceSignature` doing ~1 filesystem stat per character (~30 s cold, latency-bound) on the cache-load critical path. Removed that per-character `char.ini` signature scan from both load (`IsCacheCompatible`) and write (`SaveToJson`) paths; cheap version/config/mount checks remain. Per-character edits still detected off-critical-path by the existing post-launch `ClientAssetRefreshService.GetTrackedChangePlanForCurrentEnvironment()`. Cache dir resolution unified via `CacheEnvironment.GetCacheRoot()` (prod path unchanged, dev/test isolated) and stale per-hash files age-pruned via `CacheFilePruner` (`characters_`/`backgrounds_`/`folder_visualizer_`; persistent files never pruned). `FullList` is lock-guarded. Diagnose regressions via `startup_timing.log` `compatibilityCheckMs` (must stay ~0).
+
 ## Character File Creator
 - Doc: `Documentation/CharacterFileCreator.md`
 - Main code: `OceanyaClient/Components/Forms/AOCharacterFileCreatorWindow.xaml.cs`, `OceanyaClient/Features/CharacterCreator/AOCharacterFileCreatorBuilder.cs`, `OceanyaClient/Features/CharacterCreator/GeneratedAssetPathCollisionResolver.cs`

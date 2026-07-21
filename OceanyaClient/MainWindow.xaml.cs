@@ -249,8 +249,10 @@ namespace OceanyaClient
         List<ToggleButton> objectionModifiers;
         public MainWindow(bool aiModeEnabled = false)
         {
+            StartupTimingLogger.Log("main_window_ctor_begin");
             this.aiModeEnabled = aiModeEnabled;
             InitializeComponent();
+            StartupTimingLogger.Log("main_window_initializecomponent_end");
             InitializeClientsHeaderContextMenu();
             Title = aiModeEnabled ? "Oceanya Online - AO2 AI Bot" : "Oceanya Online";
             Icon = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/OceanyaO.ico"));
@@ -5112,12 +5114,14 @@ namespace OceanyaClient
                         WaitForm.SetSubtitle($"Connecting {i + 1}/{resolvedStates.Count}: {state.ClientName}");
                     }
 
+                    StartupTimingLogger.Log("snapshot_client_connect_begin", $"index={i}, name={state.ClientName}");
                     await AddClientInternalAsync(
                         state.ClientName,
                         state,
                         suppressInitialCharacterPrompt: true,
                         showWaitForm: false,
                         preconnectedClient: i == 0 ? firstConnectedClient : null);
+                    StartupTimingLogger.Log("snapshot_client_connect_end", $"index={i}, name={state.ClientName}");
                 }
             }
             finally
@@ -5907,12 +5911,18 @@ namespace OceanyaClient
                     InitializeCommonClientEvents(bot, bot);
                     if (preconnectedClient == null)
                     {
+                        StartupTimingLogger.Log("client_connect_handshake_begin", $"name={defaultClientName}");
                         await ConnectClientAsync(bot, autoSelectCharacter: false);
+                        StartupTimingLogger.Log("client_connect_handshake_end", $"name={defaultClientName}");
                     }
+                    StartupTimingLogger.Log("client_area_bootstrap_begin", $"name={defaultClientName}");
                     await BootstrapAreaNavigatorAsync(bot);
+                    StartupTimingLogger.Log("client_area_bootstrap_end", $"name={defaultClientName}");
                     if (restoredState != null && !string.IsNullOrWhiteSpace(restoredState.IniPuppetName))
                     {
+                        StartupTimingLogger.Log("client_inipuppet_select_begin", $"name={defaultClientName}");
                         await bot.SelectIniPuppet(restoredState.IniPuppetName, false);
+                        StartupTimingLogger.Log("client_inipuppet_select_end", $"name={defaultClientName}");
                     }
                 }
 

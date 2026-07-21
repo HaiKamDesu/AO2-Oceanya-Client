@@ -33,6 +33,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Documentation", "Documentat
 		Documentation\AreaNavigator.md = Documentation\AreaNavigator.md
 		Documentation\AO2Viewport.md = Documentation\AO2Viewport.md
 		Documentation\AgentDocumentationWorkflow.md = Documentation\AgentDocumentationWorkflow.md
+		Documentation\CharacterCacheColdLaunch.md = Documentation\CharacterCacheColdLaunch.md
 		Documentation\CharacterFileCreator.md = Documentation\CharacterFileCreator.md
 		Documentation\DebugConsoleAndLogging.md = Documentation\DebugConsoleAndLogging.md
 		Documentation\FeatureIndex.md = Documentation\FeatureIndex.md

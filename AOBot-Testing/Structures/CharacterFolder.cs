@@ -1,4 +1,5 @@
-﻿using System.IO;
+﻿using System.Diagnostics;
+using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -16,28 +17,55 @@ namespace AOBot_Testing.Structures
         static string cacheFile = Path.Combine(Path.GetTempPath(), "characters.json");
         static List<CharacterFolder> characterConfigs = new List<CharacterFolder>();
         static bool cachePathInitialized;
+
+        /// <summary>Diagnostics for the first <see cref="FullList"/> access this process — set once per cold load.</summary>
+        public static bool? LastFullListWasCacheHit { get; private set; }
+        public static long LastFullListLoadMs { get; private set; }
+        public static int LastFullListLoadCount { get; private set; }
+        /// <summary>Size in bytes of the cache file read on the last cache-hit load (-1 if not a cache hit).</summary>
+        public static long LastFullListCacheFileBytes { get; private set; } = -1;
+        /// <summary>Milliseconds spent on the raw <c>File.ReadAllText</c> disk read of the cache file.</summary>
+        public static long LastFullListFileReadMs { get; private set; } = -1;
+        /// <summary>Milliseconds spent on <c>JsonSerializer.Deserialize</c> of the cache file contents.</summary>
+        public static long LastFullListDeserializeMs { get; private set; } = -1;
+        /// <summary>Milliseconds spent in <c>IsCacheCompatible</c> (cheap version/config/mount checks only; kept for regression visibility).</summary>
+        public static long LastFullListCompatibilityCheckMs { get; private set; } = -1;
+        /// <summary>Guards the lazy load/refresh of <see cref="characterConfigs"/> so a background prewarm
+        /// and the on-demand accessor cannot race or double-load. A caller that hits the accessor while a
+        /// prewarm is mid-load simply blocks on this lock and joins the in-progress result.</summary>
+        private static readonly object fullListLoadLock = new object();
+
         public static List<CharacterFolder> FullList
         {
             get
             {
-                EnsureCacheFilePath();
-
-                if (characterConfigs.Count == 0)
+                lock (fullListLoadLock)
                 {
-                    if (TryLoadFromJson(cacheFile, out List<CharacterFolder>? cachedCharacters))
-                    {
-                        characterConfigs = cachedCharacters;
-                        CustomConsole.Info($"Loaded {characterConfigs.Count} characters from cache.");
-                    }
-                    else
-                    {
-                        RefreshCharacterList();
-                    }
-                }
+                    EnsureCacheFilePath();
 
-                return characterConfigs;
+                    if (characterConfigs.Count == 0)
+                    {
+                        var loadStopwatch = Stopwatch.StartNew();
+                        if (TryLoadFromJson(cacheFile, out List<CharacterFolder>? cachedCharacters))
+                        {
+                            characterConfigs = cachedCharacters;
+                            CustomConsole.Info($"Loaded {characterConfigs.Count} characters from cache.");
+                            LastFullListWasCacheHit = true;
+                        }
+                        else
+                        {
+                            RefreshCharacterList();
+                            LastFullListWasCacheHit = false;
+                        }
+                        LastFullListLoadMs = loadStopwatch.ElapsedMilliseconds;
+                        LastFullListLoadCount = characterConfigs.Count;
+                    }
+
+                    return characterConfigs;
+                }
             }
         }
+
 
         public static void RefreshCharacterList(
             Action<CharacterFolder>? onParsedCharacter = null,
@@ -232,10 +260,7 @@ namespace AOBot_Testing.Structures
 
         private static void EnsureCacheFilePath()
         {
-            string cacheRoot = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "OceanyaClient",
-                "cache");
+            string cacheRoot = CacheEnvironment.GetCacheRoot();
             Directory.CreateDirectory(cacheRoot);
             string desiredCachePath = Path.Combine(cacheRoot, $"characters_{BuildCacheKey()}.json");
 
@@ -245,6 +270,8 @@ namespace AOBot_Testing.Structures
                 characterConfigs = new List<CharacterFolder>();
                 cachePathInitialized = true;
             }
+
+            CacheFilePruner.PruneStaleCacheFiles(cacheRoot, "characters_", cacheFile);
         }
 
         private static string BuildCacheKey()
@@ -252,44 +279,6 @@ namespace AOBot_Testing.Structures
             string payload = $"{Globals.PathToConfigINI}|{string.Join("|", Globals.BaseFolders)}";
             byte[] hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(payload));
             return Convert.ToHexString(hashBytes).ToLowerInvariant();
-        }
-
-        private static string BuildSourceSignature()
-        {
-            List<string> entries = new List<string>();
-
-            foreach (string characterFolder in CharacterFolders)
-            {
-                if (!Directory.Exists(characterFolder))
-                {
-                    continue;
-                }
-
-                IEnumerable<string> directories;
-                try
-                {
-                    directories = Directory.EnumerateDirectories(characterFolder);
-                }
-                catch
-                {
-                    continue;
-                }
-
-                foreach (string directory in directories)
-                {
-                    string iniFilePath = Path.Combine(directory, "char.ini");
-                    if (!File.Exists(iniFilePath))
-                    {
-                        continue;
-                    }
-
-                    long lastWriteTicksUtc = File.GetLastWriteTimeUtc(iniFilePath).Ticks;
-                    entries.Add(Path.GetFileName(directory) + "|" + lastWriteTicksUtc.ToString());
-                }
-            }
-
-            entries.Sort(StringComparer.OrdinalIgnoreCase);
-            return string.Join(";", entries);
         }
 
         private static string ResolveCharacterIniPath(string characterDirectoryPath)
@@ -329,7 +318,9 @@ namespace AOBot_Testing.Structures
                 Version = CacheVersion,
                 ConfigPath = Globals.PathToConfigINI,
                 BaseFolders = new List<string>(Globals.BaseFolders),
-                SourceSignature = BuildSourceSignature(),
+                // SourceSignature is no longer used for cache validation (see IsCacheCompatible); it is left
+                // empty rather than recomputed, which previously cost thousands of cold-disk stats per save.
+                SourceSignature = string.Empty,
                 Characters = characters
             };
 
@@ -347,14 +338,33 @@ namespace AOBot_Testing.Structures
 
             try
             {
-                string json = File.ReadAllText(filePath);
+                try
+                {
+                    LastFullListCacheFileBytes = new FileInfo(filePath).Length;
+                }
+                catch
+                {
+                    LastFullListCacheFileBytes = -1;
+                }
 
+                var readStopwatch = Stopwatch.StartNew();
+                string json = File.ReadAllText(filePath);
+                readStopwatch.Stop();
+                LastFullListFileReadMs = readStopwatch.ElapsedMilliseconds;
+
+                var deserializeStopwatch = Stopwatch.StartNew();
                 CharacterCacheContainer? container = JsonSerializer.Deserialize<CharacterCacheContainer>(json);
+                deserializeStopwatch.Stop();
+                LastFullListDeserializeMs = deserializeStopwatch.ElapsedMilliseconds;
                 if (container != null)
                 {
                     // Cache exists in container format. If incompatible, skip the legacy path — trying to
                     // deserialize a container-format object as List<CharacterFolder> would throw JsonException.
-                    if (IsCacheCompatible(container))
+                    var compatibilityStopwatch = Stopwatch.StartNew();
+                    bool compatible = IsCacheCompatible(container);
+                    compatibilityStopwatch.Stop();
+                    LastFullListCompatibilityCheckMs = compatibilityStopwatch.ElapsedMilliseconds;
+                    if (compatible)
                     {
                         characters = container.Characters ?? new List<CharacterFolder>();
                         return true;
@@ -407,14 +417,13 @@ namespace AOBot_Testing.Structures
                 }
             }
 
-            if (!string.Equals(
-                    container.SourceSignature ?? string.Empty,
-                    BuildSourceSignature(),
-                    StringComparison.Ordinal))
-            {
-                return false;
-            }
-
+            // NOTE: we intentionally do NOT validate a per-character char.ini timestamp signature here.
+            // Doing so required ~one filesystem stat per character (thousands of cold-disk metadata reads),
+            // which dominated cold launch time (tens of seconds) purely to decide the cache was still valid.
+            // Per-character edits/adds/removes are instead detected off the launch critical path by the
+            // post-launch background asset change check (ClientAssetRefreshService.GetTrackedChangePlan...),
+            // which compares the saved asset-state marker against the current disk state and refreshes any
+            // changed characters live, without blocking startup. See CharacterFolder cold-launch notes.
             return true;
         }
 

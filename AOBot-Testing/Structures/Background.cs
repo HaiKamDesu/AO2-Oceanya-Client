@@ -554,10 +554,7 @@ namespace AOBot_Testing.Structures
 
         private static void EnsureCacheFilePath()
         {
-            string cacheRoot = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "OceanyaClient",
-                "cache");
+            string cacheRoot = CacheEnvironment.GetCacheRoot();
             Directory.CreateDirectory(cacheRoot);
             string desiredCachePath = Path.Combine(cacheRoot, $"backgrounds_{BuildCacheKey()}.json");
             if (!cachePathInitialized || !string.Equals(cacheFile, desiredCachePath, StringComparison.OrdinalIgnoreCase))
@@ -567,6 +564,8 @@ namespace AOBot_Testing.Structures
                 cacheLoaded = false;
                 cachePathInitialized = true;
             }
+
+            CacheFilePruner.PruneStaleCacheFiles(cacheRoot, "backgrounds_", cacheFile);
         }
 
         private static string BuildCacheKey()

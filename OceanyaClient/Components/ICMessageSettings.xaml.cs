@@ -60,7 +60,9 @@ namespace OceanyaClient.Components
 
         public ICMessageSettings()
         {
+            StartupTimingLogger.Log("ic_settings_ctor_begin");
             InitializeComponent();
+            StartupTimingLogger.Log("ic_settings_initializecomponent_end");
 
             #region Emote Grid
             EmoteGrid.SetScrollMode(PageButtonGrid.ScrollMode.Horizontal);
@@ -68,12 +70,21 @@ namespace OceanyaClient.Components
             #endregion
 
             #region Char dropdown
-            foreach (var ini in GetAlphabeticalCharacterFolders())
+            var alphabeticalCharacters = GetAlphabeticalCharacterFolders().ToList();
+            StartupTimingLogger.Log("ic_settings_character_fulllist_touched",
+                $"cacheHit={CharacterFolder.LastFullListWasCacheHit}, loadMs={CharacterFolder.LastFullListLoadMs}, "
+                + $"fileBytes={CharacterFolder.LastFullListCacheFileBytes}, fileReadMs={CharacterFolder.LastFullListFileReadMs}, "
+                + $"deserializeMs={CharacterFolder.LastFullListDeserializeMs}, "
+                + $"compatibilityCheckMs={CharacterFolder.LastFullListCompatibilityCheckMs}, "
+                + $"count={CharacterFolder.LastFullListLoadCount}");
+            foreach (var ini in alphabeticalCharacters)
             {
                 CharacterDropdown.Add(ini.Name, ini.CharIconPath);
             }
             CharacterDropdown.OnConfirm += CharacterDropdown_OnConfirm;
             CharacterDropdown.ContextMenu = BuildCharacterDropdownContextMenu();
+            StartupTimingLogger.Log("ic_settings_character_dropdown_populated",
+                $"count={alphabeticalCharacters.Count}");
             #endregion
 
             EmoteDropdown.OnConfirm += EmoteDropdown_OnConfirm;
@@ -110,6 +121,7 @@ namespace OceanyaClient.Components
 
             txtICShowname.MaxLength = ICShownameMaxLength;
             txtICMessage.MaxLength = ICMessageMaxLength;
+            StartupTimingLogger.Log("ic_settings_ctor_end");
         }
 
         private void SfxDropdown_OnConfirm(object? sender, string sfx)
