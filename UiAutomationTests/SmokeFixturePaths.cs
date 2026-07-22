@@ -11,13 +11,38 @@ internal static class SmokeFixturePaths
 
     public static string RepositoryRoot => repositoryRoot;
 
-    public static string AppExePath => Path.Combine(
-        RepositoryRoot,
-        "OceanyaClient",
-        "bin",
-        "Debug",
-        "net8.0-windows",
-        "OceanyaClient.exe");
+    /// <summary>
+    /// Resolves the OceanyaClient.exe to drive. An explicit override
+    /// (OCEANYA_TEST_APP_EXE) wins so the release gate can point Smoke at whichever
+    /// configuration it just built; otherwise probe Debug then Release. This lets the
+    /// Smoke suite run against a Release build (release.yml stable channel) without a
+    /// separate Debug build step.
+    /// </summary>
+    public static string AppExePath
+    {
+        get
+        {
+            string? overridePath = Environment.GetEnvironmentVariable("OCEANYA_TEST_APP_EXE");
+            if (!string.IsNullOrWhiteSpace(overridePath) && File.Exists(overridePath))
+            {
+                return overridePath;
+            }
+
+            foreach (string configuration in new[] { "Debug", "Release" })
+            {
+                string candidate = Path.Combine(
+                    RepositoryRoot, "OceanyaClient", "bin", configuration, "net8.0-windows", "OceanyaClient.exe");
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            // Fall back to the Debug path so the FileNotFound error in Launch names a concrete location.
+            return Path.Combine(
+                RepositoryRoot, "OceanyaClient", "bin", "Debug", "net8.0-windows", "OceanyaClient.exe");
+        }
+    }
 
     public static string FixtureRoot => Path.Combine(RepositoryRoot, "UnitTests", "TestAssets", "FlaUISmoke");
 

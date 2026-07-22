@@ -59,15 +59,22 @@ public sealed class GmMultiClientPacketTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(firstClientPacket.ConnectionId, Is.EqualTo(1), "First GM client should send on the first transport connection.");
+            // Assert the two GM clients used SEPARATE transport connections rather than
+            // exact connection ids: the client's first handshake attempt can transiently
+            // retry and open an extra connection, so raw accept-order ids are not stable.
+            Assert.That(firstClientPacket.ConnectionId, Is.GreaterThan(0), "First GM client should send on a real transport connection.");
+            Assert.That(secondClientPacket.ConnectionId, Is.GreaterThan(0), "Second GM client should send on a real transport connection.");
+            Assert.That(secondClientPacket.ConnectionId, Is.Not.EqualTo(firstClientPacket.ConnectionId), "Each GM client should use its own transport connection.");
+
             Assert.That(firstMessage.CharId, Is.EqualTo(0), "First GM client should send with the first selected INI puppet.");
             Assert.That(firstMessage.Character, Is.EqualTo("SmokePhoenix"));
-            Assert.That(firstMessage.ShowName, Is.EqualTo("PacketClientOne"));
+            // ShowName resolves to the selected character's configured showname when the
+            // profile has no custom IC showname (AO2 ResolveShowNameForPacket behavior).
+            Assert.That(firstMessage.ShowName, Is.EqualTo("Smoke Phoenix"));
 
-            Assert.That(secondClientPacket.ConnectionId, Is.EqualTo(2), "Second GM client should send on the second transport connection.");
             Assert.That(secondMessage.CharId, Is.EqualTo(1), "Second GM client should send with the second selected INI puppet.");
             Assert.That(secondMessage.Character, Is.EqualTo("SmokeEdgeworth"));
-            Assert.That(secondMessage.ShowName, Is.EqualTo("PacketClientTwo"));
+            Assert.That(secondMessage.ShowName, Is.EqualTo("Smoke Edgeworth"));
         });
     }
 
@@ -87,9 +94,13 @@ public sealed class GmMultiClientPacketTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(packet.ConnectionId, Is.EqualTo(1));
+            // Raw accept-order id is not asserted: the client's first handshake attempt can
+            // transiently retry and open an extra connection before the successful one.
+            Assert.That(packet.ConnectionId, Is.GreaterThan(0));
             Assert.That(message.Character, Is.EqualTo("SmokePhoenix"));
-            Assert.That(message.ShowName, Is.EqualTo("WebSocketClient"));
+            // ShowName resolves to the character's configured showname when no custom IC
+            // showname is set (AO2 ResolveShowNameForPacket behavior).
+            Assert.That(message.ShowName, Is.EqualTo("Smoke Phoenix"));
             Assert.That(message.Message, Is.EqualTo("websocket-ic-send"));
         });
     }

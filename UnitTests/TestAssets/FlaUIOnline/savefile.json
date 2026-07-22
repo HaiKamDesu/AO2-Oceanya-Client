@@ -3,10 +3,288 @@
   "StartupFunctionalityId": "gm_multi_client",
   "UseSingleInternalClient": false,
   "SkipLoadingScreen": false,
-  "SelectedServerEndpoint": "ws://127.0.0.1:60010",
-  "SelectedServerName": "ws://127.0.0.1:60010",
+  "SelectedServerEndpoint": "tcp://127.0.0.1:52122",
+  "SelectedServerName": "tcp://127.0.0.1:52122",
   "CustomServerEndpoints": [],
   "CustomServerEntries": [],
+  "ServerConnectionHistory": {
+    "tcp://127.0.0.1:51863": {
+      "Name": "tcp://127.0.0.1:51863",
+      "Endpoint": "tcp://127.0.0.1:51863",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:51896": {
+      "Name": "tcp://127.0.0.1:51896",
+      "Endpoint": "tcp://127.0.0.1:51896",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:51942": {
+      "Name": "tcp://127.0.0.1:51942",
+      "Endpoint": "tcp://127.0.0.1:51942",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:51978": {
+      "Name": "tcp://127.0.0.1:51978",
+      "Endpoint": "tcp://127.0.0.1:51978",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:52004": {
+      "Name": "tcp://127.0.0.1:52004",
+      "Endpoint": "tcp://127.0.0.1:52004",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:52046": {
+      "Name": "tcp://127.0.0.1:52046",
+      "Endpoint": "tcp://127.0.0.1:52046",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:52071": {
+      "Name": "tcp://127.0.0.1:52071",
+      "Endpoint": "tcp://127.0.0.1:52071",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 2
+    },
+    "tcp://127.0.0.1:52108": {
+      "Name": "tcp://127.0.0.1:52108",
+      "Endpoint": "tcp://127.0.0.1:52108",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:52143": {
+      "Name": "tcp://127.0.0.1:52143",
+      "Endpoint": "tcp://127.0.0.1:52143",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:52183": {
+      "Name": "tcp://127.0.0.1:52183",
+      "Endpoint": "tcp://127.0.0.1:52183",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:52212": {
+      "Name": "tcp://127.0.0.1:52212",
+      "Endpoint": "tcp://127.0.0.1:52212",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:52261": {
+      "Name": "tcp://127.0.0.1:52261",
+      "Endpoint": "tcp://127.0.0.1:52261",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "ws://127.0.0.1:52301": {
+      "Name": "ws://127.0.0.1:52301",
+      "Endpoint": "ws://127.0.0.1:52301",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:52350": {
+      "Name": "tcp://127.0.0.1:52350",
+      "Endpoint": "tcp://127.0.0.1:52350",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:52401": {
+      "Name": "tcp://127.0.0.1:52401",
+      "Endpoint": "tcp://127.0.0.1:52401",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:52816": {
+      "Name": "tcp://127.0.0.1:52816",
+      "Endpoint": "tcp://127.0.0.1:52816",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "ws://127.0.0.1:52987": {
+      "Name": "ws://127.0.0.1:52987",
+      "Endpoint": "ws://127.0.0.1:52987",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:53681": {
+      "Name": "tcp://127.0.0.1:53681",
+      "Endpoint": "tcp://127.0.0.1:53681",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:53707": {
+      "Name": "tcp://127.0.0.1:53707",
+      "Endpoint": "tcp://127.0.0.1:53707",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:53743": {
+      "Name": "tcp://127.0.0.1:53743",
+      "Endpoint": "tcp://127.0.0.1:53743",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:53769": {
+      "Name": "tcp://127.0.0.1:53769",
+      "Endpoint": "tcp://127.0.0.1:53769",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:53795": {
+      "Name": "tcp://127.0.0.1:53795",
+      "Endpoint": "tcp://127.0.0.1:53795",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:53822": {
+      "Name": "tcp://127.0.0.1:53822",
+      "Endpoint": "tcp://127.0.0.1:53822",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:53850": {
+      "Name": "tcp://127.0.0.1:53850",
+      "Endpoint": "tcp://127.0.0.1:53850",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:53883": {
+      "Name": "tcp://127.0.0.1:53883",
+      "Endpoint": "tcp://127.0.0.1:53883",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:53913": {
+      "Name": "tcp://127.0.0.1:53913",
+      "Endpoint": "tcp://127.0.0.1:53913",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:53947": {
+      "Name": "tcp://127.0.0.1:53947",
+      "Endpoint": "tcp://127.0.0.1:53947",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:53978": {
+      "Name": "tcp://127.0.0.1:53978",
+      "Endpoint": "tcp://127.0.0.1:53978",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:54012": {
+      "Name": "tcp://127.0.0.1:54012",
+      "Endpoint": "tcp://127.0.0.1:54012",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "ws://127.0.0.1:54045": {
+      "Name": "ws://127.0.0.1:54045",
+      "Endpoint": "ws://127.0.0.1:54045",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:54081": {
+      "Name": "tcp://127.0.0.1:54081",
+      "Endpoint": "tcp://127.0.0.1:54081",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:54116": {
+      "Name": "tcp://127.0.0.1:54116",
+      "Endpoint": "tcp://127.0.0.1:54116",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:54025": {
+      "Name": "tcp://127.0.0.1:54025",
+      "Endpoint": "tcp://127.0.0.1:54025",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:54070": {
+      "Name": "tcp://127.0.0.1:54070",
+      "Endpoint": "tcp://127.0.0.1:54070",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:62416": {
+      "Name": "tcp://127.0.0.1:62416",
+      "Endpoint": "tcp://127.0.0.1:62416",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:62457": {
+      "Name": "tcp://127.0.0.1:62457",
+      "Endpoint": "tcp://127.0.0.1:62457",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:51647": {
+      "Name": "tcp://127.0.0.1:51647",
+      "Endpoint": "tcp://127.0.0.1:51647",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:51688": {
+      "Name": "tcp://127.0.0.1:51688",
+      "Endpoint": "tcp://127.0.0.1:51688",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:51731": {
+      "Name": "tcp://127.0.0.1:51731",
+      "Endpoint": "tcp://127.0.0.1:51731",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:51779": {
+      "Name": "tcp://127.0.0.1:51779",
+      "Endpoint": "tcp://127.0.0.1:51779",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:51822": {
+      "Name": "tcp://127.0.0.1:51822",
+      "Endpoint": "tcp://127.0.0.1:51822",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:51869": {
+      "Name": "tcp://127.0.0.1:51869",
+      "Endpoint": "tcp://127.0.0.1:51869",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:51915": {
+      "Name": "tcp://127.0.0.1:51915",
+      "Endpoint": "tcp://127.0.0.1:51915",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:51970": {
+      "Name": "tcp://127.0.0.1:51970",
+      "Endpoint": "tcp://127.0.0.1:51970",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "ws://127.0.0.1:52021": {
+      "Name": "ws://127.0.0.1:52021",
+      "Endpoint": "ws://127.0.0.1:52021",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    },
+    "tcp://127.0.0.1:52122": {
+      "Name": "tcp://127.0.0.1:52122",
+      "Endpoint": "tcp://127.0.0.1:52122",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 1
+    }
+  },
   "AdvancedFeatures": {
     "EnabledFeatures": {}
   },
@@ -55,6 +333,30 @@
     "MirrorDeletes": true,
     "UseExistingMountPath": false,
     "LastSyncUtc": null
+  },
+  "Updater": {
+    "Stable": {
+      "SkippedReleaseTag": "",
+      "SkippedReleaseVersion": "",
+      "LastSeenReleaseTag": "",
+      "LastSeenReleaseVersion": "",
+      "LastCheckUtc": null,
+      "LastFailureUtc": null
+    },
+    "Test": {
+      "SkippedReleaseTag": "",
+      "SkippedReleaseVersion": "",
+      "LastSeenReleaseTag": "",
+      "LastSeenReleaseVersion": "",
+      "LastCheckUtc": null,
+      "LastFailureUtc": null
+    },
+    "SkippedReleaseTag": "",
+    "SkippedReleaseVersion": "",
+    "LastSeenReleaseTag": "",
+    "LastSeenReleaseVersion": "",
+    "LastCheckUtc": null,
+    "LastFailureUtc": null
   },
   "OOCName": "OnlineTest",
   "StickyEffect": true,
@@ -457,9 +759,12 @@
   "GMViewportWindowState": {
     "Width": 256,
     "Height": 296,
+    "SurfaceWidth": 0,
+    "SurfaceHeight": 0,
     "Left": null,
     "Top": null,
-    "IsVisible": false
+    "IsVisible": false,
+    "WindowKind": "main_viewport"
   },
   "GMMainWindowState": {
     "Width": 510,
@@ -472,9 +777,25 @@
     "Clients": [],
     "SelectedClientIndex": -1,
     "SelectedClientName": "",
-    "UseSingleInternalClient": false
+    "UseSingleInternalClient": false,
+    "ServerEndpoint": "",
+    "ServerName": ""
   },
+  "GMMultiClientSnapshotPresets": [],
   "GMViewportChatBackgroundColor": "",
+  "GMViewportChatboxOverlapsViewport": false,
+  "GMViewportWindowPreviewPriority": true,
+  "GMPictureInPictureViewport": false,
+  "GMPictureInPictureViewportState": {
+    "Width": 192,
+    "Height": 222,
+    "SurfaceWidth": 0,
+    "SurfaceHeight": 0,
+    "Left": null,
+    "Top": null,
+    "IsVisible": false,
+    "WindowKind": "picture_in_picture_viewport"
+  },
   "CharacterCreatorPreviewVolume": 1,
   "AudioMusicVolume": 0.5,
   "AudioSfxVolume": 1,
@@ -493,13 +814,16 @@
     "Network",
     "IC",
     "OOC",
-    "Viewport"
+    "Viewport",
+    "MusicList",
+    "AreaVisualizer",
+    "PairingStudio"
   ],
   "CallwordRules": [],
   "ExtraAudioRules": [],
   "FrequentlyUsedIniPuppets": {
-    "SmokeEdgeworth": 20,
-    "SmokePhoenix": 103
+    "SmokeEdgeworth": 22,
+    "SmokePhoenix": 133
   },
   "FrequentlyUsedMusic": {},
   "MusicCustomNames": {},

@@ -7,6 +7,14 @@
   "SelectedServerName": "ws://127.0.0.1:27016",
   "CustomServerEndpoints": [],
   "CustomServerEntries": [],
+  "ServerConnectionHistory": {
+    "ws://127.0.0.1:27016": {
+      "Name": "ws://127.0.0.1:27016",
+      "Endpoint": "ws://127.0.0.1:27016",
+      "Description": "Test mode endpoint override.",
+      "ConnectCount": 18
+    }
+  },
   "AdvancedFeatures": {
     "EnabledFeatures": {}
   },
@@ -55,6 +63,30 @@
     "MirrorDeletes": true,
     "UseExistingMountPath": false,
     "LastSyncUtc": null
+  },
+  "Updater": {
+    "Stable": {
+      "SkippedReleaseTag": "",
+      "SkippedReleaseVersion": "",
+      "LastSeenReleaseTag": "",
+      "LastSeenReleaseVersion": "",
+      "LastCheckUtc": null,
+      "LastFailureUtc": null
+    },
+    "Test": {
+      "SkippedReleaseTag": "",
+      "SkippedReleaseVersion": "",
+      "LastSeenReleaseTag": "",
+      "LastSeenReleaseVersion": "",
+      "LastCheckUtc": null,
+      "LastFailureUtc": null
+    },
+    "SkippedReleaseTag": "",
+    "SkippedReleaseVersion": "",
+    "LastSeenReleaseTag": "",
+    "LastSeenReleaseVersion": "",
+    "LastCheckUtc": null,
+    "LastFailureUtc": null
   },
   "OOCName": "SmokeOoc",
   "StickyEffect": false,
@@ -457,9 +489,12 @@
   "GMViewportWindowState": {
     "Width": 422,
     "Height": 488,
+    "SurfaceWidth": 0,
+    "SurfaceHeight": 0,
     "Left": 831,
     "Top": 376,
-    "IsVisible": false
+    "IsVisible": false,
+    "WindowKind": "main_viewport"
   },
   "GMMainWindowState": {
     "Width": 510,
@@ -491,8 +526,6 @@
         "PreanimEnabled": false,
         "Immediate": false,
         "Additive": false,
-        "SelfOffsetHorizontal": 0,
-        "SelfOffsetVertical": 0,
         "SwitchPosWhenChangingIni": false
       },
       {
@@ -516,8 +549,6 @@
         "PreanimEnabled": false,
         "Immediate": false,
         "Additive": false,
-        "SelfOffsetHorizontal": 0,
-        "SelfOffsetVertical": 0,
         "SwitchPosWhenChangingIni": false
       },
       {
@@ -541,16 +572,30 @@
         "PreanimEnabled": false,
         "Immediate": false,
         "Additive": false,
-        "SelfOffsetHorizontal": 0,
-        "SelfOffsetVertical": 0,
         "SwitchPosWhenChangingIni": false
       }
     ],
     "SelectedClientIndex": 2,
     "SelectedClientName": "Client3",
-    "UseSingleInternalClient": true
+    "UseSingleInternalClient": true,
+    "ServerEndpoint": "",
+    "ServerName": ""
   },
+  "GMMultiClientSnapshotPresets": [],
   "GMViewportChatBackgroundColor": "",
+  "GMViewportChatboxOverlapsViewport": false,
+  "GMViewportWindowPreviewPriority": true,
+  "GMPictureInPictureViewport": false,
+  "GMPictureInPictureViewportState": {
+    "Width": 192,
+    "Height": 222,
+    "SurfaceWidth": 0,
+    "SurfaceHeight": 0,
+    "Left": null,
+    "Top": null,
+    "IsVisible": false,
+    "WindowKind": "picture_in_picture_viewport"
+  },
   "CharacterCreatorPreviewVolume": 1,
   "AudioMusicVolume": 0.5,
   "AudioSfxVolume": 1,
@@ -569,12 +614,15 @@
     "Network",
     "IC",
     "OOC",
-    "Viewport"
+    "Viewport",
+    "MusicList",
+    "AreaVisualizer",
+    "PairingStudio"
   ],
   "CallwordRules": [],
   "ExtraAudioRules": [],
   "FrequentlyUsedIniPuppets": {
-    "SmokeEdgeworth": 22
+    "SmokeEdgeworth": 30
   },
   "FrequentlyUsedMusic": {},
   "MusicCustomNames": {},

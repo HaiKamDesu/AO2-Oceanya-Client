@@ -84,6 +84,44 @@ jobs:
           --logger "trx;LogFileName=unit-test-results.trx"
           --results-directory TestResults/UnitTests
 
+      # UI smoke gate — deterministic, offline. Blocks the release if the desktop UI
+      # regressed. windows-latest GitHub-hosted runners provide the interactive session
+      # UIA3 needs. OCEANYA_TEST_APP_EXE points Smoke at the exe just built for this
+      # channel (Release for stable, Debug for test).
+      - name: Run UI smoke tests (stable)
+        if: steps.version.outputs.channel == 'stable'
+        env:
+          OCEANYA_TEST_APP_EXE: OceanyaClient/bin/Release/net8.0-windows/OceanyaClient.exe
+        run: >
+          dotnet test UiAutomationTests/UiAutomationTests.csproj
+          --configuration Release
+          --no-build
+          --filter "Category=Smoke"
+          --logger "trx;LogFileName=ui-smoke-results.trx"
+          --results-directory TestResults/UiSmoke
+        timeout-minutes: 10
+
+      - name: Run UI smoke tests (test)
+        if: steps.version.outputs.channel == 'test'
+        env:
+          OCEANYA_TEST_APP_EXE: OceanyaClient/bin/Debug/net8.0-windows/OceanyaClient.exe
+        run: >
+          dotnet test UiAutomationTests/UiAutomationTests.csproj
+          --configuration Debug
+          --no-build
+          --filter "Category=Smoke"
+          --logger "trx;LogFileName=ui-smoke-results.trx"
+          --results-directory TestResults/UiSmoke
+        timeout-minutes: 10
+
+      - name: Upload UI smoke results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-ui-smoke-results
+          path: TestResults/UiSmoke/*.trx
+          if-no-files-found: warn
+
       - name: Prepare release assets
         id: assets
         shell: pwsh

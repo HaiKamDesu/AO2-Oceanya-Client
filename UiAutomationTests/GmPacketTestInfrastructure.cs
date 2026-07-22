@@ -191,6 +191,21 @@ internal sealed class GmPacketLoopbackServer : IDisposable
                     {
                         HandleCharacterSelect(connectionId, packet);
                         await SendToClientAsync(stream, BuildCharsCheckPacket(), cancellationToken, useWebSocket);
+
+                        // The client blocks IC sends until the server confirms the selected
+                        // INI puppet via PV#<player>#CID#<charId>#% (see AOClient.SendICMessage
+                        // guard on iniPuppetID < 0). Echo the confirmation the same way a real
+                        // AO2 server does; the player id must match the ID# we assigned so the
+                        // client's playerID guard accepts it.
+                        if (selectedCharacterByConnection.TryGetValue(connectionId, out int? confirmedCharId)
+                            && confirmedCharId.HasValue)
+                        {
+                            await SendToClientAsync(
+                                stream,
+                                $"PV#{connectionId}#CID#{confirmedCharId.Value}#%",
+                                cancellationToken,
+                                useWebSocket);
+                        }
                     }
                 }
             }

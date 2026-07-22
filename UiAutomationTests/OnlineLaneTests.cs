@@ -200,86 +200,173 @@ public sealed class OnlineLaneTests
 
     // ── in-process AO2-compatible TCP server ─────────────────────────────────
     //
-    // Mirrors the pattern in UnitTests/NetworkTests.cs.
-    // Accepts one connection, performs the full AO2 handshake, then collects every
-    // packet the client sends until the CancellationToken fires or the socket closes.
+    // Mirrors the pattern in UnitTests/NetworkTests.cs and GmPacketLoopbackServer.
     //
-    // TCP-scheme clients send HI# immediately before the server speaks; the server
-    // drains that first before sending decryptor.
+    // IMPORTANT: this ACCEPTS CONNECTIONS IN A LOOP, one handler task per connection.
+    // The InitialConfigurationWindow server-history combobox (added in commit 2083cae)
+    // fire-and-forget probes the selected endpoint via ServerEndpointCatalog.ProbeEndpointAsync,
+    // which opens its own short-lived connection to this loopback endpoint. A single-accept
+    // server would hand that probe the one and only connection, starving the real AddClient
+    // connection and leaving the client stuck on "Timed out waiting for handshake packet: ID".
+    // Accepting in a loop lets the probe and the real client both connect.
+    //
+    // Packets from every connection are aggregated under a lock. The real client is the only
+    // connection that sends the full HI→ID→askchaa→RC→RM→RD sequence and the CT# OOC send, so
+    // the ordering / content assertions in the test bodies still hold.
+    //
+    // TCP-scheme clients send HI# immediately before the server speaks; each handler drains
+    // that first before sending decryptor.
 
     private static async Task<(List<string> Packets, string? ServerError)> RunServerAsync(
         TcpListener listener,
         CancellationToken cancellationToken)
     {
         List<string> receivedPackets = new List<string>();
+        object packetsLock = new object();
         string? serverError = null;
+        int nextConnectionId = 0;
+        List<Task> connectionTasks = new List<Task>();
 
         try
         {
-            using TcpClient client = await listener.AcceptTcpClientAsync(cancellationToken);
-            using NetworkStream stream = client.GetStream();
-            StringBuilder packetBuffer = new StringBuilder();
-
-            // The TCP transport sends HI# before the server speaks; drain it first.
-            string? firstPacket = await ReadPacketAsync(stream, packetBuffer, cancellationToken);
-            if (firstPacket != null)
-            {
-                receivedPackets.Add(firstPacket);
-            }
-
-            // Standard AO2 handshake server side.
-            await SendToClientAsync(stream, "decryptor#NOENCRYPT#%", cancellationToken);
-            await SendToClientAsync(stream, "ID#1#tsuserver#7#%", cancellationToken);
-
             while (!cancellationToken.IsCancellationRequested)
             {
-                string? packet = await ReadPacketAsync(stream, packetBuffer, cancellationToken);
-                if (packet == null)
-                {
-                    break;
-                }
-
-                receivedPackets.Add(packet);
-
-                if (string.Equals(packet, "ID#AO2#2.11.0#%", StringComparison.Ordinal))
-                {
-                    await SendToClientAsync(stream, "PN#1#10#%", cancellationToken);
-                    await SendToClientAsync(stream, "FL#noencryption#fastloading#%", cancellationToken);
-                }
-                else if (string.Equals(packet, "askchaa#%", StringComparison.Ordinal))
-                {
-                    await SendToClientAsync(stream, "SI#1#0#0#%", cancellationToken);
-                }
-                else if (string.Equals(packet, "RC#%", StringComparison.Ordinal))
-                {
-                    // Send a fixture-local character so the current CharacterSelector
-                    // flow can confirm a real INI puppet before the online assertions.
-                    await SendToClientAsync(stream, "SC#SmokePhoenix#%", cancellationToken);
-                }
-                else if (string.Equals(packet, "RM#%", StringComparison.Ordinal))
-                {
-                    await SendToClientAsync(stream, "SM#Lobby#%", cancellationToken);
-                }
-                else if (string.Equals(packet, "RD#%", StringComparison.Ordinal))
-                {
-                    await SendToClientAsync(stream, "DONE#%", cancellationToken);
-                }
-                // All other packets (CT# bootstrap, post-handshake RM#, OOC sends, etc.)
-                // are silently collected but need no server-side response.
+                TcpClient client = await listener.AcceptTcpClientAsync(cancellationToken);
+                int connectionId = System.Threading.Interlocked.Increment(ref nextConnectionId);
+                connectionTasks.Add(Task.Run(
+                    () => HandleConnectionAsync(connectionId, client, receivedPackets, packetsLock, cancellationToken),
+                    cancellationToken));
             }
         }
         catch (OperationCanceledException)
         {
             // Expected on graceful test shutdown.
         }
+        catch (ObjectDisposedException)
+        {
+            // Listener stopped during shutdown.
+        }
         catch (Exception ex)
         {
-            // Capture unexpected transport errors so the test body can log them.
-            // Assertions remain the source of truth for pass/fail.
             serverError = ex.GetType().Name + ": " + ex.Message;
         }
 
-        return (receivedPackets, serverError);
+        try
+        {
+            await Task.WhenAll(connectionTasks);
+        }
+        catch
+        {
+            // Per-connection errors are best-effort; assertions are the source of truth.
+        }
+
+        lock (packetsLock)
+        {
+            return (new List<string>(receivedPackets), serverError);
+        }
+    }
+
+    private static async Task HandleConnectionAsync(
+        int connectionId,
+        TcpClient client,
+        List<string> receivedPackets,
+        object packetsLock,
+        CancellationToken cancellationToken)
+    {
+        void Record(string packet)
+        {
+            lock (packetsLock)
+            {
+                receivedPackets.Add(packet);
+            }
+        }
+
+        try
+        {
+            using (client)
+            {
+                using NetworkStream stream = client.GetStream();
+                StringBuilder packetBuffer = new StringBuilder();
+                int? selectedCharId = null;
+
+                // The TCP transport sends HI# before the server speaks; drain it first.
+                string? firstPacket = await ReadPacketAsync(stream, packetBuffer, cancellationToken);
+                if (firstPacket != null)
+                {
+                    Record(firstPacket);
+                }
+
+                // Standard AO2 handshake server side.
+                await SendToClientAsync(stream, "decryptor#NOENCRYPT#%", cancellationToken);
+                await SendToClientAsync(stream, $"ID#{connectionId}#tsuserver#7#%", cancellationToken);
+
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    string? packet = await ReadPacketAsync(stream, packetBuffer, cancellationToken);
+                    if (packet == null)
+                    {
+                        break;
+                    }
+
+                    Record(packet);
+
+                    if (string.Equals(packet, "ID#AO2#2.11.0#%", StringComparison.Ordinal))
+                    {
+                        await SendToClientAsync(stream, $"PN#{connectionId}#10#%", cancellationToken);
+                        await SendToClientAsync(stream, "FL#noencryption#fastloading#%", cancellationToken);
+                    }
+                    else if (string.Equals(packet, "askchaa#%", StringComparison.Ordinal))
+                    {
+                        await SendToClientAsync(stream, "SI#1#0#0#%", cancellationToken);
+                    }
+                    else if (string.Equals(packet, "RC#%", StringComparison.Ordinal))
+                    {
+                        // Send a fixture-local character plus its availability so the current
+                        // CharacterSelector flow can confirm a real INI puppet.
+                        await SendToClientAsync(stream, "SC#SmokePhoenix#%", cancellationToken);
+                        await SendToClientAsync(stream, "CharsCheck#0#%", cancellationToken);
+                    }
+                    else if (string.Equals(packet, "RM#%", StringComparison.Ordinal))
+                    {
+                        await SendToClientAsync(stream, "SM#Lobby#%", cancellationToken);
+                    }
+                    else if (string.Equals(packet, "RD#%", StringComparison.Ordinal))
+                    {
+                        await SendToClientAsync(stream, "DONE#%", cancellationToken);
+                    }
+                    else if (packet.StartsWith("CC#", StringComparison.Ordinal))
+                    {
+                        string[] fields = packet.Split('#', StringSplitOptions.None);
+                        if (fields.Length >= 3 && int.TryParse(fields[2], out int charId))
+                        {
+                            selectedCharId = charId;
+                        }
+
+                        await SendToClientAsync(stream, "CharsCheck#1#%", cancellationToken);
+
+                        // Confirm the INI puppet the same way a real AO2 server does; the
+                        // client blocks IC sends until it sees PV#<player>#CID#<charId>#%.
+                        if (selectedCharId.HasValue)
+                        {
+                            await SendToClientAsync(
+                                stream,
+                                $"PV#{connectionId}#CID#{selectedCharId.Value}#%",
+                                cancellationToken);
+                        }
+                    }
+                    // All other packets (post-handshake RM#, OOC sends, etc.) are collected
+                    // but need no server-side response.
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected on graceful test shutdown.
+        }
+        catch (Exception)
+        {
+            // Probe connections close abruptly; that is fine.
+        }
     }
 
     private static async Task<string?> ReadPacketAsync(
