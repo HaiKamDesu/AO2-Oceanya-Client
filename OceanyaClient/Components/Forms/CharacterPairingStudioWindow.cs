@@ -1367,12 +1367,15 @@ namespace OceanyaClient.Components
                 return;
             }
 
+            PairCandidate candidateAtSendTime = selectedCandidate;
+            AOClient activeNetworkAtSendTime = GetActiveNetworkClient();
+
             ApplyCurrentPairConfigToClients();
             sendBlankpostButton.IsEnabled = false;
-            await GetActiveNetworkClient().SendICMessage(" ");
-            if (selectedCandidate.InternalPeer is AOClient internalPeer && internalPeer.currentINI != null)
+            await activeNetworkAtSendTime.SendICMessage(" ");
+            if (candidateAtSendTime.InternalPeer is AOClient internalPeer && internalPeer.currentINI != null)
             {
-                AOClient otherClient = ReferenceEquals(GetActiveNetworkClient(), internalPeer)
+                AOClient otherClient = ReferenceEquals(activeNetworkAtSendTime, internalPeer)
                     ? networkClient
                     : internalPeer;
                 if (otherClient.currentINI != null)
