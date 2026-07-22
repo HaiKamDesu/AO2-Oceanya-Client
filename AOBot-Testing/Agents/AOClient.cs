@@ -30,17 +30,24 @@ namespace AOBot_Testing.Agents
         /// Value: Whether the character is available for selection
         /// </summary>
         Dictionary<string, bool> serverCharacterList = new Dictionary<string, bool>();
+
+        /// <summary>
+        /// Mirrors <see cref="serverCharacterList"/> insertion order so that a server character
+        /// index can be resolved to a name in O(1) instead of via <c>Dictionary.ElementAt(i)</c>,
+        /// which walks the dictionary from the start on every call.
+        /// </summary>
+        private readonly List<string> serverCharacterOrder = new List<string>();
         public int iniPuppetID = -1;
         public string iniPuppetName
         {
             get
             {
-                if (iniPuppetID < 0 || iniPuppetID >= serverCharacterList.Count)
+                if (iniPuppetID < 0 || iniPuppetID >= serverCharacterOrder.Count)
                 {
                     return string.Empty;
                 }
 
-                return serverCharacterList.ElementAt(iniPuppetID).Key;
+                return serverCharacterOrder[iniPuppetID];
             }
         }
         private string lastCharsCheck = string.Empty;
@@ -559,12 +566,14 @@ namespace AOBot_Testing.Agents
         public void ApplyCharacterAvailabilityForTests(IEnumerable<string> characters)
         {
             serverCharacterList.Clear();
+            serverCharacterOrder.Clear();
             foreach (string character in characters)
             {
                 string normalized = character?.Trim() ?? string.Empty;
-                if (!string.IsNullOrWhiteSpace(normalized))
+                if (!string.IsNullOrWhiteSpace(normalized) && !serverCharacterList.ContainsKey(normalized))
                 {
                     serverCharacterList[normalized] = true;
+                    serverCharacterOrder.Add(normalized);
                 }
             }
         }
@@ -747,19 +756,21 @@ namespace AOBot_Testing.Agents
             else if (message.StartsWith("SC#"))
             {
                 serverCharacterList.Clear();
+                serverCharacterOrder.Clear();
                 var characters = message.Substring(3).TrimEnd('#', '%').Split('#', StringSplitOptions.RemoveEmptyEntries);
                 foreach (var characterEntry in characters)
                 {
                     // SC entries can include metadata after '&' (e.g. "Phoenix&Description").
                     var character = characterEntry.Split('&')[0];
                     character = Globals.ReplaceTextForSymbols(character).Trim();
-                    if (string.IsNullOrWhiteSpace(character))
+                    if (string.IsNullOrWhiteSpace(character) || serverCharacterList.ContainsKey(character))
                     {
                         continue;
                     }
 
                     //Start every character as available to select
                     serverCharacterList[character] = true;
+                    serverCharacterOrder.Add(character);
                 }
                 CustomConsole.Info("Server Character List updated.");
                 Volatile.Read(ref _characterListRefreshTcs)?.TrySetResult(true);
@@ -1080,12 +1091,12 @@ namespace AOBot_Testing.Agents
 
         private CharacterFolder? ResolveIniPuppetCharacter()
         {
-            if (iniPuppetID < 0 || iniPuppetID >= serverCharacterList.Count)
+            if (iniPuppetID < 0 || iniPuppetID >= serverCharacterOrder.Count)
             {
                 return null;
             }
 
-            string characterName = serverCharacterList.ElementAt(iniPuppetID).Key;
+            string characterName = serverCharacterOrder[iniPuppetID];
             return FindCharacterByFolderOrIniName(characterName);
         }
 
@@ -1098,29 +1109,20 @@ namespace AOBot_Testing.Agents
             }
 
             if (iniPuppetID >= 0
-                && iniPuppetID < serverCharacterList.Count
+                && iniPuppetID < serverCharacterOrder.Count
                 && string.Equals(
-                    serverCharacterList.ElementAt(iniPuppetID).Key,
+                    serverCharacterOrder[iniPuppetID],
                     currentCharacterName,
                     StringComparison.OrdinalIgnoreCase))
             {
                 return;
             }
 
-            int serverCharId = -1;
-            bool available = false;
-            for (int i = 0; i < serverCharacterList.Count; i++)
-            {
-                KeyValuePair<string, bool> entry = serverCharacterList.ElementAt(i);
-                if (!string.Equals(entry.Key, currentCharacterName, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                serverCharId = i;
-                available = entry.Value;
-                break;
-            }
+            int serverCharId = serverCharacterOrder.FindIndex(
+                name => string.Equals(name, currentCharacterName, StringComparison.OrdinalIgnoreCase));
+            bool available = serverCharId >= 0
+                && serverCharacterList.TryGetValue(serverCharacterOrder[serverCharId], out bool isAvailable)
+                && isAvailable;
 
             if (serverCharId < 0 || !available)
             {
@@ -1171,9 +1173,9 @@ namespace AOBot_Testing.Agents
                 return characterName;
             }
 
-            if (icMessage.CharId >= 0 && icMessage.CharId < serverCharacterList.Count)
+            if (icMessage.CharId >= 0 && icMessage.CharId < serverCharacterOrder.Count)
             {
-                return serverCharacterList.ElementAt(icMessage.CharId).Key;
+                return serverCharacterOrder[icMessage.CharId];
             }
 
             return string.Empty;
@@ -1395,12 +1397,12 @@ namespace AOBot_Testing.Agents
                 return packetShowName;
             }
 
-            if (characterId < 0 || characterId >= serverCharacterList.Count)
+            if (characterId < 0 || characterId >= serverCharacterOrder.Count)
             {
                 return string.Empty;
             }
 
-            string characterName = serverCharacterList.ElementAt(characterId).Key;
+            string characterName = serverCharacterOrder[characterId];
             CharacterFolder? matchingCharacter = FindCharacterByFolderOrIniName(characterName);
             if (matchingCharacter?.configINI != null)
             {
@@ -2465,6 +2467,7 @@ namespace AOBot_Testing.Agents
             pendingCharacterSelectionTcs = null;
             serverFeatures.Clear();
             serverCharacterList.Clear();
+            serverCharacterOrder.Clear();
             playerID = -1;
             iniPuppetID = -1;
             serverAssetUrl = string.Empty;
@@ -2556,7 +2559,7 @@ namespace AOBot_Testing.Agents
 
         private void ApplyConfirmedIniPuppetSelection(int serverCharID, bool iniswapToSelected)
         {
-            if (serverCharID < -1 || serverCharID >= serverCharacterList.Count)
+            if (serverCharID < -1 || serverCharID >= serverCharacterOrder.Count)
             {
                 CustomConsole.Warning($"Server confirmed invalid INIPuppet index {serverCharID}.");
                 return;
@@ -2571,7 +2574,7 @@ namespace AOBot_Testing.Agents
                 return;
             }
 
-            string characterName = serverCharacterList.ElementAt(serverCharID).Key;
+            string characterName = serverCharacterOrder[serverCharID];
             CharacterFolder? ini = FindCharacterByFolderOrIniName(characterName);
             if (iniswapToSelected && ini != null)
             {
@@ -2613,12 +2616,12 @@ namespace AOBot_Testing.Agents
 
         private async Task<bool> TrySelectIniPuppetCandidateAsync(int serverCharID, bool iniswapToSelected)
         {
-            if (serverCharID < 0 || serverCharID >= serverCharacterList.Count)
+            if (serverCharID < 0 || serverCharID >= serverCharacterOrder.Count)
             {
                 return false;
             }
 
-            string characterName = serverCharacterList.ElementAt(serverCharID).Key;
+            string characterName = serverCharacterOrder[serverCharID];
             CharacterFolder? ini = FindCharacterByFolderOrIniName(characterName);
             if (ini == null)
             {
@@ -2678,10 +2681,10 @@ namespace AOBot_Testing.Agents
             }
 
             // Build name→index map for quick lookup
-            var nameToIndex = new Dictionary<string, int>(serverCharacterList.Count, StringComparer.OrdinalIgnoreCase);
-            for (int i = 0; i < serverCharacterList.Count; i++)
+            var nameToIndex = new Dictionary<string, int>(serverCharacterOrder.Count, StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < serverCharacterOrder.Count; i++)
             {
-                nameToIndex[serverCharacterList.ElementAt(i).Key] = i;
+                nameToIndex[serverCharacterOrder[i]] = i;
             }
 
             // Candidate order: frequently used chars first (by count desc), then remaining server order.
