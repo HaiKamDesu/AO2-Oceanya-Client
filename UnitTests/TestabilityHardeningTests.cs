@@ -404,6 +404,7 @@ namespace UnitTests
                 "Hello");
             writer.AppendIcAction("Nick", "shouts", "OBJECTION!");
             writer.AppendServerMessage("Judge", "Court is now in session.");
+            writer.Flush();
 
             string logRoot = Path.Combine(aoRoot, "logs", "TestServer");
             string logFile = Directory.GetFiles(logRoot, "*.log").Single();
@@ -449,6 +450,7 @@ namespace UnitTests
                 FileShare.ReadWrite | FileShare.Delete);
 
             writer.AppendServerMessage("Judge", "Concurrent write.");
+            writer.Flush();
 
             heldOpenStream.Dispose();
             string logText = File.ReadAllText(logFile);
@@ -478,6 +480,7 @@ namespace UnitTests
                 new ICMessage { Character = "Phoenix", ShowName = "Nick", Message = "Ping" },
                 "Nick",
                 "Ping");
+            writer.Flush();
 
             string logRoot = Path.Combine(aoRoot, "logs", "LocalHost WS 50001");
             string logFile = Directory.GetFiles(logRoot, "*.log").Single();

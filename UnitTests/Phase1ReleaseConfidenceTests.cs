@@ -214,6 +214,10 @@ namespace UnitTests
             });
             client.OnIcActionReceived?.Invoke("Phoenix Wright", "shouts OBJECTION!", true, ICMessage.TextColors.White);
 
+            // Receive-path log handlers dispatch via BeginInvoke (non-blocking) so the network read loop is
+            // not parked under heavy inbound traffic; pump the dispatcher before asserting on the log.
+            WaitForDispatcher();
+
             ICLog icLog = (ICLog)window.FindName("ICLogControl");
             string logText = ReadDocumentText(icLog.FindName("LogBox"));
 
@@ -238,6 +242,8 @@ namespace UnitTests
 
             client.OnOOCMessageReceived?.Invoke("Judge", "OOC hello from receive path", true);
 
+            WaitForDispatcher();
+
             OOCLog oocLog = (OOCLog)window.FindName("OOCLogControl");
             string logText = ReadDocumentText(oocLog.FindName("LogBox"));
 
@@ -261,6 +267,8 @@ namespace UnitTests
             InvokePrivate(window, "AttachDirectClientMessageHandlers", client);
             InvokePrivate(window, "SelectClient", client);
             client.OnOOCMessageReceived?.Invoke("Server", "After restore attach", true);
+
+            WaitForDispatcher();
 
             OOCLog oocLog = (OOCLog)window.FindName("OOCLogControl");
             string logText = ReadDocumentText(oocLog.FindName("LogBox"));

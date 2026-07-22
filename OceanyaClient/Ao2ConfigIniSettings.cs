@@ -35,14 +35,65 @@ namespace OceanyaClient
             ? Globals.PathToConfigINI
             : SaveFile.Data.ConfigIniPath;
 
+        // Cache the parsed config.ini so hot paths (per IC message text-log writes) do not re-read and
+        // re-parse the entire file from disk on every message. Invalidated by file path/size/timestamp
+        // change and explicitly on Save(). See "message freeze" navigation-map entry.
+        private static readonly object cacheLock = new object();
+        private static string cachedPath = string.Empty;
+        private static DateTime cachedWriteUtc = DateTime.MinValue;
+        private static long cachedLength = -1;
+        private static Dictionary<string, string>? cachedValues;
+
         public static Dictionary<string, string> Load()
         {
-            Dictionary<string, string> values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             string path = ConfigPath;
             if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
             {
-                return values;
+                return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             }
+
+            DateTime writeUtc;
+            long length;
+            try
+            {
+                FileInfo info = new FileInfo(path);
+                writeUtc = info.LastWriteTimeUtc;
+                length = info.Length;
+            }
+            catch
+            {
+                // If we cannot stat the file, fall back to a fresh parse without caching.
+                return ReadFromDisk(path);
+            }
+
+            lock (cacheLock)
+            {
+                if (cachedValues != null
+                    && string.Equals(cachedPath, path, StringComparison.OrdinalIgnoreCase)
+                    && cachedWriteUtc == writeUtc
+                    && cachedLength == length)
+                {
+                    // Return a copy so callers (e.g. SetPercent + Save) can mutate freely without corrupting the cache.
+                    return new Dictionary<string, string>(cachedValues, StringComparer.OrdinalIgnoreCase);
+                }
+            }
+
+            Dictionary<string, string> values = ReadFromDisk(path);
+
+            lock (cacheLock)
+            {
+                cachedPath = path;
+                cachedWriteUtc = writeUtc;
+                cachedLength = length;
+                cachedValues = new Dictionary<string, string>(values, StringComparer.OrdinalIgnoreCase);
+            }
+
+            return values;
+        }
+
+        private static Dictionary<string, string> ReadFromDisk(string path)
+        {
+            Dictionary<string, string> values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (string rawLine in File.ReadLines(path))
             {
@@ -70,6 +121,17 @@ namespace OceanyaClient
             }
 
             return values;
+        }
+
+        private static void InvalidateCache()
+        {
+            lock (cacheLock)
+            {
+                cachedValues = null;
+                cachedPath = string.Empty;
+                cachedWriteUtc = DateTime.MinValue;
+                cachedLength = -1;
+            }
         }
 
         public static void Save(IDictionary<string, string> values)
@@ -129,6 +191,7 @@ namespace OceanyaClient
             }
 
             File.WriteAllLines(path, lines);
+            InvalidateCache();
             Globals.UpdateConfigINI(path);
         }
 

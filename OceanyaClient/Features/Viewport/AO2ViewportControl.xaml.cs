@@ -1564,9 +1564,12 @@ namespace OceanyaClient.Features.Viewport
                     return;
                 }
 
+                // Keep the currently displayed frame on screen while the new image decodes on a
+                // background thread. Blanking the slot here made the sprite flash transparent for a
+                // few frames on the cache-miss path; the old frame is swapped out only once the new
+                // one is ready (below). StopAnimation freezes the last frame in image.Source without
+                // clearing it, so this never shows transparency between emotes.
                 StopAnimation(image);
-                image.Source = null;
-                image.Visibility = Visibility.Collapsed;
 
                 CancellationTokenSource staticCts = new CancellationTokenSource();
                 pendingAsyncLoads[image] = staticCts;
@@ -1628,12 +1631,12 @@ namespace OceanyaClient.Features.Viewport
                 }
             }
 
-            // Slow path: animated and not yet decoded.
-            // Clear the slot immediately so the old sprite does not linger, then decode
-            // on a background thread (mirrors AO2's AnimationLoader async approach).
+            // Slow path: animated and not yet decoded. Keep the currently displayed frame on screen
+            // and decode on a background thread (mirrors AO2's AnimationLoader async approach); the
+            // old frame is swapped out only when the first new frame is ready. Blanking the slot here
+            // made the sprite flash transparent for a few frames on the cache-miss path. StopAnimation
+            // freezes the last frame in image.Source without clearing it, so no transparency shows.
             StopAnimation(image);
-            image.Source = null;
-            image.Visibility = Visibility.Collapsed;
 
             CancellationTokenSource cts = new CancellationTokenSource();
             pendingAsyncLoads[image] = cts;

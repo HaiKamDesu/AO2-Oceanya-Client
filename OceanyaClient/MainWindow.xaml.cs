@@ -4381,7 +4381,12 @@ namespace OceanyaClient
 
             singleInternalClient.OnICMessageReceived += (ICMessage icMessage) =>
             {
-                Dispatcher.Invoke(() =>
+                // Snapshot live client fields on the network read-loop thread so deferring the UI work
+                // does not read later values. BeginInvoke (not blocking Invoke) keeps the read loop free
+                // to consume queued packets under heavy inbound traffic. Order preserved by dispatcher FIFO.
+                int puppetIdSnapshot = singleInternalClient.iniPuppetID;
+                string bgSnapshot = singleInternalClient.curBG;
+                Dispatcher.BeginInvoke(() =>
                 {
                     AOClient? targetClient = GetSingleModeLogTarget(singleInternalClient, singleInternalClient);
                     if (targetClient == null)
@@ -4391,7 +4396,7 @@ namespace OceanyaClient
 
                     UpdateObservedPairStateFromIncomingIc(targetClient, singleInternalClient, icMessage);
 
-                    bool isSentFromSelf = icMessage.CharId == singleInternalClient.iniPuppetID;
+                    bool isSentFromSelf = icMessage.CharId == puppetIdSnapshot;
                     AddLoggedIcMessageWithContext(
                         targetClient,
                         icMessage.ShowName,
@@ -4400,13 +4405,13 @@ namespace OceanyaClient
                         icMessage.TextColor,
                         icMessage);
 
-                    targetClient.curBG = singleInternalClient.curBG;
-                    targetClient.iniPuppetID = singleInternalClient.iniPuppetID;
+                    targetClient.curBG = bgSnapshot;
+                    targetClient.iniPuppetID = puppetIdSnapshot;
                 });
             };
             singleInternalClient.OnIcActionReceived += (string showName, string action, bool isSentFromSelf, ICMessage.TextColors textColor) =>
             {
-                Dispatcher.Invoke(() =>
+                Dispatcher.BeginInvoke(() =>
                 {
                     AOClient? targetClient = GetSingleModeLogTarget(singleInternalClient, singleInternalClient);
                     if (targetClient == null)
@@ -4420,7 +4425,7 @@ namespace OceanyaClient
 
             singleInternalClient.OnOOCMessageReceived += (string showName, string message, bool isFromServer) =>
             {
-                Dispatcher.Invoke(() =>
+                Dispatcher.BeginInvoke(() =>
                 {
                     AOClient? targetClient = GetSingleModeLogTarget(singleInternalClient, singleInternalClient);
                     if (targetClient == null)
@@ -5508,7 +5513,11 @@ namespace OceanyaClient
 
             bot.OnICMessageReceived += (ICMessage icMessage) =>
             {
-                Dispatcher.Invoke(() =>
+                // BeginInvoke (not blocking Invoke) so the network read loop keeps consuming packets under
+                // heavy inbound traffic instead of parking behind a saturated UI thread. In multi-client
+                // mode every GM connection receives every room message, so blocking here caused an N x M
+                // stall that froze IC sending. Dispatcher FIFO preserves log order.
+                Dispatcher.BeginInvoke(() =>
                 {
                     UpdateObservedPairStateFromIncomingIc(bot, bot, icMessage);
 
@@ -5525,7 +5534,7 @@ namespace OceanyaClient
             };
             bot.OnIcActionReceived += (string showName, string action, bool isSentFromSelf, ICMessage.TextColors textColor) =>
             {
-                Dispatcher.Invoke(() =>
+                Dispatcher.BeginInvoke(() =>
                 {
                     AppendAo2ActionLog(bot, showName, action, isSentFromSelf, textColor);
                 });
@@ -5533,7 +5542,7 @@ namespace OceanyaClient
 
             bot.OnOOCMessageReceived += (string showName, string message, bool isFromServer) =>
             {
-                Dispatcher.Invoke(() =>
+                Dispatcher.BeginInvoke(() =>
                 {
                     AddLoggedOocMessage(bot, showName, message, isFromServer);
                 });

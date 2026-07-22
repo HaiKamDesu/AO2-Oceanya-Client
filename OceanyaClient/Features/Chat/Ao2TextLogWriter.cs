@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using AOBot_Testing.Structures;
 using Common;
 
@@ -12,14 +14,40 @@ namespace OceanyaClient.Features.Chat
     /// <summary>
     /// Writes AO2-compatible text logs under the selected AO installation's logs folder.
     /// </summary>
-    internal sealed class Ao2TextLogWriter
+    /// <remarks>
+    /// Session setup and the "Joined server" header are written synchronously so the log file exists as soon
+    /// as a session starts. The hot per-message append path is offloaded to a single background consumer thread,
+    /// so IC/OOC/action logging never blocks the UI thread with disk latency. The actual on-disk write is byte-for-byte
+    /// the original open/seek/append/close per line with <see cref="FileShare.ReadWrite"/> | <see cref="FileShare.Delete"/>,
+    /// so external readers (Notepad, "Find in all logs", AO2) can open the log at any time exactly as before. Line
+    /// content and ordering are identical to the previous synchronous writer: timestamps are captured on the calling
+    /// thread before the text is queued, and a single FIFO consumer preserves order. See the "message freeze" map entry.
+    /// </remarks>
+    internal sealed class Ao2TextLogWriter : IDisposable
     {
         private static readonly Regex InvalidServerFolderChars = new Regex("[\\\\/:*?\"<>|']", RegexOptions.Compiled);
         private readonly object syncRoot = new object();
         private string logFilePath = string.Empty;
 
+        // Background single-consumer write queue. Producers (UI thread hot path) enqueue formatted lines; the
+        // consumer drains them in order. Flush requests carry a signal so callers can wait for the disk to catch up.
+        private readonly BlockingCollection<LogWriteRequest> writeQueue = new BlockingCollection<LogWriteRequest>();
+        private readonly Thread consumerThread;
+
+        public Ao2TextLogWriter()
+        {
+            consumerThread = new Thread(ConsumeQueue)
+            {
+                IsBackground = true,
+                Name = "Ao2TextLogWriter"
+            };
+            consumerThread.Start();
+        }
+
         public void ResetSession()
         {
+            // Drain everything already queued so no lines are lost, then clear the session.
+            Flush();
             lock (syncRoot)
             {
                 logFilePath = string.Empty;
@@ -46,38 +74,7 @@ namespace OceanyaClient.Features.Chat
 
             lock (syncRoot)
             {
-                if (!string.IsNullOrWhiteSpace(logFilePath))
-                {
-                    return;
-                }
-            }
-
-            string serverName = SaveFile.Data.SelectedServerName?.Trim() ?? string.Empty;
-            string serverAddress = Globals.GetSelectedServerEndpoint()?.Trim() ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(serverName))
-            {
-                serverName = string.IsNullOrWhiteSpace(serverAddress) ? "Direct Connect" : serverAddress;
-            }
-
-            string sanitizedServerName = SanitizeServerFolderName(serverName);
-            string fileName = DateTime.UtcNow.ToString("yyyy-MM-dd HH-mm-ss 'UTC'.'log'", CultureInfo.InvariantCulture);
-            string path = Path.Combine(baseDirectory, "logs", sanitizedServerName, fileName);
-
-            lock (syncRoot)
-            {
-                if (string.Equals(logFilePath, path, StringComparison.OrdinalIgnoreCase))
-                {
-                    return;
-                }
-
-                logFilePath = path;
-                WriteLineUnlocked(
-                    "Joined server "
-                    + sanitizedServerName
-                    + " hosted on address "
-                    + serverAddress
-                    + " on "
-                    + FormatQtUtcTextDate(DateTime.UtcNow));
+                EnsureSessionUnlocked();
             }
         }
 
@@ -104,6 +101,45 @@ namespace OceanyaClient.Features.Chat
             AppendLine("[OOC][" + FormatQtUtcTextDate(DateTime.UtcNow) + "] " + MaybeUnknown(showName) + ": " + MaybeUnknown(message));
         }
 
+        /// <summary>
+        /// Blocks until every line queued before this call has been written to disk. Used at shutdown and in tests.
+        /// </summary>
+        public void Flush()
+        {
+            if (writeQueue.IsAddingCompleted)
+            {
+                return;
+            }
+
+            using ManualResetEventSlim done = new ManualResetEventSlim(false);
+            try
+            {
+                writeQueue.Add(new LogWriteRequest(null, done));
+            }
+            catch (InvalidOperationException)
+            {
+                // Queue was completed concurrently; nothing left to flush.
+                return;
+            }
+
+            done.Wait(TimeSpan.FromSeconds(5));
+        }
+
+        public void Dispose()
+        {
+            writeQueue.CompleteAdding();
+            try
+            {
+                consumerThread.Join(TimeSpan.FromSeconds(5));
+            }
+            catch
+            {
+                // Best-effort join on shutdown.
+            }
+
+            writeQueue.Dispose();
+        }
+
         private void AppendChatLogPiece(string character, string characterName, string message, string action)
         {
             string details = "[" + FormatQtUtcTextDate(DateTime.UtcNow) + "] " + MaybeUnknown(characterName);
@@ -123,20 +159,60 @@ namespace OceanyaClient.Features.Chat
 
         private void AppendLine(string text)
         {
+            // Cheap cached config check on the calling thread preserves the previous "drop when logging disabled"
+            // behavior without re-parsing config.ini per message. The actual disk write is deferred to the consumer.
             Dictionary<string, string> configValues = Ao2ConfigIniSettings.Load();
             if (!Ao2ConfigIniSettings.GetBool(configValues, "automatic_logging_enabled", true))
             {
                 return;
             }
 
-            lock (syncRoot)
+            if (writeQueue.IsAddingCompleted)
             {
-                if (string.IsNullOrWhiteSpace(logFilePath))
+                return;
+            }
+
+            try
+            {
+                writeQueue.Add(new LogWriteRequest(text, null));
+            }
+            catch (InvalidOperationException)
+            {
+                // Queue completed during shutdown; drop the line.
+            }
+        }
+
+        private void ConsumeQueue()
+        {
+            foreach (LogWriteRequest request in writeQueue.GetConsumingEnumerable())
+            {
+                if (request.FlushSignal != null)
                 {
-                    RefreshSession();
+                    request.FlushSignal.Set();
+                    continue;
                 }
 
-                if (string.IsNullOrWhiteSpace(logFilePath))
+                if (request.Text == null)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    WriteLineToDisk(request.Text);
+                }
+                catch (Exception ex)
+                {
+                    CustomConsole.Error("Failed to write AO2 text log line.", ex);
+                }
+            }
+        }
+
+        private void WriteLineToDisk(string text)
+        {
+            lock (syncRoot)
+            {
+                if (string.IsNullOrWhiteSpace(logFilePath) && !EnsureSessionUnlocked())
                 {
                     return;
                 }
@@ -145,6 +221,57 @@ namespace OceanyaClient.Features.Chat
             }
         }
 
+        /// <summary>
+        /// Establishes the session log file (path + "Joined server" header) if not already established.
+        /// Must be called under <see cref="syncRoot"/>. Returns true when a usable session exists afterward.
+        /// </summary>
+        private bool EnsureSessionUnlocked()
+        {
+            if (!string.IsNullOrWhiteSpace(logFilePath))
+            {
+                return true;
+            }
+
+            Dictionary<string, string> configValues = Ao2ConfigIniSettings.Load();
+            bool textLoggingEnabled = Ao2ConfigIniSettings.GetBool(configValues, "automatic_logging_enabled", true);
+            bool demoLoggingEnabled = Ao2ConfigIniSettings.GetBool(configValues, "demo_logging_enabled", true);
+            if (!textLoggingEnabled && !demoLoggingEnabled)
+            {
+                return false;
+            }
+
+            string baseDirectory = ResolveAoBaseDirectory();
+            if (string.IsNullOrWhiteSpace(baseDirectory))
+            {
+                return false;
+            }
+
+            string serverName = SaveFile.Data.SelectedServerName?.Trim() ?? string.Empty;
+            string serverAddress = Globals.GetSelectedServerEndpoint()?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(serverName))
+            {
+                serverName = string.IsNullOrWhiteSpace(serverAddress) ? "Direct Connect" : serverAddress;
+            }
+
+            string sanitizedServerName = SanitizeServerFolderName(serverName);
+            string fileName = DateTime.UtcNow.ToString("yyyy-MM-dd HH-mm-ss 'UTC'.'log'", CultureInfo.InvariantCulture);
+            logFilePath = Path.Combine(baseDirectory, "logs", sanitizedServerName, fileName);
+
+            WriteLineUnlocked(
+                "Joined server "
+                + sanitizedServerName
+                + " hosted on address "
+                + serverAddress
+                + " on "
+                + FormatQtUtcTextDate(DateTime.UtcNow));
+            return true;
+        }
+
+        /// <summary>
+        /// Writes a single line to the session log using the original open/seek/append/close-per-line strategy so
+        /// the file is never held open between writes and external readers keep the same access they had before.
+        /// Must be called under <see cref="syncRoot"/> with a non-empty <see cref="logFilePath"/>.
+        /// </summary>
         private void WriteLineUnlocked(string text)
         {
             string? directory = Path.GetDirectoryName(logFilePath);
@@ -211,6 +338,19 @@ namespace OceanyaClient.Features.Chat
         {
             DateTime utc = timestampUtc.Kind == DateTimeKind.Utc ? timestampUtc : timestampUtc.ToUniversalTime();
             return utc.ToString("ddd MMM d HH:mm:ss yyyy 'UTC'", CultureInfo.InvariantCulture);
+        }
+
+        private readonly struct LogWriteRequest
+        {
+            public LogWriteRequest(string? text, ManualResetEventSlim? flushSignal)
+            {
+                Text = text;
+                FlushSignal = flushSignal;
+            }
+
+            public string? Text { get; }
+
+            public ManualResetEventSlim? FlushSignal { get; }
         }
     }
 }
