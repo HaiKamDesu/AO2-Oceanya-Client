@@ -51,6 +51,13 @@ namespace OceanyaClient
         private AOClient? currentClient;
         private AOClient? singleInternalClient;
         private AOClient? boundSingleClientProfile;
+        // Serializes IC sends in single-internal-client mode. Because all profiles share one connection,
+        // a rapid "switch profile, send, switch, send" sequence would otherwise interleave
+        // ApplyProfileToSingleInternalClient (which overwrites the shared connection's character/emote/puppet
+        // fields) with an in-flight SendICMessage packet build, producing torn packets, stolen CC#/PV#
+        // confirmations, and dropped sends. Holding this gate makes each profile's prepare+send atomic and
+        // ordered. Not used in multi-internal-client mode (each bot has its own connection).
+        private readonly SemaphoreSlim singleClientSendGate = new SemaphoreSlim(1, 1);
         private Window? viewportWindow;
         private Window? pictureInPictureViewportWindow;
         private HwndSource? hostWindowSource;
@@ -368,6 +375,12 @@ namespace OceanyaClient
                 }
 
 
+                // The CharId that will actually be sent, captured just before the packet goes out. The echo-clear
+                // must match against THIS snapshot, not the live shared iniPuppetID, because a later profile swap
+                // overwrites the shared field before this message's echo returns (which is why the input box used
+                // to never clear -> "message doesn't send"). Captured by the closure below.
+                int sentCharIdSnapshot = -1;
+
                 void OnICMessageReceivedHandler(ICMessage icMessage)
                 {
                     AOClient? targetNetworkClient = GetTargetClientForNetwork(client);
@@ -375,7 +388,7 @@ namespace OceanyaClient
                     {
                         return;
                     }
-                    if (icMessage.CharId == targetNetworkClient.iniPuppetID &&
+                    if (sentCharIdSnapshot >= 0 && icMessage.CharId == sentCharIdSnapshot &&
                     (icMessage.Message == "~"+sendMessage+"~" || icMessage.Message == sendMessage || icMessage.Message == sendMessage+"~"))
                     {
                         // Message was received by server.
@@ -395,42 +408,64 @@ namespace OceanyaClient
                     return;
                 }
 
-                if (useSingleInternalClient)
+                // In single-internal-client mode all profiles share one connection, so serialize the entire
+                // prepare+send so profile fields cannot be torn by a concurrent swap+send. Multi-client mode
+                // sends to independent bots and needs no cross-send serialization.
+                bool useSendGate = useSingleInternalClient;
+                if (useSendGate)
                 {
-                    CustomConsole.Debug(
-                        $"Applying profile before IC send. profile=\"{client.clientName}\" profileCharacter=\"{client.currentINI?.Name ?? "(null)"}\" profileEmote=\"{client.currentEmote?.DisplayID ?? "(null)"}\" networkIniPuppet=\"{networkClient.iniPuppetName}\" networkIniPuppetId={networkClient.iniPuppetID}",
-                        CustomConsole.LogCategory.IC);
-                    await EnsureSingleInternalClientProfileSelectionAsync(client);
-                    ApplyProfileToSingleInternalClient(client);
+                    await singleClientSendGate.WaitAsync();
                 }
 
-                if (OceanyaTestMode.Current.IsEnabled && !networkClient.IsTransportConnected)
-                {
-                    ClearIcInputAndTransientEffects();
-                    return;
-                }
-
-                networkClient.OnICMessageReceived -= OnICMessageReceivedHandler;
-                networkClient.OnICMessageReceived += OnICMessageReceivedHandler;
-                CustomConsole.Info(
-                    $"IC send requested. profile=\"{client.clientName}\" network=\"{networkClient.clientName}\" connected={networkClient.IsTransportConnected} iniPuppet=\"{networkClient.iniPuppetName}\" iniPuppetId={networkClient.iniPuppetID} character=\"{networkClient.currentINI?.Name ?? "(null)"}\" emote=\"{networkClient.currentEmote?.DisplayID ?? "(null)"}\" messageLength={sendMessage.Length}",
-                    CustomConsole.LogCategory.IC);
                 try
                 {
-                    await networkClient.SendICMessage(sendMessage);
-                    if (sendMessageIsOnlyWhitespace)
+                    if (useSingleInternalClient)
                     {
-                        networkClient.OnICMessageReceived -= OnICMessageReceivedHandler;
-                        ClearIcInputAndTransientEffects();
+                        CustomConsole.Debug(
+                            $"Applying profile before IC send. profile=\"{client.clientName}\" profileCharacter=\"{client.currentINI?.Name ?? "(null)"}\" profileEmote=\"{client.currentEmote?.DisplayID ?? "(null)"}\" networkIniPuppet=\"{networkClient.iniPuppetName}\" networkIniPuppetId={networkClient.iniPuppetID}",
+                            CustomConsole.LogCategory.IC);
+                        await EnsureSingleInternalClientProfileSelectionAsync(client);
+                        ApplyProfileToSingleInternalClient(client);
                     }
-                    SyncPairSendStateFromNetworkClient(client, networkClient);
-                    CaptureGmMultiClientSnapshot();
-                }
-                catch (Exception ex)
-                {
-                    CustomConsole.Error("IC send failed before packet write completed.", ex, CustomConsole.LogCategory.IC);
+
+                    if (OceanyaTestMode.Current.IsEnabled && !networkClient.IsTransportConnected)
+                    {
+                        ClearIcInputAndTransientEffects();
+                        return;
+                    }
+
+                    // Snapshot the CharId that this send will carry (profile selection is now applied) so the
+                    // echo-clear matches this exact message even if the user swaps profiles before it returns.
+                    sentCharIdSnapshot = networkClient.iniPuppetID;
                     networkClient.OnICMessageReceived -= OnICMessageReceivedHandler;
-                    throw;
+                    networkClient.OnICMessageReceived += OnICMessageReceivedHandler;
+                    CustomConsole.Info(
+                        $"IC send requested. profile=\"{client.clientName}\" network=\"{networkClient.clientName}\" connected={networkClient.IsTransportConnected} iniPuppet=\"{networkClient.iniPuppetName}\" iniPuppetId={networkClient.iniPuppetID} character=\"{networkClient.currentINI?.Name ?? "(null)"}\" emote=\"{networkClient.currentEmote?.DisplayID ?? "(null)"}\" messageLength={sendMessage.Length}",
+                        CustomConsole.LogCategory.IC);
+                    try
+                    {
+                        await networkClient.SendICMessage(sendMessage);
+                        if (sendMessageIsOnlyWhitespace)
+                        {
+                            networkClient.OnICMessageReceived -= OnICMessageReceivedHandler;
+                            ClearIcInputAndTransientEffects();
+                        }
+                        SyncPairSendStateFromNetworkClient(client, networkClient);
+                        CaptureGmMultiClientSnapshot();
+                    }
+                    catch (Exception ex)
+                    {
+                        CustomConsole.Error("IC send failed before packet write completed.", ex, CustomConsole.LogCategory.IC);
+                        networkClient.OnICMessageReceived -= OnICMessageReceivedHandler;
+                        throw;
+                    }
+                }
+                finally
+                {
+                    if (useSendGate)
+                    {
+                        singleClientSendGate.Release();
+                    }
                 }
 
                 void ClearIcInputAndTransientEffects()
@@ -4381,32 +4416,31 @@ namespace OceanyaClient
 
             singleInternalClient.OnICMessageReceived += (ICMessage icMessage) =>
             {
-                // Snapshot live client fields on the network read-loop thread so deferring the UI work
-                // does not read later values. BeginInvoke (not blocking Invoke) keeps the read loop free
-                // to consume queued packets under heavy inbound traffic. Order preserved by dispatcher FIFO.
-                int puppetIdSnapshot = singleInternalClient.iniPuppetID;
-                string bgSnapshot = singleInternalClient.curBG;
+                // Resolve the log/pair target at RECEIPT time (read-loop thread, atomic reference reads) so a
+                // profile swap between arrival and dispatch cannot reattribute this message. In single-client
+                // mode the IC log is shared anyway (ResolveLogClientKey maps every profile to
+                // singleInternalClient), so all profiles show the identical full stream. BeginInvoke keeps the
+                // read loop free; dispatcher FIFO preserves order.
+                AOClient targetAtReceipt = GetSingleModeLogTarget(singleInternalClient, singleInternalClient)
+                    ?? singleInternalClient;
                 Dispatcher.BeginInvoke(() =>
                 {
-                    AOClient? targetClient = GetSingleModeLogTarget(singleInternalClient, singleInternalClient);
-                    if (targetClient == null)
-                    {
-                        return;
-                    }
+                    UpdateObservedPairStateFromIncomingIc(targetAtReceipt, singleInternalClient, icMessage);
 
-                    UpdateObservedPairStateFromIncomingIc(targetClient, singleInternalClient, icMessage);
-
-                    bool isSentFromSelf = icMessage.CharId == puppetIdSnapshot;
+                    // "Self" = any of our profiles' confirmed puppet ids (all sends go through the one shared
+                    // connection), mirroring multi-client mode. Do NOT write puppet/bg back onto the profile
+                    // here: that corrupted a profile's identity on rapid swaps, which broke the viewport filters
+                    // and desynced the panes.
+                    bool isSentFromSelf =
+                        (singleInternalClient.iniPuppetID >= 0 && icMessage.CharId == singleInternalClient.iniPuppetID)
+                        || clients.Values.Any(p => p.iniPuppetID >= 0 && p.iniPuppetID == icMessage.CharId);
                     AddLoggedIcMessageWithContext(
-                        targetClient,
+                        targetAtReceipt,
                         icMessage.ShowName,
                         icMessage.Message,
                         isSentFromSelf,
                         icMessage.TextColor,
                         icMessage);
-
-                    targetClient.curBG = bgSnapshot;
-                    targetClient.iniPuppetID = puppetIdSnapshot;
                 });
             };
             singleInternalClient.OnIcActionReceived += (string showName, string action, bool isSentFromSelf, ICMessage.TextColors textColor) =>
@@ -6403,6 +6437,24 @@ namespace OceanyaClient
                 return;
             }
 
+            if (useSingleInternalClient)
+            {
+                // All profiles share ONE connection = ONE courtroom, so the viewport is a single shared,
+                // unfiltered stream (AO2 has exactly one viewport). Selecting a profile changes only what you
+                // SEND, never what you SEE. Keying on singleInternalClient (not per-profile) means no per-profile
+                // filtering and no cross-pane desync. If the connection is not up yet, detach.
+                viewportContent.AttachClient(singleInternalClient, singleInternalClient, null, null);
+
+                if (pictureInPictureViewportWindow?.IsVisible == true)
+                {
+                    RefreshPictureInPictureViewportAttachment();
+                }
+
+                return;
+            }
+
+            // Multi-internal-client mode: each profile is its own connection with its own courtroom, so each
+            // gets its own viewport pane rendering only that connection's stream.
             foreach (AOClient client in clientOrder.Where(client => clients.Values.Contains(client)))
             {
                 AOClient? incomingMessageClient = GetTargetClientForNetwork(client) ?? client;

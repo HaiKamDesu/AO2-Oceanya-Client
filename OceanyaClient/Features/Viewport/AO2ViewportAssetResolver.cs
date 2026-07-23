@@ -1015,6 +1015,15 @@ namespace OceanyaClient.Features.Viewport
         }
 
         /// <summary>
+        /// Returns the AO2 <c>stay_time</c> from <c>config.ini</c> — the delay (ms) after a message finishes
+        /// before the next queued IC message is shown (AO2's <c>text_queue_timer</c> interval).
+        /// </summary>
+        public static int GetMessageStayMilliseconds()
+        {
+            return ReadConfigIniInt("stay_time", 200, minimum: 0);
+        }
+
+        /// <summary>
         /// Returns the configured AO2 blip rate from <c>config.ini</c>.
         /// </summary>
         public static int GetBlipRate()

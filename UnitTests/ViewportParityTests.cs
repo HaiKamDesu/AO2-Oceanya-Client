@@ -8,6 +8,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading.Tasks;
 using System.Threading;
 using System.Windows;
@@ -605,6 +606,59 @@ public class AO2ViewportParityAssetResolverTests
             Assert.That(Canvas.GetTop(control.BackgroundImage), Is.EqualTo(0));
         });
     }
+
+    // ─── AO2 FIFO message queue (Phase 4b) ───────────────────────────────────────
+    // Rapid IC messages must play one-at-a-time (never skipped); objections flush the queue and play now.
+    [Test]
+    public void AO2ViewportControl_QueuesRapidMessages_AndObjectionSkipsQueue()
+    {
+        _ = WpfTestApplicationContext.EnsureCreated();
+        File.WriteAllText(Globals.PathToConfigINI, "theme=(714x688) FullChar\nsubtheme=default\n");
+
+        AOClient client = new AOClient("ws://localhost:10001/");
+        AO2ViewportControl control = new AO2ViewportControl();
+        control.AttachClient(client);
+
+        // Two rapid non-shout messages: the first displays, the second queues behind it.
+        client.OnICMessageReceived?.Invoke(new ICMessage { Character = "A", ShowName = "A", Message = "first", Side = "wit" });
+        client.OnICMessageReceived?.Invoke(new ICMessage { Character = "B", ShowName = "B", Message = "second", Side = "wit" });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(GetPrivateBool(control, "messageDisplayInProgress"), Is.True);
+            Assert.That(GetMessageQueueCount(control), Is.EqualTo(1), "Second message should queue, not render immediately.");
+            Assert.That(GetLastRenderedMessage(control)?.Message, Is.EqualTo("first"));
+        });
+
+        // An objection flushes the queue and plays immediately (AO2 skip_chatmessage_queue).
+        client.OnICMessageReceived?.Invoke(new ICMessage
+        {
+            Character = "C",
+            ShowName = "C",
+            Message = "OBJECTION",
+            Side = "wit",
+            ShoutModifier = ICMessage.ShoutModifiers.Objection
+        });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(GetMessageQueueCount(control), Is.EqualTo(0), "Objection should flush the queued message.");
+            Assert.That(GetLastRenderedMessage(control)?.Message, Is.EqualTo("OBJECTION"));
+        });
+    }
+
+    private static bool GetPrivateBool(AO2ViewportControl control, string field) =>
+        (bool)control.GetType().GetField(field, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(control)!;
+
+    private static int GetMessageQueueCount(AO2ViewportControl control) =>
+        ((System.Collections.ICollection)control.GetType()
+            .GetField("chatMessageQueue", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(control)!).Count;
+
+    private static ICMessage? GetLastRenderedMessage(AO2ViewportControl control) =>
+        (ICMessage?)control.GetType()
+            .GetField("lastRenderedMessage", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(control);
 
     // ─── ResolveWtceOverlayImage ─────────────────────────────────────────────────
 

@@ -31,6 +31,13 @@ namespace OceanyaClient.Features.Viewport
         private DispatcherTimer? pendingMessageTimer;
         private DispatcherTimer? chatTextTimer;
         private DispatcherTimer? screenShakeTimer;
+        // AO2 parity: one FIFO chat-message queue per viewport (AO2 has one chatmessage_queue per courtroom).
+        // Incoming IC messages play strictly one-at-a-time so a fast burst is never skipped; the next message is
+        // dequeued only after the current one finishes typing plus the config stay_time. Objections/shouts skip
+        // the queue (flush + play immediately), mirroring AO2 skip_chatmessage_queue.
+        private readonly Queue<ICMessage> chatMessageQueue = new Queue<ICMessage>();
+        private bool messageDisplayInProgress;
+        private DispatcherTimer? queueAdvanceTimer;
         private int messageSequence;
         private int chatTextCrawlMilliseconds = DefaultChatTextCrawlMilliseconds;
         private int chatBlipRate = DefaultBlipRate;
@@ -510,16 +517,119 @@ namespace OceanyaClient.Features.Viewport
 
             if (Dispatcher.CheckAccess())
             {
-                RenderMessage(message);
+                EnqueueChatMessage(message);
                 return;
             }
 
             Dispatcher.BeginInvoke(
                 new Action(() =>
                 {
-                    RenderMessage(message);
+                    EnqueueChatMessage(message);
                 }),
                 DispatcherPriority.Send);
+        }
+
+        /// <summary>
+        /// AO2-style FIFO enqueue: objections/shouts flush the queue and play immediately (skip_chatmessage_queue),
+        /// everything else queues and plays one-at-a-time. Must run on the UI thread.
+        /// </summary>
+        private void EnqueueChatMessage(ICMessage message)
+        {
+            bool skipsQueue = message.ShoutModifier != ICMessage.ShoutModifiers.Nothing;
+            if (skipsQueue)
+            {
+                chatMessageQueue.Clear();
+                StopQueueAdvanceTimer();
+                StartQueuedMessageDisplay(message);
+                return;
+            }
+
+            chatMessageQueue.Enqueue(message);
+            if (!messageDisplayInProgress)
+            {
+                DequeueAndDisplayNextMessage();
+            }
+        }
+
+        private void DequeueAndDisplayNextMessage()
+        {
+            StopQueueAdvanceTimer();
+            if (chatMessageQueue.Count == 0)
+            {
+                messageDisplayInProgress = false;
+                return;
+            }
+
+            StartQueuedMessageDisplay(chatMessageQueue.Dequeue());
+        }
+
+        private void StartQueuedMessageDisplay(ICMessage message)
+        {
+            messageDisplayInProgress = true;
+
+            // Whether this message will type text is decided solely by its message content (same predicate
+            // RenderScene uses for showChat). A text message advances the queue from CompleteChatTextReveal;
+            // a blank/no-text message (e.g. the space-clear message) never types, so schedule its advance here
+            // — otherwise the queue would stall forever on it.
+            bool willRevealText = !string.IsNullOrWhiteSpace(message.Message);
+            try
+            {
+                RenderMessage(message);
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Error("Viewport failed to render a queued IC message.", ex, CustomConsole.LogCategory.Viewport);
+                ScheduleQueueAdvance(TimeSpan.Zero);
+                return;
+            }
+
+            if (!willRevealText)
+            {
+                ScheduleQueueAdvance(TimeSpan.FromMilliseconds(AO2ViewportAssetResolver.GetMessageStayMilliseconds()));
+            }
+        }
+
+        /// <summary>
+        /// Called when the current message has finished displaying. If another message is queued it is shown after
+        /// the AO2 stay_time; otherwise the current message simply stays on screen (AO2 leaves it up) and the
+        /// queue goes idle so the next arrival plays immediately.
+        /// </summary>
+        private void ScheduleQueueAdvance(TimeSpan delay)
+        {
+            StopQueueAdvanceTimer();
+            if (chatMessageQueue.Count == 0)
+            {
+                messageDisplayInProgress = false;
+                return;
+            }
+
+            if (delay <= TimeSpan.Zero)
+            {
+                DequeueAndDisplayNextMessage();
+                return;
+            }
+
+            queueAdvanceTimer = new DispatcherTimer(DispatcherPriority.Normal, Dispatcher) { Interval = delay };
+            queueAdvanceTimer.Tick += (_, _) => DequeueAndDisplayNextMessage();
+            queueAdvanceTimer.Start();
+        }
+
+        private void StopQueueAdvanceTimer()
+        {
+            if (queueAdvanceTimer == null)
+            {
+                return;
+            }
+
+            queueAdvanceTimer.Stop();
+            queueAdvanceTimer = null;
+        }
+
+        private void ResetMessageQueue()
+        {
+            StopQueueAdvanceTimer();
+            chatMessageQueue.Clear();
+            messageDisplayInProgress = false;
         }
 
         private void OnIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
@@ -941,13 +1051,47 @@ namespace OceanyaClient.Features.Viewport
                     character,
                     resolvedCharacterAnimation.ResolvedToken,
                     messageSequence);
+            // Frame-perfect text: in the speaking phase, hold the message text until the character sprite is
+            // actually decoded and on screen, so the text never appears before its sprite (AO2 reveals the
+            // sprite/pre-animation first, then types). onPlayerReady fires synchronously on a cache hit (text
+            // starts immediately) or on the dispatcher after an async decode (text waits for the sprite). All
+            // decode outcomes invoke onPlayerReady, so the text can never get stuck. Guarded by message sequence
+            // so a superseded message cannot start stale text.
+            bool gateSpeakingTextOnSprite = showChat
+                && startTextReveal
+                && phase == ViewportPhase.Speaking
+                && !string.IsNullOrWhiteSpace(resolvedCharacterAnimation.AssetPath);
+            int textGateSequence = messageSequence;
+            bool speakingSpriteReady = false;
+            bool speakingSetupComplete = false;
+            Action? startSpeakingReveal = null;
+            Action<IAnimationPlayer?>? characterReadyCallback = onCharacterPlayerReady;
+            if (gateSpeakingTextOnSprite)
+            {
+                characterReadyCallback = _ =>
+                {
+                    if (textGateSequence != messageSequence)
+                    {
+                        return;
+                    }
+
+                    speakingSpriteReady = true;
+                    if (speakingSetupComplete && startSpeakingReveal != null)
+                    {
+                        Action reveal = startSpeakingReveal;
+                        startSpeakingReveal = null;
+                        reveal();
+                    }
+                };
+            }
+
             SetCharacterAnimatedImageAsync(
                 CharacterImage,
                 resolvedCharacterAnimation.AssetPath,
                 !string.IsNullOrWhiteSpace(resolvedCharacterAnimation.AssetPath),
                 loop: !isPreAnimation,
                 onFrameChanged: frameHandler,
-                onPlayerReady: onCharacterPlayerReady);
+                onPlayerReady: characterReadyCallback);
             CharacterImage.RenderTransformOrigin = new Point(0.5, 0.5);
             CharacterImage.RenderTransform = BuildCharacterTransform(flip, characterShakeTransform);
             ApplyCharacterOffset(CharacterImage, centerAndHidePair ? (0, 0) : message?.SelfOffset ?? (0, 0));
@@ -1034,7 +1178,24 @@ namespace OceanyaClient.Features.Viewport
                 ChatPreview.RefreshPreview();
                 if (shouldStartTextReveal)
                 {
-                    StartChatTextReveal(messageText ?? string.Empty, additivePrefix, character, message);
+                    if (gateSpeakingTextOnSprite)
+                    {
+                        // Defer to the character sprite's onPlayerReady (see above). If the sprite already
+                        // decoded synchronously (cache hit) start now; otherwise start when it becomes ready.
+                        startSpeakingReveal = () =>
+                            StartChatTextReveal(messageText ?? string.Empty, additivePrefix, character, message);
+                        speakingSetupComplete = true;
+                        if (speakingSpriteReady)
+                        {
+                            Action reveal = startSpeakingReveal;
+                            startSpeakingReveal = null;
+                            reveal();
+                        }
+                    }
+                    else
+                    {
+                        StartChatTextReveal(messageText ?? string.Empty, additivePrefix, character, message);
+                    }
                 }
             }
             else
@@ -1096,6 +1257,9 @@ namespace OceanyaClient.Features.Viewport
 
         private void ClearScene()
         {
+            // Drop any queued messages when the scene is torn down (client switch / detach) so stale messages
+            // from a previous client cannot play into the new scene.
+            ResetMessageQueue();
             StopChatTextTimer();
             StopScreenShake();
             BackgroundImage.Source = null;
@@ -2375,6 +2539,10 @@ namespace OceanyaClient.Features.Viewport
             currentChatEmote = string.Empty;
             currentChatSequence = 0;
             currentChatArrowMiscToken = string.Empty;
+
+            // The current message finished typing — advance the FIFO queue after the AO2 stay_time (or leave the
+            // message on screen if nothing is queued). Harmless on the preview/no-queue path (queue is empty).
+            ScheduleQueueAdvance(TimeSpan.FromMilliseconds(AO2ViewportAssetResolver.GetMessageStayMilliseconds()));
         }
 
         private void RenderPostMessageCharacterAnimation(CharacterFolder? character, string emoteName, int sequence)

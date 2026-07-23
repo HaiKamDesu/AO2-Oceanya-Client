@@ -22,6 +22,12 @@ namespace AOBot_Testing.Agents
         private readonly HashSet<string> serverFeatures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private const int DefaultCharacterSelectionTimeoutMs = 5000;
         private TaskCompletionSource<int>? pendingCharacterSelectionTcs;
+        // Serializes CC#->PV# INIPuppet selection on this one connection. The CC#/PV# exchange is not
+        // request-tagged by the server, so two selections in flight would let one PV# complete the other's
+        // pendingCharacterSelectionTcs (stealing the confirmation). AO2 selects characters strictly serially;
+        // this gate mirrors that. Per-AOClient instance, so multi-internal-client mode (one connection per bot)
+        // has no cross-bot contention.
+        private readonly SemaphoreSlim iniPuppetSelectionGate = new SemaphoreSlim(1, 1);
         private bool messageListenerStarted;
 
 
@@ -2788,27 +2794,37 @@ namespace AOBot_Testing.Agents
                 return;
             }
 
-            TaskCompletionSource<int> confirmation = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
-            pendingCharacterSelectionTcs = confirmation;
+            // Serialize the CC#/PV# exchange so a rapid profile-switch-then-send sequence (single-internal-client
+            // mode) cannot have two selections in flight racing on the shared pendingCharacterSelectionTcs.
+            await iniPuppetSelectionGate.WaitAsync();
             try
             {
-                await SendPacket($"CC#{playerID}#{serverCharID}#{hdid}#%");
-                int confirmedCharId = await WaitForCharacterSelectionConfirmationAsync(confirmation, serverCharID);
-                if (confirmedCharId != serverCharID)
+                TaskCompletionSource<int> confirmation = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+                pendingCharacterSelectionTcs = confirmation;
+                try
                 {
-                    ApplyConfirmedIniPuppetSelection(confirmedCharId, iniswapToSelected);
-                    throw new InvalidOperationException(
-                        $"Server confirmed INIPuppet index {confirmedCharId} after requesting {serverCharID}.");
-                }
+                    await SendPacket($"CC#{playerID}#{serverCharID}#{hdid}#%");
+                    int confirmedCharId = await WaitForCharacterSelectionConfirmationAsync(confirmation, serverCharID);
+                    if (confirmedCharId != serverCharID)
+                    {
+                        ApplyConfirmedIniPuppetSelection(confirmedCharId, iniswapToSelected);
+                        throw new InvalidOperationException(
+                            $"Server confirmed INIPuppet index {confirmedCharId} after requesting {serverCharID}.");
+                    }
 
-                ApplyConfirmedIniPuppetSelection(confirmedCharId, iniswapToSelected);
+                    ApplyConfirmedIniPuppetSelection(confirmedCharId, iniswapToSelected);
+                }
+                finally
+                {
+                    if (ReferenceEquals(pendingCharacterSelectionTcs, confirmation))
+                    {
+                        pendingCharacterSelectionTcs = null;
+                    }
+                }
             }
             finally
             {
-                if (ReferenceEquals(pendingCharacterSelectionTcs, confirmation))
-                {
-                    pendingCharacterSelectionTcs = null;
-                }
+                iniPuppetSelectionGate.Release();
             }
         }
 

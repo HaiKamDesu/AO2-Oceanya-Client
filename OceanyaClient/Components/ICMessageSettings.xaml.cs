@@ -459,6 +459,11 @@ namespace OceanyaClient.Components
             }
 
             this.curClient = client;
+            // SetINI below re-selects the current emote, and SelectEmote resets the preanim checkbox to the
+            // emote's default — which fires chkPreanim_Checked and overwrites client.PreanimEnabled. Capture the
+            // client's real preanim state first so swapping away and back preserves the user's toggle instead of
+            // snapping back to the emote default.
+            bool preservedPreanim = client.PreanimEnabled;
             CharacterFolder? iniToUse = client.currentINI;
             if (iniToUse == null && CharacterFolder.FullList.Any())
             {
@@ -479,7 +484,9 @@ namespace OceanyaClient.Components
 
             txtICShowname.Text = client.ICShowname;
 
-            chkPreanim.IsChecked = client.PreanimEnabled;
+            // Restore the preserved preanim state (SetINI's emote re-select may have clobbered the field).
+            client.PreanimEnabled = preservedPreanim;
+            chkPreanim.IsChecked = preservedPreanim;
             chkFlip.IsChecked = client.flip;
             chkAdditive.IsChecked = client.Additive;
             chkImmediate.IsChecked = client.Immediate;
