@@ -470,15 +470,21 @@ namespace OceanyaClient
 
                 void ClearIcInputAndTransientEffects()
                 {
-                    ICMessageSettingsControl.Dispatcher.Invoke(() =>
-                    {
-                        ICMessageSettingsControl.txtICMessage.Text = string.Empty;
-
-                        if (!ICMessageSettingsControl.stickyEffects)
+                    // Non-blocking, high priority. This runs from the echo handler on the network read-loop thread;
+                    // a blocking Invoke would park the read loop behind a saturated UI thread under heavy inbound
+                    // traffic (delaying the box clear and further packet processing). Send priority jumps the box
+                    // clear ahead of the queued log/viewport work so it clears promptly.
+                    ICMessageSettingsControl.Dispatcher.BeginInvoke(
+                        new Action(() =>
                         {
-                            ICMessageSettingsControl.ResetMessageEffects();
-                        }
-                    });
+                            ICMessageSettingsControl.txtICMessage.Text = string.Empty;
+
+                            if (!ICMessageSettingsControl.stickyEffects)
+                            {
+                                ICMessageSettingsControl.ResetMessageEffects();
+                            }
+                        }),
+                        System.Windows.Threading.DispatcherPriority.Send);
                 }
             };
 

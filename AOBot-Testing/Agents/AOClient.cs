@@ -437,8 +437,11 @@ namespace AOBot_Testing.Agents
                 }
                 else
                 {
+                    // AO2 parity: the send hits the wire immediately with no post-send delay (vanilla only blocks
+                    // re-pressing Enter for chat_ratelimit ms, it never delays the current send). The old 500ms
+                    // wait here, once the single-mode send-gate started serializing sends, showed up as multi-second
+                    // lag between pressing Enter and the message appearing under load.
                     await SendPacket(command);
-                    await Task.Delay(500);
                 }
             }
             else

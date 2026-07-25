@@ -1051,47 +1051,17 @@ namespace OceanyaClient.Features.Viewport
                     character,
                     resolvedCharacterAnimation.ResolvedToken,
                     messageSequence);
-            // Frame-perfect text: in the speaking phase, hold the message text until the character sprite is
-            // actually decoded and on screen, so the text never appears before its sprite (AO2 reveals the
-            // sprite/pre-animation first, then types). onPlayerReady fires synchronously on a cache hit (text
-            // starts immediately) or on the dispatcher after an async decode (text waits for the sprite). All
-            // decode outcomes invoke onPlayerReady, so the text can never get stuck. Guarded by message sequence
-            // so a superseded message cannot start stale text.
-            bool gateSpeakingTextOnSprite = showChat
-                && startTextReveal
-                && phase == ViewportPhase.Speaking
-                && !string.IsNullOrWhiteSpace(resolvedCharacterAnimation.AssetPath);
-            int textGateSequence = messageSequence;
-            bool speakingSpriteReady = false;
-            bool speakingSetupComplete = false;
-            Action? startSpeakingReveal = null;
-            Action<IAnimationPlayer?>? characterReadyCallback = onCharacterPlayerReady;
-            if (gateSpeakingTextOnSprite)
-            {
-                characterReadyCallback = _ =>
-                {
-                    if (textGateSequence != messageSequence)
-                    {
-                        return;
-                    }
-
-                    speakingSpriteReady = true;
-                    if (speakingSetupComplete && startSpeakingReveal != null)
-                    {
-                        Action reveal = startSpeakingReveal;
-                        startSpeakingReveal = null;
-                        reveal();
-                    }
-                };
-            }
-
+            // AO2 parity: text typing is NOT gated on the sprite decode. AO2 starts the chat tick immediately
+            // (chat_tick_timer->start(0)) while the character sprite decodes asynchronously in parallel; the text
+            // never waits for the sprite. The sprite-hold on the cache-miss path (SetCharacterAnimatedImageAsync)
+            // keeps the previous frame on screen until the new one is ready, so there is still no transparent flash.
             SetCharacterAnimatedImageAsync(
                 CharacterImage,
                 resolvedCharacterAnimation.AssetPath,
                 !string.IsNullOrWhiteSpace(resolvedCharacterAnimation.AssetPath),
                 loop: !isPreAnimation,
                 onFrameChanged: frameHandler,
-                onPlayerReady: characterReadyCallback);
+                onPlayerReady: onCharacterPlayerReady);
             CharacterImage.RenderTransformOrigin = new Point(0.5, 0.5);
             CharacterImage.RenderTransform = BuildCharacterTransform(flip, characterShakeTransform);
             ApplyCharacterOffset(CharacterImage, centerAndHidePair ? (0, 0) : message?.SelfOffset ?? (0, 0));
@@ -1178,24 +1148,8 @@ namespace OceanyaClient.Features.Viewport
                 ChatPreview.RefreshPreview();
                 if (shouldStartTextReveal)
                 {
-                    if (gateSpeakingTextOnSprite)
-                    {
-                        // Defer to the character sprite's onPlayerReady (see above). If the sprite already
-                        // decoded synchronously (cache hit) start now; otherwise start when it becomes ready.
-                        startSpeakingReveal = () =>
-                            StartChatTextReveal(messageText ?? string.Empty, additivePrefix, character, message);
-                        speakingSetupComplete = true;
-                        if (speakingSpriteReady)
-                        {
-                            Action reveal = startSpeakingReveal;
-                            startSpeakingReveal = null;
-                            reveal();
-                        }
-                    }
-                    else
-                    {
-                        StartChatTextReveal(messageText ?? string.Empty, additivePrefix, character, message);
-                    }
+                    // AO2 parity: start typing immediately; the sprite decodes in parallel (not gated).
+                    StartChatTextReveal(messageText ?? string.Empty, additivePrefix, character, message);
                 }
             }
             else
