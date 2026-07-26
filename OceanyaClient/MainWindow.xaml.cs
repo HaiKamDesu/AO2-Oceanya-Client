@@ -5070,7 +5070,16 @@ namespace OceanyaClient
                     }
                     else
                     {
+                        if (logStartupTiming)
+                        {
+                            StartupTimingLogger.Log("snapshot_single_connect_begin");
+                        }
                         await EnsureSingleInternalClientConnectedAsync();
+                        if (logStartupTiming)
+                        {
+                            StartupTimingLogger.Log("snapshot_single_connect_end");
+                            StartupTimingLogger.WriteLog();
+                        }
                     }
 
                     if (singleInternalClient == null)
@@ -5087,7 +5096,16 @@ namespace OceanyaClient
                         return;
                     }
 
+                    if (logStartupTiming)
+                    {
+                        StartupTimingLogger.Log("snapshot_initial_puppet_begin");
+                    }
                     await SelectInitialSnapshotPuppetForSingleInternalClientAsync(resolvedStates[0]);
+                    if (logStartupTiming)
+                    {
+                        StartupTimingLogger.Log("snapshot_initial_puppet_end");
+                        StartupTimingLogger.WriteLog();
+                    }
                 }
                 else
                 {
@@ -5110,12 +5128,28 @@ namespace OceanyaClient
                     return;
                 }
 
+                if (logStartupTiming)
+                {
+                    StartupTimingLogger.Log("snapshot_restore_clients_begin", $"count={resolvedStates.Count}");
+                }
                 await RestoreResolvedSnapshotClientsAsync(resolvedStates);
+                if (logStartupTiming)
+                {
+                    StartupTimingLogger.Log("snapshot_restore_clients_end");
+                }
 
                 AOClient? preferredClient = FindRestoredSelectedClient(snapshot, resolvedStates);
                 if (preferredClient != null)
                 {
+                    if (logStartupTiming)
+                    {
+                        StartupTimingLogger.Log("snapshot_select_preferred_begin");
+                    }
                     SelectClient(preferredClient);
+                    if (logStartupTiming)
+                    {
+                        StartupTimingLogger.Log("snapshot_select_preferred_end");
+                    }
                 }
             }
             catch (Exception ex)
