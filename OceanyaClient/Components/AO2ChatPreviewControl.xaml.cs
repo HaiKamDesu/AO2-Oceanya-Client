@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
@@ -272,15 +274,33 @@ namespace OceanyaClient
 
         private void ScrollMessageToCurrentTextEnd()
         {
-            MessageTextBox.CaretPosition = MessageTextBox.Document.ContentEnd;
-            MessageTextBox.ScrollToEnd();
+            // MessageTextBox is IsReadOnly + Focusable=False, so the caret is never shown. Setting
+            // CaretPosition = ContentEnd forced a full synchronous layout validation each call (done twice, plus
+            // twice more deferred) — 4 growing layout passes per typing tick. ScrollToEnd alone keeps the latest
+            // text visible; a single Render-priority deferral guarantees it runs after the new text is laid out.
             _ = MessageTextBox.Dispatcher.BeginInvoke(
                 DispatcherPriority.Render,
-                new Action(() =>
-                {
-                    MessageTextBox.CaretPosition = MessageTextBox.Document.ContentEnd;
-                    MessageTextBox.ScrollToEnd();
-                }));
+                new Action(() => MessageTextBox.ScrollToEnd()));
+        }
+
+        // The character-by-character text reveal calls this once per typing tick with a growing prefix. The
+        // formatter yields one segment per grapheme, so building a Run per segment created ~n Runs and n brushes
+        // every tick (O(n^2) allocation + inline tree + layout over the whole message) — the "long message slows
+        // down with each line" report. Coalescing consecutive same-color segments into a single Run and reusing
+        // frozen brushes keeps the visual output identical while cutting per-tick work to the number of color runs.
+        private readonly Dictionary<Color, Brush> frozenBrushCache = new Dictionary<Color, Brush>();
+
+        private Brush GetFrozenBrush(Color color)
+        {
+            if (!frozenBrushCache.TryGetValue(color, out Brush? brush))
+            {
+                SolidColorBrush solid = new SolidColorBrush(color);
+                solid.Freeze();
+                brush = solid;
+                frozenBrushCache[color] = brush;
+            }
+
+            return brush;
         }
 
         private void ApplyFormattedMessageText(AO2ChatPreviewStyle style, string rawText)
@@ -293,17 +313,44 @@ namespace OceanyaClient
                 TextAlignment = AO2ChatTextFormatter.ResolveMessageAlignment(rawText, out string text)
             };
 
+            StringBuilder runBuilder = new StringBuilder();
+            bool hasRun = false;
+            Color runColor = default;
+
+            void FlushRun()
+            {
+                if (!hasRun || runBuilder.Length == 0)
+                {
+                    runBuilder.Clear();
+                    hasRun = false;
+                    return;
+                }
+
+                paragraph.Inlines.Add(new Run(runBuilder.ToString())
+                {
+                    Foreground = GetFrozenBrush(runColor)
+                });
+                runBuilder.Clear();
+                hasRun = false;
+            }
+
             foreach (AO2FormattedTextSegment segment in AO2ChatTextFormatter.EnumerateFormattedTextSegments(
                 style,
                 text,
                 MessageColorIndex,
                 MessageColorOverride))
             {
-                paragraph.Inlines.Add(new Run(segment.Text)
+                if (hasRun && segment.Color != runColor)
                 {
-                    Foreground = new SolidColorBrush(segment.Color)
-                });
+                    FlushRun();
+                }
+
+                runColor = segment.Color;
+                hasRun = true;
+                runBuilder.Append(segment.Text);
             }
+
+            FlushRun();
 
             MessageTextBox.Document.Blocks.Add(paragraph);
         }
