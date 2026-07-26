@@ -58,6 +58,10 @@ namespace OceanyaClient
         // confirmations, and dropped sends. Holding this gate makes each profile's prepare+send atomic and
         // ordered. Not used in multi-internal-client mode (each bot has its own connection).
         private readonly SemaphoreSlim singleClientSendGate = new SemaphoreSlim(1, 1);
+        // When a client/character switch (SelectClient) takes at least this long, log a per-phase breakdown
+        // ([SWITCH-TIMING], Viewport category) so the bottleneck can be diagnosed from real numbers. Lower to
+        // capture more switches. A switch freezes the UI + viewport while it runs, so anything over a frame matters.
+        private const double SwitchTimingLogThresholdMs = 4.0;
         private Window? viewportWindow;
         private Window? pictureInPictureViewportWindow;
         private HwndSource? hostWindowSource;
@@ -6184,6 +6188,20 @@ namespace OceanyaClient
 
         private void SelectClient(AOClient client)
         {
+            // Per-phase timing for the client/character switch (freezes the UI + viewport while it runs). Lap()
+            // returns ms since the last call; a breakdown is logged when the switch exceeds the threshold so the
+            // bottleneck (emote/combobox load, viewport attach, log swap, list refreshes) can be read from real
+            // numbers. Same [VPT] Viewport log category as [RENDER-TIMING].
+            System.Diagnostics.Stopwatch switchStopwatch = System.Diagnostics.Stopwatch.StartNew();
+            double switchLastMs = 0;
+            double Lap()
+            {
+                double now = switchStopwatch.Elapsed.TotalMilliseconds;
+                double delta = now - switchLastMs;
+                switchLastMs = now;
+                return delta;
+            }
+
             foreach (var button in clients.Keys)
             {
                 if (clients[button] == client)
@@ -6193,20 +6211,33 @@ namespace OceanyaClient
                     break;
                 }
             }
+            double msButtonState = Lap();
 
             if (useSingleInternalClient)
             {
                 ApplyProfileToSingleInternalClient(client);
             }
+            double msApplyProfile = Lap();
 
             currentClient = client;
             ICMessageSettingsControl.SetClient(currentClient);
+            double msIcSettings = Lap();
+
             OOCLogControl.SetCurrentClient(currentClient);
             SetOocShownameTextForCurrentClient(currentClient.OOCShowname);
+            double msOocLog = Lap();
+
             ICLogControl.SetCurrentClient(currentClient);
+            double msIcLog = Lap();
+
             RefreshViewportAttachment();
+            double msViewport = Lap();
+
             RefreshAreaNavigatorForCurrentClient();
+            double msAreaNav = Lap();
+
             RefreshMusicListForCurrentClient();
+            double msMusicList = Lap();
 
             if (isDreddFeatureEnabled && DreddStickyOverlayCheckBox.IsChecked == true)
             {
@@ -6215,6 +6246,15 @@ namespace OceanyaClient
 
             RefreshDreddOverlayForCurrentContext(promptForUnknownOverlay: true);
             UpdateDreddFeatureEnabledState();
+            double msDredd = Lap();
+
+            double msTotal = switchStopwatch.Elapsed.TotalMilliseconds;
+            if (msTotal >= SwitchTimingLogThresholdMs)
+            {
+                CustomConsole.Info(
+                    $"[SWITCH-TIMING] total={msTotal:0.0}ms | button={msButtonState:0.0} applyProfile={msApplyProfile:0.0} icSettings={msIcSettings:0.0} oocLog={msOocLog:0.0} icLog={msIcLog:0.0} viewport={msViewport:0.0} areaNav={msAreaNav:0.0} musicList={msMusicList:0.0} dredd={msDredd:0.0} | client=\"{client.clientName}\" char=\"{client.currentINI?.Name ?? "(null)"}\" mode={(useSingleInternalClient ? "single" : "multi")}",
+                    CustomConsole.LogCategory.Viewport);
+            }
         }
 
         private void btnAddClient_Click(object sender, RoutedEventArgs e)
