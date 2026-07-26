@@ -41,6 +41,48 @@ namespace OceanyaClient
     /// </summary>
     public static class AO2SoundList
     {
+        // LoadEntries runs on every client/character switch and re-read both the character soundlist.ini and the
+        // (shared, often large) base soundlist.ini from disk each time. Cache parsed entries per file keyed by
+        // last-write-time so switches reuse the parse; an edited soundlist still refreshes (write-time changes).
+        private static readonly object SoundListCacheLock = new object();
+        private static readonly Dictionary<string, (DateTime WriteUtc, IReadOnlyList<AO2SoundListEntry> Entries)> ParsedSoundListCache =
+            new Dictionary<string, (DateTime, IReadOnlyList<AO2SoundListEntry>)>(StringComparer.OrdinalIgnoreCase);
+
+        private static IReadOnlyList<AO2SoundListEntry> GetParsedFileCached(string filePath)
+        {
+            DateTime writeUtc;
+            try
+            {
+                writeUtc = File.GetLastWriteTimeUtc(filePath);
+            }
+            catch
+            {
+                writeUtc = DateTime.MinValue;
+            }
+
+            lock (SoundListCacheLock)
+            {
+                if (ParsedSoundListCache.TryGetValue(filePath, out (DateTime WriteUtc, IReadOnlyList<AO2SoundListEntry> Entries) cached)
+                    && cached.WriteUtc == writeUtc)
+                {
+                    return cached.Entries;
+                }
+            }
+
+            List<AO2SoundListEntry> parsed = new List<AO2SoundListEntry>();
+            foreach (string line in File.ReadLines(filePath))
+            {
+                parsed.Add(ParseLine(line));
+            }
+
+            lock (SoundListCacheLock)
+            {
+                ParsedSoundListCache[filePath] = (writeUtc, parsed);
+            }
+
+            return parsed;
+        }
+
         /// <summary>
         /// Parses one AO2 sound list line into its transmitted token and visible label.
         /// </summary>
@@ -97,10 +139,7 @@ namespace OceanyaClient
                 return;
             }
 
-            foreach (string line in File.ReadLines(filePath))
-            {
-                entries.Add(ParseLine(line));
-            }
+            entries.AddRange(GetParsedFileCached(filePath));
         }
 
         private static string ResolveCharacterSoundListPath(string characterDirectoryPath)

@@ -601,6 +601,7 @@ namespace OceanyaClient.Components
             double msDropdownSet = 0;
             double msGridSet = 0;
             double msEmoteSelect = 0;
+            double msPageNav = 0;
             double msSoundList = 0;
 
             try
@@ -652,13 +653,15 @@ namespace OceanyaClient.Components
                 if (selectedEmote != null)
                 {
                     SelectEmote(selectedEmote, updateClient: !IsSelectedEmote(selectedEmote), focusMessageBox: false, notifyStateChanged: false);
+                    msEmoteSelect = Lap();
                     EmoteGrid.SetPageToVirtualizedItem(item => ReferenceEquals(item, selectedEmote));
+                    msPageNav = Lap();
                 }
                 else
                 {
                     EmoteGrid.SetVirtualizedItems(emotes, CreateEmoteButton);
+                    msEmoteSelect = Lap();
                 }
-                msEmoteSelect = Lap();
 
                 sfxDropdown.Clear();
                 sfxDropdown.Add("Default", "");
@@ -678,7 +681,7 @@ namespace OceanyaClient.Components
                 if (msSetIniTotal >= 4.0)
                 {
                     CustomConsole.Info(
-                        $"[SETINI-TIMING] total={msSetIniTotal:0.0}ms | prep={msPrep:0.0} dropdownSet={msDropdownSet:0.0} gridSet={msGridSet:0.0} emoteSelect={msEmoteSelect:0.0} soundList={msSoundList:0.0} | char=\"{ini?.Name ?? "(null)"}\" emotes={emotes.Count}",
+                        $"[SETINI-TIMING] total={msSetIniTotal:0.0}ms | prep={msPrep:0.0} dropdownSet={msDropdownSet:0.0} gridSet={msGridSet:0.0} emoteSelect={msEmoteSelect:0.0} pageNav={msPageNav:0.0} soundList={msSoundList:0.0} | char=\"{ini?.Name ?? "(null)"}\" emotes={emotes.Count}",
                         CustomConsole.LogCategory.Viewport);
                 }
             }
