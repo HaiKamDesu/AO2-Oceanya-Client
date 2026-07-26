@@ -293,6 +293,18 @@ namespace OceanyaClient
                 {
                     try
                     {
+                        // For server-backed startups (GM client), the launch-critical work (snapshot restore +
+                        // server connect) also hits the disk. Wait until it signals completion before starting this
+                        // heavy character-folder scan so the two do not fight for the disk and stall the connect.
+                        // MainWindow calls SignalStartupCriticalPathComplete when restore finishes; the timeout is a
+                        // safety fallback. Offline tools have no such critical path, so they scan immediately.
+                        if (selectedFunctionality.RequiresServerEndpoint)
+                        {
+                            StartupTimingLogger.Log("background_tracked_check_deferred_wait_begin");
+                            await ClientAssetRefreshService.WaitForStartupCriticalPathAsync(60000);
+                            StartupTimingLogger.Log("background_tracked_check_deferred_wait_end");
+                        }
+
                         StartupTimingLogger.Log("background_tracked_check_begin");
                         TargetedAssetRefreshPlan plan =
                             ClientAssetRefreshService.GetTrackedChangePlanForCurrentEnvironment();

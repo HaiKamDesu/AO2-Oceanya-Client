@@ -21,6 +21,32 @@ namespace OceanyaClient
     {
         private const int RefreshMarkerSchemaVersion = 1;
 
+        // The startup background asset scan (GetTrackedChangePlanForCurrentEnvironment → CaptureCurrentAssetStateSnapshot)
+        // does heavy single-threaded disk I/O over every character folder. If it runs concurrently with the GM
+        // snapshot restore's server connect, it starves that connect's own disk reads and the connect balloons from
+        // ~1s to ~15s on a local server (measured), leaving the window built-but-disabled. This gate lets the launch
+        // path defer the scan until the critical connect/restore has finished so they do not fight for the disk.
+        private static readonly TaskCompletionSource<bool> StartupCriticalPathGate =
+            new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>
+        /// Signals that the launch-critical work (e.g. GM snapshot restore + server connect) has finished, so the
+        /// deferred startup asset scan may run. Safe to call multiple times / from any startup path.
+        /// </summary>
+        public static void SignalStartupCriticalPathComplete()
+        {
+            StartupCriticalPathGate.TrySetResult(true);
+        }
+
+        /// <summary>
+        /// Waits until <see cref="SignalStartupCriticalPathComplete"/> is called, or the timeout elapses (safety
+        /// fallback so the scan still runs if the signal never arrives).
+        /// </summary>
+        public static async Task WaitForStartupCriticalPathAsync(int timeoutMs)
+        {
+            await Task.WhenAny(StartupCriticalPathGate.Task, Task.Delay(timeoutMs));
+        }
+
         /// <summary>
         /// Refreshes all supported client-side asset caches while showing progress in <see cref="WaitForm"/>.
         /// </summary>

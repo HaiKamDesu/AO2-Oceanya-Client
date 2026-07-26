@@ -1148,7 +1148,15 @@ namespace OceanyaClient
             if (!hasAttemptedSnapshotRestore)
             {
                 hasAttemptedSnapshotRestore = true;
-                _ = RestoreGmMultiClientSnapshotAsync();
+                // Release the deferred startup asset scan only once the snapshot restore (server connect) is done,
+                // so the scan's disk I/O does not starve the launch-critical connect. Runs on all paths, including
+                // no-snapshot / failure, via the continuation.
+                _ = RestoreGmMultiClientSnapshotAsync()
+                    .ContinueWith(_ => ClientAssetRefreshService.SignalStartupCriticalPathComplete());
+            }
+            else
+            {
+                ClientAssetRefreshService.SignalStartupCriticalPathComplete();
             }
 
             FinishedLoading?.Invoke();
