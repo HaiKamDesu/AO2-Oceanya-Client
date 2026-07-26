@@ -1011,7 +1011,7 @@ namespace AOBot_Testing.Agents
         }
 
         #region Connection Related Methods
-        public async Task Connect(int betweenHandshakeAndSetArea = 0, int betweenSetAreas = 0, int betweenAreasAndIniPuppet = 1000, int finalDelay = 1000, bool autoSelectCharacter = true)
+        public async Task Connect(int betweenHandshakeAndSetArea = 0, int betweenSetAreas = 0, int betweenAreasAndIniPuppet = 1000, int finalDelay = 1000, bool autoSelectCharacter = true, int handshakeGreetingTimeoutMs = 10000)
         {
             aliveTime.Reset();
             dead = false;
@@ -1026,7 +1026,7 @@ namespace AOBot_Testing.Agents
                 CustomConsole.Info($"Connected to AO server via {TransportName}.");
                 CustomConsole.Info("===========================");
 
-                await PerformHandshake();
+                await PerformHandshake(handshakeGreetingTimeoutMs);
                 CustomConsole.Info("===========================");
 
                 await Task.Delay(betweenHandshakeAndSetArea);
@@ -2254,13 +2254,20 @@ namespace AOBot_Testing.Agents
                 || value.EndsWith(".opus", StringComparison.OrdinalIgnoreCase);
         }
 
-        private async Task PerformHandshake()
+        private async Task PerformHandshake(int greetingTimeoutMs = 10000)
         {
             if (!IsTransportConnected)
             {
                 CustomConsole.Error("Server connection is not active. Cannot perform handshake.");
                 return;
             }
+
+            // The "greeting" waits (decryptor/ID, then ID) are the ones that hang on a dead first socket where the
+            // server sends nothing. A caller can pass a short timeout for a fast first attempt (recycle a dead
+            // socket via a fresh reconnect) and a longer one on the retry (full tolerance for a genuinely slow but
+            // alive server — AO2 itself waits indefinitely for the greeting). Post-greeting waits keep their own
+            // defaults since the server has already proven it is responding by then.
+            int clampedGreetingTimeoutMs = Math.Max(500, greetingTimeoutMs);
 
             // Per-phase handshake timing. A single WaitForPacketAsync stalling to its timeout (then the caller's
             // retry) is the intermittent multi-second connect; this shows which server packet is slow to arrive.
@@ -2291,7 +2298,7 @@ namespace AOBot_Testing.Agents
                 packet => packet.StartsWith("decryptor#", StringComparison.OrdinalIgnoreCase)
                     || packet.StartsWith("ID#", StringComparison.OrdinalIgnoreCase),
                 "decryptor/ID",
-                timeoutMs: 5000,
+                timeoutMs: clampedGreetingTimeoutMs,
                 throwOnTimeout: false);
             LogHandshakePhase("decryptor/ID");
 
@@ -2305,7 +2312,8 @@ namespace AOBot_Testing.Agents
 
                 response = await WaitForPacketAsync(
                     packet => packet.StartsWith("ID#", StringComparison.OrdinalIgnoreCase),
-                    "ID");
+                    "ID",
+                    timeoutMs: clampedGreetingTimeoutMs);
                 LogHandshakePhase("ID");
             }
             else if (string.IsNullOrWhiteSpace(response))
@@ -2318,7 +2326,8 @@ namespace AOBot_Testing.Agents
 
                 response = await WaitForPacketAsync(
                     packet => packet.StartsWith("ID#", StringComparison.OrdinalIgnoreCase),
-                    "ID");
+                    "ID",
+                    timeoutMs: clampedGreetingTimeoutMs);
                 LogHandshakePhase("ID");
             }
 

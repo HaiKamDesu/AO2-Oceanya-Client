@@ -4796,10 +4796,14 @@ namespace OceanyaClient
 
             try
             {
+                // First attempt uses a short handshake-greeting timeout so a dead first socket (server sends
+                // nothing) is detected in a few seconds and recycled via the retry below, instead of hanging the
+                // full ~15s. A healthy server sends its greeting in well under a second.
                 await bot.Connect(
                     betweenAreasAndIniPuppet: autoSelectCharacter ? 1000 : 0,
                     finalDelay: 0,
-                    autoSelectCharacter: autoSelectCharacter);
+                    autoSelectCharacter: autoSelectCharacter,
+                    handshakeGreetingTimeoutMs: 2000);
                 ao2TextLogWriter.RefreshSession();
             }
             catch (TimeoutException ex) when (IsHandshakeTimeout(ex))
@@ -4808,12 +4812,20 @@ namespace OceanyaClient
                 CustomConsole.Warning(
                     $"Retrying client connection after handshake timeout for \"{bot.clientName}\".",
                     category: CustomConsole.LogCategory.System);
+                if (WaitForm.Showing)
+                {
+                    WaitForm.SetSubtitle("Server didn't respond yet — retrying connection...");
+                }
+
                 await bot.DisconnectWebsocket();
                 await Task.Delay(750);
+                // Retry with a generous greeting timeout so a genuinely slow-but-alive server (which AO2 would wait
+                // indefinitely for) still gets a full chance to greet before we give up.
                 await bot.Connect(
                     betweenAreasAndIniPuppet: autoSelectCharacter ? 1000 : 0,
                     finalDelay: 0,
-                    autoSelectCharacter: autoSelectCharacter);
+                    autoSelectCharacter: autoSelectCharacter,
+                    handshakeGreetingTimeoutMs: 10000);
                 ao2TextLogWriter.RefreshSession();
             }
         }
@@ -5057,6 +5069,23 @@ namespace OceanyaClient
             isRestoringSnapshot = true;
             suppressSnapshotCapture = true;
             IsEnabled = false;
+            // The window is disabled for the whole restore, so surface a status in the (still-open) launch wait form
+            // instead of showing a built-but-empty window. Dispatched at Background priority so it runs AFTER the
+            // synchronous launch flow's own subtitle set (which executes right after Show() returns) and therefore
+            // wins. ConnectClientAsync updates it again if a handshake retry is needed.
+            if (logStartupTiming)
+            {
+                _ = Dispatcher.BeginInvoke(
+                    new Action(() =>
+                    {
+                        if (WaitForm.Showing)
+                        {
+                            WaitForm.SetSubtitle("Connecting to server and restoring clients...");
+                        }
+                    }),
+                    System.Windows.Threading.DispatcherPriority.Background);
+            }
+
             try
             {
                 bool snapshotMatchesCurrentServer = SnapshotServerMatchesCurrentEndpoint(

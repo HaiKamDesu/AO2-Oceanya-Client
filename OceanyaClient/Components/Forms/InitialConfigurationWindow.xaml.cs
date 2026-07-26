@@ -285,26 +285,29 @@ namespace OceanyaClient
             {
                 StartupTimingLogger.Log("finished_loading");
                 StartupTimingLogger.WriteLog();
+
+                // For server-backed startups (GM client) the window is disabled during the snapshot restore + server
+                // connect. Keep the launch wait form up through that critical path (MainWindow updates its subtitle,
+                // e.g. "Connecting to server...", "retrying...") so a slow/dead first connection is visible instead
+                // of a frozen empty window. Close it only once MainWindow signals the restore is complete. Offline
+                // tools have no such critical path, so their form closes immediately.
+                if (selectedFunctionality.RequiresServerEndpoint)
+                {
+                    // MainWindow updates the wait form subtitle from inside the restore (it runs after this launch
+                    // flow's own subtitle set, so it wins). Here we only hold the form open until restore signals.
+                    StartupTimingLogger.Log("launch_waitform_hold_begin");
+                    await ClientAssetRefreshService.WaitForStartupCriticalPathAsync(120000);
+                    StartupTimingLogger.Log("launch_waitform_hold_end");
+                }
+
                 await CloseLaunchWaitFormAsync();
                 TryPlayStartupFunctionalityJingle();
-                // Detect and refresh only changed assets in the background — this scan is
-                // deferred off the launch critical path so startup feels instant.
+                // Detect and refresh only changed assets in the background — this scan is deferred off the launch
+                // critical path (we already awaited it above for server-backed startups) so startup feels instant.
                 _ = Task.Run(async () =>
                 {
                     try
                     {
-                        // For server-backed startups (GM client), the launch-critical work (snapshot restore +
-                        // server connect) also hits the disk. Wait until it signals completion before starting this
-                        // heavy character-folder scan so the two do not fight for the disk and stall the connect.
-                        // MainWindow calls SignalStartupCriticalPathComplete when restore finishes; the timeout is a
-                        // safety fallback. Offline tools have no such critical path, so they scan immediately.
-                        if (selectedFunctionality.RequiresServerEndpoint)
-                        {
-                            StartupTimingLogger.Log("background_tracked_check_deferred_wait_begin");
-                            await ClientAssetRefreshService.WaitForStartupCriticalPathAsync(60000);
-                            StartupTimingLogger.Log("background_tracked_check_deferred_wait_end");
-                        }
-
                         StartupTimingLogger.Log("background_tracked_check_begin");
                         TargetedAssetRefreshPlan plan =
                             ClientAssetRefreshService.GetTrackedChangePlanForCurrentEnvironment();
