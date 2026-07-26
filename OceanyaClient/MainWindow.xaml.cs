@@ -4252,21 +4252,21 @@ namespace OceanyaClient
             profileClient.SetPos(singleInternalClient.curPos);
         }
 
-        private void ApplyServerPositionToAllSingleInternalProfiles(string newPos)
+        private void ApplyServerPositionToActiveSingleInternalProfile(string newPos)
         {
             if (!useSingleInternalClient)
             {
                 return;
             }
 
-            foreach (AOClient profileClient in clientOrder)
+            // A server position (SP#) arrives BOTH as the echo of a profile's own /pos change and as a real
+            // /forcepos. Apply it only to the currently active/bound profile, NOT every profile — broadcasting it
+            // to all made each profile share one position (setting client 2's pos clobbered client 1's), which
+            // broke the per-client position the combobox is supposed to reflect. Each profile keeps its own pos.
+            AOClient? activeProfile = boundSingleClientProfile ?? currentClient;
+            if (activeProfile != null && !ReferenceEquals(activeProfile, singleInternalClient))
             {
-                if (ReferenceEquals(profileClient, singleInternalClient))
-                {
-                    continue;
-                }
-
-                profileClient.SetPos(newPos);
+                activeProfile.SetPos(newPos);
             }
 
             if (currentClient != null)
@@ -4540,7 +4540,7 @@ namespace OceanyaClient
             {
                 Dispatcher.Invoke(() =>
                 {
-                    ApplyServerPositionToAllSingleInternalProfiles(newPos);
+                    ApplyServerPositionToActiveSingleInternalProfile(newPos);
                 });
             };
 
