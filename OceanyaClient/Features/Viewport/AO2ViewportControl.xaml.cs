@@ -166,6 +166,8 @@ namespace OceanyaClient.Features.Viewport
             string chatArrowToken = ChatPreview.ChatToken;
 
             Ao2AnimationPreview.ClearStaticPreviewCache();
+            // Drop cached chatbox styles so a theme swap (or newly added theme config files) is picked up fresh.
+            AO2ChatPreviewResolver.ClearCache();
             ApplyThemeLayout();
             ApplySavedChatBackground();
             ReapplyScenePlacementAfterLayoutChange();

@@ -829,6 +829,30 @@ namespace UnitTests
         }
 
         [Test]
+        public void Test_AO2ChatPreviewResolver_ResultCacheReflectsEditedConfig()
+        {
+            string customChatboxDir = Path.Combine(_tempDir, "misc", "CacheTest");
+            Directory.CreateDirectory(customChatboxDir);
+            CreateEmptyFile(Path.Combine(customChatboxDir, "chat.png"));
+            string designPath = Path.Combine(customChatboxDir, "courtroom_design.ini");
+            File.WriteAllText(designPath, "ao2_chatbox=0,178,256,104\nmessage=20,21,200,60\n");
+
+            AO2ChatPreviewStyle first = AO2ChatPreviewResolver.Resolve("CacheTest", hasShowname: true, preferViewportTheme: true);
+            Assert.That(first.MessageBounds, Is.EqualTo(new AO2ChatPreviewBounds(20, 21, 200, 60)));
+
+            // A repeated resolve with no file changes should return the cached result (same instance).
+            AO2ChatPreviewStyle cached = AO2ChatPreviewResolver.Resolve("CacheTest", hasShowname: true, preferViewportTheme: true);
+            Assert.That(ReferenceEquals(first, cached), Is.True, "Unchanged repeat resolve should hit the result cache.");
+
+            // Editing the config must invalidate the cache (write-time changes) so the new geometry is reflected.
+            File.WriteAllText(designPath, "ao2_chatbox=0,178,256,104\nmessage=5,6,100,40\n");
+            File.SetLastWriteTimeUtc(designPath, File.GetLastWriteTimeUtc(designPath).AddSeconds(5));
+
+            AO2ChatPreviewStyle afterEdit = AO2ChatPreviewResolver.Resolve("CacheTest", hasShowname: true, preferViewportTheme: true);
+            Assert.That(afterEdit.MessageBounds, Is.EqualTo(new AO2ChatPreviewBounds(5, 6, 100, 40)), "Edited config must live-reload despite the cache.");
+        }
+
+        [Test]
         public void Test_AO2ChatPreviewResolver_CustomChatboxWithoutGeometryKeepsThemeGeometry()
         {
             string viewportThemeDir = Path.Combine(_tempDir, "themes", "(714x688) FullChar");

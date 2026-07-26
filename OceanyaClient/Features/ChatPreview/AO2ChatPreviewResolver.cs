@@ -71,6 +71,73 @@ namespace OceanyaClient.Features.ChatPreview
             return entries;
         }
 
+        // Resolve() is called ~4× per viewport render (theme layout, talking style, chat preview refresh, text
+        // reveal) and each call enumerates the whole theme+mount chain doing dozens of File.Exists probes — the
+        // dominant per-message hitch measured on real hardware. Cache the whole computed style keyed by inputs +
+        // theme context + mounts (so a theme/mount/config-theme change naturally misses), validated by the
+        // last-write-times of the exact files it merged (so an edited INI still live-reloads). Only mid-session
+        // ADDITION of a higher-priority file that did not exist at compute time is not auto-detected; ClearCache()
+        // (called on theme reload) covers that case.
+        private static readonly object ResolvedStyleCacheLock = new object();
+        private static readonly Dictionary<string, (AO2ChatPreviewStyle Style, List<(string Path, DateTime WriteUtc)> Deps)> ResolvedStyleCache =
+            new Dictionary<string, (AO2ChatPreviewStyle, List<(string, DateTime)>)>(StringComparer.Ordinal);
+
+        /// <summary>Clears the cached resolved chatbox styles. Call when themes/assets are reloaded.</summary>
+        public static void ClearCache()
+        {
+            lock (ResolvedStyleCacheLock)
+            {
+                ResolvedStyleCache.Clear();
+            }
+            lock (ParsedIniCacheLock)
+            {
+                ParsedIniCache.Clear();
+            }
+        }
+
+        private static DateTime SafeWriteUtc(string path)
+        {
+            try
+            {
+                return File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue;
+            }
+            catch
+            {
+                return DateTime.MinValue;
+            }
+        }
+
+        private static bool DepsUnchanged(List<(string Path, DateTime WriteUtc)> deps)
+        {
+            for (int i = 0; i < deps.Count; i++)
+            {
+                if (SafeWriteUtc(deps[i].Path) != deps[i].WriteUtc)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static string BuildResolveCacheKey(
+            string token,
+            bool hasShowname,
+            bool preferViewportTheme,
+            AO2ChatPreviewThemeContext themeContext)
+        {
+            string baseFoldersSignature = string.Join("|", Globals.BaseFolders ?? new List<string>());
+            return string.Join(
+                "",
+                token,
+                hasShowname ? "1" : "0",
+                preferViewportTheme ? "1" : "0",
+                themeContext.Theme,
+                themeContext.Subtheme,
+                themeContext.ScalingFactor.ToString(CultureInfo.InvariantCulture),
+                baseFoldersSignature);
+        }
+
         public static AO2ChatPreviewStyle Resolve(string? chatToken, bool hasShowname)
         {
             return Resolve(chatToken, hasShowname, preferViewportTheme: false);
@@ -80,9 +147,21 @@ namespace OceanyaClient.Features.ChatPreview
         {
             string token = NormalizeChatToken(chatToken);
             AO2ChatPreviewThemeContext themeContext = ResolveThemeContext(preferViewportTheme);
-            Dictionary<string, string> fontValues = LoadMergedConfig(token, "courtroom_fonts.ini", preferViewportTheme);
-            Dictionary<string, string> chatMarkupValues = LoadMergedConfig(token, "chat_config.ini", preferViewportTheme);
-            Dictionary<string, string> designValues = LoadMergedConfig(token, "courtroom_design.ini", preferViewportTheme);
+
+            string cacheKey = BuildResolveCacheKey(token, hasShowname, preferViewportTheme, themeContext);
+            lock (ResolvedStyleCacheLock)
+            {
+                if (ResolvedStyleCache.TryGetValue(cacheKey, out (AO2ChatPreviewStyle Style, List<(string Path, DateTime WriteUtc)> Deps) cached)
+                    && DepsUnchanged(cached.Deps))
+                {
+                    return cached.Style;
+                }
+            }
+
+            List<(string Path, DateTime WriteUtc)> resolveDeps = new List<(string, DateTime)>();
+            Dictionary<string, string> fontValues = LoadMergedConfig(token, "courtroom_fonts.ini", preferViewportTheme, resolveDeps);
+            Dictionary<string, string> chatMarkupValues = LoadMergedConfig(token, "chat_config.ini", preferViewportTheme, resolveDeps);
+            Dictionary<string, string> designValues = LoadMergedConfig(token, "courtroom_design.ini", preferViewportTheme, resolveDeps);
 
             Color shownameColor = TryParseColor(GetValue(fontValues, "showname_color"), Colors.White);
             Color messageColor = TryParseColor(GetValue(fontValues, "message_color"), TryParseColor(GetValue(chatMarkupValues, "c0"), Colors.White));
@@ -102,6 +181,10 @@ namespace OceanyaClient.Features.ChatPreview
             int shownameExtraWidth = Math.Max(0, TryParseInt(GetValue(designValues, "showname_extra_width"), 0));
 
             string? chatboxImagePath = ResolveChatboxImagePath(token, hasShowname, preferViewportTheme);
+            if (!string.IsNullOrWhiteSpace(chatboxImagePath))
+            {
+                resolveDeps.Add((chatboxImagePath, SafeWriteUtc(chatboxImagePath)));
+            }
 
             AO2ChatPreviewStyle style = new AO2ChatPreviewStyle
             {
@@ -143,6 +226,11 @@ namespace OceanyaClient.Features.ChatPreview
                     GetValue(chatMarkupValues, "c" + i.ToString(CultureInfo.InvariantCulture) + "_talking"),
                     "0",
                     StringComparison.Ordinal);
+            }
+
+            lock (ResolvedStyleCacheLock)
+            {
+                ResolvedStyleCache[cacheKey] = (style, resolveDeps);
             }
 
             return style;
@@ -249,7 +337,11 @@ namespace OceanyaClient.Features.ChatPreview
             return string.IsNullOrWhiteSpace(token) ? string.Empty : token;
         }
 
-        private static Dictionary<string, string> LoadMergedConfig(string chatToken, string fileName, bool preferViewportTheme)
+        private static Dictionary<string, string> LoadMergedConfig(
+            string chatToken,
+            string fileName,
+            bool preferViewportTheme,
+            List<(string Path, DateTime WriteUtc)>? deps = null)
         {
             Dictionary<string, string> values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (string filePath in EnumerateConfigFilesLowToHigh(chatToken, fileName, preferViewportTheme))
@@ -259,6 +351,9 @@ namespace OceanyaClient.Features.ChatPreview
                 {
                     continue;
                 }
+
+                // Record the exact files merged so Resolve's result cache can revalidate them by write-time.
+                deps?.Add((resolvedPath, SafeWriteUtc(resolvedPath)));
 
                 try
                 {
