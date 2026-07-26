@@ -38,6 +38,11 @@ namespace OceanyaClient.Features.Viewport
         private readonly Queue<ICMessage> chatMessageQueue = new Queue<ICMessage>();
         private bool messageDisplayInProgress;
         private DispatcherTimer? queueAdvanceTimer;
+        // When a single RenderScene pass takes at least this long on the UI thread, log a per-phase breakdown
+        // (category Viewport, prefix "[RENDER-TIMING]") so slow/hitchy renders can be diagnosed from real numbers.
+        // A 60fps frame is ~16.7ms; anything over this threshold is a visible risk of stalling the animation timer.
+        // Lower it to capture more renders. Threshold-gated so routine fast renders do not spam the log.
+        private const double RenderTimingLogThresholdMs = 4.0;
         private int messageSequence;
         private int chatTextCrawlMilliseconds = DefaultChatTextCrawlMilliseconds;
         private int chatBlipRate = DefaultBlipRate;
@@ -1006,11 +1011,23 @@ namespace OceanyaClient.Features.Viewport
             bool startTextReveal = true,
             Action<IAnimationPlayer?>? onCharacterPlayerReady = null)
         {
+            // Per-phase render timing (see RenderTimingLogThresholdMs). Lap() returns ms elapsed since the last call.
+            System.Diagnostics.Stopwatch renderStopwatch = System.Diagnostics.Stopwatch.StartNew();
+            double renderLastMs = 0;
+            double Lap()
+            {
+                double now = renderStopwatch.Elapsed.TotalMilliseconds;
+                double delta = now - renderLastMs;
+                renderLastMs = now;
+                return delta;
+            }
+
             string chatToken = AO2ViewportAssetResolver.ResolveCharacterChatToken(character);
             bool hasShowname = !string.IsNullOrWhiteSpace(showname);
             ApplyThemeLayout(chatToken, hasShowname);
             AO2ViewportAssetResolver.ViewportDisplayOptions displayOptions =
                 AO2ViewportAssetResolver.ResolveDisplayOptions(backgroundName);
+            double msTheme = Lap();
             currentRenderCharacter = character;
             AO2ViewportAssetResolver.ViewportImagePlacement backgroundPlacement =
                 AO2ViewportAssetResolver.ResolveBackgroundPlacement(backgroundName, position);
@@ -1022,6 +1039,7 @@ namespace OceanyaClient.Features.Viewport
             double bgOldLeft = Canvas.GetLeft(BackgroundImage);
             double deskOldLeft = Canvas.GetLeft(DeskImage);
             SetPlacedAnimatedImage(BackgroundImage, backgroundPlacement, true, displayOptions.StretchMode);
+            double msBackground = Lap();
 
             bool isPreAnimation = phase == ViewportPhase.PreAnimation;
             bool isZoom = message != null && AO2ViewportAssetResolver.IsZoomEmote(message.EmoteModifier);
@@ -1051,6 +1069,7 @@ namespace OceanyaClient.Features.Viewport
                     character,
                     resolvedCharacterAnimation.ResolvedToken,
                     messageSequence);
+            double msCharacterResolve = Lap();
             // AO2 parity: text typing is NOT gated on the sprite decode. AO2 starts the chat tick immediately
             // (chat_tick_timer->start(0)) while the character sprite decodes asynchronously in parallel; the text
             // never waits for the sprite. The sprite-hold on the cache-miss path (SetCharacterAnimatedImageAsync)
@@ -1065,6 +1084,7 @@ namespace OceanyaClient.Features.Viewport
             CharacterImage.RenderTransformOrigin = new Point(0.5, 0.5);
             CharacterImage.RenderTransform = BuildCharacterTransform(flip, characterShakeTransform);
             ApplyCharacterOffset(CharacterImage, centerAndHidePair ? (0, 0) : message?.SelfOffset ?? (0, 0));
+            double msCharacterSet = Lap();
 
             bool shouldShowDesk = isZoom && !isPreAnimation
                 ? false
@@ -1075,6 +1095,7 @@ namespace OceanyaClient.Features.Viewport
                 ? AO2ViewportAssetResolver.ResolveDeskPlacement(backgroundName, position)
                 : new AO2ViewportAssetResolver.ViewportImagePlacement(null, 0, 0, AO2ViewportAssetResolver.ViewportWidth, AO2ViewportAssetResolver.ViewportHeight);
             SetPlacedAnimatedImage(DeskImage, deskPlacement, shouldShowDesk, displayOptions.StretchMode);
+            double msDesk = Lap();
 
             RenderPairCharacter(message, character, centerAndHidePair || isZoom);
             RenderSpeedlines(message, position, character, phase == ViewportPhase.Speaking && isZoom);
@@ -1089,6 +1110,7 @@ namespace OceanyaClient.Features.Viewport
             }
 
             RenderShoutOverlay(message, phase);
+            double msOverlays = Lap();
 
             ChatPreview.MessageColorIndex = message == null ? 0 : (int)message.TextColor;
             ChatPreview.MessageColorOverride = ResolveViewportMessageColor(message);
@@ -1157,6 +1179,7 @@ namespace OceanyaClient.Features.Viewport
                 StopChatTextTimer();
                 currentChatBlipToken = string.Empty;
             }
+            double msChat = Lap();
 
             // Track position for slide transitions
             string newPosition = position ?? string.Empty;
@@ -1190,6 +1213,15 @@ namespace OceanyaClient.Features.Viewport
             {
                 StopAnimation(EvidenceImage);
                 EvidenceImage.Visibility = Visibility.Collapsed;
+            }
+            double msTail = Lap();
+
+            double msTotal = renderStopwatch.Elapsed.TotalMilliseconds;
+            if (msTotal >= RenderTimingLogThresholdMs)
+            {
+                CustomConsole.Info(
+                    $"[RENDER-TIMING] total={msTotal:0.0}ms | theme={msTheme:0.0} bg={msBackground:0.0} charResolve={msCharacterResolve:0.0} charSet={msCharacterSet:0.0} desk={msDesk:0.0} overlays={msOverlays:0.0} chat={msChat:0.0} tail={msTail:0.0} | phase={phase} bg=\"{backgroundName}\" char=\"{character?.configINI?.Name ?? "(null)"}\" emote=\"{emoteName}\" showChat={showChat}",
+                    CustomConsole.LogCategory.Viewport);
             }
         }
 
