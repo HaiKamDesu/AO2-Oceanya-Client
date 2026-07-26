@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Media;
 using AOBot_Testing.Structures;
@@ -22,6 +23,53 @@ namespace OceanyaClient.Features.ChatPreview
     {
         private static readonly string[] ImageExtensions = { ".webp", ".apng", ".gif", ".png", ".jpg", ".jpeg" };
         private const double WpfPixelsPerQtPoint = 96d / 72d;
+
+        // Resolve() runs several times per viewport render (talking style, text reveal, chat preview refresh, theme
+        // layout), and each call merges three INI files (fonts/chat_config/design) across the whole theme+mount
+        // chain. Re-reading and re-parsing those files from disk on every render was a large synchronous UI-thread
+        // cost (freeze/lag while a message displays). Cache the parsed key/value pairs per resolved file keyed by
+        // last-write-time so an edited INI (e.g. via the "Open chatbox in file explorer" flow) still live-reloads.
+        // On Windows the filesystem is case-insensitive, so File.Exists already matches regardless of case and the
+        // Directory.EnumerateFiles case-insensitive fallback below can never find anything new — it just scans theme
+        // directories on the UI thread for every missed config-file candidate across the theme chain. Skip it on
+        // Windows; keep it on case-sensitive filesystems (Linux).
+        private static readonly bool FilesystemIsCaseSensitive =
+            !RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+
+        private static readonly object ParsedIniCacheLock = new object();
+        private static readonly Dictionary<string, (DateTime LastWriteUtc, List<(string Key, string Value)> Entries)> ParsedIniCache =
+            new Dictionary<string, (DateTime, List<(string, string)>)>(StringComparer.OrdinalIgnoreCase);
+
+        private static List<(string Key, string Value)> GetParsedIniCached(string resolvedPath)
+        {
+            DateTime lastWriteUtc;
+            try
+            {
+                lastWriteUtc = File.GetLastWriteTimeUtc(resolvedPath);
+            }
+            catch
+            {
+                lastWriteUtc = DateTime.MinValue;
+            }
+
+            lock (ParsedIniCacheLock)
+            {
+                if (ParsedIniCache.TryGetValue(resolvedPath, out (DateTime LastWriteUtc, List<(string Key, string Value)> Entries) cached)
+                    && cached.LastWriteUtc == lastWriteUtc)
+                {
+                    return cached.Entries;
+                }
+            }
+
+            List<(string Key, string Value)> entries = ParseIniFile(resolvedPath).ToList();
+
+            lock (ParsedIniCacheLock)
+            {
+                ParsedIniCache[resolvedPath] = (lastWriteUtc, entries);
+            }
+
+            return entries;
+        }
 
         public static AO2ChatPreviewStyle Resolve(string? chatToken, bool hasShowname)
         {
@@ -214,7 +262,7 @@ namespace OceanyaClient.Features.ChatPreview
 
                 try
                 {
-                    foreach ((string key, string value) in ParseIniFile(resolvedPath))
+                    foreach ((string key, string value) in GetParsedIniCached(resolvedPath))
                     {
                         values[key] = value;
                     }
@@ -610,6 +658,11 @@ namespace OceanyaClient.Features.ChatPreview
 
         private static string? ResolveStemCaseInsensitive(string directory, string stem)
         {
+            if (!FilesystemIsCaseSensitive)
+            {
+                return null;
+            }
+
             if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
             {
                 return null;
@@ -639,6 +692,11 @@ namespace OceanyaClient.Features.ChatPreview
             if (File.Exists(filePath))
             {
                 return filePath;
+            }
+
+            if (!FilesystemIsCaseSensitive)
+            {
+                return null;
             }
 
             string? directory = Path.GetDirectoryName(filePath);
