@@ -663,17 +663,27 @@ namespace OceanyaClient.Components
                     msEmoteSelect = Lap();
                 }
 
-                sfxDropdown.Clear();
-                sfxDropdown.Add("Default", "");
-                sfxDropdown.Add("Nothing", "");
-
+                // Bulk-populate the sfx dropdown with a single SetItems (one ItemsSource refresh) instead of a
+                // per-entry Add loop — each Add marshalled to the dispatcher and did a full item refresh, which for
+                // a large base soundlist was the dominant remaining switch cost (the disk read itself is cached).
                 IReadOnlyList<AO2SoundListEntry> soundListEntries = AO2SoundList.LoadEntries(
                     ini?.DirectoryPath ?? string.Empty,
                     Globals.BaseFolders);
+                List<DropdownItem> sfxItems = new List<DropdownItem>(soundListEntries.Count + 2)
+                {
+                    new DropdownItem { Name = "Default", ImagePath = string.Empty, Value = "Default" },
+                    new DropdownItem { Name = "Nothing", ImagePath = string.Empty, Value = "Nothing" }
+                };
                 foreach (AO2SoundListEntry soundListEntry in soundListEntries)
                 {
-                    sfxDropdown.Add(soundListEntry.DisplayText, "", soundListEntry.Value);
+                    sfxItems.Add(new DropdownItem
+                    {
+                        Name = soundListEntry.DisplayText,
+                        ImagePath = string.Empty,
+                        Value = soundListEntry.Value
+                    });
                 }
+                sfxDropdown.SetItems(sfxItems);
                 sfxDropdown.SelectedText = "Default";
                 msSoundList = Lap();
 
