@@ -646,13 +646,17 @@ namespace OceanyaClient.Components
                 }));
                 msDropdownSet = Lap();
 
-                EmoteGrid.SetVirtualizedItems(emotes, CreateEmoteButton);
-                msGridSet = Lap();
-
+                // The virtualized emote grid is built by SelectEmote below (it calls SetVirtualizedItems to reflect
+                // the selection). Building it here too rebuilt the whole grid — including a synchronous image decode
+                // per visible button — twice per switch. Build here only when there is no emote to select.
                 if (selectedEmote != null)
                 {
                     SelectEmote(selectedEmote, updateClient: !IsSelectedEmote(selectedEmote), focusMessageBox: false, notifyStateChanged: false);
                     EmoteGrid.SetPageToVirtualizedItem(item => ReferenceEquals(item, selectedEmote));
+                }
+                else
+                {
+                    EmoteGrid.SetVirtualizedItems(emotes, CreateEmoteButton);
                 }
                 msEmoteSelect = Lap();
 
@@ -697,6 +701,53 @@ namespace OceanyaClient.Components
                 throw;
             }
         }
+        // BitmapFileLoader.LoadFrozen decodes from disk every call (IgnoreImageCache), so building the emote grid
+        // re-decoded every visible button's on/off images on every client/character switch — the same images
+        // reloaded each time you switch back to a character (measured as the dominant switch cost). Cache the frozen
+        // (immutable, shareable) button bitmaps by path, validated by last-write-time so edited art still refreshes.
+        private static readonly object EmoteButtonImageCacheLock = new object();
+        private static readonly Dictionary<string, (DateTime WriteUtc, BitmapImage Image)> EmoteButtonImageCache =
+            new Dictionary<string, (DateTime, BitmapImage)>(StringComparer.OrdinalIgnoreCase);
+        private const int EmoteButtonImageCacheLimit = 1500;
+
+        private static BitmapImage GetCachedButtonImage(string cacheKey, string statPath, Func<BitmapImage> factory)
+        {
+            DateTime writeUtc;
+            try
+            {
+                writeUtc = System.IO.File.GetLastWriteTimeUtc(statPath);
+            }
+            catch
+            {
+                writeUtc = DateTime.MinValue;
+            }
+
+            lock (EmoteButtonImageCacheLock)
+            {
+                if (EmoteButtonImageCache.TryGetValue(cacheKey, out (DateTime WriteUtc, BitmapImage Image) cached)
+                    && cached.WriteUtc == writeUtc)
+                {
+                    return cached.Image;
+                }
+            }
+
+            BitmapImage image = factory();
+
+            lock (EmoteButtonImageCacheLock)
+            {
+                EmoteButtonImageCache[cacheKey] = (writeUtc, image);
+                if (EmoteButtonImageCache.Count > EmoteButtonImageCacheLimit)
+                {
+                    foreach (string staleKey in EmoteButtonImageCache.Keys.Take(EmoteButtonImageCache.Count - EmoteButtonImageCacheLimit).ToList())
+                    {
+                        EmoteButtonImageCache.Remove(staleKey);
+                    }
+                }
+            }
+
+            return image;
+        }
+
         private ToggleButton CreateEmoteButton(Emote emote)
         {
             string buttonOff = emote.PathToImage_off;
@@ -735,27 +786,22 @@ namespace OceanyaClient.Components
                 if (offExists && onExists)
                 {
                     // Both images exist, use them as is
-                    offImage = BitmapFileLoader.LoadFrozen(buttonOff);
-                    onImage = BitmapFileLoader.LoadFrozen(buttonOn);
+                    offImage = GetCachedButtonImage(buttonOff, buttonOff, () => BitmapFileLoader.LoadFrozen(buttonOff));
+                    onImage = GetCachedButtonImage(buttonOn, buttonOn, () => BitmapFileLoader.LoadFrozen(buttonOn));
                 }
                 else if (offExists)
                 {
                     // Only off image exists
-                    BitmapImage existingImage = BitmapFileLoader.LoadFrozen(buttonOff);
+                    offImage = GetCachedButtonImage(buttonOff, buttonOff, () => BitmapFileLoader.LoadFrozen(buttonOff));
                     // Create darkened version for on state
-                    onImage = CreateDarkenedImage(buttonOff);
-                   
-                    // Use existing image as the off state
-                    offImage = existingImage; 
+                    onImage = GetCachedButtonImage(buttonOff + "|dark", buttonOff, () => CreateDarkenedImage(buttonOff));
                 }
                 else // onExists
                 {
                     // Only on image exists
-                    BitmapImage existingImage = BitmapFileLoader.LoadFrozen(buttonOn);
-                    // Use existing image as the on state
-                    onImage = existingImage;
+                    onImage = GetCachedButtonImage(buttonOn, buttonOn, () => BitmapFileLoader.LoadFrozen(buttonOn));
                     // Create darkened version for off state
-                    offImage = CreateDarkenedImage(buttonOn);
+                    offImage = GetCachedButtonImage(buttonOn + "|dark", buttonOn, () => CreateDarkenedImage(buttonOn));
                 }
 
                 // Set default (off) state image
