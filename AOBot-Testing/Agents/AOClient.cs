@@ -290,30 +290,44 @@ namespace AOBot_Testing.Agents
 
         private List<string> pendingMessages = new List<string>();
         #region Send Message Methods
-        public async Task SendICMessage(string showname, string message, bool queueMessage = false)
+        public async Task<int> SendICMessage(string showname, string message, bool queueMessage = false)
         {
             SetICShowname(showname);
-            await SendICMessage(message, queueMessage);
+            return await SendICMessage(message, queueMessage);
         }
         private bool isProcessingMessages = false;
 
-        public async Task SendICMessage(string message, bool queueMessage = false)
+        /// <summary>
+        /// Sends an IC message and returns the CharId actually placed in the outgoing MS# packet (i.e. the
+        /// server-confirmed INIPuppet id after any send-time realignment), or -1 if the message was not sent.
+        /// Callers use this to match the server echo of their own message — the CharId can change during
+        /// <see cref="AlignIniPuppetWithCurrentCharacterIfAvailableAsync"/>, so a value snapshotted before the
+        /// call would be stale and the echo-clear would miss.
+        /// </summary>
+        public async Task<int> SendICMessage(string message, bool queueMessage = false)
         {
             if (IsTransportConnected)
             {
                 if (CurrentINI == null || currentEmote == null)
                 {
                     CustomConsole.Error("Cannot send IC message without selected character/emote.");
-                    return;
+                    return -1;
                 }
 
                 if (iniPuppetID < 0)
                 {
                     CustomConsole.Error("Cannot send IC message without a server-confirmed INIPuppet.");
-                    return;
+                    return -1;
                 }
 
+                int iniPuppetBeforeAlign = iniPuppetID;
                 await AlignIniPuppetWithCurrentCharacterIfAvailableAsync();
+                if (iniPuppetID != iniPuppetBeforeAlign)
+                {
+                    CustomConsole.Info(
+                        $"IC send realigned INIPuppet before packet build. before={iniPuppetBeforeAlign} after={iniPuppetID} character=\"{CurrentINI.Name}\" client=\"{clientName}\". This realignment does a CC#/PV# round trip; if it happens on every send it will add latency under load.",
+                        CustomConsole.LogCategory.IC);
+                }
 
                 ICMessage msg = new ICMessage();
                 msg.DeskMod = ResolveDeskModForPacket(currentEmote.Modifier, currentEmote.DeskMod);
@@ -443,10 +457,13 @@ namespace AOBot_Testing.Agents
                     // lag between pressing Enter and the message appearing under load.
                     await SendPacket(command);
                 }
+
+                return msg.CharId;
             }
             else
             {
                 CustomConsole.Error("Server connection is not active. Cannot send message.");
+                return -1;
             }
         }
 
@@ -2563,6 +2580,16 @@ namespace AOBot_Testing.Agents
                 return;
             }
 
+            // Server-initiated INIPuppet change (no selection pending). If confirmedCharId differs from our current
+            // iniPuppetID it silently moves our puppet, which then forces a realign (CC#/PV# + delay) on the next
+            // IC send. Log it so a report shows whether the server is reassigning our slot.
+            if (confirmedCharId != iniPuppetID)
+            {
+                CustomConsole.Info(
+                    $"Server-initiated INIPuppet change (no selection pending). from={iniPuppetID} to={confirmedCharId} client=\"{clientName}\".",
+                    CustomConsole.LogCategory.IC);
+            }
+
             ApplyConfirmedIniPuppetSelection(confirmedCharId, iniswapToSelected: true);
         }
 
@@ -2799,15 +2826,24 @@ namespace AOBot_Testing.Agents
 
             // Serialize the CC#/PV# exchange so a rapid profile-switch-then-send sequence (single-internal-client
             // mode) cannot have two selections in flight racing on the shared pendingCharacterSelectionTcs.
+            System.Diagnostics.Stopwatch gateWaitStopwatch = System.Diagnostics.Stopwatch.StartNew();
             await iniPuppetSelectionGate.WaitAsync();
+            long gateWaitMs = gateWaitStopwatch.ElapsedMilliseconds;
             try
             {
+                System.Diagnostics.Stopwatch confirmStopwatch = System.Diagnostics.Stopwatch.StartNew();
                 TaskCompletionSource<int> confirmation = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
                 pendingCharacterSelectionTcs = confirmation;
                 try
                 {
                     await SendPacket($"CC#{playerID}#{serverCharID}#{hdid}#%");
                     int confirmedCharId = await WaitForCharacterSelectionConfirmationAsync(confirmation, serverCharID);
+                    // This CC#/PV# round trip blocks the IC send behind it. Under a busy area the PV# reply queues
+                    // behind the inbound packet flood in the serial read loop, so a large confirmMs here is the
+                    // source of the "press Enter, message appears seconds later" delay.
+                    CustomConsole.Info(
+                        $"INIPuppet selection round trip. requested={serverCharID} confirmed={confirmedCharId} gateWaitMs={gateWaitMs} confirmMs={confirmStopwatch.ElapsedMilliseconds} client=\"{clientName}\"",
+                        CustomConsole.LogCategory.IC);
                     if (confirmedCharId != serverCharID)
                     {
                         ApplyConfirmedIniPuppetSelection(confirmedCharId, iniswapToSelected);

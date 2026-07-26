@@ -375,10 +375,10 @@ namespace OceanyaClient
                 }
 
 
-                // The CharId that will actually be sent, captured just before the packet goes out. The echo-clear
-                // must match against THIS snapshot, not the live shared iniPuppetID, because a later profile swap
-                // overwrites the shared field before this message's echo returns (which is why the input box used
-                // to never clear -> "message doesn't send"). Captured by the closure below.
+                // The CharId that will actually be sent. The echo-clear matches against THIS value, which is set
+                // to the CharId SendICMessage actually placed in the packet (returned below) — NOT a value read
+                // before the send, because SendICMessage's internal INIPuppet realignment can change the CharId
+                // after any pre-send snapshot, which made the echo miss and the box never clear.
                 int sentCharIdSnapshot = -1;
 
                 void OnICMessageReceivedHandler(ICMessage icMessage)
@@ -388,14 +388,25 @@ namespace OceanyaClient
                     {
                         return;
                     }
-                    if (sentCharIdSnapshot >= 0 && icMessage.CharId == sentCharIdSnapshot &&
-                    (icMessage.Message == "~"+sendMessage+"~" || icMessage.Message == sendMessage || icMessage.Message == sendMessage+"~"))
+
+                    bool textMatches = icMessage.Message == "~" + sendMessage + "~"
+                        || icMessage.Message == sendMessage
+                        || icMessage.Message == sendMessage + "~";
+                    if (sentCharIdSnapshot >= 0 && icMessage.CharId == sentCharIdSnapshot && textMatches)
                     {
                         // Message was received by server.
                         ClearIcInputAndTransientEffects();
 
                         // Unsubscribe from the event
                         targetNetworkClient.OnICMessageReceived -= OnICMessageReceivedHandler;
+                    }
+                    else if (textMatches && icMessage.CharId != sentCharIdSnapshot)
+                    {
+                        // Our own message text came back under a different CharId than we recorded sending — the
+                        // input box will NOT clear. Log it so a user report includes the exact mismatch.
+                        CustomConsole.Warning(
+                            $"IC echo text matched but CharId did not: echoCharId={icMessage.CharId} sentCharId={sentCharIdSnapshot} client=\"{client.clientName}\" showname=\"{icMessage.ShowName}\". Input box will not auto-clear for this send.",
+                            category: CustomConsole.LogCategory.IC);
                     }
                 }
 
@@ -434,9 +445,10 @@ namespace OceanyaClient
                         return;
                     }
 
-                    // Snapshot the CharId that this send will carry (profile selection is now applied) so the
-                    // echo-clear matches this exact message even if the user swaps profiles before it returns.
+                    // Best-guess snapshot before the send (covers the theoretical instant-echo race on loopback);
+                    // corrected below to the CharId SendICMessage actually sent.
                     sentCharIdSnapshot = networkClient.iniPuppetID;
+                    int preSendPuppetId = networkClient.iniPuppetID;
                     networkClient.OnICMessageReceived -= OnICMessageReceivedHandler;
                     networkClient.OnICMessageReceived += OnICMessageReceivedHandler;
                     CustomConsole.Info(
@@ -444,7 +456,20 @@ namespace OceanyaClient
                         CustomConsole.LogCategory.IC);
                     try
                     {
-                        await networkClient.SendICMessage(sendMessage);
+                        int actualSentCharId = await networkClient.SendICMessage(sendMessage);
+                        if (actualSentCharId >= 0)
+                        {
+                            // Match the echo against what was really sent (realignment inside SendICMessage may
+                            // have changed the CharId from the pre-send value).
+                            sentCharIdSnapshot = actualSentCharId;
+                            if (actualSentCharId != preSendPuppetId)
+                            {
+                                CustomConsole.Info(
+                                    $"IC send CharId changed during send (realigned). preSend={preSendPuppetId} sent={actualSentCharId} client=\"{client.clientName}\". Echo-clear now targets the sent CharId.",
+                                    CustomConsole.LogCategory.IC);
+                            }
+                        }
+
                         if (sendMessageIsOnlyWhitespace)
                         {
                             networkClient.OnICMessageReceived -= OnICMessageReceivedHandler;
