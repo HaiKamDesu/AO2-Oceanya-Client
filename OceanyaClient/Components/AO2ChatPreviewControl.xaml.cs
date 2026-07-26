@@ -168,8 +168,8 @@ namespace OceanyaClient
             activeStyle = style;
             ApplyLayout(style);
             ApplyTextStyle(style, showname, text);
-            ApplyDynamicShownameLayout(style, showname);
-            ApplyChatboxImage(style.ChatboxImagePath);
+            string? effectiveChatboxImagePath = ApplyDynamicShownameLayout(style, showname);
+            ApplyChatboxImage(effectiveChatboxImagePath);
         }
 
         private void ApplyLayout(AO2ChatPreviewStyle style)
@@ -360,11 +360,16 @@ namespace OceanyaClient
             return AO2ChatTextFormatter.GetMessageColor(style, colorIndex, MessageColorIndex, MessageColorOverride);
         }
 
-        private void ApplyDynamicShownameLayout(AO2ChatPreviewStyle style, string showname)
+        // Returns the chatbox image path to display (the base, or the "med"/"big" showname-background variant when
+        // the showname is wide), and sizes the showname text box to match. Does NOT mutate the passed-in style —
+        // the style is a shared cached instance from AO2ChatPreviewResolver.Resolve, so writing style.ChatboxImagePath
+        // here corrupted the cache for subsequent renders (wrong showname sizing/position and a stale bg variant).
+        private string? ApplyDynamicShownameLayout(AO2ChatPreviewStyle style, string showname)
         {
+            string? effectiveChatboxImagePath = style.ChatboxImagePath;
             if (!ShowShowname || string.IsNullOrWhiteSpace(showname) || style.ShownameExtraWidth <= 0)
             {
-                return;
+                return effectiveChatboxImagePath;
             }
 
             double measuredWidth = MeasureShownameWidth(showname, style);
@@ -375,7 +380,7 @@ namespace OceanyaClient
                 string? mediumImagePath = AO2ChatPreviewResolver.ResolveSiblingImageVariant(baseImagePath, "med");
                 if (!string.IsNullOrWhiteSpace(mediumImagePath))
                 {
-                    style.ChatboxImagePath = mediumImagePath;
+                    effectiveChatboxImagePath = mediumImagePath;
                     ShownameTextBlock.Width = defaultBounds.Width + style.ShownameExtraWidth;
                 }
             }
@@ -385,10 +390,12 @@ namespace OceanyaClient
                 string? bigImagePath = AO2ChatPreviewResolver.ResolveSiblingImageVariant(baseImagePath, "big");
                 if (!string.IsNullOrWhiteSpace(bigImagePath))
                 {
-                    style.ChatboxImagePath = bigImagePath;
+                    effectiveChatboxImagePath = bigImagePath;
                     ShownameTextBlock.Width = defaultBounds.Width + (style.ShownameExtraWidth * 2);
                 }
             }
+
+            return effectiveChatboxImagePath;
         }
 
         private double MeasureShownameWidth(string showname, AO2ChatPreviewStyle style)
