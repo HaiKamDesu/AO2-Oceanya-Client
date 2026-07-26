@@ -585,6 +585,24 @@ namespace OceanyaClient.Components
                 return;
             }
 
+            // Per-phase timing: SetINI (via SetClient) is the dominant cost of a client/character switch and freezes
+            // the UI while it runs. Lap() returns ms since the last call; a breakdown is logged when SetINI exceeds
+            // the threshold so the slow part (emote dropdown, emote grid, emote select, sound list) is identifiable.
+            System.Diagnostics.Stopwatch setIniStopwatch = System.Diagnostics.Stopwatch.StartNew();
+            double setIniLastMs = 0;
+            double Lap()
+            {
+                double now = setIniStopwatch.Elapsed.TotalMilliseconds;
+                double delta = now - setIniLastMs;
+                setIniLastMs = now;
+                return delta;
+            }
+
+            double msDropdownSet = 0;
+            double msGridSet = 0;
+            double msEmoteSelect = 0;
+            double msSoundList = 0;
+
             try
             {
                 txtICShowname_Placeholder.Text = ini.configINI.ShowName;
@@ -598,6 +616,7 @@ namespace OceanyaClient.Components
                 Emote? selectedEmote = string.IsNullOrWhiteSpace(selectedDisplayId)
                     ? null
                     : FindEmoteByDisplayId(selectedDisplayId);
+                double msPrep = Lap();
 
                 if (emotes.Count == 0)
                 {
@@ -625,12 +644,17 @@ namespace OceanyaClient.Components
                     ImagePath = emote.PathToImage_off,
                     Value = emote.DisplayID
                 }));
+                msDropdownSet = Lap();
+
                 EmoteGrid.SetVirtualizedItems(emotes, CreateEmoteButton);
+                msGridSet = Lap();
+
                 if (selectedEmote != null)
                 {
                     SelectEmote(selectedEmote, updateClient: !IsSelectedEmote(selectedEmote), focusMessageBox: false, notifyStateChanged: false);
                     EmoteGrid.SetPageToVirtualizedItem(item => ReferenceEquals(item, selectedEmote));
                 }
+                msEmoteSelect = Lap();
 
                 sfxDropdown.Clear();
                 sfxDropdown.Add("Default", "");
@@ -644,6 +668,15 @@ namespace OceanyaClient.Components
                     sfxDropdown.Add(soundListEntry.DisplayText, "", soundListEntry.Value);
                 }
                 sfxDropdown.SelectedText = "Default";
+                msSoundList = Lap();
+
+                double msSetIniTotal = setIniStopwatch.Elapsed.TotalMilliseconds;
+                if (msSetIniTotal >= 4.0)
+                {
+                    CustomConsole.Info(
+                        $"[SETINI-TIMING] total={msSetIniTotal:0.0}ms | prep={msPrep:0.0} dropdownSet={msDropdownSet:0.0} gridSet={msGridSet:0.0} emoteSelect={msEmoteSelect:0.0} soundList={msSoundList:0.0} | char=\"{ini?.Name ?? "(null)"}\" emotes={emotes.Count}",
+                        CustomConsole.LogCategory.Viewport);
+                }
             }
             catch (Exception ex)
             {
