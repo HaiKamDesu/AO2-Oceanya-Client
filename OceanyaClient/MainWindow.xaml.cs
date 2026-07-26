@@ -4804,6 +4804,7 @@ namespace OceanyaClient
             }
             catch (TimeoutException ex) when (IsHandshakeTimeout(ex))
             {
+                StartupTimingLogger.Log("connect_handshake_timeout_retry", $"name={bot.clientName}, reason={ex.Message}");
                 CustomConsole.Warning(
                     $"Retrying client connection after handshake timeout for \"{bot.clientName}\".",
                     category: CustomConsole.LogCategory.System);

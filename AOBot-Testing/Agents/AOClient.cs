@@ -2262,6 +2262,21 @@ namespace AOBot_Testing.Agents
                 return;
             }
 
+            // Per-phase handshake timing. A single WaitForPacketAsync stalling to its timeout (then the caller's
+            // retry) is the intermittent multi-second connect; this shows which server packet is slow to arrive.
+            System.Diagnostics.Stopwatch handshakeStopwatch = System.Diagnostics.Stopwatch.StartNew();
+            long handshakeLastMs = 0;
+            void LogHandshakePhase(string phase)
+            {
+                long now = handshakeStopwatch.ElapsedMilliseconds;
+                long delta = now - handshakeLastMs;
+                handshakeLastMs = now;
+                if (delta >= 50)
+                {
+                    CustomConsole.Info($"[HANDSHAKE-TIMING] {phase}={delta}ms (total={now}ms) client=\"{clientName}\"", CustomConsole.LogCategory.Network);
+                }
+            }
+
             hdid = Guid.NewGuid().ToString();
             bool hiSent = false;
 
@@ -2278,6 +2293,7 @@ namespace AOBot_Testing.Agents
                 "decryptor/ID",
                 timeoutMs: 5000,
                 throwOnTimeout: false);
+            LogHandshakePhase("decryptor/ID");
 
             if (response.StartsWith("decryptor#", StringComparison.OrdinalIgnoreCase))
             {
@@ -2290,6 +2306,7 @@ namespace AOBot_Testing.Agents
                 response = await WaitForPacketAsync(
                     packet => packet.StartsWith("ID#", StringComparison.OrdinalIgnoreCase),
                     "ID");
+                LogHandshakePhase("ID");
             }
             else if (string.IsNullOrWhiteSpace(response))
             {
@@ -2302,6 +2319,7 @@ namespace AOBot_Testing.Agents
                 response = await WaitForPacketAsync(
                     packet => packet.StartsWith("ID#", StringComparison.OrdinalIgnoreCase),
                     "ID");
+                LogHandshakePhase("ID");
             }
 
             string[] parts = response.Split('#');
@@ -2323,6 +2341,7 @@ namespace AOBot_Testing.Agents
                 "SI/SC",
                 timeoutMs: 5000,
                 throwOnTimeout: false);
+            LogHandshakePhase("SI/SC");
 
             if (response.StartsWith("SI#", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(response))
             {
@@ -2330,6 +2349,7 @@ namespace AOBot_Testing.Agents
                 response = await WaitForPacketAsync(
                     packet => packet.StartsWith("SC#", StringComparison.OrdinalIgnoreCase),
                     "SC");
+                LogHandshakePhase("SC");
             }
 
             await SendPacket("RM#%");
@@ -2338,6 +2358,7 @@ namespace AOBot_Testing.Agents
                 packet => packet.StartsWith("SM#", StringComparison.OrdinalIgnoreCase)
                     || packet.StartsWith("FA#", StringComparison.OrdinalIgnoreCase),
                 "SM/FA");
+            LogHandshakePhase("SM/FA");
 
             await SendPacket("RD#%");
 
@@ -2347,6 +2368,7 @@ namespace AOBot_Testing.Agents
             await WaitForPacketAsync(
                 packet => packet.StartsWith("DONE#", StringComparison.OrdinalIgnoreCase),
                 "DONE");
+            LogHandshakePhase("DONE");
 
             CustomConsole.Info("Handshake completed successfully!");
         }
