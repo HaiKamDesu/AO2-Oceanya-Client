@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using AOBot_Testing.Structures;
 using Common;
 using OceanyaClient.Features.ChatPreview;
@@ -1447,8 +1449,20 @@ namespace OceanyaClient.Features.Viewport
                     return (cached.Width, cached.Height);
                 }
 
+                // Read the pixel dimensions from the image header only — do NOT fully decode the image here.
+                // This runs on the UI thread during every fresh background/desk placement; a full decode of a
+                // large background was the single heaviest synchronous cost per render and stalled the shared
+                // animation DispatcherTimer (freezing animated backgrounds for a few frames). Metadata-only decode
+                // reads just the header. Formats WPF cannot decode natively (e.g. WebP) throw and fall back to the
+                // full decode path below.
+                if (TryReadImageHeaderSize(imagePath, out int headerWidth, out int headerHeight))
+                {
+                    ImageSizeCache[imagePath] = new CachedImageSize(headerWidth, headerHeight, lastWriteTimeUtc);
+                    return (headerWidth, headerHeight);
+                }
+
                 ImageSource? source = LoadImage(imagePath);
-                if (source is System.Windows.Media.Imaging.BitmapSource bitmap)
+                if (source is BitmapSource bitmap)
                 {
                     ImageSizeCache[imagePath] = new CachedImageSize(
                         bitmap.PixelWidth,
@@ -1463,6 +1477,37 @@ namespace OceanyaClient.Features.Viewport
             }
 
             return (0, 0);
+        }
+
+        /// <summary>
+        /// Reads an image's pixel dimensions from its header without decoding the pixels. Returns false for
+        /// formats the platform decoder cannot handle (caller then falls back to a full decode).
+        /// </summary>
+        private static bool TryReadImageHeaderSize(string imagePath, out int width, out int height)
+        {
+            width = 0;
+            height = 0;
+            try
+            {
+                using FileStream stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                BitmapDecoder decoder = BitmapDecoder.Create(
+                    stream,
+                    BitmapCreateOptions.DelayCreation | BitmapCreateOptions.IgnoreColorProfile,
+                    BitmapCacheOption.None);
+                BitmapFrame? frame = decoder.Frames.Count > 0 ? decoder.Frames[0] : null;
+                if (frame == null || frame.PixelWidth <= 0 || frame.PixelHeight <= 0)
+                {
+                    return false;
+                }
+
+                width = frame.PixelWidth;
+                height = frame.PixelHeight;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static string ReadDesignValue(string backgroundDirectory, string identifier)
@@ -1857,6 +1902,15 @@ namespace OceanyaClient.Features.Viewport
             yield return ResolveRelativeStem("themes", "CC", "misc", normalizedStem);
         }
 
+        // On Windows the filesystem is already case-insensitive, so File.Exists matches regardless of case and the
+        // Directory.EnumerateFiles/EnumerateDirectories case-insensitive fallback can never find anything File.Exists
+        // did not. That fallback ran on the UI thread for every wrong-extension probe (e.g. trying char.apng/.gif/.webp
+        // before the real char.png) and scanned the whole — potentially large — character/asset directory each time,
+        // stalling the shared animation timer and freezing animated layers while an emote resolved. Skip it on
+        // case-insensitive filesystems; keep it on case-sensitive ones (Linux) where it is still needed.
+        private static readonly bool FilesystemIsCaseSensitive =
+            !RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+
         private static string? ResolvePathCaseInsensitive(string path)
         {
             if (string.IsNullOrWhiteSpace(path))
@@ -1867,6 +1921,11 @@ namespace OceanyaClient.Features.Viewport
             if (File.Exists(path))
             {
                 return path;
+            }
+
+            if (!FilesystemIsCaseSensitive)
+            {
+                return null;
             }
 
             string? directory = Path.GetDirectoryName(path);
@@ -1904,6 +1963,11 @@ namespace OceanyaClient.Features.Viewport
             if (Directory.Exists(directory))
             {
                 return directory;
+            }
+
+            if (!FilesystemIsCaseSensitive)
+            {
+                return null;
             }
 
             string? parent = Path.GetDirectoryName(directory);
