@@ -57,9 +57,14 @@ namespace OceanyaClient.Utilities
             AddAsyncItem(menu, "Refresh All Assets", options.RefreshAllAssetsAsync != null, options.RefreshAllAssetsAsync);
             AddAsyncItem(menu, "Refresh All Characters", options.RefreshAllCharactersAsync != null, options.RefreshAllCharactersAsync);
 
+            // A character served from the server's asset URL has no folder in the user's AO install, so
+            // editing, duplicating, and deleting it are meaningless (they would act on a cache mirror
+            // that repopulates itself). Everything else behaves exactly as it does for a local character.
+            bool isWebCharacter = WebAssetMenuDecorator.IsWebAsset(options.DirectoryPath);
+
             ContextMenuSectionHelper.AddHeader(menu, "Oceanya Editor", addLeadingSeparator: true);
             Func<Task> newCharacter = options.NewCharacterFolderAsync ?? (() => OpenNewCharacterFolderAsync(options));
-            bool canOpenInEditor = Directory.Exists(options.DirectoryPath) && File.Exists(options.CharIniPath);
+            bool canOpenInEditor = !isWebCharacter && Directory.Exists(options.DirectoryPath) && File.Exists(options.CharIniPath);
             Func<Task>? editCharacter = options.EditCharacterFolderAsync ?? (() => OpenCharacterFolderInCreatorAsync(options, duplicate: false));
             Func<Task>? duplicateCharacter = options.DuplicateCharacterFolderAsync ?? (() => OpenCharacterFolderInCreatorAsync(options, duplicate: true));
             AddAsyncItem(menu, "New Character Folder", true, newCharacter);
@@ -69,7 +74,17 @@ namespace OceanyaClient.Utilities
             ContextMenuSectionHelper.AddHeader(menu, "Character View", addLeadingSeparator: true);
             AddItem(menu, "Open Char.ini", File.Exists(options.CharIniPath), () => TryOpenPath(options.CharIniPath));
             AddItem(menu, "Open Readme", options.HasReadme && File.Exists(options.ReadmePath), () => TryOpenPath(options.ReadmePath));
-            AddItem(menu, "Show in explorer", Directory.Exists(options.DirectoryPath), () => ShowInExplorer(options.DirectoryPath));
+            if (isWebCharacter)
+            {
+                MenuItem streamedItem = new MenuItem();
+                WebAssetMenuDecorator.ApplyProvenance(streamedItem, options.DirectoryPath);
+                menu.Items.Add(streamedItem);
+                WebAssetMenuDecorator.AddCopyAssetUrlItem(menu, options.CharIniPath);
+            }
+            else
+            {
+                AddItem(menu, "Show in explorer", Directory.Exists(options.DirectoryPath), () => ShowInExplorer(options.DirectoryPath));
+            }
             AddItem(menu, "Copy name", !string.IsNullOrWhiteSpace(options.CharacterName), () => ClipboardUtilities.TrySetText(options.CharacterName));
             AddItem(menu, "Open in Character Emote Visualizer", Directory.Exists(options.DirectoryPath) && options.OpenCharacterEmoteVisualizer != null, options.OpenCharacterEmoteVisualizer);
             AddItem(menu, "Open in Character Folder Visualizer", !string.IsNullOrWhiteSpace(options.DirectoryPath) && options.OpenCharacterFolderVisualizer != null, options.OpenCharacterFolderVisualizer);
@@ -82,7 +97,7 @@ namespace OceanyaClient.Utilities
 
             ContextMenuSectionHelper.AddHeader(menu, "Attorney Online", addLeadingSeparator: true);
             Func<Task>? deleteCharacter = options.DeleteCharacterFolderAsync ?? (() => DeleteCharacterFolderAsync(options));
-            AddAsyncItem(menu, "Delete character folder", Directory.Exists(options.DirectoryPath), deleteCharacter);
+            AddAsyncItem(menu, "Delete character folder", !isWebCharacter && Directory.Exists(options.DirectoryPath), deleteCharacter);
         }
 
         private static void AddItem(ItemsControl menu, string header, bool isEnabled, Action? action)

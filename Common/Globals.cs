@@ -183,6 +183,9 @@ Each of these settings has predefined integer values. **If a change is requested
     {
         PathToConfigINI = pathToConfigINI;
         BaseFolders = GetBaseFolders(pathToConfigINI);
+        // The web asset mirror is not part of config.ini, so rebuilding the mount list drops it.
+        // Re-append it (no-op when web asset fallback is not installed).
+        Common.WebAssets.WebAssetService.ReapplyMount();
         LogMaxMessages = 200;
 
         foreach (string line in File.ReadLines(Globals.PathToConfigINI))
@@ -196,6 +199,22 @@ Each of these settings has predefined integer values. **If a change is requested
             }
         }
     }
+    /// <summary>
+    /// The mount list with any web-asset mirror removed: the user's real, configured asset folders.
+    /// </summary>
+    /// <remarks>
+    /// Cache signatures and "your mounts changed, refresh assets?" checks must use THIS, never
+    /// <see cref="BaseFolders"/>. The mirror is appended and removed as the player connects and
+    /// disconnects, so including it would invalidate the character and background caches on every
+    /// connect and force the multi-second cold rescan documented in
+    /// <c>Documentation/CharacterCacheColdLaunch.md</c>. Asset LOOKUP still walks the full
+    /// <see cref="BaseFolders"/>, which is exactly how web content becomes visible.
+    /// </remarks>
+    public static List<string> PhysicalBaseFolders =>
+        (BaseFolders ?? new List<string>())
+            .Where(folder => !Common.WebAssets.WebAssetSource.IsWebAsset(folder))
+            .ToList();
+
     public static List<string> GetBaseFolders(string pathToConfigINI)
     {
         string mountPathsRaw = "";

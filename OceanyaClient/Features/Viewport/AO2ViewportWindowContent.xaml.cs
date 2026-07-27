@@ -352,6 +352,16 @@ namespace OceanyaClient.Features.Viewport
                 Header = "Open in file explorer",
                 IsEnabled = Directory.Exists(directory)
             };
+
+            // Server-streamed assets live in a private cache mirror, not the user's AO install, so the
+            // entry becomes a one-line explanation plus a copyable URL instead of opening a cache folder.
+            if (WebAssetMenuDecorator.ApplyProvenance(item, directory))
+            {
+                menu.Items.Add(item);
+                WebAssetMenuDecorator.AddCopyAssetUrlItem(menu, directory);
+                return;
+            }
+
             item.Click += (_, _) => OpenDirectory(directory);
             menu.Items.Add(item);
         }

@@ -284,6 +284,67 @@ namespace UnitTests
         }
 
         [Test]
+        public void AudioSettings_ConfigIniVolumeWinsOverTheSavefile()
+        {
+            // The Settings window reads and writes config.ini, so playback must use the same source or
+            // a session starts at the wrong volume until a slider is touched.
+            string configDirectory = Path.Combine(Path.GetTempPath(), "OceanyaAudioSettings", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(configDirectory);
+            string configPath = Path.Combine(configDirectory, "config.ini");
+            string originalConfigPath = Globals.PathToConfigINI;
+
+            try
+            {
+                File.WriteAllText(configPath, "default_music=0\ndefault_sfx=100\n");
+                Globals.PathToConfigINI = configPath;
+
+                SaveFile.ResetForTests(
+                    new SaveData
+                    {
+                        AudioMusicVolume = 0.5,
+                        AudioSfxVolume = 0.5,
+                        AudioBlipVolume = 0.25
+                    },
+                    persist: false);
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(AudioSettings.MusicVolume, Is.EqualTo(0.0),
+                        "config.ini says 0%; the stale savefile value must not win.");
+                    Assert.That(AudioSettings.SfxVolume, Is.EqualTo(1.0));
+                    Assert.That(AudioSettings.BlipVolume, Is.EqualTo(0.25),
+                        "config.ini declares no default_blip, so the savefile is the fallback.");
+                });
+
+                // Unsaved slider movement has to be audible even though config.ini is unchanged.
+                AudioSettings.SetLivePreviewVolumes(music: 0.8, sfx: 0.1, blip: 0.9);
+                Assert.Multiple(() =>
+                {
+                    Assert.That(AudioSettings.MusicVolume, Is.EqualTo(0.8));
+                    Assert.That(AudioSettings.SfxVolume, Is.EqualTo(0.1));
+                    Assert.That(AudioSettings.BlipVolume, Is.EqualTo(0.9));
+                });
+
+                AudioSettings.ClearLivePreviewVolumes();
+                Assert.That(AudioSettings.MusicVolume, Is.EqualTo(0.0),
+                    "Clearing the preview must fall back to the persisted values, not keep the preview.");
+            }
+            finally
+            {
+                AudioSettings.ClearLivePreviewVolumes();
+                Globals.PathToConfigINI = originalConfigPath;
+                try
+                {
+                    Directory.Delete(configDirectory, recursive: true);
+                }
+                catch
+                {
+                    // Temp cleanup failures must not fail the run.
+                }
+            }
+        }
+
+        [Test]
         public void AudioSettings_ScaleEmbeddedSfxVolume_UsesPersistedSfxSlider()
         {
             SaveFile.ResetForTests(

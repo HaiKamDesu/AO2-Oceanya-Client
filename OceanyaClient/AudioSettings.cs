@@ -12,19 +12,70 @@ namespace OceanyaClient
     public static class AudioSettings
     {
         /// <summary>
-        /// Gets the persisted music volume as a 0-1 scalar.
+        /// Gets the effective music volume as a 0-1 scalar.
         /// </summary>
-        public static double MusicVolume => Math.Clamp(SaveFile.Data.AudioMusicVolume, 0.0, 1.0);
+        public static double MusicVolume => ResolveVolume("default_music", SaveFile.Data.AudioMusicVolume);
 
         /// <summary>
-        /// Gets the persisted SFX volume as a 0-1 scalar.
+        /// Gets the effective SFX volume as a 0-1 scalar.
         /// </summary>
-        public static double SfxVolume => Math.Clamp(SaveFile.Data.AudioSfxVolume, 0.0, 1.0);
+        public static double SfxVolume => ResolveVolume("default_sfx", SaveFile.Data.AudioSfxVolume);
 
         /// <summary>
-        /// Gets the persisted blip volume as a 0-1 scalar.
+        /// Gets the effective blip volume as a 0-1 scalar.
         /// </summary>
-        public static double BlipVolume => Math.Clamp(SaveFile.Data.AudioBlipVolume, 0.0, 1.0);
+        public static double BlipVolume => ResolveVolume("default_blip", SaveFile.Data.AudioBlipVolume);
+
+        /// <summary>
+        /// Resolves a volume the same way the Settings window does: the selected AO2
+        /// <c>config.ini</c> value wins, with the savefile as fallback.
+        /// </summary>
+        /// <remarks>
+        /// These two sources used to disagree. The Settings window read and wrote
+        /// <c>config.ini</c> (<c>default_music</c> / <c>default_sfx</c> / <c>default_blip</c>) while
+        /// playback read only the savefile, and nothing reconciled them at startup. Any change made
+        /// outside our Settings window - by AO2 itself, or by editing config.ini - left the slider
+        /// showing the real value while audio played at the stale savefile one, which is why a session
+        /// started at the wrong volume and only corrected once the slider was touched (that write
+        /// updated both). Sharing one precedence rule removes the divergence instead of papering over
+        /// it with a startup sync.
+        /// </remarks>
+        private static double ResolveVolume(string configKey, double savefileScalar)
+        {
+            if (livePreviewVolumes != null && livePreviewVolumes.TryGetValue(configKey, out double preview))
+            {
+                return Math.Clamp(preview, 0.0, 1.0);
+            }
+
+            double fallback = Math.Clamp(savefileScalar, 0.0, 1.0);
+            return Ao2ConfigIniSettings.TryGetCachedInt(configKey, out int percent)
+                ? Math.Clamp(percent / 100.0, 0.0, 1.0)
+                : fallback;
+        }
+
+        /// <summary>
+        /// Unsaved slider values, active only while the Settings window is open.
+        /// </summary>
+        /// <remarks>
+        /// Needed because <c>config.ini</c> now wins over the savefile: dragging a slider writes neither
+        /// until Save, so without this the live preview would be silently ignored. Cleared on save and
+        /// on cancel, after which the persisted values take over again.
+        /// </remarks>
+        private static volatile Dictionary<string, double>? livePreviewVolumes;
+
+        /// <summary>Applies unsaved slider values (0-1 scalars) for live preview.</summary>
+        public static void SetLivePreviewVolumes(double music, double sfx, double blip)
+        {
+            livePreviewVolumes = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["default_music"] = music,
+                ["default_sfx"] = sfx,
+                ["default_blip"] = blip
+            };
+        }
+
+        /// <summary>Drops the live preview so persisted values apply again.</summary>
+        public static void ClearLivePreviewVolumes() => livePreviewVolumes = null;
 
         /// <summary>
         /// Gets a blip volume after applying saved extra audio rules.

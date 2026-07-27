@@ -195,6 +195,57 @@ namespace OceanyaClient
             Globals.UpdateConfigINI(path);
         }
 
+        /// <summary>
+        /// Reads one integer straight from the parsed-config cache, without copying the dictionary.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="Load"/> hands out a defensive copy so callers can mutate before saving, which is
+        /// far too much allocation for a per-blip audio lookup. This shares the cached instance and is
+        /// therefore read-only by contract.
+        /// </remarks>
+        /// <returns><c>false</c> when config.ini has no usable value for <paramref name="key"/>.</returns>
+        public static bool TryGetCachedInt(string key, out int value)
+        {
+            value = 0;
+            string path = ConfigPath;
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            {
+                return false;
+            }
+
+            DateTime writeUtc;
+            long length;
+            try
+            {
+                FileInfo info = new FileInfo(path);
+                writeUtc = info.LastWriteTimeUtc;
+                length = info.Length;
+            }
+            catch
+            {
+                return false;
+            }
+
+            Dictionary<string, string>? snapshot;
+            lock (cacheLock)
+            {
+                bool cacheValid = cachedValues != null
+                    && string.Equals(cachedPath, path, StringComparison.OrdinalIgnoreCase)
+                    && cachedWriteUtc == writeUtc
+                    && cachedLength == length;
+                snapshot = cacheValid ? cachedValues : null;
+            }
+
+            if (snapshot == null)
+            {
+                // Cold or stale: Load() re-reads and repopulates the cache for subsequent calls.
+                snapshot = Load();
+            }
+
+            return snapshot.TryGetValue(key, out string? raw)
+                && int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
+        }
+
         public static int GetInt(IDictionary<string, string> values, string key, int fallback)
         {
             return values.TryGetValue(key, out string? raw)

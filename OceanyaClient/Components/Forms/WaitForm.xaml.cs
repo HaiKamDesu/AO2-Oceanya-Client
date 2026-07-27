@@ -2,6 +2,7 @@
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 
@@ -23,6 +24,7 @@ namespace OceanyaClient
         private static Window? _ownerWindow;
         private static Rect _ownerBounds = Rect.Empty;
         private static bool _threadRunning = false;
+        private static int _suspendCount;
 
         private WaitForm()
         {
@@ -209,6 +211,136 @@ namespace OceanyaClient
             _ = CloseFormAsync();
         }
 
+        /// <summary>
+        /// Reports whether the wait form is currently hidden behind one or more suspensions.
+        /// </summary>
+        public static bool IsSuspended => Volatile.Read(ref _suspendCount) > 0;
+
+        /// <summary>
+        /// Hides the wait form for as long as a modal dialog is on screen, then restores it.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The wait form runs on its own STA thread, so WPF cannot own it from the main window and
+        /// cannot keep a main-thread modal dialog above it. It is also explicitly activated when shown.
+        /// The result was a wait form sitting on top of the dialog it was supposed to yield to - most
+        /// visibly the snapshot INI-puppet conflict prompt during "Connecting to server and restoring
+        /// clients...", which the user could not read or reach.
+        /// </para>
+        /// <para>
+        /// Rather than fight z-order across threads, the form simply steps aside: it hides while any
+        /// dialog is up and comes back afterwards if the operation is still running. Suspensions nest,
+        /// so a dialog opened from inside another dialog restores correctly.
+        /// </para>
+        /// </remarks>
+        /// <returns>A scope that restores the wait form when disposed.</returns>
+        public static IDisposable SuspendForDialog() => new WaitFormSuspension();
+
+        /// <summary>
+        /// Subscribes to the calling thread's modal-loop notifications so ANY modal dialog on that
+        /// thread hides the wait form, not just the ones routed through <c>OceanyaWindowManager</c>.
+        /// </summary>
+        /// <remarks>
+        /// WPF raises these around every <c>Window.ShowDialog()</c> and <c>MessageBox.Show(...)</c>,
+        /// which is the only practical way to cover the couple hundred direct dialog call sites in this
+        /// codebase (and any added later) without touching each one.
+        /// </remarks>
+        public static void HookThreadModalDialogs()
+        {
+            ComponentDispatcher.EnterThreadModal += OnEnterThreadModal;
+            ComponentDispatcher.LeaveThreadModal += OnLeaveThreadModal;
+        }
+
+        private static void OnEnterThreadModal(object? sender, EventArgs e) => Suspend();
+
+        private static void OnLeaveThreadModal(object? sender, EventArgs e) => Resume();
+
+        private static void Suspend()
+        {
+            if (OceanyaTestMode.Current.DisableWaitForms || _formDispatcher == null)
+            {
+                Interlocked.Increment(ref _suspendCount);
+                return;
+            }
+
+            if (Interlocked.Increment(ref _suspendCount) != 1)
+            {
+                return; // Already hidden by an outer dialog.
+            }
+
+            try
+            {
+                // Non-blocking on purpose: this runs from inside a modal-entry callback on the main UI
+                // thread, and a blocking Invoke into another UI thread from there is a deadlock waiting
+                // to happen. Ordering is still guaranteed because hide and show queue on the same
+                // dispatcher.
+                _formDispatcher.InvokeAsync(() =>
+                {
+                    if (_instance != null && _instance.IsVisible)
+                    {
+                        _instance.Hide();
+                    }
+                });
+            }
+            catch
+            {
+                // A dispatcher shutting down mid-suspend is not actionable; the dialog still shows.
+            }
+        }
+
+        private static void Resume()
+        {
+            if (Interlocked.Decrement(ref _suspendCount) != 0)
+            {
+                return; // An outer dialog is still open.
+            }
+
+            if (OceanyaTestMode.Current.DisableWaitForms || _formDispatcher == null)
+            {
+                return;
+            }
+
+            try
+            {
+                _formDispatcher.InvokeAsync(() =>
+                {
+                    // Only restore if the operation is still running: CloseFormAsync may have run while
+                    // the dialog was up, in which case the form must stay gone. Re-checked here rather
+                    // than at suspend time because the close can land at any point during the dialog.
+                    if (_instance == null || !Showing || IsSuspended)
+                    {
+                        return;
+                    }
+
+                    _instance.Show();
+                    _instance.Activate();
+                });
+            }
+            catch
+            {
+                // Same as above - a torn-down dispatcher just means there is nothing to restore.
+            }
+        }
+
+        /// <summary>Scope object returned by <see cref="SuspendForDialog"/>.</summary>
+        private sealed class WaitFormSuspension : IDisposable
+        {
+            private bool disposed;
+
+            public WaitFormSuspension() => Suspend();
+
+            public void Dispose()
+            {
+                if (disposed)
+                {
+                    return;
+                }
+
+                disposed = true;
+                Resume();
+            }
+        }
+
         public static async Task SetSubtitleAsync(string subtitle)
         {
             if (OceanyaTestMode.Current.DisableWaitForms)
@@ -222,7 +354,9 @@ namespace OceanyaClient
 
             await _formDispatcher.InvokeAsync(() =>
             {
-                if (_instance != null && _instance.IsVisible)
+                // Deliberately not gated on IsVisible: while a dialog has the form suspended it is
+                // hidden but still live, and the subtitle must be current when it comes back.
+                if (_instance != null)
                 {
                     if (!string.IsNullOrWhiteSpace(subtitle))
                     {

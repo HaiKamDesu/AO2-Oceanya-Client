@@ -129,9 +129,11 @@
         </Grid>
 
         <!-- Character sections -->
-        <ScrollViewer Grid.Row="2"
+        <ScrollViewer x:Name="SectionsScrollViewer"
+                      Grid.Row="2"
                       VerticalScrollBarVisibility="Auto"
-                      HorizontalScrollBarVisibility="Disabled">
+                      HorizontalScrollBarVisibility="Disabled"
+                      ScrollChanged="SectionsScrollViewer_ScrollChanged">
             <StackPanel x:Name="SectionsPanel"/>
         </ScrollViewer>
 

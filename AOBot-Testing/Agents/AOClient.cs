@@ -263,6 +263,27 @@ namespace AOBot_Testing.Agents
         public string ServerAssetUrl => serverAssetUrl;
 
         /// <summary>
+        /// Fires when the server announces its HTTP asset URL through <c>ASS#</c>, carrying the raw URL
+        /// (empty when the server published none).
+        /// </summary>
+        /// <remarks>
+        /// The GM Multi-Client window uses this to install webAO-style asset fallback for the session.
+        /// It is deliberately an event rather than a poll of <see cref="ServerAssetUrl"/> because
+        /// <c>ASS#</c> arrives asynchronously during the handshake.
+        /// </remarks>
+        public event Action<string>? OnServerAssetUrlReceived;
+
+        /// <summary>
+        /// Fires when the server's character roster arrives through <c>SC#</c>, carrying the character
+        /// names in server order.
+        /// </summary>
+        /// <remarks>
+        /// This roster - not the asset server's optional <c>characters.json</c> - is the authoritative
+        /// list of what a GM can actually play as, so it is what web asset mirroring works from.
+        /// </remarks>
+        public event Action<IReadOnlyList<string>>? OnServerCharacterListReceived;
+
+        /// <summary>
         /// The server software identifier from the ID# handshake (e.g. "tsuserver3", "tsuservercc").
         /// </summary>
         public string ServerSoftware => serverSoftware;
@@ -548,7 +569,7 @@ namespace AOBot_Testing.Agents
                 {
                     string area = areas[areaIndex];
                     string switchToken = ResolveAreaSwitchToken(area);
-                    string switchRoomCommand = $"MC#{switchToken}#{playerID}#%";
+                    string switchRoomCommand = $"MC#{switchToken}#{BuildAreaSwitchCharacterId()}#%";
                     lock (availableStateLock)
                     {
                         string? knownDisplayName = availableAreas.FirstOrDefault(
@@ -573,6 +594,20 @@ namespace AOBot_Testing.Agents
                 CustomConsole.Error("Server connection is not active. Cannot switch rooms.");
             }
         }
+
+        /// <summary>
+        /// Returns the id AO2 puts in the second field of an area-switch <c>MC#</c> packet.
+        /// </summary>
+        /// <remarks>
+        /// AO2 parity: <c>AO2-Client/src/courtroom.cpp on_area_list_double_clicked</c> appends
+        /// <c>m_cid</c> - the client's CHARACTER id - not its player/connection id. Oceanya used
+        /// <see cref="playerID"/> here, which is the <c>ID#</c> connection id and is usually 0.
+        /// tsuserver3/CC/KFO ignore the field, so the bug was invisible on those, but a server that
+        /// validates it (observed on Nyathena) silently drops the packet and the client simply never
+        /// changes area. Falling back to <see cref="playerID"/> when no character is selected keeps the
+        /// old behavior for the spectator case rather than sending a bare -1.
+        /// </remarks>
+        private int BuildAreaSwitchCharacterId() => iniPuppetID >= 0 ? iniPuppetID : playerID;
 
         /// <summary>
         /// Applies deterministic local area state without requiring a live transport connection.
@@ -800,6 +835,7 @@ namespace AOBot_Testing.Agents
                 }
                 CustomConsole.Info("Server Character List updated.");
                 Volatile.Read(ref _characterListRefreshTcs)?.TrySetResult(true);
+                OnServerCharacterListReceived?.Invoke(serverCharacterOrder.ToList());
             }
             else if (message.StartsWith("PV#"))
             {
@@ -828,6 +864,10 @@ namespace AOBot_Testing.Agents
                 serverAssetUrl = fields.Length > 0
                     ? Globals.ReplaceTextForSymbols(fields[0]).Trim()
                     : string.Empty;
+                CustomConsole.Info(
+                    $"Server asset URL: {(string.IsNullOrWhiteSpace(serverAssetUrl) ? "(none)" : serverAssetUrl)}",
+                    Common.CustomConsole.LogCategory.WebAssets);
+                OnServerAssetUrlReceived?.Invoke(serverAssetUrl);
             }
             else if (message.StartsWith("MS#"))
             {
@@ -867,7 +907,7 @@ namespace AOBot_Testing.Agents
                 AreaListEntry[] areaEntries = ParseAreaListFromSm(message);
                 if (ShouldAutoExitKfoHubList(areaEntries))
                 {
-                    _ = SendPacket($"MC#{areaEntries[0].SwitchToken}#{playerID}#%");
+                    _ = SendPacket($"MC#{areaEntries[0].SwitchToken}#{BuildAreaSwitchCharacterId()}#%");
                 }
 
                 ConsumeInitialKfoHubListAutoExit();
@@ -877,7 +917,7 @@ namespace AOBot_Testing.Agents
                 AreaListEntry[] areaEntries = ParseAreaListFromFa(message);
                 if (ShouldAutoExitKfoHubList(areaEntries))
                 {
-                    _ = SendPacket($"MC#{areaEntries[0].SwitchToken}#{playerID}#%");
+                    _ = SendPacket($"MC#{areaEntries[0].SwitchToken}#{BuildAreaSwitchCharacterId()}#%");
                 }
 
                 ConsumeInitialKfoHubListAutoExit();

@@ -198,7 +198,9 @@ namespace OceanyaClient
                     marker,
                     GetAppVersion(),
                     Globals.PathToConfigINI ?? string.Empty,
-                    Globals.BaseFolders ?? new List<string>());
+                    // Physical mounts only: a web mirror appearing on connect is not a user mount change
+                    // and must not trigger the "refresh all assets?" prompt.
+                    Globals.PhysicalBaseFolders);
             }
             catch
             {
@@ -687,7 +689,7 @@ namespace OceanyaClient
 
                 if (marker.BaseFolders.Count == 0)
                 {
-                    marker.BaseFolders = NormalizeFolderSequence(Globals.BaseFolders ?? new List<string>());
+                    marker.BaseFolders = NormalizeFolderSequence(Globals.PhysicalBaseFolders);
                 }
 
                 marker.AssetState = forceFullStateCapture || changedPlan == null
@@ -825,7 +827,7 @@ namespace OceanyaClient
         {
             Dictionary<string, AssetTrackedFolderState> states =
                 new Dictionary<string, AssetTrackedFolderState>(StringComparer.OrdinalIgnoreCase);
-            foreach (string baseFolder in Globals.BaseFolders ?? new List<string>())
+            foreach (string baseFolder in Globals.PhysicalBaseFolders)
             {
                 if (string.IsNullOrWhiteSpace(baseFolder))
                 {
@@ -912,7 +914,7 @@ namespace OceanyaClient
         {
             string[] allowedExtensions = { ".opus", ".ogg", ".mp3", ".wav" };
             HashSet<string> values = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (string baseFolder in Globals.BaseFolders ?? new List<string>())
+            foreach (string baseFolder in Globals.PhysicalBaseFolders)
             {
                 if (string.IsNullOrWhiteSpace(baseFolder))
                 {
@@ -961,7 +963,7 @@ namespace OceanyaClient
             {
                 "default"
             };
-            foreach (string baseFolder in Globals.BaseFolders ?? new List<string>())
+            foreach (string baseFolder in Globals.PhysicalBaseFolders)
             {
                 if (string.IsNullOrWhiteSpace(baseFolder))
                 {
@@ -1005,7 +1007,7 @@ namespace OceanyaClient
         private static IEnumerable<string> CaptureEffectsEntries()
         {
             HashSet<string> values = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (string baseFolder in Globals.BaseFolders ?? new List<string>())
+            foreach (string baseFolder in Globals.PhysicalBaseFolders)
             {
                 if (string.IsNullOrWhiteSpace(baseFolder))
                 {

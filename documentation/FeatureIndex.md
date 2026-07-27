@@ -19,10 +19,18 @@ Use this file as the first stop before broad repository searches. It should poin
 - Examples: `OceanyaClient/Components/Forms/CharacterFolderVisualizerWindow.xaml.cs`, `OceanyaClient/MainWindow.xaml.cs` (`MusicContextMenu_Opened`), `OceanyaClient/Features/Viewport/AO2ViewportWindowContent.xaml.cs`, `OceanyaClient/Components/ICMessageSettings.xaml.cs`
 - Notes: Custom WPF context menus use disabled bold category title rows with separators between categories. New/touched C#-built menus should call `ContextMenuSectionHelper.AddHeader(...)`.
 
+## Wait Form And Modal Dialogs
+- Main code: `OceanyaClient/Components/Forms/WaitForm.xaml.cs`, `OceanyaClient/App.xaml.cs` (`HookThreadModalDialogs`), `OceanyaClient/Components/Forms/OceanyaWindowManager.cs`
+- Notes: The wait form runs on its own STA thread, so it cannot be owned by the main window and used to cover modal dialogs (most visibly the snapshot INI-puppet conflict prompt during "Connecting to server and restoring clients..."). It now hides itself for the lifetime of any modal: `ComponentDispatcher.EnterThreadModal`/`LeaveThreadModal` cover every `ShowDialog()`/`MessageBox.Show()` on the UI thread, and `OceanyaWindowManager.ShowDialog` suspends explicitly. Suspensions nest; suspend/resume are non-blocking (`InvokeAsync`) because they run inside a modal-entry callback.
+
 ## Custom Message Boxes
 - Main code: `OceanyaClient/Components/Forms/OceanyaMessageBox.xaml(.cs)`, `OceanyaClient/Components/Forms/OceanyaWindowManager.cs`, `OceanyaClient/Components/Forms/GenericOceanyaWindow.xaml(.cs)`
 - Tests: `UnitTests/TestabilityHardeningTests.cs`
 - Notes: `OceanyaMessageBox` is hosted in the shared chrome and computes its content size from wrapped message text plus visible buttons before showing. The dialog grows up to a screen-aware max, then uses the message `ScrollViewer` as overflow fallback.
+
+## Character Selector Performance
+- Main code: `OceanyaClient/Components/Forms/CharacterSelectorWindow.xaml.cs`, `OceanyaClient/MainWindow.xaml.cs` (`ShowCharacterSelectorForClientSelectionAsync`, `ShowCharacterSelectorForAvailability`, `EnsureCharacterAvailableLocallyAsync`)
+- Notes: Building the picker on a large server used to allocate a placeholder bitmap per card and synchronously decode every icon on the UI thread, plus a hidden automation button per character. Now uses one shared frozen placeholder, a static write-time-validated icon cache, worker-thread icon decoding applied in dispatcher batches, and automation buttons only under `OceanyaTestMode.IsEnabled`. Diagnose with `[CHARSELECT-TIMING]` and `[CHARSELECT-ICONS]` (category Viewport, `[VPT]`). With web asset fallback active, characters the server can stream are fully selectable and visually identical to installed ones; picking one fetches its `char.ini` on demand behind a wait form.
 
 ## GM Multi-Client Snapshot Restore
 - Doc: `Documentation/GmMultiClientSnapshotRestore.md`
@@ -55,7 +63,7 @@ Use this file as the first stop before broad repository searches. It should poin
 ## Debug Console And Logging
 - Doc: `Documentation/DebugConsoleAndLogging.md`
 - Main code: `Common/CustomConsole.cs`, `OceanyaClient/Components/Forms/DebugConsoleWindow.xaml(.cs)`
-- Notes: Structured log entries carry level and category metadata. The debug console filters System, Network, IC, OOC, Viewport, Music List, Area visualizer, and SFX logs. The Export button writes the currently visible filtered console document to a `.txt` file.
+- Notes: Structured log entries carry level and category metadata. The debug console filters System, Network, IC, OOC, Viewport, Music List, Area visualizer, SFX, and Web Assets logs. The Export button writes the currently visible filtered console document to a `.txt` file. Adding a category means touching all five places: the `CustomConsole.LogCategory` enum, the `DebugConsoleWindow` brush + badge switches, the XAML filter checkbox, `LoadCategoryFilterState`/`CategoryFilter_Changed`, and the `SaveData.EnabledLogCategories` defaults plus its backfill in `SaveFile`.
 
 ## Client Settings And Audio
 - Doc: `Documentation/AO2Viewport.md`
@@ -63,6 +71,7 @@ Use this file as the first stop before broad repository searches. It should poin
 - AO2 reference: `AO2-Client/src/options.cpp`, `AO2-Client/src/courtroom.cpp`
 - Notes: The shared dark settings dialog persists AO2-style music/SFX/blip sliders plus inverse `suppress_audio` as Unfocused Volume, client toggles, selected config.ini values, callword trigger rules, and extra audio rules. Callwords support AO2-compatible config.ini sync plus Oceanya-only message, showname, character, and emote triggers with optional custom/default SFX, plus optional whole-word matching for text triggers. Extra audio rule volume overrides matching blip/SFX/music volume directly, with a 0-200% slider and a positive numeric field for higher values. Rule creation uses modal editors, file pickers, audio preview, the reusable `AutoCompleteDropdownField` for finite dark dropdown choices, the reusable main-client character INI selector, database-viewer character lookup, editable blip/SFX/music dropdowns, and local catalogs instead of raw path/token typing. The viewport/audio playback bridge uses the saved volumes/rules when the viewport is visible.
 
+- Volume precedence: the selected AO2 `config.ini` (`default_music`/`default_sfx`/`default_blip`) wins, savefile is the fallback, and unsaved slider movement is published through `AudioSettings.SetLivePreviewVolumes(...)`. All three volume accessors must share this rule - playback reading only the savefile while the Settings window read/wrote config.ini is what made a session start at the wrong volume until a slider was touched.
 ## Save File And Update Persistence
 - Doc: `Documentation/SaveFileAndUpdatePersistence.md`
 - Main code: `Common/SaveFile.cs`, `OceanyaClient/App.xaml.cs`, `Common/OceanyaTestMode.cs`, `OceanyaClient/Components/Forms/InitialConfigurationWindow.xaml.cs`, `OceanyaClient/Components/Forms/AdvancedFeatureFlagsWindow.xaml(.cs)`, `OceanyaClient/Features/Startup/SaveFileDeletionService.cs`
@@ -77,6 +86,13 @@ Use this file as the first stop before broad repository searches. It should poin
 - Main code: `OceanyaClient/ClientAssetRefreshService.cs`, `OceanyaClient/Components/Forms/InitialConfigurationWindow.xaml.cs`
 - Tests: `UnitTests/GoogleDriveSyncTests.cs` (`ClientAssetRefreshServiceTests`)
 - Notes: Startup forced-refresh prompts come from `%APPDATA%/OceanyaClient/cache/asset_refresh_marker.json`. Reasons distinguish missing/unreadable markers, marker schema changes, app version changes, selected `config.ini` plus mount-list changes, and mount/base-folder list changes without blaming `config.ini` when only mounts changed.
+
+## webAO Asset Fallback
+- Doc: `Documentation/WebAOAssetFallback.md`
+- Main code: `Common/WebAssets/*`, `OceanyaClient/Features/WebAssets/*`, `OceanyaClient/Utilities/WebAssetMenuDecorator.cs`, `Common/Globals.cs` (`PhysicalBaseFolders`, `UpdateConfigINI` -> `WebAssetService.ReapplyMount`)
+- Reference: `webAO/` and `AsyncAO/` submodules (reference-only)
+- Tests: `UnitTests/WebAssetFallbackTests.cs`, `UnitTests/WebAssetIntegrationTests.cs`
+- Notes: Complete end to end (images, audio, characters, provenance UX); live-server verification still outstanding. Serves assets the user lacks locally from the server's `ASS#` asset URL by materializing them into a local AO2-shaped mirror appended LAST to `Globals.BaseFolders`, so existing first-hit-wins resolvers prefer physical files with no code change and downstream consumers keep receiving plain file paths. Sync resolution never touches the network; misses fire a non-blocking request and re-render on the `Materialized` event. Probe economy comes from webAO root manifests (`characters.json`/`backgrounds.json`/`evidence.json`/`extensions.json`), AsyncAO-style learned formats, a persisted 24 h negative cache, and a 3-strike circuit breaker. Late assets repaint via `WebAssetService.AnyMaterialized` -> debounced `RenderScene(visualRefreshOnly: true)`, which skips audio/shake/slide/text-reveal. A message may be held up to `WebAssetService.DefaultGraceWindowMilliseconds` (150 ms) for a cold sprite; with fallback off or the asset warm, the path stays fully synchronous. Debug category `WebAssets` (`[WEB]`) logs `[WEB-PREFETCH]`, `[WEB-GRACE]`, `[WEB-REFRESH]`, per-asset latency, and a `[WEB-SUMMARY]` line whose `reqPerAsset` should trend to 1.0. **Cache signatures must use `Globals.PhysicalBaseFolders`, never `Globals.BaseFolders`** - the mirror is appended on connect, so including it reintroduces the 30 s cold rescan.
 
 ## Character Cache Cold-Launch Performance
 - Doc: `Documentation/CharacterCacheColdLaunch.md`

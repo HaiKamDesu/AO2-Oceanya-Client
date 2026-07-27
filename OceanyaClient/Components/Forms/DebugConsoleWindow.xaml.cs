@@ -1,5 +1,6 @@
 using Common;
 using System;
+using System.Diagnostics;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -126,12 +127,9 @@ namespace OceanyaClient
 
                 if (entriesCopy.Count > 0)
                 {
-                    int startIndex = Math.Max(0, entriesCopy.Count - MAX_DOCUMENT_LINES);
-                    for (int i = startIndex; i < entriesCopy.Count; i++)
-                    {
-                        if (IsEntryVisible(entriesCopy[i]))
-                            AddEntryToDocument(entriesCopy[i]);
-                    }
+                    // Same batching as RebuildDocument: opening the console on a busy session would
+                    // otherwise add tens of thousands of inlines to a live document one at a time.
+                    AppendEntriesBatched(entriesCopy, Math.Max(0, entriesCopy.Count - MAX_DOCUMENT_LINES));
                     ScrollToBottom();
                 }
 
@@ -177,6 +175,7 @@ namespace OceanyaClient
                 FilterAreaVisualizer.IsChecked = _enabledCategories.Contains("AreaVisualizer");
                 FilterPairingStudio.IsChecked = _enabledCategories.Contains("PairingStudio");
                 FilterSFX.IsChecked     = _enabledCategories.Contains("SFX");
+                FilterWebAssets.IsChecked = _enabledCategories.Contains("WebAssets");
 
                 UpdateFilterSummary();
             }
@@ -198,6 +197,7 @@ namespace OceanyaClient
             if (FilterAreaVisualizer.IsChecked == true) _enabledCategories.Add("AreaVisualizer");
             if (FilterPairingStudio.IsChecked == true) _enabledCategories.Add("PairingStudio");
             if (FilterSFX.IsChecked == true)      _enabledCategories.Add("SFX");
+            if (FilterWebAssets.IsChecked == true) _enabledCategories.Add("WebAssets");
 
             UpdateFilterSummary();
 
@@ -229,23 +229,95 @@ namespace OceanyaClient
         private bool IsEntryVisible(CustomConsole.LogEntry entry)
             => _enabledCategories.Contains(entry.Category.ToString());
 
+        /// <summary>
+        /// Rebuilds the whole visible document after a filter change.
+        /// </summary>
+        /// <remarks>
+        /// The document is detached from the <see cref="RichTextBox"/> for the duration and the inlines
+        /// are built into a buffer, so WPF measures once at the end instead of after every run. Without
+        /// this, ticking a category checkbox on a busy session froze the UI for seconds.
+        /// </remarks>
         private void RebuildDocument()
         {
-            _currentParagraph.Inlines.Clear();
-            _lineCount = 0;
+            Stopwatch stopwatch = Stopwatch.StartNew();
 
             List<CustomConsole.LogEntry> snapshot;
             try { snapshot = CustomConsole.GetLogEntriesSnapshot(); }
             catch { return; }
 
-            int startIndex = Math.Max(0, snapshot.Count - MAX_DOCUMENT_LINES);
-            for (int i = startIndex; i < snapshot.Count; i++)
+            _lineCount = 0;
+            _bulkInlineBuffer = new List<Inline>(capacity: 4096);
+            int rendered = 0;
+
+            try
             {
-                if (IsEntryVisible(snapshot[i]))
-                    AddEntryToDocument(snapshot[i]);
+                // Detaching first means none of the work below touches a live visual tree.
+                ConsoleTextBox.Document = EmptyPlaceholderDocument;
+                _currentParagraph.Inlines.Clear();
+
+                int startIndex = Math.Max(0, snapshot.Count - MAX_DOCUMENT_LINES);
+                for (int i = startIndex; i < snapshot.Count; i++)
+                {
+                    if (!IsEntryVisible(snapshot[i]))
+                    {
+                        continue;
+                    }
+
+                    AppendColorizedEntry(snapshot[i]);
+                    _lineCount++;
+                    rendered++;
+                }
+
+                _currentParagraph.Inlines.AddRange(_bulkInlineBuffer);
+            }
+            finally
+            {
+                _bulkInlineBuffer = null;
+                ConsoleTextBox.Document = _consoleDocument;
             }
 
             ScrollToBottom();
+
+            CustomConsole.Debug(
+                $"[DEBUGCONSOLE-TIMING] rebuild entries={snapshot.Count} rendered={rendered} "
+                + $"elapsedMs={stopwatch.Elapsed.TotalMilliseconds:0.0} categories={_enabledCategories.Count}",
+                CustomConsole.LogCategory.System);
+        }
+
+        /// <summary>Throwaway document swapped in while the real one is rebuilt off the visual tree.</summary>
+        private static FlowDocument EmptyPlaceholderDocument => new FlowDocument();
+
+        /// <summary>
+        /// Appends a run of entries to the document as a single batch, trimming first if needed.
+        /// </summary>
+        private void AppendEntriesBatched(IReadOnlyList<CustomConsole.LogEntry> entries, int startIndex)
+        {
+            if (startIndex >= entries.Count)
+            {
+                return;
+            }
+
+            int incoming = entries.Count - startIndex;
+            if (_lineCount + incoming >= MAX_DOCUMENT_LINES)
+            {
+                TrimDocument(Math.Max(1, Math.Min(_lineCount, incoming + (MAX_DOCUMENT_LINES / 5))));
+            }
+
+            _bulkInlineBuffer = new List<Inline>(capacity: incoming * 5);
+            try
+            {
+                for (int i = startIndex; i < entries.Count; i++)
+                {
+                    AppendColorizedEntry(entries[i]);
+                    _lineCount++;
+                }
+
+                _currentParagraph.Inlines.AddRange(_bulkInlineBuffer);
+            }
+            finally
+            {
+                _bulkInlineBuffer = null;
+            }
         }
 
         // ── Message processing ───────────────────────────────────────────────────
@@ -255,18 +327,28 @@ namespace OceanyaClient
             if (_pendingEntries.IsEmpty) return;
 
             int batchSize = 5000;
-            int processed = 0;
+            int dequeued = 0;
+            List<CustomConsole.LogEntry> visible = new List<CustomConsole.LogEntry>();
 
-            while (_pendingEntries.TryDequeue(out CustomConsole.LogEntry? entry) && processed < batchSize)
+            while (dequeued < batchSize && _pendingEntries.TryDequeue(out CustomConsole.LogEntry? entry))
             {
+                dequeued++;
                 if (entry != null && IsEntryVisible(entry))
                 {
-                    AddEntryToDocument(entry);
-                    processed++;
+                    visible.Add(entry);
                 }
             }
 
-            if (processed > 0 && IsScrolledToBottom())
+            if (visible.Count == 0)
+            {
+                return;
+            }
+
+            // A burst (the web asset pipeline can emit hundreds of lines a second) arrives as one
+            // AddRange rather than one layout invalidation per line.
+            AppendEntriesBatched(visible, 0);
+
+            if (IsScrolledToBottom())
                 ScrollToBottom();
         }
 
@@ -290,6 +372,7 @@ namespace OceanyaClient
         private static readonly Brush CatMusicListBrush = new SolidColorBrush(Color.FromRgb(0xC7, 0xA4, 0x5A));
         private static readonly Brush CatAreaVisualizerBrush = new SolidColorBrush(Color.FromRgb(0x6A, 0xC6, 0xCF));
         private static readonly Brush CatPairingStudioBrush = new SolidColorBrush(Color.FromRgb(0xF0, 0x9A, 0xA8));
+        private static readonly Brush CatWebAssetsBrush = new SolidColorBrush(Color.FromRgb(0x8F, 0xB8, 0x6A));
 
         private static Brush GetCategoryBrush(CustomConsole.LogCategory category) => category switch
         {
@@ -300,6 +383,7 @@ namespace OceanyaClient
             CustomConsole.LogCategory.MusicList => CatMusicListBrush,
             CustomConsole.LogCategory.AreaVisualizer => CatAreaVisualizerBrush,
             CustomConsole.LogCategory.PairingStudio => CatPairingStudioBrush,
+            CustomConsole.LogCategory.WebAssets => CatWebAssetsBrush,
             _                                 => CatSystemBrush
         };
 
@@ -312,6 +396,7 @@ namespace OceanyaClient
             CustomConsole.LogCategory.MusicList => "[MUS]",
             CustomConsole.LogCategory.AreaVisualizer => "[ARA]",
             CustomConsole.LogCategory.PairingStudio => "[PAIR]",
+            CustomConsole.LogCategory.WebAssets => "[WEB]",
             _                                 => "[SYS]"
         };
 
@@ -386,11 +471,29 @@ namespace OceanyaClient
             AppendRun(remaining + Environment.NewLine, bodyBrush);
         }
 
+        /// <summary>
+        /// When non-null, appended runs collect here instead of going straight into the live document.
+        /// </summary>
+        /// <remarks>
+        /// Adding inlines one at a time to an attached <see cref="FlowDocument"/> invalidates layout on
+        /// every call. A full rebuild is ~5000 entries x ~5 runs, so that was ~25000 layout
+        /// invalidations - the UI freeze seen when toggling a category checkbox. Buffering and flushing
+        /// through <c>AddRange</c> turns it into a single batch.
+        /// </remarks>
+        private List<Inline>? _bulkInlineBuffer;
+
         private void AppendRun(string text, Brush foreground)
         {
             Run run = new Run(text);
             run.Foreground = foreground;
             run.Background = Brushes.Transparent;
+
+            if (_bulkInlineBuffer != null)
+            {
+                _bulkInlineBuffer.Add(run);
+                return;
+            }
+
             _currentParagraph.Inlines.Add(run);
         }
 

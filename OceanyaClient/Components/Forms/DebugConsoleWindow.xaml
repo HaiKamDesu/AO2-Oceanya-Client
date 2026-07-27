@@ -235,6 +235,11 @@
                                   Style="{StaticResource CategoryCheckBoxStyle}"
                                   Checked="CategoryFilter_Changed"
                                   Unchecked="CategoryFilter_Changed"/>
+                        <CheckBox x:Name="FilterWebAssets"
+                                  Content="Web Assets"
+                                  Style="{StaticResource CategoryCheckBoxStyle}"
+                                  Checked="CategoryFilter_Changed"
+                                  Unchecked="CategoryFilter_Changed"/>
                     </StackPanel>
                 </Border>
             </Popup>

@@ -66,6 +66,10 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        // Any modal dialog on this thread must hide the wait form, which lives on its own STA thread
+        // and would otherwise sit on top of the dialog it should be yielding to.
+        WaitForm.HookThreadModalDialogs();
+
         OceanyaTestModeOptions testModeOptions = OceanyaTestMode.ParseArgs(e.Args);
         OceanyaTestMode.SetCurrent(testModeOptions);
         if (testModeOptions.IsEnabled)

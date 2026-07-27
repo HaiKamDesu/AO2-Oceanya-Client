@@ -10,3 +10,9 @@
 [submodule "KFO-Server"]
 	path = KFO-Server
 	url = https://github.com/Crystalwarrior/KFO-Server.git
+[submodule "webAO"]
+	path = webAO
+	url = https://github.com/AttorneyOnline/webAO.git
+[submodule "AsyncAO"]
+	path = AsyncAO
+	url = https://github.com/SyntaxNyah/AsyncAO.git

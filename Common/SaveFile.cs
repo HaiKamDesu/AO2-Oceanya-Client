@@ -550,7 +550,7 @@ namespace OceanyaClient
         public bool MusicListShowAssetPaths { get; set; } = false;
         public List<string> MusicListCollapsedCategoryKeys { get; set; } = new List<string>();
         public List<string> EnabledLogCategories { get; set; } =
-            new List<string> { "System", "Network", "IC", "OOC", "Viewport", "MusicList", "AreaVisualizer", "PairingStudio" };
+            new List<string> { "System", "Network", "IC", "OOC", "Viewport", "MusicList", "AreaVisualizer", "PairingStudio", "WebAssets" };
         public List<CallwordRule> CallwordRules { get; set; } = new List<CallwordRule>();
         public List<ExtraAudioRule> ExtraAudioRules { get; set; } = new List<ExtraAudioRule>();
         public Dictionary<string, int> FrequentlyUsedIniPuppets { get; set; } =
@@ -874,7 +874,7 @@ namespace OceanyaClient
             data.EnabledLogCategories ??= new List<string>();
             if (data.EnabledLogCategories.Count == 0)
             {
-                data.EnabledLogCategories.AddRange(new[] { "System", "Network", "IC", "OOC", "Viewport", "MusicList", "AreaVisualizer", "PairingStudio" });
+                data.EnabledLogCategories.AddRange(new[] { "System", "Network", "IC", "OOC", "Viewport", "MusicList", "AreaVisualizer", "PairingStudio", "WebAssets" });
             }
 
             for (int i = 0; i < data.EnabledLogCategories.Count; i++)
@@ -902,6 +902,11 @@ namespace OceanyaClient
             if (!data.EnabledLogCategories.Contains("PairingStudio", StringComparer.OrdinalIgnoreCase))
             {
                 data.EnabledLogCategories.Add("PairingStudio");
+            }
+
+            if (!data.EnabledLogCategories.Contains("WebAssets", StringComparer.OrdinalIgnoreCase))
+            {
+                data.EnabledLogCategories.Add("WebAssets");
             }
 
             data.CharacterFolderPreviewEmoteOverrides ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);

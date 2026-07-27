@@ -47,7 +47,9 @@ namespace Common
             /// <summary>AO2 pairing studio candidate discovery and /getarea diagnostics</summary>
             PairingStudio,
             /// <summary>SFX/blip/shout packet diagnostics</summary>
-            SFX
+            SFX,
+            /// <summary>webAO-style asset fallback: probes, downloads, manifests, and latency</summary>
+            WebAssets
         }
 
         /// <summary>

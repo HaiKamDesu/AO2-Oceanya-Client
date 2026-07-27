@@ -9,6 +9,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using AOBot_Testing.Structures;
 using Common;
+using Common.WebAssets;
 using OceanyaClient.Features.ChatPreview;
 
 namespace OceanyaClient.Features.Viewport
@@ -214,6 +215,7 @@ namespace OceanyaClient.Features.Viewport
                 CustomConsole.Warning(
                     $"ResolveBackground(\"{backgroundName}\") returned null. BaseFolders={string.Join(";", Globals.BaseFolders ?? new System.Collections.Generic.List<string>())}",
                     category: CustomConsole.LogCategory.Viewport);
+                RequestWebBackgroundFallback(backgroundName ?? string.Empty, position);
                 return DefaultPlacement(null);
             }
 
@@ -241,11 +243,12 @@ namespace OceanyaClient.Features.Viewport
             Background? background = ResolveBackground(backgroundName);
             if (background == null)
             {
+                RequestWebBackgroundFallback(backgroundName ?? string.Empty, position);
                 return DefaultPlacement(null);
             }
 
             BackgroundPositionResolution resolution = ResolveBackgroundPosition(background, position);
-            string? deskImagePath = ResolveImageStem(background.PathToFile, resolution.DeskStem);
+            string? deskImagePath = ResolveImageStem(background.PathToFile, resolution.DeskStem, WebAssetKind.Background);
 
             // AO2 parity: in set_scene(), ui_vp_desk is resized and moved to exactly the same
             // rect as ui_vp_background (scaled_frame_size and scaled_pos are computed from the
@@ -492,7 +495,7 @@ namespace OceanyaClient.Features.Viewport
 
                 foreach (string root in EnumerateEffectRoots(baseFolder, effectFolder))
                 {
-                    string? resolved = ResolveImageStem(root, effectName);
+                    string? resolved = ResolveImageStem(root, effectName, WebAssetKind.Misc);
                     if (!string.IsNullOrWhiteSpace(resolved))
                     {
                         effectPath = resolved;
@@ -711,16 +714,9 @@ namespace OceanyaClient.Features.Viewport
         public static string? ResolveSpeedlinesImage(string? position, CharacterFolder? character)
         {
             string name = ResolveSpeedlinesName(position);
-            foreach (string relativeStem in EnumerateMiscRelativeImageStems(name, character?.configINI.EffectsFolder))
-            {
-                string? resolved = ResolveImageVfs(relativeStem);
-                if (!string.IsNullOrWhiteSpace(resolved))
-                {
-                    return resolved;
-                }
-            }
-
-            return null;
+            return ResolveImageVfsCandidates(
+                EnumerateMiscRelativeImageStems(name, character?.configINI.EffectsFolder),
+                WebAssetKind.Misc);
         }
 
         /// <summary>
@@ -766,16 +762,9 @@ namespace OceanyaClient.Features.Viewport
                 ? characterFolder.Name.Trim()
                 : characterName?.Trim() ?? string.Empty;
             string misc = miscName?.Trim() ?? string.Empty;
-            foreach (string relativeStem in EnumerateAo2ImageAssetRelativeStems(stem, character, misc))
-            {
-                string? resolved = ResolveImageVfs(relativeStem);
-                if (!string.IsNullOrWhiteSpace(resolved))
-                {
-                    return resolved;
-                }
-            }
-
-            return null;
+            return ResolveImageVfsCandidates(
+                EnumerateAo2ImageAssetRelativeStems(stem, character, misc),
+                WebAssetKind.Misc);
         }
 
         /// <summary>
@@ -797,16 +786,9 @@ namespace OceanyaClient.Features.Viewport
             }
 
             string bgMisc = GetBackgroundMiscFolder(backgroundName);
-            foreach (string relativeStem in EnumerateWtceImageRelativeStems(assetStem, bgMisc))
-            {
-                string? resolved = ResolveImageVfs(relativeStem);
-                if (!string.IsNullOrWhiteSpace(resolved))
-                {
-                    return resolved;
-                }
-            }
-
-            return null;
+            return ResolveImageVfsCandidates(
+                EnumerateWtceImageRelativeStems(assetStem, bgMisc),
+                WebAssetKind.Misc);
         }
 
         /// <summary>
@@ -821,16 +803,9 @@ namespace OceanyaClient.Features.Viewport
 
             string stem = "sticker/" + characterName.Trim();
             string misc = miscName?.Trim() ?? string.Empty;
-            foreach (string relativeStem in EnumerateAo2ImageAssetRelativeStems(stem, string.Empty, misc))
-            {
-                string? resolved = ResolveImageVfs(relativeStem);
-                if (!string.IsNullOrWhiteSpace(resolved))
-                {
-                    return resolved;
-                }
-            }
-
-            return null;
+            return ResolveImageVfsCandidates(
+                EnumerateAo2ImageAssetRelativeStems(stem, string.Empty, misc),
+                WebAssetKind.Misc);
         }
 
         /// <summary>
@@ -840,16 +815,9 @@ namespace OceanyaClient.Features.Viewport
         {
             string stem = leftSide ? "evidence_appear_left" : "evidence_appear_right";
             string bgMisc = GetBackgroundMiscFolder(backgroundName);
-            foreach (string relativeStem in EnumerateWtceImageRelativeStems(stem, bgMisc))
-            {
-                string? resolved = ResolveImageVfs(relativeStem);
-                if (!string.IsNullOrWhiteSpace(resolved))
-                {
-                    return resolved;
-                }
-            }
-
-            return null;
+            return ResolveImageVfsCandidates(
+                EnumerateWtceImageRelativeStems(stem, bgMisc),
+                WebAssetKind.Misc);
         }
 
         /// <summary>
@@ -877,7 +845,7 @@ namespace OceanyaClient.Features.Viewport
                     continue;
                 }
 
-                string? resolved = ResolveImageStem(Path.Combine(baseFolder, "evidence"), file);
+                string? resolved = ResolveImageStem(Path.Combine(baseFolder, "evidence"), file, WebAssetKind.Evidence);
                 if (!string.IsNullOrWhiteSpace(resolved))
                 {
                     return resolved;
@@ -1217,7 +1185,7 @@ namespace OceanyaClient.Features.Viewport
 
         private static string? ResolveAo2BackgroundImagePath(Background background, string backgroundStem)
         {
-            string? imagePath = ResolveImageStem(background.PathToFile, backgroundStem);
+            string? imagePath = ResolveImageStem(background.PathToFile, backgroundStem, WebAssetKind.Background);
             if (!string.IsNullOrWhiteSpace(imagePath))
             {
                 return imagePath;
@@ -1225,7 +1193,7 @@ namespace OceanyaClient.Features.Viewport
 
             // AO2 set_scene fallback is same-background wit.* only. It does not fall back
             // to another background folder, including background/default.
-            return ResolveImageStem(background.PathToFile, "wit");
+            return ResolveImageStem(background.PathToFile, "wit", WebAssetKind.Background);
         }
 
         private static Background? ResolveBackground(string? backgroundName)
@@ -1743,7 +1711,49 @@ namespace OceanyaClient.Features.Viewport
                 : null;
         }
 
-        private static string? ResolveImageStem(string directory, string stem)
+        /// <summary>
+        /// Resolves <paramref name="stem"/> inside a physical <paramref name="directory"/>, optionally
+        /// asking the server's asset URL for it when nothing local matched.
+        /// </summary>
+        /// <param name="webFallbackKind">
+        /// When set, a local miss fires a non-blocking web request for the same logical asset. Leave it
+        /// <c>null</c> for probes that only inform layout decisions (does <c>court</c> exist?) - those
+        /// are expected to miss constantly and must not generate traffic.
+        /// </param>
+        private static string? ResolveImageStem(string directory, string stem, WebAssetKind? webFallbackKind = null)
+        {
+            string? resolved = ResolveImageStemLocal(directory, stem);
+            if (resolved != null || webFallbackKind == null)
+            {
+                return resolved;
+            }
+
+            RequestWebFallbackForDirectory(directory, stem, webFallbackKind.Value);
+            return null;
+        }
+
+        /// <summary>
+        /// Translates a physical directory + stem back into an AO2 VFS path and asks the web pipeline
+        /// for it. Fire-and-forget: the asset lands in the mirror and the viewport re-renders then.
+        /// </summary>
+        private static void RequestWebFallbackForDirectory(string directory, string stem, WebAssetKind kind)
+        {
+            if (!WebAssetService.IsActive
+                || !WebAssetSource.TryGetVPathForAbsolutePath(directory, out string directoryVPath))
+            {
+                return;
+            }
+
+            string normalizedStem = (stem ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
+            if (normalizedStem.Length == 0)
+            {
+                return;
+            }
+
+            WebAssetService.RequestIfActive(directoryVPath + "/" + normalizedStem, kind);
+        }
+
+        private static string? ResolveImageStemLocal(string directory, string stem)
         {
             if (string.IsNullOrWhiteSpace(directory) || string.IsNullOrWhiteSpace(stem))
             {
@@ -1793,7 +1803,15 @@ namespace OceanyaClient.Features.Viewport
                     .Select(part => part.Trim().Replace('\\', '/').Trim('/')));
         }
 
-        private static string? ResolveImageVfs(string relativeStem)
+        /// <summary>
+        /// Resolves an AO2 VFS stem across every mount, first hit wins.
+        /// </summary>
+        /// <param name="webFallbackKind">
+        /// When set, a miss across all mounts fires a non-blocking web request. Because the web mirror
+        /// is itself the last mount, a previously downloaded asset is already found by the loop above
+        /// and never reaches this path.
+        /// </param>
+        private static string? ResolveImageVfs(string relativeStem, WebAssetKind? webFallbackKind = null)
         {
             string normalized = (relativeStem ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
             if (string.IsNullOrWhiteSpace(normalized))
@@ -1803,14 +1821,108 @@ namespace OceanyaClient.Features.Viewport
 
             foreach (string baseFolder in Globals.BaseFolders ?? Enumerable.Empty<string>())
             {
-                string? resolved = ResolveImageStem(baseFolder, normalized);
+                string? resolved = ResolveImageStemLocal(baseFolder, normalized);
                 if (!string.IsNullOrWhiteSpace(resolved))
                 {
                     return resolved;
                 }
             }
 
+            if (webFallbackKind != null)
+            {
+                WebAssetService.RequestIfActive(normalized, webFallbackKind.Value);
+            }
+
             return null;
+        }
+
+        /// <summary>
+        /// Resolves the first AO2 candidate stem that exists locally, and only when every candidate
+        /// misses asks the web for them.
+        /// </summary>
+        /// <remarks>
+        /// Deferring the web request until the whole candidate list has been walked locally is the
+        /// point of this helper: AO2 overlay lookups try a character override, then a misc folder, then
+        /// the theme, then the bare stem. Requesting per candidate inside the loop would fetch a
+        /// character-specific override the user does not need simply because the theme default sits
+        /// later in the list. The first candidate is the one the server is most likely to have as an
+        /// override and takes the immediate lane; the rest ride the prefetch lane so a rarely-seen
+        /// overlay can never delay the sprite of the message being drawn.
+        /// </remarks>
+        private static string? ResolveImageVfsCandidates(IEnumerable<string> relativeStems, WebAssetKind kind)
+        {
+            List<string> candidates = new List<string>();
+            foreach (string relativeStem in relativeStems)
+            {
+                string normalized = (relativeStem ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
+                if (normalized.Length == 0)
+                {
+                    continue;
+                }
+
+                string? resolved = ResolveImageVfs(normalized);
+                if (!string.IsNullOrWhiteSpace(resolved))
+                {
+                    return resolved;
+                }
+
+                candidates.Add(normalized);
+            }
+
+            if (!WebAssetService.IsActive)
+            {
+                return null;
+            }
+
+            for (int index = 0; index < candidates.Count; index++)
+            {
+                WebAssetService.RequestIfActive(
+                    candidates[index],
+                    kind,
+                    index == 0 ? WebAssetPriority.Immediate : WebAssetPriority.Prefetch);
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Asks the server for a background the user does not have at all.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="ResolveBackground"/> needs a real folder before any per-position probing can
+        /// happen, so a background that exists only on the server produces no folder and no probes.
+        /// Requesting a small, targeted set of position images creates that folder in the mirror; the
+        /// next resolve finds it through <c>Background.FromBGPath</c>'s directory scan with no cache
+        /// rebuild needed. Kept deliberately small - the full AO2 position matrix would be dozens of
+        /// requests for a background that may never be shown again.
+        /// </remarks>
+        private static void RequestWebBackgroundFallback(string backgroundName, string? position)
+        {
+            if (!WebAssetService.IsActive || string.IsNullOrWhiteSpace(backgroundName))
+            {
+                return;
+            }
+
+            string folder = "background/" + backgroundName.Trim().Replace('\\', '/').Trim('/');
+            string positionToken = NormalizeBackgroundPositionToken(position);
+            int separator = positionToken.IndexOf(':');
+            if (separator > 0)
+            {
+                positionToken = positionToken[..separator];
+            }
+
+            WebAssetService.RequestIfActive(folder + "/design.ini", WebAssetKind.Config);
+            WebAssetService.RequestIfActive(folder + "/wit", WebAssetKind.Background);
+
+            if (LegacyPositionImageNames.TryGetValue(positionToken, out string? legacyName))
+            {
+                WebAssetService.RequestIfActive(folder + "/" + legacyName, WebAssetKind.Background);
+            }
+
+            if (DeskImageNames.TryGetValue(positionToken, out string? deskName))
+            {
+                WebAssetService.RequestIfActive(folder + "/" + deskName, WebAssetKind.Background, WebAssetPriority.Prefetch);
+            }
         }
 
         private static string ResolveCharacterImageAsset(CharacterFolder? character, string token)
@@ -1821,7 +1933,9 @@ namespace OceanyaClient.Features.Viewport
                 return string.Empty;
             }
 
-            string? resolved = ResolveImageVfs(ResolveRelativeStem("characters", characterName, token));
+            string? resolved = ResolveImageVfs(
+                ResolveRelativeStem("characters", characterName, token),
+                WebAssetKind.CharacterSprite);
             if (!string.IsNullOrWhiteSpace(resolved))
             {
                 return resolved;

@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using Common;
+using Common.WebAssets;
 
 namespace OceanyaClient.Features.Viewport
 {
@@ -176,8 +177,30 @@ namespace OceanyaClient.Features.Viewport
         {
             // AO2 standard SFX tokens (e.g. "sfx-realization", "1.wav") live in sounds/general/.
             // Fall back to sounds/ root for non-standard layouts.
-            return ResolveSoundPath("general", token, includeLegacySfxPrefixes: true)
+            string? resolved = ResolveSoundPath("general", token, includeLegacySfxPrefixes: true)
                 ?? ResolveSoundPath(string.Empty, token, includeLegacySfxPrefixes: false);
+            if (resolved != null || string.IsNullOrWhiteSpace(token))
+            {
+                return resolved;
+            }
+
+            // Nothing local: ask the server. Non-blocking, so a missing SFX never delays playback of the
+            // rest of the message - it simply stays silent this once and plays from the mirror next time.
+            RequestWebSound("sounds/general/" + token.Trim().Replace('\\', '/'), WebAssetKind.Sound);
+            return null;
+        }
+
+        /// <summary>
+        /// Fire-and-forget request for an audio asset the user does not have locally.
+        /// </summary>
+        /// <remarks>
+        /// Audio deliberately has no grace window. A late sprite can swap into a still-visible frame, but
+        /// a sound that arrives after its cue is worse than silence, so the first play of a missing SFX is
+        /// skipped and every later play is local.
+        /// </remarks>
+        private static void RequestWebSound(string stem, WebAssetKind kind)
+        {
+            WebAssetService.RequestIfActive(stem, kind);
         }
 
         public static string? ResolveCourtSfxPath(string identifier)
@@ -250,6 +273,14 @@ namespace OceanyaClient.Features.Viewport
                 }
             }
 
+            // webAO's shout SFX path is characters/<char>/<shout>.opus, with sounds/general as the
+            // shared fallback for characters that ship no custom shout.
+            if (character.Length > 0)
+            {
+                RequestWebSound("characters/" + character.Replace('\\', '/') + "/" + normalized, WebAssetKind.Sound);
+            }
+
+            RequestWebSound("sounds/general/" + normalized, WebAssetKind.Sound);
             return null;
         }
 
@@ -290,6 +321,10 @@ namespace OceanyaClient.Features.Viewport
                 }
             }
 
+            // webAO serves blips from sounds/blips/<token>; ask for that first, then the AO2 legacy
+            // sounds/general location some packs still use.
+            RequestWebSound("sounds/blips/" + normalized, WebAssetKind.Blip);
+            RequestWebSound("sounds/general/" + normalized, WebAssetKind.Blip);
             return null;
         }
 

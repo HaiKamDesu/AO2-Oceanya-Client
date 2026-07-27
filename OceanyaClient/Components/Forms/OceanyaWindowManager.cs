@@ -83,6 +83,10 @@ namespace OceanyaClient
 
             content.CloseRequested += OnCloseRequested;
 
+            // The wait form lives on its own STA thread, so WPF cannot keep this dialog above it.
+            // Hiding it for the lifetime of the dialog is the reliable fix and covers every Oceanya
+            // modal at once, because they all come through here.
+            using IDisposable waitFormSuspension = WaitForm.SuspendForDialog();
             try
             {
                 return window.ShowDialog();

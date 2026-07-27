@@ -1,6 +1,7 @@
 ﻿using AOBot_Testing.Agents;
 using AOBot_Testing.Structures;
 using Common;
+using Common.WebAssets;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -22,6 +23,7 @@ using Path = System.IO.Path;
 using System.ComponentModel;
 using static OceanyaClient.Components.ImageComboBox;
 using System.Xml.Linq;
+using OceanyaClient.Features.WebAssets;
 using OceanyaClient.Utilities;
 using System.Windows.Automation;
 using OceanyaClient.Features.Viewport;
@@ -38,6 +40,12 @@ namespace OceanyaClient.Components
         readonly List<Emote> emotes = new();
         bool suppressEmoteToggleEvents;
         AOClient? curClient;
+
+        /// <summary>Debounce for rebuilding the emote grid after streamed button art lands.</summary>
+        private const int EmoteArtRefreshDebounceMilliseconds = 400;
+
+        private System.Windows.Threading.DispatcherTimer? emoteArtRefreshTimer;
+
         readonly Dictionary<AOClient, int> clientEmotePages = new();
         public bool stickyEffects;
 
@@ -64,6 +72,15 @@ namespace OceanyaClient.Components
             InitializeComponent();
             StartupTimingLogger.Log("ic_settings_initializecomponent_end");
 
+            WebAssetService.AnyMaterialized += OnWebAssetMaterialized;
+            CharacterDropdown.VisibleItemsChanged += (_, _) => WarmVisibleDropdownIcons();
+            Unloaded += (_, _) =>
+            {
+                WebAssetService.AnyMaterialized -= OnWebAssetMaterialized;
+                emoteArtRefreshTimer?.Stop();
+                emoteArtRefreshTimer = null;
+            };
+
             #region Emote Grid
             EmoteGrid.SetScrollMode(PageButtonGrid.ScrollMode.Horizontal);
             EmoteGrid.SetPageSize(2, 10);
@@ -79,7 +96,7 @@ namespace OceanyaClient.Components
                 + $"count={CharacterFolder.LastFullListLoadCount}");
             foreach (var ini in alphabeticalCharacters)
             {
-                CharacterDropdown.Add(ini.Name, ini.CharIconPath);
+                CharacterDropdown.Add(ini.Name, WebCharacterIconResolver.ResolveCharacterIcon(ini.Name, ini.CharIconPath));
             }
             CharacterDropdown.OnConfirm += CharacterDropdown_OnConfirm;
             CharacterDropdown.ContextMenu = BuildCharacterDropdownContextMenu();
@@ -139,14 +156,142 @@ namespace OceanyaClient.Components
                 .ThenBy(character => character.DirectoryPath, StringComparer.OrdinalIgnoreCase);
         }
 
+        /// <summary>
+        /// Names the connected server offers that the user does not have installed, kept so the
+        /// character dropdown can list them alongside local characters.
+        /// </summary>
+        /// <remarks>
+        /// Session-scoped: cleared on disconnect and never persisted, so these entries only ever appear
+        /// while connected to the server that actually provides them.
+        /// </remarks>
+        private readonly List<string> serverOnlyCharacterNames = new List<string>();
+
+        /// <summary>
+        /// Adds the connected server's characters to the character dropdown so a GM can iniswap to
+        /// anything the server offers, not just what is installed locally.
+        /// </summary>
+        /// <param name="serverCharacterNames">The server's <c>SC#</c> roster.</param>
+        public void SetServerCharacterRoster(IReadOnlyCollection<string>? serverCharacterNames)
+        {
+            serverOnlyCharacterNames.Clear();
+            warmedDropdownIcons.Clear();
+
+            if (serverCharacterNames != null && WebAssetService.IsActive)
+            {
+                HashSet<string> local = new HashSet<string>(
+                    CharacterFolder.FullList.Select(folder => folder.Name),
+                    StringComparer.OrdinalIgnoreCase);
+
+                foreach (string name in serverCharacterNames)
+                {
+                    string trimmed = (name ?? string.Empty).Trim();
+                    if (trimmed.Length > 0 && !local.Contains(trimmed))
+                    {
+                        serverOnlyCharacterNames.Add(trimmed);
+                    }
+                }
+            }
+
+            RepopulateCharacterDropdown();
+        }
+
+        /// <summary>
+        /// Rebuilds the character dropdown from local characters plus any server-only ones.
+        /// </summary>
+        private void RepopulateCharacterDropdown()
+        {
+            System.Diagnostics.Stopwatch stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            List<ImageComboBox.DropdownItem> items = new List<ImageComboBox.DropdownItem>();
+
+            foreach (CharacterFolder ini in GetAlphabeticalCharacterFolders())
+            {
+                items.Add(new ImageComboBox.DropdownItem
+                {
+                    Name = ini.Name,
+                    ImagePath = WebCharacterIconResolver.ResolveCharacterIcon(ini.Name, ini.CharIconPath) ?? string.Empty,
+                    Value = ini.Name
+                });
+            }
+
+            foreach (string name in serverOnlyCharacterNames.OrderBy(n => n, StringComparer.OrdinalIgnoreCase))
+            {
+                // Icon path may be empty until the icon downloads; the dropdown tolerates that and the
+                // materialize handler repopulates once art lands.
+                items.Add(new ImageComboBox.DropdownItem
+                {
+                    Name = name,
+                    ImagePath = WebCharacterIconResolver.ResolveCharacterIcon(name, bakedIconPath: null) ?? string.Empty,
+                    Value = name
+                });
+            }
+
+            CharacterDropdown.SetItems(items);
+
+            CustomConsole.Info(
+                $"[CHARDROPDOWN-TIMING] rebuild local={items.Count - serverOnlyCharacterNames.Count} "
+                + $"serverOnly={serverOnlyCharacterNames.Count} total={items.Count} "
+                + $"elapsedMs={stopwatch.Elapsed.TotalMilliseconds:0.0}",
+                CustomConsole.LogCategory.Viewport);
+        }
+
+        /// <summary>Server-only characters whose icon has already been requested this session.</summary>
+        private readonly HashSet<string> warmedDropdownIcons = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Requests icons only for the dropdown rows currently on screen.
+        /// </summary>
+        /// <remarks>
+        /// Scoped to the visible window for the same reason the character selector is: a roster can run
+        /// to several thousand entries, and firing that many requests at once is what saturated the
+        /// fetch pipeline in earlier testing. Scrolling warms what the user is actually looking at.
+        /// </remarks>
+        private void WarmVisibleDropdownIcons()
+        {
+            if (!WebAssetService.IsActive || serverOnlyCharacterNames.Count == 0)
+            {
+                return;
+            }
+
+            IReadOnlyList<ImageComboBox.DropdownItem> visible = CharacterDropdown.GetVisibleItems();
+            if (visible.Count == 0)
+            {
+                return;
+            }
+
+            HashSet<string> serverOnly = new HashSet<string>(serverOnlyCharacterNames, StringComparer.OrdinalIgnoreCase);
+            int requested = 0;
+            foreach (ImageComboBox.DropdownItem item in visible)
+            {
+                string name = item.Name ?? string.Empty;
+                if (name.Length == 0 || !serverOnly.Contains(name) || !warmedDropdownIcons.Add(name))
+                {
+                    continue;
+                }
+
+                string stem = "characters/" + WebAssetSource.NormalizeVPath(name) + "/char_icon";
+                if (WebAssetService.FindInMirrorIfActive(stem, WebAssetKind.CharacterIcon) != null)
+                {
+                    continue;
+                }
+
+                WebAssetService.PrefetchIfActive(stem, WebAssetKind.CharacterIcon);
+                requested++;
+            }
+
+            if (requested > 0)
+            {
+                CustomConsole.Debug(
+                    $"[CHARDROPDOWN-TIMING] warmed {requested} visible server-only icons "
+                    + $"(visible={visible.Count}, warmedTotal={warmedDropdownIcons.Count}/{serverOnlyCharacterNames.Count})",
+                    CustomConsole.LogCategory.WebAssets);
+            }
+        }
+
         public void ReinitializeSettings()
         {
-            // Reinitialize Character Dropdown
-            CharacterDropdown.Clear();
-            foreach (var ini in GetAlphabeticalCharacterFolders())
-            {
-                CharacterDropdown.Add(ini.Name, ini.CharIconPath);
-            }
+            // Reinitialize Character Dropdown. Goes through the shared rebuild so server-only entries
+            // survive an asset refresh instead of silently disappearing mid-session.
+            RepopulateCharacterDropdown();
 
             // Reinitialize Emote Dropdown
             EmoteDropdown.Clear();
@@ -285,7 +430,12 @@ namespace OceanyaClient.Components
             {
                 string backgroundName = ResolveCurrentBackgroundName();
                 string backgroundDirectory = ResolveCurrentBackgroundDirectory();
+                openExplorerItem.Header = "Open in file explorer";
+                openExplorerItem.ToolTip = null;
                 openExplorerItem.IsEnabled = Directory.Exists(backgroundDirectory);
+                // Rebuilt every time the menu opens, so switching between a local and a streamed
+                // background updates the entry instead of keeping the previous background's state.
+                WebAssetMenuDecorator.ApplyProvenance(openExplorerItem, backgroundDirectory);
                 copyNameItem.IsEnabled = !string.IsNullOrWhiteSpace(backgroundName);
                 refreshBackgroundItem.Header = string.IsNullOrWhiteSpace(backgroundName)
                     ? "Refresh background"
@@ -423,6 +573,13 @@ namespace OceanyaClient.Components
             if (curClient == null) return;
 
             var ini = CharacterFolder.FullList.FirstOrDefault(x => x.Name == iniName);
+            if (ini == null && WebAssetService.IsActive)
+            {
+                // A server-only entry: fetch its char.ini, then finish the selection.
+                _ = ConfirmServerOnlyCharacterAsync(iniName);
+                return;
+            }
+
             if(ini != null)
             {
                 txtICMessage.Focus();
@@ -440,6 +597,44 @@ namespace OceanyaClient.Components
                 CustomConsole.WriteLine($"Character {iniName} not found.");
 
             }
+        }
+
+        /// <summary>
+        /// Mirrors a server-only character's config, then applies it like any local character.
+        /// </summary>
+        private async System.Threading.Tasks.Task ConfirmServerOnlyCharacterAsync(string iniName)
+        {
+            bool mirrored;
+            try
+            {
+                mirrored = await WebCharacterMirror.EnsureCharacterAsync(iniName);
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Error(
+                    $"Could not fetch character \"{iniName}\" from the server's assets.",
+                    ex,
+                    CustomConsole.LogCategory.WebAssets);
+                return;
+            }
+
+            if (!mirrored)
+            {
+                CustomConsole.WriteLine($"Character {iniName} not found locally or on the server.");
+                return;
+            }
+
+            CharacterFolder? ini = CharacterFolder.FullList.FirstOrDefault(x => x.Name == iniName);
+            if (ini == null || curClient == null || curClient.currentINI == ini)
+            {
+                return;
+            }
+
+            txtICMessage.Focus();
+            curClient.SetCharacter(ini);
+            SetINI(ini);
+            UpdatePosDropdown(curClient);
+            OnClientStateChanged?.Invoke();
         }
 
         public void SetClient(AOClient client)
@@ -613,6 +808,9 @@ namespace OceanyaClient.Components
                 EmoteDropdown.Clear();
                 emotes.AddRange(ini.configINI.Emotions.Values);
 
+                // Streamed characters have no button art on disk yet; warm it so the grid fills in.
+                WebCharacterIconResolver.PrefetchEmoteButtons(ini.Name, emotes);
+
                 string? selectedDisplayId = curClient.currentEmote?.DisplayID;
                 Emote? selectedEmote = string.IsNullOrWhiteSpace(selectedDisplayId)
                     ? null
@@ -761,10 +959,122 @@ namespace OceanyaClient.Components
             return image;
         }
 
+        /// <summary>
+        /// Rebuilds the emote grid once art for the current character finishes downloading.
+        /// </summary>
+        /// <remarks>
+        /// Debounced because a character's buttons arrive as a burst of small files and a grid rebuild
+        /// is the single most expensive part of a character switch.
+        /// </remarks>
+        private void OnWebAssetMaterialized(WebAssetMaterializedEventArgs args)
+        {
+            if (args.Kind != WebAssetKind.CharacterIcon)
+            {
+                return;
+            }
+
+            if (args.VPath.EndsWith("/char_icon" + System.IO.Path.GetExtension(args.VPath), StringComparison.Ordinal))
+            {
+                // A dropdown entry's icon arrived. Update that one row in place - rebuilding a roster
+                // that can run to thousands of entries for every icon would be far more expensive than
+                // the icon itself.
+                string characterFolder = ExtractCharacterFolderFromVPath(args.VPath);
+                string localPath = args.LocalPath;
+                Dispatcher.BeginInvoke(
+                    System.Windows.Threading.DispatcherPriority.Background,
+                    new Action(() => UpdateDropdownIcon(characterFolder, localPath)));
+                return;
+            }
+
+            string? characterName = curClient?.currentINI?.Name;
+            if (string.IsNullOrWhiteSpace(characterName))
+            {
+                return;
+            }
+
+            string expected = "characters/" + WebAssetSource.NormalizeVPath(characterName) + "/";
+            if (!args.VPath.StartsWith(expected, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            Dispatcher.BeginInvoke(
+                System.Windows.Threading.DispatcherPriority.Background,
+                new Action(ScheduleEmoteArtRefresh));
+        }
+
+        /// <summary>
+        /// Points one dropdown row at its freshly downloaded icon.
+        /// </summary>
+        private void UpdateDropdownIcon(string characterFolder, string localIconPath)
+        {
+            if (characterFolder.Length == 0)
+            {
+                return;
+            }
+
+            // The mirror stores lowercase folder names; the dropdown row keeps the server's casing.
+            string? displayName = serverOnlyCharacterNames.FirstOrDefault(
+                name => string.Equals(
+                    WebAssetSource.NormalizeVPath(name),
+                    characterFolder,
+                    StringComparison.OrdinalIgnoreCase));
+
+            if (displayName != null)
+            {
+                CharacterDropdown.TryUpdateItemImage(displayName, localIconPath);
+            }
+        }
+
+        /// <summary>Extracts <c>&lt;folder&gt;</c> from <c>characters/&lt;folder&gt;/...</c>.</summary>
+        private static string ExtractCharacterFolderFromVPath(string vpath)
+        {
+            const string prefix = "characters/";
+            if (!vpath.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return string.Empty;
+            }
+
+            int separator = vpath.IndexOf('/', prefix.Length);
+            return separator > prefix.Length ? vpath[prefix.Length..separator] : string.Empty;
+        }
+
+        private void ScheduleEmoteArtRefresh()
+        {
+            if (emoteArtRefreshTimer != null)
+            {
+                return;
+            }
+
+            emoteArtRefreshTimer = new System.Windows.Threading.DispatcherTimer(
+                System.Windows.Threading.DispatcherPriority.Background,
+                Dispatcher)
+            {
+                Interval = TimeSpan.FromMilliseconds(EmoteArtRefreshDebounceMilliseconds)
+            };
+            emoteArtRefreshTimer.Tick += (_, _) =>
+            {
+                emoteArtRefreshTimer?.Stop();
+                emoteArtRefreshTimer = null;
+
+                CharacterFolder? character = curClient?.currentINI;
+                if (character != null)
+                {
+                    SetINI(character);
+                }
+            };
+            emoteArtRefreshTimer.Start();
+        }
+
         private ToggleButton CreateEmoteButton(Emote emote)
         {
-            string buttonOff = emote.PathToImage_off;
-            string buttonOn = emote.PathToImage_on;
+            // A streamed character's button art may not have existed when its CharacterFolder was
+            // parsed, so the cached paths are empty; fall back to the web mirror.
+            string characterName = curClient?.currentINI?.Name ?? string.Empty;
+            string buttonOff = WebCharacterIconResolver.ResolveEmoteButton(
+                characterName, emote, on: false, bakedPath: emote.PathToImage_off);
+            string buttonOn = WebCharacterIconResolver.ResolveEmoteButton(
+                characterName, emote, on: true, bakedPath: emote.PathToImage_on);
             ToggleButton toggleBtn = new ToggleButton
             {
                 Width = 40,

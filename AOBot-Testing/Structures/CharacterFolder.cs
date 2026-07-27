@@ -276,7 +276,7 @@ namespace AOBot_Testing.Structures
 
         private static string BuildCacheKey()
         {
-            string payload = $"{Globals.PathToConfigINI}|{string.Join("|", Globals.BaseFolders)}";
+            string payload = $"{Globals.PathToConfigINI}|{string.Join("|", Globals.PhysicalBaseFolders)}";
             byte[] hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(payload));
             return Convert.ToHexString(hashBytes).ToLowerInvariant();
         }
@@ -317,7 +317,7 @@ namespace AOBot_Testing.Structures
             {
                 Version = CacheVersion,
                 ConfigPath = Globals.PathToConfigINI,
-                BaseFolders = new List<string>(Globals.BaseFolders),
+                BaseFolders = new List<string>(Globals.PhysicalBaseFolders),
                 // SourceSignature is no longer used for cache validation (see IsCacheCompatible); it is left
                 // empty rather than recomputed, which previously cost thousands of cold-disk stats per save.
                 SourceSignature = string.Empty,
@@ -403,15 +403,18 @@ namespace AOBot_Testing.Structures
                 return false;
             }
 
+            // Web mirror mounts are excluded on purpose: they come and go with the server connection
+            // and must never invalidate this cache (see Globals.PhysicalBaseFolders).
             List<string> cachedBaseFolders = container.BaseFolders ?? new List<string>();
-            if (cachedBaseFolders.Count != Globals.BaseFolders.Count)
+            List<string> currentBaseFolders = Globals.PhysicalBaseFolders;
+            if (cachedBaseFolders.Count != currentBaseFolders.Count)
             {
                 return false;
             }
 
             for (int i = 0; i < cachedBaseFolders.Count; i++)
             {
-                if (!string.Equals(cachedBaseFolders[i], Globals.BaseFolders[i], StringComparison.OrdinalIgnoreCase))
+                if (!string.Equals(cachedBaseFolders[i], currentBaseFolders[i], StringComparison.OrdinalIgnoreCase))
                 {
                     return false;
                 }

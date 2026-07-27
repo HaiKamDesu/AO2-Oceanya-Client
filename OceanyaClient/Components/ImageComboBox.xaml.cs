@@ -17,11 +17,34 @@ namespace OceanyaClient.Components
     public partial class ImageComboBox : UserControl
     {
         #region Nested Types
-        public class DropdownItem
+        public class DropdownItem : System.ComponentModel.INotifyPropertyChanged
         {
+            private string imagePath = string.Empty;
+
             public string Name { get; set; } = string.Empty;
-            public string ImagePath { get; set; } = string.Empty;
+
+            /// <summary>
+            /// Icon path. Change-notifying so a row's art can be swapped in place once it downloads,
+            /// instead of rebuilding a list that can hold thousands of entries.
+            /// </summary>
+            public string ImagePath
+            {
+                get => imagePath;
+                set
+                {
+                    if (string.Equals(imagePath, value, StringComparison.Ordinal))
+                    {
+                        return;
+                    }
+
+                    imagePath = value;
+                    PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(ImagePath)));
+                }
+            }
+
             public string Value { get; set; } = string.Empty;
+
+            public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
         }
         #endregion
 
@@ -118,6 +141,10 @@ namespace OceanyaClient.Components
                 RestoreAllItemsIfShowingConfirmedText();
                 cboINISelect.Dispatcher.BeginInvoke(
                     new Action(AssignItemAutomationIdentifiers),
+                    System.Windows.Threading.DispatcherPriority.Loaded);
+                // The popup's ScrollViewer only exists once the drop-down has been realized.
+                cboINISelect.Dispatcher.BeginInvoke(
+                    new Action(AttachDropdownScrollTracking),
                     System.Windows.Threading.DispatcherPriority.Loaded);
             };
             cboINISelect.SelectionChanged += (_, _) => AssignItemAutomationIdentifiers();
@@ -372,6 +399,130 @@ namespace OceanyaClient.Components
         #endregion
 
         #region Methods
+        /// <summary>
+        /// Raised when the set of dropdown rows on screen changes: the list opened, was scrolled, or was
+        /// re-filtered.
+        /// </summary>
+        /// <remarks>
+        /// Lets a caller do work only for rows the user can actually see - e.g. downloading character
+        /// icons for a several-thousand-entry roster instead of requesting all of them up front.
+        /// </remarks>
+        public event EventHandler? VisibleItemsChanged;
+
+        private ScrollViewer? dropdownScrollViewer;
+
+        /// <summary>
+        /// Returns the currently displayed rows within the dropdown viewport, padded by
+        /// <paramref name="margin"/> rows on each side so a small scroll does not immediately miss.
+        /// </summary>
+        /// <remarks>
+        /// The dropdown scrolls with <c>ScrollUnit="Item"</c> and <c>CanContentScroll="True"</c>, so the
+        /// ScrollViewer's offsets are already item indices - no per-container hit testing needed.
+        /// Returns an empty list while the dropdown is closed.
+        /// </remarks>
+        public IReadOnlyList<DropdownItem> GetVisibleItems(int margin = 10)
+        {
+            if (!cboINISelect.IsDropDownOpen || dropdownScrollViewer == null)
+            {
+                return Array.Empty<DropdownItem>();
+            }
+
+            IList<DropdownItem> source = cboINISelect.ItemsSource as IList<DropdownItem>
+                ?? (IList<DropdownItem>)allItems;
+            if (source.Count == 0)
+            {
+                return Array.Empty<DropdownItem>();
+            }
+
+            int first = Math.Max(0, (int)Math.Floor(dropdownScrollViewer.VerticalOffset) - margin);
+            int last = Math.Min(
+                source.Count - 1,
+                (int)Math.Ceiling(dropdownScrollViewer.VerticalOffset + dropdownScrollViewer.ViewportHeight) + margin);
+
+            List<DropdownItem> visible = new List<DropdownItem>(Math.Max(0, last - first + 1));
+            for (int i = first; i <= last; i++)
+            {
+                visible.Add(source[i]);
+            }
+
+            return visible;
+        }
+
+        /// <summary>
+        /// Finds the dropdown's ScrollViewer the first time the popup opens and starts reporting
+        /// visibility changes.
+        /// </summary>
+        private void AttachDropdownScrollTracking()
+        {
+            if (dropdownScrollViewer != null)
+            {
+                RaiseVisibleItemsChanged();
+                return;
+            }
+
+            // The ScrollViewer lives inside the popup, which is only realized once the drop-down opens.
+            dropdownScrollViewer = FindDescendant<ScrollViewer>(cboINISelect);
+            if (dropdownScrollViewer == null)
+            {
+                return;
+            }
+
+            dropdownScrollViewer.ScrollChanged += (_, args) =>
+            {
+                if (Math.Abs(args.VerticalChange) > 0.01 || Math.Abs(args.ViewportHeightChange) > 0.01)
+                {
+                    RaiseVisibleItemsChanged();
+                }
+            };
+
+            RaiseVisibleItemsChanged();
+        }
+
+        private void RaiseVisibleItemsChanged() => VisibleItemsChanged?.Invoke(this, EventArgs.Empty);
+
+        /// <summary>
+        /// Points an existing row at a new icon without rebuilding the list.
+        /// </summary>
+        /// <returns><c>true</c> when a row with that name existed and was updated.</returns>
+        public bool TryUpdateItemImage(string name, string imagePath)
+        {
+            if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(imagePath))
+            {
+                return false;
+            }
+
+            DropdownItem? item = allItems.FirstOrDefault(
+                candidate => string.Equals(candidate.Name, name, StringComparison.OrdinalIgnoreCase));
+            if (item == null)
+            {
+                return false;
+            }
+
+            item.ImagePath = imagePath;
+            return true;
+        }
+
+        private static T? FindDescendant<T>(DependencyObject root) where T : DependencyObject
+        {
+            int count = VisualTreeHelper.GetChildrenCount(root);
+            for (int i = 0; i < count; i++)
+            {
+                DependencyObject child = VisualTreeHelper.GetChild(root, i);
+                if (child is T match)
+                {
+                    return match;
+                }
+
+                T? nested = FindDescendant<T>(child);
+                if (nested != null)
+                {
+                    return nested;
+                }
+            }
+
+            return null;
+        }
+
         public void Add(string name, string imagePath, string? value = null)
         {
             InvokeOnDispatcher(() =>

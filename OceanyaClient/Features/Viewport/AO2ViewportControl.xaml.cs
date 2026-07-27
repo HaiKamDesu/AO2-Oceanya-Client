@@ -14,7 +14,9 @@ using System.Windows.Threading;
 using AOBot_Testing.Agents;
 using AOBot_Testing.Structures;
 using Common;
+using Common.WebAssets;
 using OceanyaClient.Features.ChatPreview;
+using OceanyaClient.Features.WebAssets;
 using OceanyaClient.Utilities;
 
 namespace OceanyaClient.Features.Viewport
@@ -63,6 +65,13 @@ namespace OceanyaClient.Features.Viewport
         private string currentChatEmote = string.Empty;
         private int currentChatSequence;
         private ICMessage? lastRenderedMessage;
+        private SceneRenderArgs? lastSceneRenderArgs;
+        private DispatcherTimer? webAssetRefreshTimer;
+        private int pendingWebAssetRefreshCount;
+        // Late web assets arrive in bursts (a sprite pair, a background plus its desk). Coalescing them into
+        // one repaint keeps a burst from costing several full RenderScene passes back to back. Kept short so
+        // the swap still reads as immediate.
+        private const int WebAssetRefreshDebounceMilliseconds = 60;
         private string[] chatMarkupStart = Array.Empty<string>();
         private string[] chatMarkupEnd = Array.Empty<string>();
         private bool[] chatMarkupRemove = Array.Empty<bool>();
@@ -99,7 +108,227 @@ namespace OceanyaClient.Features.Viewport
             ApplyThemeLayout();
             ApplySavedChatBackground();
             IsVisibleChanged += OnIsVisibleChanged;
-            Unloaded += (_, _) => audioManager.Dispose();
+            WebAssetService.AnyMaterialized += OnWebAssetMaterialized;
+            Unloaded += (_, _) =>
+            {
+                WebAssetService.AnyMaterialized -= OnWebAssetMaterialized;
+                StopWebAssetRefreshTimer();
+                audioManager.Dispose();
+            };
+        }
+
+        /// <summary>
+        /// Every argument of the last real <see cref="RenderScene"/> pass, so a late web asset can repaint
+        /// the same scene without replaying audio, screen shake, the text reveal, or the chat queue.
+        /// </summary>
+        private sealed record SceneRenderArgs(
+            string? BackgroundName,
+            string? Position,
+            CharacterFolder? Character,
+            string? EmoteName,
+            ICMessage.DeskMods DeskMod,
+            string? EffectString,
+            ICMessage.Effects Effect,
+            bool Flip,
+            bool ShowChat,
+            string? Showname,
+            string? MessageText,
+            ICMessage? Message,
+            ViewportPhase Phase);
+
+        /// <summary>
+        /// Raised on a fetch worker thread when an asset finishes downloading into the web mirror.
+        /// Marshals to the UI thread and debounces, because a single message commonly lands several
+        /// assets within a few milliseconds of each other.
+        /// </summary>
+        private void OnWebAssetMaterialized(WebAssetMaterializedEventArgs args)
+        {
+            if (!IsSceneRelevantWebAsset(args))
+            {
+                return;
+            }
+
+            System.Threading.Interlocked.Increment(ref pendingWebAssetRefreshCount);
+            Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(ScheduleWebAssetRefresh));
+        }
+
+        /// <summary>
+        /// Reports whether a freshly downloaded asset could change what this viewport is currently
+        /// showing. Anything else must not cost a repaint.
+        /// </summary>
+        /// <remarks>
+        /// Measured on a 3500-character server: 512 renders in one session, 488 of them triggered by
+        /// this event, at 16-20 ms each - roughly nine seconds of UI-thread stalls. Almost all of them
+        /// came from <c>char.ini</c> downloads for characters nobody was playing. Two filters remove
+        /// that: kinds that cannot appear in the scene at all, and assets belonging to a character or
+        /// background other than the one on screen.
+        /// </remarks>
+        private bool IsSceneRelevantWebAsset(WebAssetMaterializedEventArgs args)
+        {
+            switch (args.Kind)
+            {
+                case WebAssetKind.Config:
+                case WebAssetKind.Sound:
+                case WebAssetKind.Blip:
+                case WebAssetKind.Music:
+                case WebAssetKind.CharacterIcon:
+                    // Configs and audio are never drawn, and icons only appear in pickers.
+                    return false;
+            }
+
+            SceneRenderArgs? scene = lastSceneRenderArgs;
+            if (scene == null)
+            {
+                // Nothing rendered yet: only the background layer can be showing.
+                return args.Kind == WebAssetKind.Background;
+            }
+
+            string vpath = args.VPath;
+            if (vpath.StartsWith("characters/", StringComparison.Ordinal))
+            {
+                return PathTargetsName(vpath, "characters/", scene.Character?.Name)
+                    || PathTargetsName(vpath, "characters/", scene.Message?.Character)
+                    || PathTargetsName(vpath, "characters/", scene.Message?.OtherName);
+            }
+
+            if (vpath.StartsWith("background/", StringComparison.Ordinal))
+            {
+                return PathTargetsName(vpath, "background/", scene.BackgroundName);
+            }
+
+            // Theme, misc, effect, and evidence art is shared, so it is always potentially on screen.
+            return true;
+        }
+
+        /// <summary>
+        /// Reports whether a normalized VFS path sits under <paramref name="prefix"/> plus
+        /// <paramref name="name"/>'s folder.
+        /// </summary>
+        private static bool PathTargetsName(string vpath, string prefix, string? name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return false;
+            }
+
+            string expected = prefix + WebAssetSource.NormalizeVPath(name) + "/";
+            return vpath.StartsWith(expected, StringComparison.Ordinal);
+        }
+
+        private void ScheduleWebAssetRefresh()
+        {
+            if (webAssetRefreshTimer != null)
+            {
+                return; // A repaint is already pending; this asset rides along with it.
+            }
+
+            webAssetRefreshTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+            {
+                Interval = TimeSpan.FromMilliseconds(WebAssetRefreshDebounceMilliseconds)
+            };
+            webAssetRefreshTimer.Tick += (_, _) =>
+            {
+                StopWebAssetRefreshTimer();
+                RefreshSceneVisualsForWebAsset();
+            };
+            webAssetRefreshTimer.Start();
+        }
+
+        private void StopWebAssetRefreshTimer()
+        {
+            if (webAssetRefreshTimer == null)
+            {
+                return;
+            }
+
+            webAssetRefreshTimer.Stop();
+            webAssetRefreshTimer = null;
+        }
+
+        /// <summary>
+        /// Repaints the current scene now that one or more late assets exist on disk.
+        /// </summary>
+        /// <remarks>
+        /// Visual only. The message keeps typing, its SFX do not replay, the chat queue is untouched, and
+        /// <c>SetCharacterAnimatedImageAsync</c>'s hold-previous-frame behavior turns the swap into a
+        /// frame change rather than a flash.
+        /// </remarks>
+        private void RefreshSceneVisualsForWebAsset()
+        {
+            int coalesced = System.Threading.Interlocked.Exchange(ref pendingWebAssetRefreshCount, 0);
+            if (coalesced <= 0 || !IsVisible)
+            {
+                return;
+            }
+
+            System.Diagnostics.Stopwatch stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                if (lastSceneRenderArgs is { } args)
+                {
+                    // The character may have been unknown when this scene was first drawn and mirrored
+                    // since, so re-resolve rather than replaying the null.
+                    CharacterFolder? character = args.Character
+                        ?? AO2ViewportAssetResolver.ResolveCharacter(args.Message?.Character);
+
+                    RenderScene(
+                        args.BackgroundName,
+                        args.Position,
+                        character,
+                        args.EmoteName,
+                        args.DeskMod,
+                        args.EffectString,
+                        args.Effect,
+                        args.Flip,
+                        args.ShowChat,
+                        args.Showname,
+                        args.MessageText,
+                        args.Message,
+                        args.Phase,
+                        startTextReveal: false,
+                        onCharacterPlayerReady: null,
+                        visualRefreshOnly: true);
+                }
+                else if (sceneClient != null)
+                {
+                    // No message has rendered yet (freshly attached viewport): the background is the only
+                    // thing on screen, so refreshing it is both sufficient and side-effect free.
+                    RefreshBackgroundPlacementOnly();
+                }
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Error(
+                    "Viewport failed to repaint after a web asset arrived.",
+                    ex,
+                    CustomConsole.LogCategory.WebAssets);
+                return;
+            }
+
+            CustomConsole.Debug(
+                $"[WEB-REFRESH] repaint coalesced={coalesced} elapsedMs={stopwatch.Elapsed.TotalMilliseconds:0.0} "
+                + $"hadScene={lastSceneRenderArgs != null}",
+                CustomConsole.LogCategory.WebAssets);
+        }
+
+        /// <summary>
+        /// Re-resolves and re-applies only the background and desk layers, with no other scene changes.
+        /// </summary>
+        private void RefreshBackgroundPlacementOnly()
+        {
+            if (sceneClient == null)
+            {
+                return;
+            }
+
+            string backgroundName = ResolveCurrentBackgroundName();
+            AO2ViewportAssetResolver.ViewportDisplayOptions displayOptions =
+                AO2ViewportAssetResolver.ResolveDisplayOptions(backgroundName);
+            string position = ResolveCurrentOrDefaultViewportPosition(sceneClient);
+            AO2ViewportAssetResolver.ViewportImagePlacement backgroundPlacement =
+                AO2ViewportAssetResolver.ResolveBackgroundPlacement(backgroundName, position);
+            RenderOptions.SetBitmapScalingMode(BackgroundImage, displayOptions.ScalingMode);
+            SetPlacedAnimatedImage(BackgroundImage, backgroundPlacement, true, displayOptions.StretchMode);
         }
 
         public int SurfaceWidth => currentThemeLayout?.SurfaceWidth ?? AO2ViewportAssetResolver.ViewportToolWidth;
@@ -524,10 +753,14 @@ namespace OceanyaClient.Features.Viewport
 
             if (Dispatcher.CheckAccess())
             {
+                PrefetchWebAssetsForMessage(message);
                 EnqueueChatMessage(message);
                 return;
             }
 
+            // Prefetch off the dispatcher: the request is non-blocking, and starting it here rather than
+            // after the marshal gives the download the whole dispatcher hop as extra head start.
+            PrefetchWebAssetsForMessage(message);
             Dispatcher.BeginInvoke(
                 new Action(() =>
                 {
@@ -558,6 +791,63 @@ namespace OceanyaClient.Features.Viewport
             }
         }
 
+        /// <summary>
+        /// Warms every asset an incoming message needs while earlier messages are still playing.
+        /// </summary>
+        private void PrefetchWebAssetsForMessage(ICMessage message)
+        {
+            if (!WebAssetService.IsActive)
+            {
+                return;
+            }
+
+            WebAssetPrefetcher.PrefetchMessageAssets(message, ResolveCurrentBackgroundName());
+            EnsureSpeakingCharacterMirrored(message.Character);
+            EnsureSpeakingCharacterMirrored(message.OtherName);
+        }
+
+        /// <summary>
+        /// Mirrors the <c>char.ini</c> of a character we just saw speak, when the user does not have it.
+        /// </summary>
+        /// <remarks>
+        /// Sprite resolution runs through <c>CharacterFolder</c>: with no folder,
+        /// <c>ResolveCharacterImageAsset</c> has no folder name to build a VFS path from and returns
+        /// nothing, so the viewport drew <c>placeholder.gif</c> even though the sprites themselves had
+        /// already downloaded. Only the user's own character worked, because selecting it mirrors its
+        /// config. Bounded by design: this fires for people actually speaking in the area, not the
+        /// whole roster.
+        /// </remarks>
+        private void EnsureSpeakingCharacterMirrored(string? characterName)
+        {
+            if (string.IsNullOrWhiteSpace(characterName)
+                || AO2ViewportAssetResolver.ResolveCharacter(characterName) != null)
+            {
+                return;
+            }
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    if (!await WebCharacterMirror.EnsureCharacterAsync(characterName).ConfigureAwait(false))
+                    {
+                        return;
+                    }
+
+                    // The scene was rendered with a null character; repaint now that one exists.
+                    System.Threading.Interlocked.Increment(ref pendingWebAssetRefreshCount);
+                    await Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(ScheduleWebAssetRefresh));
+                }
+                catch (Exception ex)
+                {
+                    CustomConsole.Error(
+                        $"Could not mirror speaking character \"{characterName}\".",
+                        ex,
+                        CustomConsole.LogCategory.WebAssets);
+                }
+            });
+        }
+
         private void DequeueAndDisplayNextMessage()
         {
             StopQueueAdvanceTimer();
@@ -570,10 +860,103 @@ namespace OceanyaClient.Features.Viewport
             StartQueuedMessageDisplay(chatMessageQueue.Dequeue());
         }
 
+        /// <summary>
+        /// Begins displaying a message, optionally holding it for a bounded grace window first so a
+        /// cold web sprite can land before the first frame instead of popping in after it.
+        /// </summary>
+        /// <remarks>
+        /// The grace path is only taken when web fallback is active AND the message's idle sprite is
+        /// genuinely absent locally. With fallback off, or on a warm asset, this stays fully
+        /// synchronous - identical to the pre-feature code path, including its timing.
+        /// </remarks>
         private void StartQueuedMessageDisplay(ICMessage message)
         {
             messageDisplayInProgress = true;
 
+            string? graceStem = ResolveGraceWindowSpriteStem(message);
+            if (graceStem == null)
+            {
+                DisplayQueuedMessageNow(message);
+                return;
+            }
+
+            _ = HoldForWebAssetThenDisplayAsync(message, graceStem);
+        }
+
+        /// <summary>
+        /// Returns the sprite stem worth briefly waiting for, or <c>null</c> when there is nothing to
+        /// wait on and the message should render immediately.
+        /// </summary>
+        private string? ResolveGraceWindowSpriteStem(ICMessage message)
+        {
+            if (!WebAssetService.IsActive || string.IsNullOrWhiteSpace(message.Character))
+            {
+                return null;
+            }
+
+            string emote = (message.Emote ?? string.Empty).Trim();
+            if (emote.Length == 0)
+            {
+                return null;
+            }
+
+            // Only wait when the sprite that will actually be drawn first is missing everywhere. A
+            // local file, or one already in the mirror, resolves here and skips the async path.
+            CharacterFolder? character = AO2ViewportAssetResolver.ResolveCharacter(message.Character);
+            if (!string.IsNullOrWhiteSpace(AO2ViewportAssetResolver.ResolveCharacterDialogAnimation(character, emote, false)))
+            {
+                return null;
+            }
+
+            return "characters/" + message.Character.Trim() + "/(a)" + emote;
+        }
+
+        private async System.Threading.Tasks.Task HoldForWebAssetThenDisplayAsync(ICMessage message, string spriteStem)
+        {
+            System.Diagnostics.Stopwatch stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            string? landed = null;
+            try
+            {
+                WebAssetService? service = WebAssetService.Current;
+                if (service != null)
+                {
+                    landed = await service
+                        .RequestWithGraceAsync(
+                            spriteStem,
+                            WebAssetKind.CharacterSprite,
+                            WebAssetService.DefaultGraceWindowMilliseconds)
+                        .ConfigureAwait(true);
+                }
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Error(
+                    "Web asset grace window failed; rendering the message without waiting.",
+                    ex,
+                    CustomConsole.LogCategory.WebAssets);
+            }
+
+            CustomConsole.Debug(
+                $"[WEB-GRACE] stem=\"{spriteStem}\" landed={landed != null} waitedMs={stopwatch.Elapsed.TotalMilliseconds:0.0} "
+                + $"budgetMs={WebAssetService.DefaultGraceWindowMilliseconds}",
+                CustomConsole.LogCategory.WebAssets);
+
+            try
+            {
+                DisplayQueuedMessageNow(message);
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Error(
+                    "Viewport failed to render a message after its web asset grace window.",
+                    ex,
+                    CustomConsole.LogCategory.Viewport);
+                ScheduleQueueAdvance(TimeSpan.Zero);
+            }
+        }
+
+        private void DisplayQueuedMessageNow(ICMessage message)
+        {
             // Whether this message will type text is decided solely by its message content (same predicate
             // RenderScene uses for showChat). A text message advances the queue from CompleteChatTextReveal;
             // a blank/no-text message (e.g. the space-clear message) never types, so schedule its advance here
@@ -1011,8 +1394,29 @@ namespace OceanyaClient.Features.Viewport
             ICMessage? message = null,
             ViewportPhase phase = ViewportPhase.Speaking,
             bool startTextReveal = true,
-            Action<IAnimationPlayer?>? onCharacterPlayerReady = null)
+            Action<IAnimationPlayer?>? onCharacterPlayerReady = null,
+            bool visualRefreshOnly = false)
         {
+            if (!visualRefreshOnly)
+            {
+                // Remembered so a late web asset can repaint exactly this scene without replaying its
+                // audio, shake, or text reveal (see RefreshSceneVisualsForWebAsset).
+                lastSceneRenderArgs = new SceneRenderArgs(
+                    backgroundName,
+                    position,
+                    character,
+                    emoteName,
+                    deskMod,
+                    effectString,
+                    effect,
+                    flip,
+                    showChat,
+                    showname,
+                    messageText,
+                    message,
+                    phase);
+            }
+
             // Per-phase render timing (see RenderTimingLogThresholdMs). Lap() returns ms elapsed since the last call.
             System.Diagnostics.Stopwatch renderStopwatch = System.Diagnostics.Stopwatch.StartNew();
             double renderLastMs = 0;
@@ -1139,7 +1543,7 @@ namespace OceanyaClient.Features.Viewport
             ChatPreview.ShowShowname = hasShowname;
             ChatPreview.ShowMessage = showChat;
             ChatPreview.Visibility = showChat ? Visibility.Visible : Visibility.Collapsed;
-            if (message != null && ShouldPlayViewportAudio)
+            if (message != null && ShouldPlayViewportAudio && !visualRefreshOnly)
             {
                 bool hasPreAnimation = !string.IsNullOrWhiteSpace(
                     AO2ViewportAssetResolver.ResolveCharacterPreAnimation(character, message.PreAnim));
@@ -1165,7 +1569,7 @@ namespace OceanyaClient.Features.Viewport
             if (showChat)
             {
                 currentChatBlipToken = ResolveViewportBlipToken(character, message);
-                if (renderAudioEnabled)
+                if (renderAudioEnabled && !visualRefreshOnly)
                 {
                     audioManager.PrepareBlip(currentChatBlipToken, character?.Name, showname);
                 }
@@ -1186,15 +1590,20 @@ namespace OceanyaClient.Features.Viewport
             // Track position for slide transitions
             string newPosition = position ?? string.Empty;
             bool positionChanged = !string.Equals(currentRenderPosition, newPosition, StringComparison.OrdinalIgnoreCase);
-            bool shouldSlide = message?.Slide == true && positionChanged && phase == ViewportPhase.Speaking;
+            bool shouldSlide = message?.Slide == true && positionChanged && phase == ViewportPhase.Speaking && !visualRefreshOnly;
             currentRenderPosition = newPosition;
             if (shouldSlide)
             {
                 AnimateBackgroundSlide(bgOldLeft, deskOldLeft);
             }
 
-            // Show character sticker for this message
-            if (phase == ViewportPhase.Speaking && character != null)
+            // Show character sticker for this message. Skipped on a visual refresh: re-showing a
+            // sticker or replaying the evidence appear animation mid-message would be visibly wrong.
+            if (visualRefreshOnly)
+            {
+                // Nothing to re-trigger; the existing sticker/evidence visuals stay as they are.
+            }
+            else if (phase == ViewportPhase.Speaking && character != null)
             {
                 ShowSticker(message?.Character, AO2ViewportAssetResolver.ResolveCharacterChatToken(character));
             }

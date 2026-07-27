@@ -256,6 +256,12 @@ namespace OceanyaClient
             SaveFile.Data.AudioMusicVolume = AudioSettings.PercentToScalar(MusicVolumeSlider.Value);
             SaveFile.Data.AudioSfxVolume = AudioSettings.PercentToScalar(SfxVolumeSlider.Value);
             SaveFile.Data.AudioBlipVolume = AudioSettings.PercentToScalar(BlipVolumeSlider.Value);
+            // config.ini wins over the savefile, and it is only written on Save, so the unsaved slider
+            // values have to be published explicitly for the live preview to be audible.
+            AudioSettings.SetLivePreviewVolumes(
+                AudioSettings.PercentToScalar(MusicVolumeSlider.Value),
+                AudioSettings.PercentToScalar(SfxVolumeSlider.Value),
+                AudioSettings.PercentToScalar(BlipVolumeSlider.Value));
             VolumeLiveChanged?.Invoke();
         }
 
@@ -425,6 +431,8 @@ namespace OceanyaClient
 
         private void SaveButton_Click(object sender, RoutedEventArgs e)
         {
+            // The saved values below become authoritative, so the preview override must go.
+            AudioSettings.ClearLivePreviewVolumes();
             SaveFile.Data.AudioMusicVolume = AudioSettings.PercentToScalar(MusicVolumeSlider.Value);
             SaveFile.Data.AudioSfxVolume = AudioSettings.PercentToScalar(SfxVolumeSlider.Value);
             SaveFile.Data.AudioBlipVolume = AudioSettings.PercentToScalar(BlipVolumeSlider.Value);
@@ -485,6 +493,7 @@ namespace OceanyaClient
 
         private void CancelButton_Click(object sender, RoutedEventArgs e)
         {
+            AudioSettings.ClearLivePreviewVolumes();
             SaveFile.Data.AudioMusicVolume = originalMusicVolume;
             SaveFile.Data.AudioSfxVolume = originalSfxVolume;
             SaveFile.Data.AudioBlipVolume = originalBlipVolume;

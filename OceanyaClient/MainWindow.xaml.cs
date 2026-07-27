@@ -21,12 +21,14 @@ using AO2AIBot.Controller;
 using AOBot_Testing.Agents;
 using AOBot_Testing.Structures;
 using Common;
+using Common.WebAssets;
 using NAudio.Wave;
 using OceanyaClient.AdvancedFeatures;
 using OceanyaClient.Components;
 using OceanyaClient.Features.Chat;
 using OceanyaClient.Features.Startup;
 using OceanyaClient.Features.Viewport;
+using OceanyaClient.Features.WebAssets;
 using OceanyaClient.Utilities;
 using ToggleButton = System.Windows.Controls.Primitives.ToggleButton;
 
@@ -4456,6 +4458,7 @@ namespace OceanyaClient
 
             singleInternalClient = new AOClient(Globals.GetSelectedServerEndpoint());
             singleInternalClient.clientName = "InternalClient";
+            AttachWebAssetFallback(singleInternalClient);
 
             singleInternalClient.OnICMessageReceived += (ICMessage icMessage) =>
             {
@@ -4674,6 +4677,63 @@ namespace OceanyaClient
             return ApplyCharacterSelectionAsync(bot, charName, preserveLocalCharacter: false);
         }
 
+        /// <summary>
+        /// Makes sure a character picked from the selector actually exists on disk before it is used,
+        /// downloading its <c>char.ini</c> from the server's asset URL when the user does not have it.
+        /// </summary>
+        /// <remarks>
+        /// The selector lists every character the server offers, streamed ones included, so picking one
+        /// the user never installed is now a normal action. Everything downstream
+        /// (<c>CharacterFolder.Create</c>, the emote grid, the viewport) is path-based, so materializing
+        /// the config into the web mirror is all that is required to make it behave like a local
+        /// character. Sprites still stream on demand.
+        /// </remarks>
+        private async Task EnsureCharacterAvailableLocallyAsync(string charName)
+        {
+            if (string.IsNullOrWhiteSpace(charName) || !WebAssetService.IsActive)
+            {
+                return;
+            }
+
+            if (CharacterFolder.FullList.Any(folder =>
+                    string.Equals(folder.Name, charName, StringComparison.OrdinalIgnoreCase)))
+            {
+                return;
+            }
+
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            bool waitFormShown = false;
+            Window? owner = HostWindow ?? Application.Current?.MainWindow;
+            try
+            {
+                if (owner != null && !OceanyaTestMode.Current.DisableWaitForms)
+                {
+                    await WaitForm.ShowFormAsync($"Getting {charName} from the server...", owner);
+                    waitFormShown = true;
+                }
+
+                bool registered = await WebCharacterMirror.EnsureCharacterAsync(charName);
+                CustomConsole.Info(
+                    $"[WEB] On-demand character fetch \"{charName}\" registered={registered} "
+                    + $"elapsedMs={stopwatch.ElapsedMilliseconds}",
+                    CustomConsole.LogCategory.WebAssets);
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Error(
+                    $"Could not fetch character \"{charName}\" from the server's assets.",
+                    ex,
+                    CustomConsole.LogCategory.WebAssets);
+            }
+            finally
+            {
+                if (waitFormShown)
+                {
+                    await WaitForm.CloseFormAsync();
+                }
+            }
+        }
+
         private async Task ApplyCharacterSelectionAsync(AOClient bot, string charName, bool preserveLocalCharacter)
         {
             try
@@ -4688,6 +4748,8 @@ namespace OceanyaClient
                 Emote? previousEmote = bot.currentEmote;
                 string previousICShowname = bot.ICShowname;
                 string previousPosition = bot.curPos;
+
+                await EnsureCharacterAvailableLocallyAsync(charName);
 
                 await networkClient.SelectIniPuppet(charName, !preserveLocalCharacter);
                 SetProfileIniPuppetName(bot, charName);
@@ -5497,13 +5559,35 @@ namespace OceanyaClient
             string currentSelectedCharName,
             IReadOnlyCollection<string> additionalUnavailableCharacters)
         {
-            CharacterSelectorWindow selector = new CharacterSelectorWindow(
-                BuildCharacterSelectorAvailability(serverAvailability, additionalUnavailableCharacters),
-                SaveFile.Data.FrequentlyUsedIniPuppets,
-                currentSelectedCharName)
+            // Building the selector is real work on a large server, so show progress rather than a
+            // frozen window. The wait form hides itself automatically once the dialog goes modal.
+            Window? owner = HostWindow ?? Application.Current?.MainWindow;
+            bool waitFormShown = false;
+            if (owner != null && !OceanyaTestMode.Current.DisableWaitForms)
             {
-                Owner = HostWindow ?? Application.Current?.MainWindow
-            };
+                WaitForm.ShowFormAsync("Loading characters...", owner).GetAwaiter().GetResult();
+                waitFormShown = true;
+                WaitForm.SetSubtitle("Building character list...");
+            }
+
+            CharacterSelectorWindow selector;
+            try
+            {
+                selector = new CharacterSelectorWindow(
+                    BuildCharacterSelectorAvailability(serverAvailability, additionalUnavailableCharacters),
+                    SaveFile.Data.FrequentlyUsedIniPuppets,
+                    currentSelectedCharName)
+                {
+                    Owner = HostWindow ?? Application.Current?.MainWindow
+                };
+            }
+            finally
+            {
+                if (waitFormShown)
+                {
+                    WaitForm.CloseFormAsync().GetAwaiter().GetResult();
+                }
+            }
 
             if (selector.ShowDialog() != true || string.IsNullOrWhiteSpace(selector.SelectedCharacterName))
             {
@@ -5645,12 +5729,87 @@ namespace OceanyaClient
             OceanyaMessageBox.Show(message, title, buttons, image);
         }
 
+        /// <summary>
+        /// Installs webAO-style asset fallback for this GM session once the server announces its
+        /// asset URL, so anything the user is missing locally streams from the server instead.
+        /// </summary>
+        /// <remarks>
+        /// GM Multi-Client only. Offline tools never call this, which is what keeps the Character
+        /// Database Viewer and File Creator showing physical files exclusively. Installing is
+        /// idempotent per asset URL, so every connected internal client can safely hook it.
+        /// </remarks>
+        private void AttachWebAssetFallback(AOClient bot)
+        {
+            bot.OnServerAssetUrlReceived += assetUrl =>
+            {
+                InstallWebAssetFallback(assetUrl);
+            };
+
+            // The server's roster feeds the character dropdown, so a GM can iniswap to anything the
+            // server offers rather than only what is installed locally.
+            bot.OnServerCharacterListReceived += roster =>
+            {
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    try
+                    {
+                        ICMessageSettingsControl.SetServerCharacterRoster(roster);
+                    }
+                    catch (Exception ex)
+                    {
+                        CustomConsole.Error(
+                            "Failed to add the server character roster to the character dropdown.",
+                            ex,
+                            CustomConsole.LogCategory.WebAssets);
+                    }
+                }));
+            };
+
+            // Deliberately NOT mirroring the whole roster here. Measured on a 3500-character server,
+            // downloading every missing char.ini saturated the fetch pipeline for minutes and pushed
+            // average asset latency to 13 seconds (peak 52 s), starving the assets actually on screen.
+            // Configs are fetched on demand instead: when a character is selected
+            // (EnsureCharacterAvailableLocallyAsync) and for the selector cards the user can actually
+            // see (CharacterSelectorWindow's visible-card warm-up).
+
+            // A client that already completed its handshake before handlers were attached (snapshot
+            // restore reuses preconnected clients) will not fire the event again.
+            if (!string.IsNullOrWhiteSpace(bot.ServerAssetUrl))
+            {
+                InstallWebAssetFallback(bot.ServerAssetUrl);
+            }
+        }
+
+        private void InstallWebAssetFallback(string? assetUrl)
+        {
+            try
+            {
+                WebAssetService? service = WebAssetService.Install(assetUrl);
+                if (service == null)
+                {
+                    return;
+                }
+
+                // No bulk character mirroring on connect: see AttachWebAssetFallback for why. Characters
+                // stream in on demand.
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Error(
+                    "Failed to install web asset fallback; the client will use local files only.",
+                    ex,
+                    CustomConsole.LogCategory.WebAssets);
+            }
+        }
+
         private void AttachDirectClientMessageHandlers(AOClient bot)
         {
             if (!directMessageHandlersAttached.Add(bot))
             {
                 return;
             }
+
+            AttachWebAssetFallback(bot);
 
             bot.OnICMessageReceived += (ICMessage icMessage) =>
             {
@@ -5966,8 +6125,11 @@ namespace OceanyaClient
                 {
                     Dispatcher.Invoke(() =>
                     {
-                        // Path to the normal and selected images
-                        string normalImagePath = newCharacter.CharIconPath;
+                        // Path to the normal and selected images. Resolved through the web mirror when
+                        // the cached path is empty (streamed character registered before its icon landed).
+                        string normalImagePath = WebCharacterIconResolver.ResolveCharacterIcon(
+                            newCharacter.Name,
+                            newCharacter.CharIconPath);
                         string selectedImagePath = normalImagePath; // Since you want the same image darkened
 
                         if (System.IO.File.Exists(normalImagePath))
@@ -6539,6 +6701,10 @@ namespace OceanyaClient
                 content.SettingsSaved -= ApplySavedClientSettingsToRuntime;
                 content.SettingsSaved -= ao2TextLogWriter.RefreshSession;
                 content.VolumeLiveChanged -= liveVolumeRefresh;
+                // Safety net for closing via the title-bar X, which runs neither Save nor Cancel and
+                // would otherwise leave the unsaved slider preview permanently in force.
+                AudioSettings.ClearLivePreviewVolumes();
+                liveVolumeRefresh();
                 settingsWindow = null;
                 if (ReferenceEquals(settingsContent, content))
                 {
