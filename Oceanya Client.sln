@@ -35,6 +35,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Documentation", "Documentat
 		Documentation\AgentDocumentationWorkflow.md = Documentation\AgentDocumentationWorkflow.md
 		Documentation\CharacterCacheColdLaunch.md = Documentation\CharacterCacheColdLaunch.md
 		Documentation\CharacterFileCreator.md = Documentation\CharacterFileCreator.md
+		Documentation\CutoutSelectionSurface.md = Documentation\CutoutSelectionSurface.md
 		Documentation\DebugConsoleAndLogging.md = Documentation\DebugConsoleAndLogging.md
 		Documentation\FeatureIndex.md = Documentation\FeatureIndex.md
 		Documentation\GmMultiClientSnapshotRestore.md = Documentation\GmMultiClientSnapshotRestore.md

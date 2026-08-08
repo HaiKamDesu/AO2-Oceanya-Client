@@ -9283,50 +9283,6 @@ namespace OceanyaClient
                 clampedSize);
         }
 
-        private static bool TryCreatePixelSquareSelectionFromDisplayBounds(
-            BitmapSource frame,
-            Rect viewport,
-            Rect rawSelectionBounds,
-            out PixelSquareSelection selection)
-        {
-            selection = default;
-            if (viewport.Width <= 0 || viewport.Height <= 0)
-            {
-                return false;
-            }
-
-            Rect clipped = Rect.Intersect(rawSelectionBounds, viewport);
-            if (clipped.IsEmpty || clipped.Width < 4 || clipped.Height < 4)
-            {
-                return false;
-            }
-
-            double scale = Math.Min(
-                viewport.Width / Math.Max(1, frame.PixelWidth),
-                viewport.Height / Math.Max(1, frame.PixelHeight));
-            if (scale <= 0)
-            {
-                return false;
-            }
-
-            int cropX = Math.Max(0, (int)Math.Round((clipped.X - viewport.X) / scale));
-            int cropY = Math.Max(0, (int)Math.Round((clipped.Y - viewport.Y) / scale));
-            int proposedSize = Math.Max(
-                1,
-                Math.Min(
-                    (int)Math.Round(clipped.Width / scale),
-                    (int)Math.Round(clipped.Height / scale)));
-            int maxSize = Math.Min(frame.PixelWidth - cropX, frame.PixelHeight - cropY);
-            if (maxSize <= 0)
-            {
-                return false;
-            }
-
-            selection = new PixelSquareSelection(cropX, cropY, Math.Min(proposedSize, maxSize));
-            selection = ClampPixelSquareSelectionToFrame(selection, frame);
-            return selection.Size > 0;
-        }
-
         private static bool TryRestorePixelSquareSelection(
             CutSelectionState? state,
             BitmapSource frame,
@@ -9348,36 +9304,6 @@ namespace OceanyaClient
 
             selection = ClampPixelSquareSelectionToFrame(new PixelSquareSelection(cropX, cropY, cropSize), frame);
             return selection.Size > 0;
-        }
-
-        private static Rect ProjectPixelSquareSelectionToViewport(
-            BitmapSource frame,
-            Rect viewport,
-            PixelSquareSelection selection)
-        {
-            double scale = Math.Min(
-                viewport.Width / Math.Max(1, frame.PixelWidth),
-                viewport.Height / Math.Max(1, frame.PixelHeight));
-            double x = viewport.X + (selection.X * scale);
-            double y = viewport.Y + (selection.Y * scale);
-            double size = selection.Size * scale;
-            return new Rect(x, y, size, size);
-        }
-
-        private static bool TryResolveCutSelectionDisplayRect(
-            CutSelectionState? state,
-            BitmapSource frame,
-            Rect viewport,
-            out Rect displayRect)
-        {
-            displayRect = Rect.Empty;
-            if (!TryRestorePixelSquareSelection(state, frame, out PixelSquareSelection pixelSelection))
-            {
-                return false;
-            }
-
-            displayRect = ProjectPixelSquareSelectionToViewport(frame, viewport, pixelSelection);
-            return !displayRect.IsEmpty && displayRect.Width >= 2 && displayRect.Height >= 2;
         }
 
         private static BitmapSource? CreateCutoutFromPixelSquareSelection(
@@ -9543,29 +9469,8 @@ namespace OceanyaClient
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 VerticalAlignment = VerticalAlignment.Stretch
             };
-            Grid previewGrid = new Grid();
-            Image previewImage = new Image { Stretch = Stretch.Uniform };
-            Canvas selectionCanvas = new Canvas { Background = Brushes.Transparent };
-            System.Windows.Shapes.Rectangle lastSelectionRect = new System.Windows.Shapes.Rectangle
-            {
-                Stroke = new SolidColorBrush(Color.FromRgb(226, 160, 96)),
-                StrokeThickness = 1.3,
-                StrokeDashArray = new DoubleCollection { 4, 2 },
-                Fill = Brushes.Transparent,
-                Visibility = Visibility.Collapsed
-            };
-            System.Windows.Shapes.Rectangle selectionRect = new System.Windows.Shapes.Rectangle
-            {
-                Stroke = new SolidColorBrush(Color.FromRgb(148, 220, 255)),
-                Fill = new SolidColorBrush(Color.FromArgb(42, 96, 182, 226)),
-                StrokeThickness = 1.5,
-                Visibility = Visibility.Collapsed
-            };
-            selectionCanvas.Children.Add(lastSelectionRect);
-            selectionCanvas.Children.Add(selectionRect);
-            previewGrid.Children.Add(previewImage);
-            previewGrid.Children.Add(selectionCanvas);
-            previewBorder.Child = previewGrid;
+            CutoutSelectionSurface selectionSurface = new CutoutSelectionSurface();
+            previewBorder.Child = selectionSurface;
 
             Button playPauseButton = CreateTimelineSymbolButton("▶", "Play/pause preview.");
             Button prevFrameButton = CreateTimelineSymbolButton("⏮", "Go back one frame.");
@@ -9625,7 +9530,9 @@ namespace OceanyaClient
 
             TextBlock tipText = new TextBlock
             {
-                Text = "Drag to draw a square selection. Use the timeline for animated assets before cropping.",
+                Text = "Drag to draw a square selection, then drag its sides/corners to resize or its middle to move it. "
+                    + "Click outside it and drag to start a new one. Alt-drag resizes from the center, Space+drag pans the view. "
+                    + "Right-click for selection actions, Ctrl+Z / Ctrl+Y to undo/redo, arrow keys to nudge, mouse wheel to zoom.",
                 Foreground = new SolidColorBrush(Color.FromRgb(186, 202, 218)),
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, 8, 0, 0)
@@ -9685,6 +9592,7 @@ namespace OceanyaClient
             StackPanel previewPanel = new StackPanel();
             previewPanel.Children.Add(previewBorder);
             previewPanel.Children.Add(previewResizeGrip);
+            previewPanel.Children.Add(selectionSurface.Toolbar);
             previewPanel.Children.Add(timelineControls);
             previewPanel.Children.Add(copyPasteRow);
             previewPanel.Children.Add(tipText);
@@ -9753,8 +9661,6 @@ namespace OceanyaClient
             AnimationTimelinePreviewController? previewController = null;
             BitmapSource? currentFrame = null;
             bool suppressTimelineSeek = false;
-            Point dragStart;
-            bool dragging = false;
             PixelSquareSelection? currentPixelSelection = null;
             BitmapSource? currentSelectionCutout = null;
             string currentSourcePath = sourceOptions[0].Path;
@@ -9773,20 +9679,6 @@ namespace OceanyaClient
                 lastCutoutImage.Source = hasMatchingSavedSelection ? existingCutout : null;
             }
 
-            Rect ComputeImageViewport(BitmapSource frame)
-            {
-                double hostWidth = Math.Max(1, selectionCanvas.ActualWidth);
-                double hostHeight = Math.Max(1, selectionCanvas.ActualHeight);
-                double frameWidth = Math.Max(1, frame.PixelWidth);
-                double frameHeight = Math.Max(1, frame.PixelHeight);
-                double scale = Math.Min(hostWidth / frameWidth, hostHeight / frameHeight);
-                double drawWidth = frameWidth * scale;
-                double drawHeight = frameHeight * scale;
-                double x = (hostWidth - drawWidth) * 0.5;
-                double y = (hostHeight - drawHeight) * 0.5;
-                return new Rect(x, y, drawWidth, drawHeight);
-            }
-
             CutSelectionState? GetSavedSelectionForCurrentSource()
             {
                 if (savedCutSelectionByEmoteKey.TryGetValue(emoteCutSelectionKey, out CutSelectionState? saved)
@@ -9802,44 +9694,18 @@ namespace OceanyaClient
             void UpdateLastSelectionVisual(CutSelectionState? selectionState)
             {
                 if (currentFrame == null
-                    || !TryResolveCutSelectionDisplayRect(selectionState, currentFrame, ComputeImageViewport(currentFrame), out Rect rect))
+                    || !TryRestorePixelSquareSelection(selectionState, currentFrame, out PixelSquareSelection ghost))
                 {
-                    lastSelectionRect.Visibility = Visibility.Collapsed;
+                    selectionSurface.SetGhostSelection(null);
                     return;
                 }
 
-                if (rect.Width < 2 || rect.Height < 2)
-                {
-                    lastSelectionRect.Visibility = Visibility.Collapsed;
-                    return;
-                }
-
-                Canvas.SetLeft(lastSelectionRect, rect.X);
-                Canvas.SetTop(lastSelectionRect, rect.Y);
-                lastSelectionRect.Width = rect.Width;
-                lastSelectionRect.Height = rect.Height;
-                lastSelectionRect.Visibility = Visibility.Visible;
+                selectionSurface.SetGhostSelection(ghost);
             }
 
             void UpdateSelectionVisual()
             {
-                if (currentFrame == null || !currentPixelSelection.HasValue)
-                {
-                    selectionRect.Visibility = Visibility.Collapsed;
-                    currentCutoutImage.Source = null;
-                    currentSelectionCutout = null;
-                    copySelectionButton.IsEnabled = false;
-                    return;
-                }
-
-                Rect viewport = ComputeImageViewport(currentFrame);
-                Rect selectionBounds = ProjectPixelSquareSelectionToViewport(currentFrame, viewport, currentPixelSelection.Value);
-                selectionRect.Visibility = Visibility.Visible;
-                Canvas.SetLeft(selectionRect, selectionBounds.X);
-                Canvas.SetTop(selectionRect, selectionBounds.Y);
-                selectionRect.Width = selectionBounds.Width;
-                selectionRect.Height = selectionBounds.Height;
-                copySelectionButton.IsEnabled = true;
+                copySelectionButton.IsEnabled = currentPixelSelection.HasValue;
             }
 
             void UpdateCurrentCutoutPreview()
@@ -9848,36 +9714,65 @@ namespace OceanyaClient
                 currentCutoutImage.Source = currentSelectionCutout;
             }
 
+            void ApplySelectionToSurface(PixelSquareSelection? value)
+            {
+                selectionSurface.SetSelection(value, recordUndo: false);
+                currentPixelSelection = selectionSurface.Selection;
+                UpdateSelectionVisual();
+                UpdateCurrentCutoutPreview();
+            }
+
+            selectionSurface.SelectionChanged += (_, _) =>
+            {
+                currentPixelSelection = selectionSurface.Selection;
+                UpdateSelectionVisual();
+                UpdateCurrentCutoutPreview();
+            };
+            selectionSurface.CanPasteSelection = () => copiedCutSelection.HasValue;
+            selectionSurface.CopySelectionRequested += (_, _) =>
+            {
+                if (currentPixelSelection.HasValue)
+                {
+                    copiedCutSelection = currentPixelSelection;
+                    pasteSelectionButton.IsEnabled = currentFrame != null;
+                }
+            };
+            selectionSurface.PasteSelectionRequested += (_, _) =>
+            {
+                if (currentFrame != null && copiedCutSelection.HasValue)
+                {
+                    selectionSurface.SetSelection(copiedCutSelection.Value, recordUndo: true);
+                }
+            };
+
             void ApplyInitialSelectionForCurrentSource()
             {
                 if (currentFrame == null)
                 {
-                    currentPixelSelection = null;
-                    UpdateSelectionVisual();
-                    UpdateCurrentCutoutPreview();
+                    ApplySelectionToSurface(null);
                     UpdateLastSelectionVisual(null);
                     UpdateLastCutoutPreviewForCurrentSource();
+                    selectionSurface.ResetHistory();
                     return;
                 }
 
                 CutSelectionState? savedSelection = GetSavedSelectionForCurrentSource();
                 if (TryRestorePixelSquareSelection(savedSelection, currentFrame, out PixelSquareSelection restored))
                 {
-                    currentPixelSelection = restored;
+                    ApplySelectionToSurface(restored);
                 }
                 else if (suggestedPixelSelection.HasValue)
                 {
-                    currentPixelSelection = ClampPixelSquareSelectionToFrame(suggestedPixelSelection.Value, currentFrame);
+                    ApplySelectionToSurface(ClampPixelSquareSelectionToFrame(suggestedPixelSelection.Value, currentFrame));
                 }
                 else
                 {
-                    currentPixelSelection = null;
+                    ApplySelectionToSurface(null);
                 }
 
-                UpdateSelectionVisual();
-                UpdateCurrentCutoutPreview();
                 UpdateLastSelectionVisual(savedSelection);
                 UpdateLastCutoutPreviewForCurrentSource();
+                selectionSurface.ResetHistory();
             }
 
             void LoadSource(string path)
@@ -9886,6 +9781,7 @@ namespace OceanyaClient
                 previewController?.Dispose();
                 previewController = null;
                 currentFrame = null;
+                selectionSurface.SetFrame(null);
                 currentPixelSelection = null;
                 UpdateSelectionVisual();
                 UpdateCurrentCutoutPreview();
@@ -9894,7 +9790,7 @@ namespace OceanyaClient
                 {
                     previewController = createdController;
                     currentFrame = createdController.CurrentFrame as BitmapSource;
-                    previewImage.Source = createdController.CurrentFrame;
+                    selectionSurface.SetFrame(currentFrame);
                     timelineSlider.Maximum = Math.Max(1, createdController.EffectiveDurationMs);
                     createdController.SetLoop(loopCheckBox.IsChecked == true);
                     createdController.PlaybackStateChanged += isPlaying => Dispatcher.Invoke(() =>
@@ -9903,8 +9799,9 @@ namespace OceanyaClient
                     });
                     createdController.PositionChanged += (frame, positionMs) => Dispatcher.Invoke(() =>
                     {
-                        previewImage.Source = frame;
                         currentFrame = frame as BitmapSource;
+                        selectionSurface.SetFrame(currentFrame);
+                        currentPixelSelection = selectionSurface.Selection;
                         UpdateSelectionVisual();
                         UpdateCurrentCutoutPreview();
                         UpdateLastSelectionVisual(GetSavedSelectionForCurrentSource());
@@ -9916,7 +9813,7 @@ namespace OceanyaClient
                 else if (TryLoadButtonBitmap(path, out BitmapSource? bitmap, out _))
                 {
                     currentFrame = bitmap;
-                    previewImage.Source = bitmap;
+                    selectionSurface.SetFrame(bitmap);
                     timelineSlider.Value = 0;
                     timelineSlider.Maximum = 1;
                 }
@@ -9962,72 +9859,26 @@ namespace OceanyaClient
                     return;
                 }
 
-                currentPixelSelection = ClampPixelSquareSelectionToFrame(copiedCutSelection.Value, currentFrame);
-                UpdateSelectionVisual();
-                UpdateCurrentCutoutPreview();
+                selectionSurface.SetSelection(copiedCutSelection.Value, recordUndo: true);
                 copySelectionButton.IsEnabled = true;
             };
 
-            selectionCanvas.MouseLeftButtonDown += (_, e) =>
+            selectionSurface.SelectionCommitted += (_, _) =>
             {
-                if (currentFrame == null)
-                {
-                    return;
-                }
-
-                dragging = true;
-                dragStart = e.GetPosition(selectionCanvas);
-                currentPixelSelection = null;
-                UpdateSelectionVisual();
-                UpdateCurrentCutoutPreview();
-                selectionCanvas.CaptureMouse();
-            };
-            selectionCanvas.MouseMove += (_, e) =>
-            {
-                if (!dragging || currentFrame == null)
-                {
-                    return;
-                }
-
-                Point current = e.GetPosition(selectionCanvas);
-                double dx = current.X - dragStart.X;
-                double dy = current.Y - dragStart.Y;
-                double size = Math.Max(Math.Abs(dx), Math.Abs(dy));
-                double widthDirection = dx == 0 ? (dy < 0 ? -1 : 1) : Math.Sign(dx);
-                double heightDirection = dy == 0 ? (dx < 0 ? -1 : 1) : Math.Sign(dy);
-                double width = widthDirection * size;
-                double height = heightDirection * size;
-                Point end = new Point(dragStart.X + width, dragStart.Y + height);
-                Rect rawSelectionBounds = new Rect(dragStart, end);
-                Rect viewport = ComputeImageViewport(currentFrame);
-                if (TryCreatePixelSquareSelectionFromDisplayBounds(currentFrame, viewport, rawSelectionBounds, out PixelSquareSelection selection))
-                {
-                    currentPixelSelection = selection;
-                }
-                else
-                {
-                    currentPixelSelection = null;
-                }
-
-                UpdateSelectionVisual();
-                UpdateCurrentCutoutPreview();
-            };
-            selectionCanvas.MouseLeftButtonUp += (_, _) =>
-            {
-                dragging = false;
-                if (selectionCanvas.IsMouseCaptured)
-                {
-                    selectionCanvas.ReleaseMouseCapture();
-                }
-
                 suggestedPixelSelection = null;
                 UpdateCurrentCutoutPreview();
             };
-            selectionCanvas.SizeChanged += (_, _) =>
+            dialog.PreviewKeyDown += (_, e) =>
             {
-                UpdateSelectionVisual();
-                UpdateCurrentCutoutPreview();
-                UpdateLastSelectionVisual(GetSavedSelectionForCurrentSource());
+                if (Keyboard.FocusedElement is TextBoxBase)
+                {
+                    return;
+                }
+
+                if (selectionSurface.HandleKey(e))
+                {
+                    e.Handled = true;
+                }
             };
 
             playPauseButton.Click += (_, _) =>
@@ -10230,29 +10081,8 @@ namespace OceanyaClient
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 VerticalAlignment = VerticalAlignment.Stretch
             };
-            Grid previewGrid = new Grid();
-            Image previewImage = new Image { Stretch = Stretch.Uniform };
-            Canvas selectionCanvas = new Canvas { Background = Brushes.Transparent };
-            System.Windows.Shapes.Rectangle lastSelectionRect = new System.Windows.Shapes.Rectangle
-            {
-                Stroke = new SolidColorBrush(Color.FromRgb(226, 160, 96)),
-                StrokeThickness = 1.3,
-                StrokeDashArray = new DoubleCollection { 4, 2 },
-                Fill = Brushes.Transparent,
-                Visibility = Visibility.Collapsed
-            };
-            System.Windows.Shapes.Rectangle selectionRect = new System.Windows.Shapes.Rectangle
-            {
-                Stroke = new SolidColorBrush(Color.FromRgb(148, 220, 255)),
-                Fill = new SolidColorBrush(Color.FromArgb(42, 96, 182, 226)),
-                StrokeThickness = 1.5,
-                Visibility = Visibility.Collapsed
-            };
-            selectionCanvas.Children.Add(lastSelectionRect);
-            selectionCanvas.Children.Add(selectionRect);
-            previewGrid.Children.Add(previewImage);
-            previewGrid.Children.Add(selectionCanvas);
-            previewBorder.Child = previewGrid;
+            CutoutSelectionSurface selectionSurface = new CutoutSelectionSurface();
+            previewBorder.Child = selectionSurface;
 
             Button playPauseButton = CreateTimelineSymbolButton("▶", "Play/pause preview.");
             Button prevFrameButton = CreateTimelineSymbolButton("⏮", "Go back one frame.");
@@ -10310,7 +10140,10 @@ namespace OceanyaClient
 
             TextBlock tipText = new TextBlock
             {
-                Text = "Drag to draw a square selection. Use Previous/Next to move through the list and Done to save the whole batch.",
+                Text = "Drag to draw a square selection, then drag its sides/corners to resize or its middle to move it. "
+                    + "Click outside it and drag to start a new one. Alt-drag resizes from the center, Space+drag pans the view. "
+                    + "Right-click for selection actions, Ctrl+Z / Ctrl+Y to undo/redo, arrow keys to nudge, mouse wheel to zoom. "
+                    + "Use Previous/Next to move through the list and Done to save the whole batch.",
                 Foreground = new SolidColorBrush(Color.FromRgb(186, 202, 218)),
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, 8, 0, 0)
@@ -10370,6 +10203,7 @@ namespace OceanyaClient
             StackPanel previewPanel = new StackPanel();
             previewPanel.Children.Add(previewBorder);
             previewPanel.Children.Add(previewResizeGrip);
+            previewPanel.Children.Add(selectionSurface.Toolbar);
             previewPanel.Children.Add(timelineControls);
             previewPanel.Children.Add(bulkCopyPasteRow);
             previewPanel.Children.Add(tipText);
@@ -10464,26 +10298,10 @@ namespace OceanyaClient
             bool suppressTimelineSeek = false;
             bool suppressSourceDropdownEvents = false;
             bool allowCloseWithoutPrompt = false;
-            Point dragStart = default;
-            bool dragging = false;
 
             BulkCutoutEditorEntry GetCurrentEntry()
             {
                 return entries[currentIndex];
-            }
-
-            Rect ComputeImageViewport(BitmapSource frame)
-            {
-                double hostWidth = Math.Max(1, selectionCanvas.ActualWidth);
-                double hostHeight = Math.Max(1, selectionCanvas.ActualHeight);
-                double frameWidth = Math.Max(1, frame.PixelWidth);
-                double frameHeight = Math.Max(1, frame.PixelHeight);
-                double scale = Math.Min(hostWidth / frameWidth, hostHeight / frameHeight);
-                double drawWidth = frameWidth * scale;
-                double drawHeight = frameHeight * scale;
-                double x = (hostWidth - drawWidth) * 0.5;
-                double y = (hostHeight - drawHeight) * 0.5;
-                return new Rect(x, y, drawWidth, drawHeight);
             }
 
             void RefreshNavigatorTiles()
@@ -10559,25 +10377,18 @@ namespace OceanyaClient
 
             void UpdateLastSelectionVisual()
             {
+                CutSelectionState? referenceState = GetCurrentEntry().InitialSelectionState != null
+                    && string.Equals(GetCurrentEntry().InitialSelectionState!.SourcePath, currentSourcePath, StringComparison.OrdinalIgnoreCase)
+                        ? GetCurrentEntry().InitialSelectionState
+                        : null;
                 if (currentFrame == null
-                    || !TryResolveCutSelectionDisplayRect(
-                        GetCurrentEntry().InitialSelectionState != null
-                            && string.Equals(GetCurrentEntry().InitialSelectionState.SourcePath, currentSourcePath, StringComparison.OrdinalIgnoreCase)
-                            ? GetCurrentEntry().InitialSelectionState
-                            : null,
-                        currentFrame,
-                        ComputeImageViewport(currentFrame),
-                        out Rect rect))
+                    || !TryRestorePixelSquareSelection(referenceState, currentFrame, out PixelSquareSelection ghost))
                 {
-                    lastSelectionRect.Visibility = Visibility.Collapsed;
+                    selectionSurface.SetGhostSelection(null);
                     return;
                 }
 
-                lastSelectionRect.Visibility = Visibility.Visible;
-                Canvas.SetLeft(lastSelectionRect, rect.X);
-                Canvas.SetTop(lastSelectionRect, rect.Y);
-                lastSelectionRect.Width = rect.Width;
-                lastSelectionRect.Height = rect.Height;
+                selectionSurface.SetGhostSelection(ghost);
             }
 
             void UpdateSavedCutoutPreview()
@@ -10600,25 +10411,16 @@ namespace OceanyaClient
 
             void UpdateSelectionVisual()
             {
-                if (currentFrame == null || !currentPixelSelection.HasValue)
-                {
-                    selectionRect.Visibility = Visibility.Collapsed;
-                    currentSelectionCutout = null;
-                    currentCutoutImage.Source = null;
-                    UpdateNavigationButtons();
-                    return;
-                }
-
-                Rect viewport = ComputeImageViewport(currentFrame);
-                Rect selectionBounds = ProjectPixelSquareSelectionToViewport(currentFrame, viewport, currentPixelSelection.Value);
-                selectionRect.Visibility = Visibility.Visible;
-                Canvas.SetLeft(selectionRect, selectionBounds.X);
-                Canvas.SetTop(selectionRect, selectionBounds.Y);
-                selectionRect.Width = selectionBounds.Width;
-                selectionRect.Height = selectionBounds.Height;
                 currentSelectionCutout = CreateCutoutFromPixelSquareSelection(currentFrame, currentPixelSelection);
                 currentCutoutImage.Source = currentSelectionCutout;
                 UpdateNavigationButtons();
+            }
+
+            void ApplySelectionToSurface(PixelSquareSelection? value)
+            {
+                selectionSurface.SetSelection(value, recordUndo: false);
+                currentPixelSelection = selectionSurface.Selection;
+                UpdateSelectionVisual();
             }
 
             void CaptureCurrentEntryState()
@@ -10663,33 +10465,33 @@ namespace OceanyaClient
             {
                 if (currentFrame == null)
                 {
-                    currentPixelSelection = null;
-                    UpdateSelectionVisual();
+                    ApplySelectionToSurface(null);
                     UpdateLastSelectionVisual();
                     UpdateSavedCutoutPreview();
+                    selectionSurface.ResetHistory();
                     return;
                 }
 
                 if (GetCurrentEntry().WorkingSelectionState != null
-                    && string.Equals(GetCurrentEntry().WorkingSelectionState.SourcePath, currentSourcePath, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(GetCurrentEntry().WorkingSelectionState!.SourcePath, currentSourcePath, StringComparison.OrdinalIgnoreCase)
                     && TryRestorePixelSquareSelection(GetCurrentEntry().WorkingSelectionState, currentFrame, out PixelSquareSelection savedSelection))
                 {
-                    currentPixelSelection = savedSelection;
+                    ApplySelectionToSurface(savedSelection);
                 }
                 else if (currentIndex > 0
                     && entries[currentIndex - 1].WorkingSelectionState != null
                     && TryRestorePixelSquareSelection(entries[currentIndex - 1].WorkingSelectionState, currentFrame, out PixelSquareSelection previousSelection))
                 {
-                    currentPixelSelection = previousSelection;
+                    ApplySelectionToSurface(previousSelection);
                 }
                 else
                 {
-                    currentPixelSelection = null;
+                    ApplySelectionToSurface(null);
                 }
 
-                UpdateSelectionVisual();
                 UpdateLastSelectionVisual();
                 UpdateSavedCutoutPreview();
+                selectionSurface.ResetHistory();
             }
 
             void LoadSource(string sourcePath)
@@ -10700,15 +10502,14 @@ namespace OceanyaClient
                 currentFrame = null;
                 currentPixelSelection = null;
                 currentSelectionCutout = null;
-                previewImage.Source = null;
+                selectionSurface.SetFrame(null);
                 currentCutoutImage.Source = null;
-                selectionRect.Visibility = Visibility.Collapsed;
 
                 if (AnimationTimelinePreviewController.TryCreate(ResolveAo2PreviewImagePath(sourcePath), out AnimationTimelinePreviewController? createdController))
                 {
                     previewController = createdController;
                     currentFrame = createdController.CurrentFrame as BitmapSource;
-                    previewImage.Source = createdController.CurrentFrame;
+                    selectionSurface.SetFrame(currentFrame);
                     timelineSlider.Maximum = Math.Max(1, createdController.EffectiveDurationMs);
                     createdController.SetLoop(loopCheckBox.IsChecked == true);
                     createdController.PlaybackStateChanged += isPlaying => Dispatcher.Invoke(() =>
@@ -10717,8 +10518,9 @@ namespace OceanyaClient
                     });
                     createdController.PositionChanged += (frame, positionMs) => Dispatcher.Invoke(() =>
                     {
-                        previewImage.Source = frame;
                         currentFrame = frame as BitmapSource;
+                        selectionSurface.SetFrame(currentFrame);
+                        currentPixelSelection = selectionSurface.Selection;
                         UpdateSelectionVisual();
                         UpdateLastSelectionVisual();
                         suppressTimelineSeek = true;
@@ -10730,7 +10532,7 @@ namespace OceanyaClient
                 else if (TryLoadButtonBitmap(sourcePath, out BitmapSource? bitmap, out _))
                 {
                     currentFrame = bitmap;
-                    previewImage.Source = bitmap;
+                    selectionSurface.SetFrame(bitmap);
                     timelineSlider.Value = 0;
                     timelineSlider.Maximum = 1;
                 }
@@ -10794,64 +10596,45 @@ namespace OceanyaClient
                 LoadSource(selected.Path);
             };
 
-            selectionCanvas.MouseLeftButtonDown += (_, e) =>
+            selectionSurface.SelectionChanged += (_, _) =>
             {
-                if (currentFrame == null)
-                {
-                    return;
-                }
-
-                dragging = true;
-                dragStart = e.GetPosition(selectionCanvas);
-                currentPixelSelection = null;
-                UpdateSelectionVisual();
-                selectionCanvas.CaptureMouse();
-            };
-            selectionCanvas.MouseMove += (_, e) =>
-            {
-                if (!dragging || currentFrame == null)
-                {
-                    return;
-                }
-
-                Point current = e.GetPosition(selectionCanvas);
-                double dx = current.X - dragStart.X;
-                double dy = current.Y - dragStart.Y;
-                double size = Math.Max(Math.Abs(dx), Math.Abs(dy));
-                double widthDirection = dx == 0 ? (dy < 0 ? -1 : 1) : Math.Sign(dx);
-                double heightDirection = dy == 0 ? (dx < 0 ? -1 : 1) : Math.Sign(dy);
-                Point end = new Point(
-                    dragStart.X + (widthDirection * size),
-                    dragStart.Y + (heightDirection * size));
-                Rect rawSelectionBounds = new Rect(dragStart, end);
-                Rect viewport = ComputeImageViewport(currentFrame);
-                if (TryCreatePixelSquareSelectionFromDisplayBounds(currentFrame, viewport, rawSelectionBounds, out PixelSquareSelection selection))
-                {
-                    currentPixelSelection = selection;
-                }
-                else
-                {
-                    currentPixelSelection = null;
-                }
-
+                currentPixelSelection = selectionSurface.Selection;
                 UpdateSelectionVisual();
             };
-            selectionCanvas.MouseLeftButtonUp += (_, _) =>
+            selectionSurface.SelectionCommitted += (_, _) =>
             {
-                dragging = false;
-                if (selectionCanvas.IsMouseCaptured)
-                {
-                    selectionCanvas.ReleaseMouseCapture();
-                }
-
+                currentPixelSelection = selectionSurface.Selection;
                 UpdateSelectionVisual();
                 CaptureCurrentEntryState();
                 RefreshNavigatorTiles();
             };
-            selectionCanvas.SizeChanged += (_, _) =>
+            selectionSurface.CanPasteSelection = () => copiedSelection.HasValue;
+            selectionSurface.CopySelectionRequested += (_, _) =>
             {
-                UpdateSelectionVisual();
-                UpdateLastSelectionVisual();
+                if (currentPixelSelection.HasValue)
+                {
+                    copiedSelection = currentPixelSelection;
+                    UpdateNavigationButtons();
+                }
+            };
+            selectionSurface.PasteSelectionRequested += (_, _) =>
+            {
+                if (currentFrame != null && copiedSelection.HasValue)
+                {
+                    selectionSurface.SetSelection(copiedSelection.Value, recordUndo: true);
+                }
+            };
+            dialog.PreviewKeyDown += (_, e) =>
+            {
+                if (Keyboard.FocusedElement is TextBoxBase)
+                {
+                    return;
+                }
+
+                if (selectionSurface.HandleKey(e))
+                {
+                    e.Handled = true;
+                }
             };
 
             playPauseButton.Click += (_, _) =>
@@ -10898,10 +10681,7 @@ namespace OceanyaClient
                     return;
                 }
 
-                currentPixelSelection = ClampPixelSquareSelectionToFrame(copiedSelection.Value, currentFrame);
-                UpdateSelectionVisual();
-                CaptureCurrentEntryState();
-                RefreshNavigatorTiles();
+                selectionSurface.SetSelection(copiedSelection.Value, recordUndo: true);
             };
             topPreviousButton.Click += (_, _) => NavigateRelative(-1);
             bottomPreviousButton.Click += (_, _) => NavigateRelative(-1);

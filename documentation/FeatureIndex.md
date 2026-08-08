@@ -104,6 +104,11 @@ Use this file as the first stop before broad repository searches. It should poin
 - Main code: `OceanyaClient/Components/Forms/AOCharacterFileCreatorWindow.xaml.cs`, `OceanyaClient/Features/CharacterCreator/AOCharacterFileCreatorBuilder.cs`, `OceanyaClient/Features/CharacterCreator/GeneratedAssetPathCollisionResolver.cs`
 - Notes: Includes file organization, generated assets, duplicate-name collision handling, emote-tile interactions, and built-in asset viewers.
 
+## Cutout Selection Surface (Emote Cutting / Configure Cutouts)
+- Doc: `Documentation/CutoutSelectionSurface.md`
+- Main code: `OceanyaClient/Utilities/CutoutSelectionSurface.cs`, `OceanyaClient/Components/Forms/AOCharacterFileCreatorWindow.xaml.cs` (`ShowEmoteCuttingDialog`, `ShowBulkEmoteCuttingDialog`)
+- Notes: Photoshop-style square selection (8 resize handles, drag-to-move, click-outside-to-redraw), rule-of-thirds guides, dim-outside overlay, undo/redo, right-click action menu, and asset-viewer-style zoom/pan/image-bounds. Selection is held in source-image pixels; the image and overlay canvas are sized to `pixelSize * zoom`, so display = pixel × zoom.
+
 ## Character Tagging
 - Docs:
   - `Documentation/TaggingCharacters/CharacterTaggingMigrationGuide.md`
