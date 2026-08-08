@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -22,6 +23,7 @@ namespace OceanyaClient
         private static string _currentTitle = "";
         private static string _currentSubtitle = "";
         private static Window? _ownerWindow;
+        private static IntPtr _ownerHandle = IntPtr.Zero;
         private static Rect _ownerBounds = Rect.Empty;
         private static bool _threadRunning = false;
         private static int _suspendCount;
@@ -110,6 +112,7 @@ namespace OceanyaClient
             _currentTitle = message;
             _currentSubtitle = string.Empty;
             _ownerWindow = owner;
+            _ownerHandle = ResolveOwnerHandle(owner);
             _ownerBounds = ResolveOwnerBounds(owner);
 
             // Start the UI thread if needed
@@ -190,6 +193,13 @@ namespace OceanyaClient
                 {
                     _instance.BeginAnimation(Window.OpacityProperty, null);
                     _instance.Opacity = 1;
+
+                    // Hand activation back to the owner BEFORE the form goes away. The wait form is a
+                    // top-level window on its own thread with no Win32 owner, so when it closes while it
+                    // holds the foreground, Windows picks the next window in the global Z-order - often a
+                    // different process, or one of WPF's zero-sized per-thread helper windows. The app then
+                    // drops behind everything, which reads to the user as "it minimized itself".
+                    TryRestoreOwnerForeground();
 
                     try
                     {
@@ -278,6 +288,9 @@ namespace OceanyaClient
                 {
                     if (_instance != null && _instance.IsVisible)
                     {
+                        // Same foreground-void problem as the close path: hiding the form while it holds
+                        // the foreground lets Windows hand activation to whatever is behind the app.
+                        TryRestoreOwnerForeground();
                         _instance.Hide();
                     }
                 });
@@ -579,6 +592,84 @@ namespace OceanyaClient
                 ? resolvedBounds
                 : Rect.Empty;
         }
+
+        /// <summary>
+        /// Captures the owner window handle on the owner's own thread.
+        /// </summary>
+        /// <param name="owner">Owner window, possibly living on another dispatcher.</param>
+        /// <returns>The owner window handle, or <see cref="IntPtr.Zero"/> when it cannot be resolved.</returns>
+        private static IntPtr ResolveOwnerHandle(Window? owner)
+        {
+            if (owner == null)
+            {
+                return IntPtr.Zero;
+            }
+
+            try
+            {
+                return owner.Dispatcher.Invoke(() => new WindowInteropHelper(owner).Handle);
+            }
+            catch
+            {
+                return IntPtr.Zero;
+            }
+        }
+
+        /// <summary>
+        /// Gives the foreground back to the owner window while the wait form still holds it.
+        /// </summary>
+        /// <remarks>
+        /// Only acts when the wait form is actually the foreground window, so it can never steal activation
+        /// from a dialog or from another application the user switched to on purpose. Cross-thread
+        /// <c>SetForegroundWindow</c> is permitted here because the calling process owns the foreground
+        /// window at that moment.
+        /// </remarks>
+        private static void TryRestoreOwnerForeground()
+        {
+            try
+            {
+                if (_instance == null || _ownerHandle == IntPtr.Zero)
+                {
+                    return;
+                }
+
+                IntPtr waitFormHandle = new WindowInteropHelper(_instance).Handle;
+                if (waitFormHandle == IntPtr.Zero || GetForegroundWindow() != waitFormHandle)
+                {
+                    return;
+                }
+
+                if (!IsWindow(_ownerHandle) || !IsWindowVisible(_ownerHandle) || IsIconic(_ownerHandle))
+                {
+                    return;
+                }
+
+                _ = SetForegroundWindow(_ownerHandle);
+            }
+            catch
+            {
+                // Activation is best-effort; a failure only means the previous focus behavior applies.
+            }
+        }
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool IsWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool IsWindowVisible(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool IsIconic(IntPtr hWnd);
 
         private static double Clamp(double value, double minimum, double maximum)
         {

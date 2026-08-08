@@ -2805,13 +2805,13 @@ namespace OceanyaClient
                 string normalizedFolder = NormalizeRelativePath(standardFolder, isFolder: true);
                 string absoluteFolder = Path.Combine(sourceRoot, normalizedFolder.TrimEnd('/').Replace('/', Path.DirectorySeparatorChar));
 
-                bool hasExternalFilesUnderFolder = entries.Any(entry =>
-                    entry.IsExternal
-                    && !entry.IsFolder
+                bool hasUserSuppliedFilesUnderFolder = entries.Any(entry =>
+                    !entry.IsFolder
+                    && (entry.IsExternal || IsNewlyAddedAssetEntry(entry, sourceRoot))
                     && NormalizeRelativePath(entry.RelativePath, entry.IsFolder).StartsWith(normalizedFolder, StringComparison.OrdinalIgnoreCase));
-                if (hasExternalFilesUnderFolder)
+                if (hasUserSuppliedFilesUnderFolder)
                 {
-                    WriteFileOrganizationDebugLog($"PrunePhantomStandardAssetEntries keep external-under-folder standard={normalizedFolder}");
+                    WriteFileOrganizationDebugLog($"PrunePhantomStandardAssetEntries keep user-files-under-folder standard={normalizedFolder}");
                     continue;
                 }
 
@@ -2840,6 +2840,28 @@ namespace OceanyaClient
                 WriteFileOrganizationDebugLog(
                     $"PrunePhantomStandardAssetEntries removed={removed} externalRemoved={externalRemoved} standard={normalizedFolder} absoluteExists={Directory.Exists(absoluteFolder)} folderHasFiles={folderContainsFiles}");
             }
+        }
+
+        /// <summary>
+        /// Reports whether an organization entry was supplied by the user during this session rather than
+        /// coming from the character folder that was loaded for editing or duplication.
+        /// </summary>
+        /// <param name="entry">Entry to classify.</param>
+        /// <param name="sourceRoot">Root directory of the loaded character folder.</param>
+        /// <returns><see langword="true"/> when the entry points at a file outside the loaded character folder.</returns>
+        /// <remarks>
+        /// Newly dropped assets default to the standard <c>Images/</c> and <c>Sounds/</c> folders, which the
+        /// loaded character usually does not have (AO2 folders keep sprites at the root). Without this check
+        /// the phantom-folder prune deleted the brand-new asset along with the phantom folder.
+        /// </remarks>
+        private static bool IsNewlyAddedAssetEntry(FileOrganizationEntryViewModel entry, string sourceRoot)
+        {
+            if (entry.IsFolder || string.IsNullOrWhiteSpace(entry.SourcePath))
+            {
+                return false;
+            }
+
+            return File.Exists(entry.SourcePath) && !IsPathInsideRoot(sourceRoot, entry.SourcePath);
         }
 
         private List<FileOrganizationEntryViewModel> BuildGeneratedFileOrganizationEntries()

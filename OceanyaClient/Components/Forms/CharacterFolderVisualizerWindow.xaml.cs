@@ -3258,7 +3258,9 @@ namespace OceanyaClient
             }
             finally
             {
-                WaitForm.CloseForm();
+                // Awaited on purpose: the fire-and-forget overload let the close race the dialog below,
+                // so the wait form could still own the foreground when the editor opened.
+                await WaitForm.CloseFormAsync();
             }
 
             if (!loadedSuccessfully)
