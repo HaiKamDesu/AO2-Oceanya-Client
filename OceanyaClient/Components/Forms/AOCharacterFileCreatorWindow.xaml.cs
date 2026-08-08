@@ -3089,7 +3089,7 @@ namespace OceanyaClient
                 return;
             }
 
-            string extension = Path.GetExtension(sourcePath);
+            string extension = isVisual ? ResolveAo2ShoutVisualExtension(sourcePath) : Path.GetExtension(sourcePath);
             if (string.IsNullOrWhiteSpace(extension))
             {
                 return;
@@ -3401,7 +3401,7 @@ namespace OceanyaClient
                 return;
             }
 
-            string extension = Path.GetExtension(sourcePath);
+            string extension = isVisual ? ResolveAo2ShoutVisualExtension(sourcePath) : Path.GetExtension(sourcePath);
             string defaultRelativePath = targetBaseName + extension;
             string assetKey = isVisual ? $"shout:visual:{key}" : $"shout:sfx:{key}";
             AddGeneratedAssetPathCollisionCandidate(
@@ -16083,8 +16083,10 @@ namespace OceanyaClient
             }
 
             selectedShoutVisualSourcePaths[key] = dialog.FileName;
+            RetargetGeneratedOverrideExtension($"shout:visual:{key}", ResolveAo2ShoutVisualExtension(dialog.FileName));
             SetShoutVisualFileNameText(key, Path.GetFileName(dialog.FileName));
             UpdateShoutTilePreview(key);
+            RefreshFileOrganizationEntries();
             StatusTextBlock.Text = $"Selected {key} visual file.";
         }
 
@@ -16113,7 +16115,9 @@ namespace OceanyaClient
             }
 
             selectedShoutSfxSourcePaths[key] = dialog.FileName;
+            RetargetGeneratedOverrideExtension($"shout:sfx:{key}", Path.GetExtension(dialog.FileName));
             SetShoutSfxFileNameText(key, Path.GetFileName(dialog.FileName));
+            RefreshFileOrganizationEntries();
             StatusTextBlock.Text = $"Selected {key} shout sound file.";
         }
 
@@ -17034,11 +17038,73 @@ namespace OceanyaClient
                 return;
             }
 
-            string extension = Path.GetExtension(sourcePath);
+            string extension = ResolveAo2ShoutVisualExtension(sourcePath);
             string relativePath = ResolveOutputPathForAsset($"shout:visual:{key}", targetBaseName + extension, isFolder: false);
             string destinationPath = Path.Combine(characterDirectory, relativePath.Replace('/', Path.DirectorySeparatorChar));
             EnsureDestinationDirectory(destinationPath);
+
+            if (IsAo2ShoutVisualExtension(Path.GetExtension(sourcePath)))
+            {
+                // AO2 only probes the file name, so an .apng/.webp/.gif/.png source must keep its own
+                // container. Copy the bytes untouched instead of re-encoding or renaming the extension.
+                File.Copy(sourcePath, destinationPath, overwrite: true);
+                return;
+            }
+
+            // AO2 (get_image_suffix) never probes anything but .webp/.apng/.gif/.png, so a source AO2
+            // cannot load at all is re-encoded to a real PNG rather than just renamed.
+            if (TryLoadFirstFrame(sourcePath, out ImageSource? frame, out _) && frame is BitmapSource bitmap)
+            {
+                SaveBitmapAsPng(bitmap, destinationPath);
+                return;
+            }
+
             File.Copy(sourcePath, destinationPath, overwrite: true);
+        }
+
+        /// <summary>Image containers AO2 probes for shout bubbles, in AO2's own suffix order.</summary>
+        private static readonly string[] Ao2ShoutVisualExtensions = { ".webp", ".apng", ".gif", ".png" };
+
+        /// <summary>Returns true when AO2 would ever look for a shout bubble with this extension.</summary>
+        private static bool IsAo2ShoutVisualExtension(string? extension)
+        {
+            return !string.IsNullOrWhiteSpace(extension)
+                && Ao2ShoutVisualExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Resolves the output extension for a shout visual: AO2-supported containers are kept as-is
+        /// (renaming an .apng to .gif produces a file AO2 finds but cannot decode), anything else
+        /// becomes .png because it is re-encoded on copy.
+        /// </summary>
+        private static string ResolveAo2ShoutVisualExtension(string sourcePath)
+        {
+            string extension = Path.GetExtension(sourcePath ?? string.Empty);
+            return IsAo2ShoutVisualExtension(extension) ? extension.ToLowerInvariant() : ".png";
+        }
+
+        /// <summary>
+        /// Repoints a generated-asset override at a new extension. Loading an existing character records
+        /// the discovered path per asset key (e.g. <c>objection_bubble.gif</c>); without this, replacing
+        /// that asset with a different container would write the new bytes under the old extension.
+        /// </summary>
+        private void RetargetGeneratedOverrideExtension(string assetKey, string newExtension)
+        {
+            if (string.IsNullOrWhiteSpace(newExtension)
+                || !generatedOrganizationOverrides.TryGetValue(assetKey, out string? existingPath)
+                || string.IsNullOrWhiteSpace(existingPath))
+            {
+                return;
+            }
+
+            if (string.Equals(Path.GetExtension(existingPath), newExtension, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            generatedOrganizationOverrides[assetKey] = NormalizeRelativePath(
+                Path.ChangeExtension(existingPath, newExtension),
+                isFolder: false);
         }
 
         private void CleanupEmptyStandardAssetFolders(string characterDirectory)
