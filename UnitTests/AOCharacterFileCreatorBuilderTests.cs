@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -588,6 +588,79 @@ namespace UnitTests
             Assert.That(center.R, Is.EqualTo(sourceColor.R).Within(2));
             Assert.That(center.G, Is.EqualTo(sourceColor.G).Within(2));
             Assert.That(center.B, Is.EqualTo(sourceColor.B).Within(2));
+        }
+
+        /// <summary>
+        /// The automatic background is its own ordered layer stack: a solid color under an
+        /// image layer must render the image on top of the color, not replace it.
+        /// </summary>
+        [Test]
+        public void AutomaticBackgroundStack_DrawsLayersInOrderBehindTheCutout()
+        {
+            ButtonIconGenerationConfig config = new ButtonIconGenerationConfig
+            {
+                Mode = ButtonIconMode.Automatic,
+                OnEffect = new ButtonEffectConfig(),
+                OffEffect = new ButtonEffectConfig(),
+                AutomaticBackground = new ButtonEffectConfig
+                {
+                    Layers = new List<ButtonEffectLayer>
+                    {
+                        new ButtonEffectLayer
+                        {
+                            Kind = ButtonEffectLayerKind.SolidColor,
+                            SolidColor = Color.FromRgb(0, 0, 255)
+                        },
+                        new ButtonEffectLayer
+                        {
+                            Kind = ButtonEffectLayerKind.Darken,
+                            DarknessPercent = 100
+                        }
+                    }
+                }
+            };
+
+            MethodInfo? buildPairMethod = typeof(AOCharacterFileCreatorWindow).GetMethod(
+                "TryBuildButtonIconPair",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(buildPairMethod, Is.Not.Null);
+
+            object?[] args = { config, null, null, null };
+            Assert.That(buildPairMethod!.Invoke(null, args), Is.EqualTo(true));
+
+            Color center = SampleCenterColor((args[1] as BitmapSource)!);
+            Assert.Multiple(() =>
+            {
+                // The darken layer sits on top of the blue layer, so the result is black, not blue.
+                Assert.That(center.R, Is.LessThan(10));
+                Assert.That(center.G, Is.LessThan(10));
+                Assert.That(center.B, Is.LessThan(10));
+                Assert.That(center.A, Is.GreaterThan(200));
+            });
+        }
+
+        /// <summary>An empty background stack must leave the generated square transparent.</summary>
+        [Test]
+        public void AutomaticBackgroundStack_EmptyStackStaysTransparent()
+        {
+            ButtonIconGenerationConfig config = new ButtonIconGenerationConfig
+            {
+                Mode = ButtonIconMode.Automatic,
+                OnEffect = new ButtonEffectConfig(),
+                OffEffect = new ButtonEffectConfig(),
+                AutomaticBackground = new ButtonEffectConfig()
+            };
+
+            MethodInfo? buildPairMethod = typeof(AOCharacterFileCreatorWindow).GetMethod(
+                "TryBuildButtonIconPair",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(buildPairMethod, Is.Not.Null);
+
+            object?[] args = { config, null, null, null };
+            Assert.That(buildPairMethod!.Invoke(null, args), Is.EqualTo(true));
+
+            Color center = SampleCenterColor((args[1] as BitmapSource)!);
+            Assert.That(center.A, Is.EqualTo(0));
         }
 
         private static string CreateSolidPng(string path, Color color)

@@ -1,4 +1,4 @@
-# Character File Creator
+﻿# Character File Creator
 
 ## Purpose
 The character file creator builds AO2-compatible character folders, lets users organize generated assets before export, and previews the most important character assets inside the editor.
@@ -27,14 +27,19 @@ The character file creator builds AO2-compatible character folders, lets users o
 - Two-image previews can show whichever side is already assigned, while the missing side still renders as empty.
 - File organization and final export only treat button icons as generated when a real `button_on`/`button_off` pair can be produced from the current config.
 
-## Stacked Button Effects
+## Stacked Button Effects And Backgrounds
 - Each button state (`button_on` / `button_off`) owns an ordered stack of effects instead of a single effect mode.
-- Model: `ButtonEffectConfig` holds `List<ButtonEffectLayer> Layers` plus `CustomPresetId`; `ButtonEffectLayer.Kind` is one of `ReduceOpacity`, `Darken`, `Overlay`, `Border`. An empty stack means "use the base image as-is" (the old `None` mode). `ButtonEffectConfig.CreateDarken(50)` builds the historical `button_off` default.
-- Rendering: `ApplyButtonEffectToBitmap` walks the layers in list order and calls `ApplyButtonEffectLayerToBitmap` for each one, feeding the previous result into the next. Border is now just another layer, so `border → darken → overlay → border` is expressible.
-- UI: `BuildButtonEffectEditorSection` builds a collapsible section per state (`AnimateSectionExpansion` animates `MaxHeight`), a collapsible card per layer with move-up/move-down/remove chips (`CreateEffectChipButton`), a green `＋ Add effect` chip whose context menu offers the four kinds, and the preset row. Layer expansion state lives on the UI-only `ButtonEffectLayer.IsExpanded`.
+- Model: `ButtonEffectConfig` holds `List<ButtonEffectLayer> Layers` plus `CustomPresetId`; `ButtonEffectLayer.Kind` is one of `ReduceOpacity`, `Darken`, `UploadImage`, `Border`, `SolidColor`, `Gradient`. An empty stack means "use the base image as-is" (the old `None` mode). `ButtonEffectConfig.CreateDarken(50)` builds the historical `button_off` default.
+- Rendering: `ApplyButtonEffectToBitmap` walks the layers in list order and calls `ApplyButtonEffectLayerToBitmap` for each one, feeding the previous result into the next. Border is now just another layer, so `border → darken → image → border` is expressible.
+- UI: `BuildButtonEffectEditorSection` builds a collapsible section per state (`AnimateSectionExpansion` animates `MaxHeight`), a collapsible card per layer with move-up/move-down/remove chips (`CreateEffectChipButton`), a dialog-styled `+ Add effect` chip (green plus) whose context menu offers every layer kind, and the preset row. The per-layer editor itself is the shared `BuildButtonEffectStackEditor`, also used by the background tab. Layer expansion state lives on the UI-only `ButtonEffectLayer.IsExpanded`.
 - Presets: `CharacterCreatorButtonEffectPreset` / `CharacterCreatorButtonEffectSnapshot` persist the full `Layers` list, so a whole stack saves and reloads as one preset. The legacy single-effect fields (`Mode`, `OpacityPercent`, `DarknessPercent`, `OverlayPath`, `AddBorder`, `BorderColor`, `BorderWidth`) are kept only for migration: `SaveFile.NormalizeButtonEffectLayers` rebuilds them into an equivalent stack (effect first, border on top) when no layers were persisted.
 - Overlay images referenced by any layer are cached/kept alive through `EnumerateButtonEffectOverlayPaths` in `CleanupCachedCharacterCreatorButtonIconAssets`.
-- Tests: `UnitTests/AOCharacterFileCreatorBuilderTests.cs` (`ButtonEffectStack_AppliesEveryLayerInOrder`, `ButtonEffectStack_EmptyStack_LeavesBaseImageUnchanged`), `UnitTests/TestabilityHardeningTests.cs` (`ButtonEffectPresets_LegacySingleEffectSavefile_MigratesIntoLayerStack`).
+- Layer kinds are shared by effects and backgrounds: `ReduceOpacity`, `Darken`, `UploadImage` (previously "Overlay"), `Border`, `SolidColor`, `Gradient`.
+- The automatic background is the same kind of stack (`ButtonIconGenerationConfig.AutomaticBackground`), rendered by `BuildAutomaticBackgroundBitmap` into a transparent square before the emote cutout is drawn on top; the old `ButtonAutomaticBackgroundMode` (None/PresetList/SolidColor/Gradient/Upload) is gone.
+- `BuildAutomaticBackgroundEditor` shows preview → background selector → layer stack → preset buttons. The selector lists `No BG`, the built-in preset images, and saved custom presets; picking `No BG` clears the stack, a built-in preset replaces it with one `UploadImage` layer holding that preset's `pack://` path (`IsBuiltInBackgroundPresetPath` keeps those out of the upload cache), and a saved preset loads its layers. Hand-edited stacks display as `Custom layer stack`.
+- Gradient layers own their stops/midpoints/direction; the draggable strip editor is `BuildGradientLayerEditor`.
+- Background presets persist through `CharacterCreatorButtonBackgroundPreset.Layers`; legacy mode fields migrate in `SaveFile.NormalizeBackgroundPresetLayers`. The bulk snapshot uses `CharacterCreatorLastBulkButtonIconConfig.BackgroundLayers` (+ `BackgroundLayersMigrated`), migrated UI-side in `ApplyLastBulkButtonIconsBackgroundConfig` because only the UI knows the built-in preset asset map.
+- Tests: `UnitTests/AOCharacterFileCreatorBuilderTests.cs` (`ButtonEffectStack_AppliesEveryLayerInOrder`, `ButtonEffectStack_EmptyStack_LeavesBaseImageUnchanged`, `AutomaticBackgroundStack_DrawsLayersInOrderBehindTheCutout`, `AutomaticBackgroundStack_EmptyStackStaysTransparent`), `UnitTests/TestabilityHardeningTests.cs` (`ButtonEffectPresets_LegacySingleEffectSavefile_MigratesIntoLayerStack`, `ButtonBackgroundPresets_LegacySingleModeSavefile_MigratesIntoLayerStack`).
 
 ## File Organization Viewers
 - Double-click behavior is centralized in `OpenFileOrganizationEntry`.

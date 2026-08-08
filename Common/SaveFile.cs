@@ -358,6 +358,12 @@ namespace OceanyaClient
     {
         public string Id { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
+
+        /// <summary>Ordered background layer stack. Empty means "no background".</summary>
+        public List<CharacterCreatorButtonEffectLayer> Layers { get; set; } =
+            new List<CharacterCreatorButtonEffectLayer>();
+
+        // Legacy single-mode fields, kept so old savefiles can migrate into Layers.
         public CharacterCreatorButtonBackgroundPresetMode Mode { get; set; } =
             CharacterCreatorButtonBackgroundPresetMode.SolidColor;
         public string SolidColor { get; set; } = "#00000000";
@@ -387,8 +393,10 @@ namespace OceanyaClient
     {
         ReduceOpacity = 1,
         Darken = 2,
-        Overlay = 3,
-        Border = 4
+        UploadImage = 3,
+        Border = 4,
+        SolidColor = 5,
+        Gradient = 6
     }
 
     /// <summary>
@@ -403,6 +411,12 @@ namespace OceanyaClient
         public string OverlayPath { get; set; } = string.Empty;
         public string BorderColor { get; set; } = "#FF000000";
         public int BorderWidth { get; set; } = 5;
+        public string SolidColor { get; set; } = "#FF000000";
+        public CharacterCreatorButtonBackgroundGradientDirection GradientDirection { get; set; } =
+            CharacterCreatorButtonBackgroundGradientDirection.Horizontal;
+        public List<CharacterCreatorButtonBackgroundGradientStop> GradientStops { get; set; } =
+            new List<CharacterCreatorButtonBackgroundGradientStop>();
+        public List<double> GradientMidpoints { get; set; } = new List<double>();
     }
 
     public class CharacterCreatorButtonEffectPreset
@@ -464,6 +478,13 @@ namespace OceanyaClient
         public bool BackgroundAddBorder { get; set; }
         public string BackgroundBorderColor { get; set; } = "#FF000000";
         public int BackgroundBorderWidth { get; set; } = 5;
+
+        /// <summary>Ordered background layer stack. Empty means "no background".</summary>
+        public List<CharacterCreatorButtonEffectLayer> BackgroundLayers { get; set; } =
+            new List<CharacterCreatorButtonEffectLayer>();
+
+        /// <summary>True once <see cref="BackgroundLayers"/> was written by a layer-aware build.</summary>
+        public bool BackgroundLayersMigrated { get; set; }
 
         // Effects.
         public CharacterCreatorButtonEffectSnapshot OnEffect { get; set; } =
@@ -2400,18 +2421,80 @@ namespace OceanyaClient
                     normalizedMidpoints.Add(Math.Clamp(midpoint, left, right));
                 }
                 preset.GradientMidpoints = normalizedMidpoints;
+                preset.Layers = NormalizeBackgroundPresetLayers(raw.Layers, preset);
 
                 string baseName = preset.Name;
                 int suffix = 2;
-                string uniquenessKey = $"{preset.Name}|{preset.Mode}";
+                string uniquenessKey = preset.Name;
                 while (!usedNameModeKeys.Add(uniquenessKey))
                 {
                     preset.Name = $"{baseName} ({suffix})";
-                    uniquenessKey = $"{preset.Name}|{preset.Mode}";
+                    uniquenessKey = preset.Name;
                     suffix++;
                 }
 
                 normalized.Add(preset);
+            }
+
+            return normalized;
+        }
+
+        /// <summary>
+        /// Returns a clamped copy of a background preset's layer stack, migrating the legacy
+        /// single-mode fields (solid color / gradient / upload plus optional border) when the
+        /// preset predates stacked background layers.
+        /// </summary>
+        private static List<CharacterCreatorButtonEffectLayer> NormalizeBackgroundPresetLayers(
+            IEnumerable<CharacterCreatorButtonEffectLayer>? layers,
+            CharacterCreatorButtonBackgroundPreset legacy)
+        {
+            List<CharacterCreatorButtonEffectLayer> normalized = NormalizeButtonEffectLayerList(layers);
+            if (normalized.Count > 0)
+            {
+                return normalized;
+            }
+
+            switch (legacy.Mode)
+            {
+                case CharacterCreatorButtonBackgroundPresetMode.Upload:
+                    normalized.Add(new CharacterCreatorButtonEffectLayer
+                    {
+                        Kind = CharacterCreatorButtonEffectLayerKind.UploadImage,
+                        OverlayPath = legacy.UploadPath
+                    });
+                    break;
+                case CharacterCreatorButtonBackgroundPresetMode.Gradient:
+                    normalized.Add(new CharacterCreatorButtonEffectLayer
+                    {
+                        Kind = CharacterCreatorButtonEffectLayerKind.Gradient,
+                        GradientDirection = legacy.GradientDirection,
+                        GradientStops = legacy.GradientStops
+                            .Select(stop => new CharacterCreatorButtonBackgroundGradientStop
+                            {
+                                Color = stop.Color,
+                                Position = stop.Position
+                            })
+                            .ToList(),
+                        GradientMidpoints = legacy.GradientMidpoints.ToList()
+                    });
+                    break;
+                default:
+                    normalized.Add(new CharacterCreatorButtonEffectLayer
+                    {
+                        Kind = CharacterCreatorButtonEffectLayerKind.SolidColor,
+                        SolidColor = legacy.SolidColor
+                    });
+                    break;
+            }
+
+            if (legacy.AddBorder)
+            {
+                normalized.Add(new CharacterCreatorButtonEffectLayer
+                {
+                    Kind = CharacterCreatorButtonEffectLayerKind.Border,
+                    BorderColor = legacy.BorderColor,
+                    BorderWidth = legacy.BorderWidth
+                });
             }
 
             return normalized;
@@ -2465,6 +2548,38 @@ namespace OceanyaClient
             return normalized;
         }
 
+        /// <summary>Returns a clamped copy of a raw layer list, dropping nulls.</summary>
+        private static List<CharacterCreatorButtonEffectLayer> NormalizeButtonEffectLayerList(
+            IEnumerable<CharacterCreatorButtonEffectLayer>? layers)
+        {
+            return (layers ?? Array.Empty<CharacterCreatorButtonEffectLayer>())
+                .Where(layer => layer != null)
+                .Select(layer => new CharacterCreatorButtonEffectLayer
+                {
+                    Kind = layer.Kind,
+                    OpacityPercent = Math.Clamp(layer.OpacityPercent, 0, 100),
+                    DarknessPercent = Math.Clamp(layer.DarknessPercent, 0, 100),
+                    OverlayPath = layer.OverlayPath?.Trim() ?? string.Empty,
+                    BorderColor = string.IsNullOrWhiteSpace(layer.BorderColor) ? "#FF000000" : layer.BorderColor.Trim(),
+                    BorderWidth = Math.Clamp(layer.BorderWidth, 1, 32),
+                    SolidColor = string.IsNullOrWhiteSpace(layer.SolidColor) ? "#FF000000" : layer.SolidColor.Trim(),
+                    GradientDirection = layer.GradientDirection,
+                    GradientStops = (layer.GradientStops ?? new List<CharacterCreatorButtonBackgroundGradientStop>())
+                        .Where(stop => stop != null)
+                        .Select(stop => new CharacterCreatorButtonBackgroundGradientStop
+                        {
+                            Color = string.IsNullOrWhiteSpace(stop.Color) ? "#FFFFFFFF" : stop.Color.Trim(),
+                            Position = Math.Clamp(stop.Position, 0.0, 1.0)
+                        })
+                        .OrderBy(stop => stop.Position)
+                        .ToList(),
+                    GradientMidpoints = (layer.GradientMidpoints ?? new List<double>())
+                        .Select(value => Math.Clamp(value, 0.0, 1.0))
+                        .ToList()
+                })
+                .ToList();
+        }
+
         /// <summary>
         /// Returns a clamped copy of <paramref name="layers"/>, migrating the legacy single-effect fields
         /// into an equivalent stack when no layers were persisted yet.
@@ -2479,18 +2594,7 @@ namespace OceanyaClient
             string? legacyBorderColor,
             int legacyBorderWidth)
         {
-            List<CharacterCreatorButtonEffectLayer> normalized = (layers ?? Array.Empty<CharacterCreatorButtonEffectLayer>())
-                .Where(layer => layer != null)
-                .Select(layer => new CharacterCreatorButtonEffectLayer
-                {
-                    Kind = layer.Kind,
-                    OpacityPercent = Math.Clamp(layer.OpacityPercent, 0, 100),
-                    DarknessPercent = Math.Clamp(layer.DarknessPercent, 0, 100),
-                    OverlayPath = layer.OverlayPath?.Trim() ?? string.Empty,
-                    BorderColor = string.IsNullOrWhiteSpace(layer.BorderColor) ? "#FF000000" : layer.BorderColor.Trim(),
-                    BorderWidth = Math.Clamp(layer.BorderWidth, 1, 32)
-                })
-                .ToList();
+            List<CharacterCreatorButtonEffectLayer> normalized = NormalizeButtonEffectLayerList(layers);
 
             if (normalized.Count > 0)
             {
@@ -2517,7 +2621,7 @@ namespace OceanyaClient
                 case CharacterCreatorButtonEffectPresetMode.Overlay:
                     normalized.Add(new CharacterCreatorButtonEffectLayer
                     {
-                        Kind = CharacterCreatorButtonEffectLayerKind.Overlay,
+                        Kind = CharacterCreatorButtonEffectLayerKind.UploadImage,
                         OverlayPath = legacyOverlayPath?.Trim() ?? string.Empty
                     });
                     break;
@@ -2583,6 +2687,7 @@ namespace OceanyaClient
                 }
             };
 
+            config.BackgroundLayers = NormalizeButtonEffectLayerList(config.BackgroundLayers);
             NormalizeEffectSnapshot(config.OnEffect);
             NormalizeEffectSnapshot(config.OffEffect);
         }

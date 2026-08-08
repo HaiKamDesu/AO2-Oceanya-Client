@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -1124,6 +1124,43 @@ namespace UnitTests
                 Assert.That(migrated.Layers[1].Kind, Is.EqualTo(CharacterCreatorButtonEffectLayerKind.Border));
                 Assert.That(migrated.Layers[1].BorderWidth, Is.EqualTo(7));
                 Assert.That(migrated.Layers[1].BorderColor, Is.EqualTo("#FF112233"));
+            });
+        }
+
+        /// <summary>
+        /// Background presets saved before stacked background layers stored one mode plus an
+        /// "add border" flag. Loading one must rebuild the equivalent ordered layer stack.
+        /// </summary>
+        [Test]
+        public void ButtonBackgroundPresets_LegacySingleModeSavefile_MigratesIntoLayerStack()
+        {
+            SaveFile.ResetForTests(new SaveData(), persist: false);
+            SaveFile.Data.CharacterCreatorButtonBackgroundPresets = new List<CharacterCreatorButtonBackgroundPreset>
+            {
+                new CharacterCreatorButtonBackgroundPreset
+                {
+                    Id = "legacy-bg",
+                    Name = "Legacy Solid",
+                    Mode = CharacterCreatorButtonBackgroundPresetMode.SolidColor,
+                    SolidColor = "#FF204080",
+                    AddBorder = true,
+                    BorderColor = "#FF223344",
+                    BorderWidth = 9
+                }
+            };
+            SaveFile.Save();
+
+            SaveData reloaded = SaveFile.LoadSnapshotFromDisk();
+            CharacterCreatorButtonBackgroundPreset migrated = reloaded.CharacterCreatorButtonBackgroundPresets
+                .Single(preset => string.Equals(preset.Id, "legacy-bg", StringComparison.OrdinalIgnoreCase));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(migrated.Layers, Has.Count.EqualTo(2));
+                Assert.That(migrated.Layers[0].Kind, Is.EqualTo(CharacterCreatorButtonEffectLayerKind.SolidColor));
+                Assert.That(migrated.Layers[0].SolidColor, Is.EqualTo("#FF204080"));
+                Assert.That(migrated.Layers[1].Kind, Is.EqualTo(CharacterCreatorButtonEffectLayerKind.Border));
+                Assert.That(migrated.Layers[1].BorderWidth, Is.EqualTo(9));
             });
         }
 
