@@ -27,6 +27,15 @@ The character file creator builds AO2-compatible character folders, lets users o
 - Two-image previews can show whichever side is already assigned, while the missing side still renders as empty.
 - File organization and final export only treat button icons as generated when a real `button_on`/`button_off` pair can be produced from the current config.
 
+## Stacked Button Effects
+- Each button state (`button_on` / `button_off`) owns an ordered stack of effects instead of a single effect mode.
+- Model: `ButtonEffectConfig` holds `List<ButtonEffectLayer> Layers` plus `CustomPresetId`; `ButtonEffectLayer.Kind` is one of `ReduceOpacity`, `Darken`, `Overlay`, `Border`. An empty stack means "use the base image as-is" (the old `None` mode). `ButtonEffectConfig.CreateDarken(50)` builds the historical `button_off` default.
+- Rendering: `ApplyButtonEffectToBitmap` walks the layers in list order and calls `ApplyButtonEffectLayerToBitmap` for each one, feeding the previous result into the next. Border is now just another layer, so `border → darken → overlay → border` is expressible.
+- UI: `BuildButtonEffectEditorSection` builds a collapsible section per state (`AnimateSectionExpansion` animates `MaxHeight`), a collapsible card per layer with move-up/move-down/remove chips (`CreateEffectChipButton`), a green `＋ Add effect` chip whose context menu offers the four kinds, and the preset row. Layer expansion state lives on the UI-only `ButtonEffectLayer.IsExpanded`.
+- Presets: `CharacterCreatorButtonEffectPreset` / `CharacterCreatorButtonEffectSnapshot` persist the full `Layers` list, so a whole stack saves and reloads as one preset. The legacy single-effect fields (`Mode`, `OpacityPercent`, `DarknessPercent`, `OverlayPath`, `AddBorder`, `BorderColor`, `BorderWidth`) are kept only for migration: `SaveFile.NormalizeButtonEffectLayers` rebuilds them into an equivalent stack (effect first, border on top) when no layers were persisted.
+- Overlay images referenced by any layer are cached/kept alive through `EnumerateButtonEffectOverlayPaths` in `CleanupCachedCharacterCreatorButtonIconAssets`.
+- Tests: `UnitTests/AOCharacterFileCreatorBuilderTests.cs` (`ButtonEffectStack_AppliesEveryLayerInOrder`, `ButtonEffectStack_EmptyStack_LeavesBaseImageUnchanged`), `UnitTests/TestabilityHardeningTests.cs` (`ButtonEffectPresets_LegacySingleEffectSavefile_MigratesIntoLayerStack`).
+
 ## File Organization Viewers
 - Double-click behavior is centralized in `OpenFileOrganizationEntry`.
 - Text assets still open the existing text viewer/editor.

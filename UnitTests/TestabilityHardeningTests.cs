@@ -1089,6 +1089,44 @@ namespace UnitTests
             });
         }
 
+        /// <summary>
+        /// Savefiles written before stacked button effects stored a single mode plus an "add border" flag.
+        /// Loading one must rebuild the equivalent ordered layer stack (effect first, border on top).
+        /// </summary>
+        [Test]
+        public void ButtonEffectPresets_LegacySingleEffectSavefile_MigratesIntoLayerStack()
+        {
+            SaveFile.ResetForTests(new SaveData(), persist: false);
+            SaveFile.Data.CharacterCreatorButtonEffectPresets = new List<CharacterCreatorButtonEffectPreset>
+            {
+                new CharacterCreatorButtonEffectPreset
+                {
+                    Id = "legacy-preset",
+                    Name = "Legacy Darken",
+                    Mode = CharacterCreatorButtonEffectPresetMode.Darken,
+                    DarknessPercent = 35,
+                    AddBorder = true,
+                    BorderColor = "#FF112233",
+                    BorderWidth = 7
+                }
+            };
+            SaveFile.Save();
+
+            SaveData reloaded = SaveFile.LoadSnapshotFromDisk();
+            CharacterCreatorButtonEffectPreset migrated = reloaded.CharacterCreatorButtonEffectPresets
+                .Single(preset => string.Equals(preset.Id, "legacy-preset", StringComparison.OrdinalIgnoreCase));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(migrated.Layers, Has.Count.EqualTo(2));
+                Assert.That(migrated.Layers[0].Kind, Is.EqualTo(CharacterCreatorButtonEffectLayerKind.Darken));
+                Assert.That(migrated.Layers[0].DarknessPercent, Is.EqualTo(35));
+                Assert.That(migrated.Layers[1].Kind, Is.EqualTo(CharacterCreatorButtonEffectLayerKind.Border));
+                Assert.That(migrated.Layers[1].BorderWidth, Is.EqualTo(7));
+                Assert.That(migrated.Layers[1].BorderColor, Is.EqualTo("#FF112233"));
+            });
+        }
+
         [Test]
         public void RecordServerConnectionUsage_IncrementsCountAndPersistsAcrossReload()
         {

@@ -380,10 +380,41 @@ namespace OceanyaClient
         Overlay = 3
     }
 
+    /// <summary>
+    /// One entry of a button effect stack. Layers are applied in list order, each on top of the previous result.
+    /// </summary>
+    public enum CharacterCreatorButtonEffectLayerKind
+    {
+        ReduceOpacity = 1,
+        Darken = 2,
+        Overlay = 3,
+        Border = 4
+    }
+
+    /// <summary>
+    /// A single stacked button effect. Only the fields relevant to <see cref="Kind"/> are used.
+    /// </summary>
+    public class CharacterCreatorButtonEffectLayer
+    {
+        public CharacterCreatorButtonEffectLayerKind Kind { get; set; } =
+            CharacterCreatorButtonEffectLayerKind.Darken;
+        public int OpacityPercent { get; set; } = 75;
+        public int DarknessPercent { get; set; } = 50;
+        public string OverlayPath { get; set; } = string.Empty;
+        public string BorderColor { get; set; } = "#FF000000";
+        public int BorderWidth { get; set; } = 5;
+    }
+
     public class CharacterCreatorButtonEffectPreset
     {
         public string Id { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
+
+        /// <summary>Ordered effect stack. Empty means "no effect".</summary>
+        public List<CharacterCreatorButtonEffectLayer> Layers { get; set; } =
+            new List<CharacterCreatorButtonEffectLayer>();
+
+        // Legacy single-effect fields, kept so old savefiles can migrate into Layers.
         public CharacterCreatorButtonEffectPresetMode Mode { get; set; } =
             CharacterCreatorButtonEffectPresetMode.Darken;
         public int OpacityPercent { get; set; } = 75;
@@ -396,6 +427,12 @@ namespace OceanyaClient
 
     public class CharacterCreatorButtonEffectSnapshot
     {
+        /// <summary>Ordered effect stack. Empty means "no effect".</summary>
+        public List<CharacterCreatorButtonEffectLayer> Layers { get; set; } =
+            new List<CharacterCreatorButtonEffectLayer>();
+        public string CustomPresetId { get; set; } = string.Empty;
+
+        // Legacy single-effect fields, kept so old savefiles can migrate into Layers.
         public CharacterCreatorButtonEffectPresetMode Mode { get; set; } =
             CharacterCreatorButtonEffectPresetMode.None;
         public int OpacityPercent { get; set; } = 75;
@@ -404,7 +441,6 @@ namespace OceanyaClient
         public bool AddBorder { get; set; }
         public string BorderColor { get; set; } = "#FF000000";
         public int BorderWidth { get; set; } = 5;
-        public string CustomPresetId { get; set; } = string.Empty;
     }
 
     public class CharacterCreatorLastBulkButtonIconConfig
@@ -435,8 +471,14 @@ namespace OceanyaClient
         public CharacterCreatorButtonEffectSnapshot OffEffect { get; set; } =
             new CharacterCreatorButtonEffectSnapshot
             {
-                Mode = CharacterCreatorButtonEffectPresetMode.Darken,
-                DarknessPercent = 50
+                Layers = new List<CharacterCreatorButtonEffectLayer>
+                {
+                    new CharacterCreatorButtonEffectLayer
+                    {
+                        Kind = CharacterCreatorButtonEffectLayerKind.Darken,
+                        DarknessPercent = 50
+                    }
+                }
             };
     }
 
@@ -2391,13 +2433,15 @@ namespace OceanyaClient
                 {
                     Id = string.IsNullOrWhiteSpace(raw.Id) ? Guid.NewGuid().ToString("N") : raw.Id.Trim(),
                     Name = raw.Name?.Trim() ?? string.Empty,
-                    Mode = raw.Mode,
-                    OpacityPercent = Math.Clamp(raw.OpacityPercent, 0, 100),
-                    DarknessPercent = Math.Clamp(raw.DarknessPercent, 0, 100),
-                    OverlayPath = raw.OverlayPath?.Trim() ?? string.Empty,
-                    AddBorder = raw.AddBorder,
-                    BorderColor = string.IsNullOrWhiteSpace(raw.BorderColor) ? "#FF000000" : raw.BorderColor.Trim(),
-                    BorderWidth = Math.Clamp(raw.BorderWidth, 1, 32)
+                    Layers = NormalizeButtonEffectLayers(
+                        raw.Layers,
+                        raw.Mode,
+                        raw.OpacityPercent,
+                        raw.DarknessPercent,
+                        raw.OverlayPath,
+                        raw.AddBorder,
+                        raw.BorderColor,
+                        raw.BorderWidth)
                 };
 
                 if (string.IsNullOrWhiteSpace(preset.Name))
@@ -2407,15 +2451,86 @@ namespace OceanyaClient
 
                 string baseName = preset.Name;
                 int suffix = 2;
-                string uniquenessKey = $"{preset.Name}|{preset.Mode}";
+                string uniquenessKey = preset.Name;
                 while (!usedNameKeys.Add(uniquenessKey))
                 {
                     preset.Name = $"{baseName} ({suffix})";
-                    uniquenessKey = $"{preset.Name}|{preset.Mode}";
+                    uniquenessKey = preset.Name;
                     suffix++;
                 }
 
                 normalized.Add(preset);
+            }
+
+            return normalized;
+        }
+
+        /// <summary>
+        /// Returns a clamped copy of <paramref name="layers"/>, migrating the legacy single-effect fields
+        /// into an equivalent stack when no layers were persisted yet.
+        /// </summary>
+        private static List<CharacterCreatorButtonEffectLayer> NormalizeButtonEffectLayers(
+            IEnumerable<CharacterCreatorButtonEffectLayer>? layers,
+            CharacterCreatorButtonEffectPresetMode legacyMode,
+            int legacyOpacityPercent,
+            int legacyDarknessPercent,
+            string? legacyOverlayPath,
+            bool legacyAddBorder,
+            string? legacyBorderColor,
+            int legacyBorderWidth)
+        {
+            List<CharacterCreatorButtonEffectLayer> normalized = (layers ?? Array.Empty<CharacterCreatorButtonEffectLayer>())
+                .Where(layer => layer != null)
+                .Select(layer => new CharacterCreatorButtonEffectLayer
+                {
+                    Kind = layer.Kind,
+                    OpacityPercent = Math.Clamp(layer.OpacityPercent, 0, 100),
+                    DarknessPercent = Math.Clamp(layer.DarknessPercent, 0, 100),
+                    OverlayPath = layer.OverlayPath?.Trim() ?? string.Empty,
+                    BorderColor = string.IsNullOrWhiteSpace(layer.BorderColor) ? "#FF000000" : layer.BorderColor.Trim(),
+                    BorderWidth = Math.Clamp(layer.BorderWidth, 1, 32)
+                })
+                .ToList();
+
+            if (normalized.Count > 0)
+            {
+                return normalized;
+            }
+
+            string borderColor = string.IsNullOrWhiteSpace(legacyBorderColor) ? "#FF000000" : legacyBorderColor.Trim();
+            switch (legacyMode)
+            {
+                case CharacterCreatorButtonEffectPresetMode.ReduceOpacity:
+                    normalized.Add(new CharacterCreatorButtonEffectLayer
+                    {
+                        Kind = CharacterCreatorButtonEffectLayerKind.ReduceOpacity,
+                        OpacityPercent = Math.Clamp(legacyOpacityPercent, 0, 100)
+                    });
+                    break;
+                case CharacterCreatorButtonEffectPresetMode.Darken:
+                    normalized.Add(new CharacterCreatorButtonEffectLayer
+                    {
+                        Kind = CharacterCreatorButtonEffectLayerKind.Darken,
+                        DarknessPercent = Math.Clamp(legacyDarknessPercent, 0, 100)
+                    });
+                    break;
+                case CharacterCreatorButtonEffectPresetMode.Overlay:
+                    normalized.Add(new CharacterCreatorButtonEffectLayer
+                    {
+                        Kind = CharacterCreatorButtonEffectLayerKind.Overlay,
+                        OverlayPath = legacyOverlayPath?.Trim() ?? string.Empty
+                    });
+                    break;
+            }
+
+            if (legacyAddBorder)
+            {
+                normalized.Add(new CharacterCreatorButtonEffectLayer
+                {
+                    Kind = CharacterCreatorButtonEffectLayerKind.Border,
+                    BorderColor = borderColor,
+                    BorderWidth = Math.Clamp(legacyBorderWidth, 1, 32)
+                });
             }
 
             return normalized;
@@ -2458,8 +2573,14 @@ namespace OceanyaClient
             config.OnEffect ??= new CharacterCreatorButtonEffectSnapshot();
             config.OffEffect ??= new CharacterCreatorButtonEffectSnapshot
             {
-                Mode = CharacterCreatorButtonEffectPresetMode.Darken,
-                DarknessPercent = 50
+                Layers = new List<CharacterCreatorButtonEffectLayer>
+                {
+                    new CharacterCreatorButtonEffectLayer
+                    {
+                        Kind = CharacterCreatorButtonEffectLayerKind.Darken,
+                        DarknessPercent = 50
+                    }
+                }
             };
 
             NormalizeEffectSnapshot(config.OnEffect);
@@ -2468,13 +2589,15 @@ namespace OceanyaClient
 
         private static void NormalizeEffectSnapshot(CharacterCreatorButtonEffectSnapshot snapshot)
         {
-            snapshot.OpacityPercent = Math.Clamp(snapshot.OpacityPercent, 0, 100);
-            snapshot.DarknessPercent = Math.Clamp(snapshot.DarknessPercent, 0, 100);
-            snapshot.OverlayPath = snapshot.OverlayPath?.Trim() ?? string.Empty;
-            snapshot.BorderColor = string.IsNullOrWhiteSpace(snapshot.BorderColor)
-                ? "#FF000000"
-                : snapshot.BorderColor.Trim();
-            snapshot.BorderWidth = Math.Clamp(snapshot.BorderWidth, 1, 32);
+            snapshot.Layers = NormalizeButtonEffectLayers(
+                snapshot.Layers,
+                snapshot.Mode,
+                snapshot.OpacityPercent,
+                snapshot.DarknessPercent,
+                snapshot.OverlayPath,
+                snapshot.AddBorder,
+                snapshot.BorderColor,
+                snapshot.BorderWidth);
             snapshot.CustomPresetId = snapshot.CustomPresetId?.Trim() ?? string.Empty;
         }
     }

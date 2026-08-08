@@ -452,16 +452,8 @@ namespace UnitTests
                 Mode = ButtonIconMode.TwoImages,
                 TwoImagesOnPath = buttonOnPath,
                 TwoImagesOffPath = buttonOffPath,
-                OnEffect = new ButtonEffectConfig
-                {
-                    Mode = ButtonEffectsGenerationMode.Darken,
-                    DarknessPercent = 80
-                },
-                OffEffect = new ButtonEffectConfig
-                {
-                    Mode = ButtonEffectsGenerationMode.Darken,
-                    DarknessPercent = 10
-                }
+                OnEffect = ButtonEffectConfig.CreateDarken(80),
+                OffEffect = ButtonEffectConfig.CreateDarken(10)
             };
 
             MethodInfo? buildPairMethod = typeof(AOCharacterFileCreatorWindow).GetMethod(
@@ -517,6 +509,85 @@ namespace UnitTests
             Assert.That(onImage, Is.Not.Null, "button_on image must be produced");
             Assert.That(onImage!.PixelWidth, Is.EqualTo(onImage.PixelHeight),
                 "Button icon output must be square (PixelWidth == PixelHeight) regardless of input aspect ratio");
+        }
+
+        /// <summary>
+        /// Stacked button effects must be applied in list order, each on top of the previous result.
+        /// Two darken layers must therefore compound instead of the last one winning.
+        /// </summary>
+        [Test]
+        public void ButtonEffectStack_AppliesEveryLayerInOrder()
+        {
+            string basePath = CreateSolidPng(Path.Combine(tempRoot, "stack_base.png"), Color.FromRgb(255, 255, 255));
+
+            ButtonIconGenerationConfig singleDarken = new ButtonIconGenerationConfig
+            {
+                Mode = ButtonIconMode.SingleImage,
+                SingleImagePath = basePath,
+                OnEffect = ButtonEffectConfig.CreateDarken(40),
+                OffEffect = new ButtonEffectConfig()
+            };
+
+            ButtonEffectConfig stacked = ButtonEffectConfig.CreateDarken(40);
+            stacked.Layers.Add(new ButtonEffectLayer
+            {
+                Kind = ButtonEffectLayerKind.Darken,
+                DarknessPercent = 40
+            });
+            ButtonIconGenerationConfig doubleDarken = new ButtonIconGenerationConfig
+            {
+                Mode = ButtonIconMode.SingleImage,
+                SingleImagePath = basePath,
+                OnEffect = stacked,
+                OffEffect = new ButtonEffectConfig()
+            };
+
+            MethodInfo? buildPairMethod = typeof(AOCharacterFileCreatorWindow).GetMethod(
+                "TryBuildButtonIconPair",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(buildPairMethod, Is.Not.Null);
+
+            object?[] singleArgs = { singleDarken, null, null, null };
+            Assert.That(buildPairMethod!.Invoke(null, singleArgs), Is.EqualTo(true));
+            object?[] doubleArgs = { doubleDarken, null, null, null };
+            Assert.That(buildPairMethod.Invoke(null, doubleArgs), Is.EqualTo(true));
+
+            Color singleCenter = SampleCenterColor((singleArgs[1] as BitmapSource)!);
+            Color doubleCenter = SampleCenterColor((doubleArgs[1] as BitmapSource)!);
+
+            Assert.That(doubleCenter.R, Is.LessThan(singleCenter.R),
+                "The second darken layer must compound on top of the first");
+        }
+
+        /// <summary>
+        /// An empty effect stack must leave the base image untouched (the old "None" mode).
+        /// </summary>
+        [Test]
+        public void ButtonEffectStack_EmptyStack_LeavesBaseImageUnchanged()
+        {
+            Color sourceColor = Color.FromRgb(200, 120, 60);
+            string basePath = CreateSolidPng(Path.Combine(tempRoot, "stack_empty.png"), sourceColor);
+
+            ButtonIconGenerationConfig config = new ButtonIconGenerationConfig
+            {
+                Mode = ButtonIconMode.SingleImage,
+                SingleImagePath = basePath,
+                OnEffect = new ButtonEffectConfig(),
+                OffEffect = new ButtonEffectConfig()
+            };
+
+            MethodInfo? buildPairMethod = typeof(AOCharacterFileCreatorWindow).GetMethod(
+                "TryBuildButtonIconPair",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(buildPairMethod, Is.Not.Null);
+
+            object?[] args = { config, null, null, null };
+            Assert.That(buildPairMethod!.Invoke(null, args), Is.EqualTo(true));
+
+            Color center = SampleCenterColor((args[1] as BitmapSource)!);
+            Assert.That(center.R, Is.EqualTo(sourceColor.R).Within(2));
+            Assert.That(center.G, Is.EqualTo(sourceColor.G).Within(2));
+            Assert.That(center.B, Is.EqualTo(sourceColor.B).Within(2));
         }
 
         private static string CreateSolidPng(string path, Color color)

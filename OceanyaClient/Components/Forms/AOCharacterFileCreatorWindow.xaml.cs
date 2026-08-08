@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -162,13 +162,14 @@ namespace OceanyaClient
             "Two images",
             "Automatic"
         };
-        private static readonly IReadOnlyList<string> ButtonEffectsGenerationOptionNames = new List<string>
+        private static readonly IReadOnlyList<ButtonEffectLayerKind> ButtonEffectLayerKindOptions = new List<ButtonEffectLayerKind>
         {
-            "None",
-            "Reduce opacity",
-            "Darken",
-            "Overlay"
+            ButtonEffectLayerKind.ReduceOpacity,
+            ButtonEffectLayerKind.Darken,
+            ButtonEffectLayerKind.Overlay,
+            ButtonEffectLayerKind.Border
         };
+        private const string ButtonEffectNoPresetOptionName = "(No preset)";
         private const string ButtonBackgroundNoOptionName = "No BG";
         private const string ButtonBackgroundSolidColorOptionName = "Solid Color";
         private const string ButtonBackgroundGradientOptionName = "Gradient";
@@ -2170,8 +2171,8 @@ namespace OceanyaClient
                 || !string.IsNullOrWhiteSpace(emote.ButtonSingleImageAssetSourcePath)
                 || !string.IsNullOrWhiteSpace(emote.ButtonTwoImagesOnAssetSourcePath)
                 || !string.IsNullOrWhiteSpace(emote.ButtonTwoImagesOffAssetSourcePath)
-                || !string.IsNullOrWhiteSpace(emote.ButtonOnEffect?.OverlayImagePath)
-                || !string.IsNullOrWhiteSpace(emote.ButtonOffEffect?.OverlayImagePath)
+                || EnumerateButtonEffectOverlayPaths(emote.ButtonOnEffect).Any()
+                || EnumerateButtonEffectOverlayPaths(emote.ButtonOffEffect).Any()
                 || !string.IsNullOrWhiteSpace(emote.ButtonAutomaticBackgroundUploadAssetSourcePath)
                 || emote.ButtonAutomaticCutEmoteImage != null;
         }
@@ -2464,19 +2465,28 @@ namespace OceanyaClient
 
         private static void ValidateBulkButtonEffectForIssues(ButtonEffectConfig? effect, string roleLabel, List<string> issues)
         {
-            if (effect == null || effect.Mode != ButtonEffectsGenerationMode.Overlay)
+            if (effect == null)
             {
                 return;
             }
 
-            string overlayPath = effect.OverlayImagePath ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(overlayPath))
+            for (int index = 0; index < effect.Layers.Count; index++)
             {
-                issues.Add($"Effect ({roleLabel}): choose an overlay image or switch the effect mode away from Overlay.");
-            }
-            else if (!TryLoadButtonBitmap(overlayPath, out _, out _))
-            {
-                issues.Add($"Effect ({roleLabel}): the selected overlay image could not be loaded.");
+                ButtonEffectLayer layer = effect.Layers[index];
+                if (layer == null || layer.Kind != ButtonEffectLayerKind.Overlay)
+                {
+                    continue;
+                }
+
+                string overlayPath = layer.OverlayImagePath ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(overlayPath))
+                {
+                    issues.Add($"Effect ({roleLabel}): overlay #{index + 1} has no image selected.");
+                }
+                else if (!TryLoadButtonBitmap(overlayPath, out _, out _))
+                {
+                    issues.Add($"Effect ({roleLabel}): overlay #{index + 1} could not load \"{Path.GetFileName(overlayPath)}\".");
+                }
             }
         }
 
@@ -2697,11 +2707,7 @@ namespace OceanyaClient
                 {
                     Mode = ButtonIconMode.Automatic,
                     OnEffect = (bulkButtonIconConfig.OnEffect ?? new ButtonEffectConfig()).Clone(),
-                    OffEffect = (bulkButtonIconConfig.OffEffect ?? new ButtonEffectConfig
-                    {
-                        Mode = ButtonEffectsGenerationMode.Darken,
-                        DarknessPercent = 50
-                    }).Clone(),
+                    OffEffect = (bulkButtonIconConfig.OffEffect ?? ButtonEffectConfig.CreateDarken(50)).Clone(),
                     AutomaticBackgroundMode = bulkButtonIconConfig.AutomaticBackgroundMode,
                     AutomaticBackgroundPreset = bulkButtonIconConfig.AutomaticBackgroundPreset,
                     AutomaticSolidColor = bulkButtonIconConfig.AutomaticSolidColor,
@@ -7198,17 +7204,9 @@ namespace OceanyaClient
             emote.ButtonTwoImagesOffAssetSourcePath = null;
             emote.ButtonOnEffect = assignSelectedState
                 ? new ButtonEffectConfig()
-                : new ButtonEffectConfig
-                {
-                    Mode = ButtonEffectsGenerationMode.Darken,
-                    DarknessPercent = 50
-                };
+                : ButtonEffectConfig.CreateDarken(50);
             emote.ButtonOffEffect = assignSelectedState
-                ? new ButtonEffectConfig
-                {
-                    Mode = ButtonEffectsGenerationMode.Darken,
-                    DarknessPercent = 50
-                }
+                ? ButtonEffectConfig.CreateDarken(50)
                 : new ButtonEffectConfig();
         }
 
@@ -7220,17 +7218,9 @@ namespace OceanyaClient
             emote.ButtonTwoImagesOffAssetSourcePath = assignSelectedState ? null : sourcePath;
             emote.ButtonOnEffect = assignSelectedState
                 ? new ButtonEffectConfig()
-                : new ButtonEffectConfig
-                {
-                    Mode = ButtonEffectsGenerationMode.Darken,
-                    DarknessPercent = 50
-                };
+                : ButtonEffectConfig.CreateDarken(50);
             emote.ButtonOffEffect = assignSelectedState
-                ? new ButtonEffectConfig
-                {
-                    Mode = ButtonEffectsGenerationMode.Darken,
-                    DarknessPercent = 50
-                }
+                ? ButtonEffectConfig.CreateDarken(50)
                 : new ButtonEffectConfig();
         }
 
@@ -9041,11 +9031,7 @@ namespace OceanyaClient
                     dialog,
                     RefreshPreviews));
                 panel.Children.Add(BuildButtonEffectEditorSection(
-                    config.OffEffect ??= new ButtonEffectConfig
-                    {
-                        Mode = ButtonEffectsGenerationMode.Darken,
-                        DarknessPercent = 50
-                    },
+                    config.OffEffect ??= ButtonEffectConfig.CreateDarken(50),
                     "Unselected Button (button_off)",
                     "AO2 uses button_off for emote buttons that are not currently selected.",
                     "This generates button_off. AO2 shows it for unselected/inactive emote buttons.",
@@ -12284,6 +12270,110 @@ namespace OceanyaClient
             return root;
         }
 
+        /// <summary>
+        /// Expands or collapses a section body with a short height animation.
+        /// </summary>
+        private static void AnimateSectionExpansion(FrameworkElement host, FrameworkElement content, bool expand, bool animate)
+        {
+            host.BeginAnimation(FrameworkElement.MaxHeightProperty, null);
+            if (!animate)
+            {
+                host.Visibility = expand ? Visibility.Visible : Visibility.Collapsed;
+                host.MaxHeight = expand ? double.PositiveInfinity : 0;
+                return;
+            }
+
+            double availableWidth = host.ActualWidth > 0 ? host.ActualWidth : double.PositiveInfinity;
+            content.Measure(new Size(availableWidth, double.PositiveInfinity));
+            double contentHeight = content.DesiredSize.Height;
+            double from = expand ? 0 : (host.ActualHeight > 0 ? host.ActualHeight : contentHeight);
+            double to = expand ? contentHeight : 0;
+
+            host.Visibility = Visibility.Visible;
+            host.MaxHeight = from;
+
+            DoubleAnimation animation = new DoubleAnimation(from, to, TimeSpan.FromMilliseconds(160))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut }
+            };
+            animation.Completed += (_, _) =>
+            {
+                host.BeginAnimation(FrameworkElement.MaxHeightProperty, null);
+                host.MaxHeight = expand ? double.PositiveInfinity : 0;
+                host.Visibility = expand ? Visibility.Visible : Visibility.Collapsed;
+            };
+            host.BeginAnimation(FrameworkElement.MaxHeightProperty, animation);
+        }
+
+        /// <summary>
+        /// Creates a small flat clickable chip. Used for the effect stack's add/move/remove actions.
+        /// </summary>
+        private static Border CreateEffectChipButton(
+            string text,
+            Color background,
+            string toolTip,
+            Action onClick,
+            string accentPrefix = "",
+            Color? accentColor = null)
+        {
+            SolidColorBrush normalBrush = new SolidColorBrush(background);
+            SolidColorBrush hoverBrush = new SolidColorBrush(Color.FromArgb(
+                255,
+                (byte)Math.Min(255, background.R + 28),
+                (byte)Math.Min(255, background.G + 28),
+                (byte)Math.Min(255, background.B + 28)));
+
+            Border chip = new Border
+            {
+                Background = normalBrush,
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(10, 5, 10, 5),
+                Cursor = Cursors.Hand,
+                ToolTip = toolTip,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+
+            TextBlock label = new TextBlock
+            {
+                Text = text,
+                Foreground = new SolidColorBrush(Color.FromRgb(238, 244, 250)),
+                FontWeight = FontWeights.SemiBold,
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
+            if (string.IsNullOrEmpty(accentPrefix))
+            {
+                chip.Child = label;
+            }
+            else
+            {
+                StackPanel content = new StackPanel { Orientation = Orientation.Horizontal };
+                content.Children.Add(new TextBlock
+                {
+                    Text = accentPrefix,
+                    Margin = new Thickness(0, 0, 6, 0),
+                    FontWeight = FontWeights.Bold,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Foreground = new SolidColorBrush(accentColor ?? Color.FromRgb(96, 208, 122))
+                });
+                label.VerticalAlignment = VerticalAlignment.Center;
+                content.Children.Add(label);
+                chip.Child = content;
+            }
+
+            chip.MouseEnter += (_, _) => chip.Background = hoverBrush;
+            chip.MouseLeave += (_, _) => chip.Background = normalBrush;
+            chip.MouseLeftButtonUp += (_, args) =>
+            {
+                args.Handled = true;
+                onClick();
+            };
+            return chip;
+        }
+
+        /// <summary>
+        /// Builds the collapsible editor for one button state's ordered effect stack
+        /// (button_on or button_off), including add/reorder/remove and preset management.
+        /// </summary>
         private FrameworkElement BuildButtonEffectEditorSection(
             ButtonEffectConfig effect,
             string sectionTitle,
@@ -12305,10 +12395,59 @@ namespace OceanyaClient
             };
 
             StackPanel root = new StackPanel();
-            FrameworkElement header = CreateDialogFieldHeader(sectionTitle, sectionToolTip);
-            header.Margin = new Thickness(0, 0, 0, 4);
-            root.Children.Add(header);
-            root.Children.Add(new TextBlock
+            sectionCard.Child = root;
+
+            bool sectionExpanded = true;
+
+            TextBlock sectionChevron = new TextBlock
+            {
+                Text = "▼",
+                FontSize = 11,
+                Margin = new Thickness(0, 0, 8, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = new SolidColorBrush(Color.FromRgb(160, 194, 224))
+            };
+            TextBlock sectionTitleText = new TextBlock
+            {
+                Text = sectionTitle,
+                FontWeight = FontWeights.Bold,
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = new SolidColorBrush(Color.FromRgb(224, 232, 240))
+            };
+            TextBlock sectionSummaryText = new TextBlock
+            {
+                Margin = new Thickness(10, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Foreground = new SolidColorBrush(Color.FromRgb(150, 168, 186))
+            };
+
+            Grid sectionHeaderGrid = new Grid();
+            sectionHeaderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            sectionHeaderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            sectionHeaderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            Grid.SetColumn(sectionChevron, 0);
+            Grid.SetColumn(sectionTitleText, 1);
+            Grid.SetColumn(sectionSummaryText, 2);
+            sectionHeaderGrid.Children.Add(sectionChevron);
+            sectionHeaderGrid.Children.Add(sectionTitleText);
+            sectionHeaderGrid.Children.Add(sectionSummaryText);
+
+            Border sectionHeader = new Border
+            {
+                Background = Brushes.Transparent,
+                Cursor = Cursors.Hand,
+                Padding = new Thickness(0, 2, 0, 2),
+                ToolTip = sectionToolTip,
+                Child = sectionHeaderGrid
+            };
+            root.Children.Add(sectionHeader);
+
+            StackPanel body = new StackPanel { Margin = new Thickness(0, 8, 0, 0) };
+            Border bodyHost = new Border { ClipToBounds = true, Child = body };
+            root.Children.Add(bodyHost);
+
+            body.Children.Add(new TextBlock
             {
                 Text = stateDescription,
                 TextWrapping = TextWrapping.Wrap,
@@ -12317,154 +12456,34 @@ namespace OceanyaClient
                 ToolTip = sectionToolTip
             });
 
-            StackPanel AddField(string label, string toolTip, UIElement content)
-            {
-                StackPanel container = new StackPanel
-                {
-                    Margin = new Thickness(0, 0, 0, 8)
-                };
-                FrameworkElement fieldHeader = CreateDialogFieldHeader(label, toolTip);
-                fieldHeader.Margin = new Thickness(0, 0, 0, 4);
-                container.Children.Add(fieldHeader);
-                container.Children.Add(content);
-                root.Children.Add(container);
-                return container;
-            }
+            StackPanel layersPanel = new StackPanel();
+            body.Children.Add(layersPanel);
 
-            bool suppressDropdownChange = false;
-            bool suppressSliderEvents = false;
-            bool suppressBorderEvents = false;
-
-            AutoCompleteDropdownField effectDropdown = CreateDialogAutoCompleteField(
-                GetButtonEffectOptionItems(),
-                GetButtonEffectSelectionName(effect, GetSavedButtonEffectPresets()),
-                effectToolTip,
-                isReadOnly: true,
-                preserveItemOrder: true);
-            _ = AddField("Effect", effectToolTip, effectDropdown);
-
-            StackPanel opacityPanel = new StackPanel();
-            Slider opacitySlider = new Slider
+            TextBlock orderHintText = new TextBlock
             {
-                Minimum = 0,
-                Maximum = 100,
-                TickFrequency = 5,
-                IsSnapToTickEnabled = true
-            };
-            TextBlock opacityValueText = new TextBlock
-            {
-                Foreground = new SolidColorBrush(Color.FromRgb(198, 212, 224)),
-                Margin = new Thickness(0, 4, 0, 0)
-            };
-            opacityPanel.Children.Add(opacitySlider);
-            opacityPanel.Children.Add(opacityValueText);
-            StackPanel opacityField = AddField(
-                "Opacity",
-                "Used only by Reduce opacity. Lower values make this state more transparent.",
-                opacityPanel);
-
-            StackPanel darknessPanel = new StackPanel();
-            Slider darknessSlider = new Slider
-            {
-                Minimum = 0,
-                Maximum = 100,
-                TickFrequency = 5,
-                IsSnapToTickEnabled = true
-            };
-            TextBlock darknessValueText = new TextBlock
-            {
-                Foreground = new SolidColorBrush(Color.FromRgb(198, 212, 224)),
-                Margin = new Thickness(0, 4, 0, 0)
-            };
-            darknessPanel.Children.Add(darknessSlider);
-            darknessPanel.Children.Add(darknessValueText);
-            StackPanel darknessField = AddField(
-                "Darkness",
-                "Used only by Darken. Higher values add more black over the square button image.",
-                darknessPanel);
-
-            Grid overlayGrid = new Grid();
-            overlayGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            overlayGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            Button overlayButton = CreateDialogButton("Select overlay...", isPrimary: false);
-            overlayButton.Width = 150;
-            TextBlock overlayPathText = new TextBlock
-            {
-                Margin = new Thickness(10, 0, 0, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-                Foreground = new SolidColorBrush(Color.FromRgb(198, 212, 224)),
+                Text = "Effects are applied top to bottom.",
+                Margin = new Thickness(0, 0, 0, 6),
+                Foreground = new SolidColorBrush(Color.FromRgb(150, 168, 186)),
                 TextWrapping = TextWrapping.Wrap
             };
-            Grid.SetColumn(overlayButton, 0);
-            Grid.SetColumn(overlayPathText, 1);
-            overlayGrid.Children.Add(overlayButton);
-            overlayGrid.Children.Add(overlayPathText);
-            StackPanel overlayField = AddField(
-                "Overlay Image",
-                "Used only by Overlay. The overlay image is fitted into the same square button area.",
-                overlayGrid);
+            body.Children.Add(orderHintText);
 
-            CheckBox addBorderCheckBox = new CheckBox
+            // Filled in below, once the preset controls the add action depends on exist.
+            Border addEffectHost = new Border
             {
-                Content = "Add border",
-                Foreground = new SolidColorBrush(Color.FromRgb(224, 232, 240))
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Margin = new Thickness(0, 0, 0, 4)
             };
-            Grid borderGrid = new Grid
-            {
-                Margin = new Thickness(0, 8, 0, 0)
-            };
-            borderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            borderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            borderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            Button pickBorderColorButton = CreateDialogButton("Pick color...", isPrimary: false);
-            pickBorderColorButton.Width = 130;
-            Border borderColorPreview = new Border
-            {
-                Width = 48,
-                Height = 30,
-                Margin = new Thickness(8, 0, 8, 0),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(84, 104, 126)),
-                BorderThickness = new Thickness(1)
-            };
-            TextBlock borderColorHexText = new TextBlock
-            {
-                VerticalAlignment = VerticalAlignment.Center,
-                Foreground = new SolidColorBrush(Color.FromRgb(198, 212, 224))
-            };
-            Grid.SetColumn(pickBorderColorButton, 0);
-            Grid.SetColumn(borderColorPreview, 1);
-            Grid.SetColumn(borderColorHexText, 2);
-            borderGrid.Children.Add(pickBorderColorButton);
-            borderGrid.Children.Add(borderColorPreview);
-            borderGrid.Children.Add(borderColorHexText);
-            Slider borderWidthSlider = new Slider
-            {
-                Minimum = 1,
-                Maximum = 32,
-                TickFrequency = 1,
-                IsSnapToTickEnabled = true,
-                Margin = new Thickness(0, 8, 0, 0)
-            };
-            TextBlock borderWidthText = new TextBlock
-            {
-                Foreground = new SolidColorBrush(Color.FromRgb(198, 212, 224)),
-                Margin = new Thickness(0, 4, 0, 0)
-            };
-            StackPanel borderPanel = new StackPanel();
-            borderPanel.Children.Add(addBorderCheckBox);
-            borderPanel.Children.Add(borderGrid);
-            borderPanel.Children.Add(borderWidthSlider);
-            borderPanel.Children.Add(borderWidthText);
-            _ = AddField(
-                "Border",
-                "Optional outline applied after the chosen effect, useful for combining darken/overlay with a visible frame.",
-                borderPanel);
+            body.Children.Add(addEffectHost);
 
-            StackPanel presetActionRow = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                HorizontalAlignment = HorizontalAlignment.Left
-            };
+            // Preset row.
+            AutoCompleteDropdownField presetDropdown = CreateDialogAutoCompleteField(
+                GetButtonEffectPresetOptionItems(),
+                ButtonEffectNoPresetOptionName,
+                "Load a saved effect stack into this button state.",
+                isReadOnly: true,
+                preserveItemOrder: true);
+
             Button saveAsPresetButton = CreateDialogButton("Save as preset", isPrimary: false);
             saveAsPresetButton.Width = 140;
             saveAsPresetButton.Margin = new Thickness(0, 0, 8, 0);
@@ -12476,23 +12495,40 @@ namespace OceanyaClient
             saveDuplicatePresetButton.Margin = new Thickness(0, 0, 8, 0);
             Button deletePresetButton = CreateDialogButton("Delete preset", isPrimary: false);
             deletePresetButton.Width = 120;
+
+            StackPanel presetActionRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Margin = new Thickness(0, 6, 0, 0)
+            };
             presetActionRow.Children.Add(saveAsPresetButton);
             presetActionRow.Children.Add(savePresetButton);
             presetActionRow.Children.Add(saveDuplicatePresetButton);
             presetActionRow.Children.Add(deletePresetButton);
+
             TextBlock presetHintText = new TextBlock
             {
                 Foreground = new SolidColorBrush(Color.FromRgb(188, 204, 220)),
                 Margin = new Thickness(0, 6, 0, 0),
                 TextWrapping = TextWrapping.Wrap
             };
-            StackPanel presetActionsPanel = new StackPanel();
-            presetActionsPanel.Children.Add(presetActionRow);
-            presetActionsPanel.Children.Add(presetHintText);
-            _ = AddField(
+
+            StackPanel presetPanel = new StackPanel();
+            presetPanel.Children.Add(presetDropdown);
+            presetPanel.Children.Add(presetActionRow);
+            presetPanel.Children.Add(presetHintText);
+
+            StackPanel presetContainer = new StackPanel { Margin = new Thickness(0, 10, 0, 0) };
+            FrameworkElement presetHeader = CreateDialogFieldHeader(
                 "Effect Presets",
-                "Save, update, duplicate, or delete reusable effect setups for this state.",
-                presetActionsPanel);
+                "Save, update, duplicate, or delete the whole effect stack for reuse.");
+            presetHeader.Margin = new Thickness(0, 0, 0, 4);
+            presetContainer.Children.Add(presetHeader);
+            presetContainer.Children.Add(presetPanel);
+            body.Children.Add(presetContainer);
+
+            bool suppressPresetDropdownChange = false;
 
             CharacterCreatorButtonEffectPreset? ResolveCurrentPreset()
             {
@@ -12503,171 +12539,406 @@ namespace OceanyaClient
                         string.Equals(preset.Id, presetId, StringComparison.OrdinalIgnoreCase));
             }
 
-            void RefreshUi()
+            void RefreshPresetUi()
             {
-                IReadOnlyList<CharacterCreatorButtonEffectPreset> presets = GetSavedButtonEffectPresets();
-                suppressDropdownChange = true;
-                effectDropdown.ItemsSource = GetButtonEffectOptionItems();
-                effectDropdown.Text = GetButtonEffectSelectionName(effect, presets);
-                suppressDropdownChange = false;
-
-                opacityField.Visibility = effect.Mode == ButtonEffectsGenerationMode.ReduceOpacity
-                    ? Visibility.Visible
-                    : Visibility.Collapsed;
-                darknessField.Visibility = effect.Mode == ButtonEffectsGenerationMode.Darken
-                    ? Visibility.Visible
-                    : Visibility.Collapsed;
-                overlayField.Visibility = effect.Mode == ButtonEffectsGenerationMode.Overlay
-                    ? Visibility.Visible
-                    : Visibility.Collapsed;
-
-                suppressSliderEvents = true;
-                opacitySlider.Value = Math.Clamp(effect.OpacityPercent, 0, 100);
-                opacityValueText.Text = $"{Math.Clamp(effect.OpacityPercent, 0, 100)}%";
-                darknessSlider.Value = Math.Clamp(effect.DarknessPercent, 0, 100);
-                darknessValueText.Text = $"{Math.Clamp(effect.DarknessPercent, 0, 100)}%";
-                suppressSliderEvents = false;
-                overlayPathText.Text = string.IsNullOrWhiteSpace(effect.OverlayImagePath)
-                    ? "No overlay selected"
-                    : Path.GetFileName(effect.OverlayImagePath);
-
-                suppressBorderEvents = true;
-                addBorderCheckBox.IsChecked = effect.AddBorder;
-                borderGrid.Visibility = effect.AddBorder ? Visibility.Visible : Visibility.Collapsed;
-                borderWidthSlider.Visibility = effect.AddBorder ? Visibility.Visible : Visibility.Collapsed;
-                borderWidthText.Visibility = effect.AddBorder ? Visibility.Visible : Visibility.Collapsed;
-                borderWidthSlider.Value = Math.Clamp(effect.BorderWidth, 1, 32);
-                borderWidthText.Text = $"Border width: {Math.Clamp(effect.BorderWidth, 1, 32)} px";
-                borderColorPreview.Background = new SolidColorBrush(effect.BorderColor);
-                borderColorHexText.Text = ToHexColor(effect.BorderColor);
-                suppressBorderEvents = false;
-
                 CharacterCreatorButtonEffectPreset? currentPreset = ResolveCurrentPreset();
+                suppressPresetDropdownChange = true;
+                presetDropdown.ItemsSource = GetButtonEffectPresetOptionItems();
+                presetDropdown.Text = currentPreset == null
+                    ? ButtonEffectNoPresetOptionName
+                    : GetButtonEffectCustomPresetDisplayName(currentPreset);
+                suppressPresetDropdownChange = false;
+
                 savePresetButton.IsEnabled = currentPreset != null;
                 deletePresetButton.IsEnabled = currentPreset != null;
                 presetHintText.Text = currentPreset == null
-                    ? "Using a direct effect configuration. Save it as a preset to reuse it later."
+                    ? "Using a direct effect stack. Save it as a preset to reuse it later."
                     : $"Editing saved preset \"{currentPreset.Name}\".";
+                sectionSummaryText.Text = GetButtonEffectStackSummary(effect);
             }
 
-            effectDropdown.TextValueChanged += (_, _) =>
+            void NotifyStackChanged()
             {
-                if (suppressDropdownChange)
+                MarkButtonEffectCustomPresetDirty(effect);
+                RefreshPresetUi();
+                onPreviewChanged();
+            }
+
+            void RebuildLayers()
+            {
+                layersPanel.Children.Clear();
+                if (effect.Layers.Count == 0)
+                {
+                    layersPanel.Children.Add(new TextBlock
+                    {
+                        Text = "No effects yet. The base image is used as-is.",
+                        Margin = new Thickness(0, 0, 0, 8),
+                        TextWrapping = TextWrapping.Wrap,
+                        FontStyle = FontStyles.Italic,
+                        Foreground = new SolidColorBrush(Color.FromRgb(150, 168, 186))
+                    });
+                    orderHintText.Visibility = Visibility.Collapsed;
+                    RefreshPresetUi();
+                    return;
+                }
+
+                orderHintText.Visibility = effect.Layers.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+                for (int index = 0; index < effect.Layers.Count; index++)
+                {
+                    layersPanel.Children.Add(BuildLayerCard(effect.Layers[index], index));
+                }
+
+                RefreshPresetUi();
+            }
+
+            FrameworkElement BuildLayerCard(ButtonEffectLayer layer, int index)
+            {
+                Border card = new Border
+                {
+                    Margin = new Thickness(0, 0, 0, 6),
+                    Padding = new Thickness(8),
+                    BorderBrush = new SolidColorBrush(Color.FromRgb(72, 92, 112)),
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(4),
+                    Background = new SolidColorBrush(Color.FromArgb(120, 18, 26, 34))
+                };
+
+                StackPanel cardRoot = new StackPanel();
+                card.Child = cardRoot;
+
+                TextBlock layerChevron = new TextBlock
+                {
+                    Text = layer.IsExpanded ? "▼" : "▶",
+                    FontSize = 10,
+                    Margin = new Thickness(0, 0, 8, 0),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Foreground = new SolidColorBrush(Color.FromRgb(160, 194, 224))
+                };
+                TextBlock layerTitleText = new TextBlock
+                {
+                    Text = $"{index + 1}. {GetButtonEffectLayerKindName(layer.Kind)}",
+                    FontWeight = FontWeights.SemiBold,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Foreground = new SolidColorBrush(Color.FromRgb(224, 232, 240))
+                };
+                TextBlock layerSummaryText = new TextBlock
+                {
+                    Text = GetButtonEffectLayerSummary(layer),
+                    Margin = new Thickness(10, 0, 10, 0),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    Foreground = new SolidColorBrush(Color.FromRgb(150, 168, 186))
+                };
+
+                StackPanel layerActions = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                Border moveUpChip = CreateEffectChipButton("↑", Color.FromRgb(52, 68, 86), "Move this effect one step earlier.", () =>
+                {
+                    if (index <= 0)
+                    {
+                        return;
+                    }
+
+                    (effect.Layers[index - 1], effect.Layers[index]) = (effect.Layers[index], effect.Layers[index - 1]);
+                    RebuildLayers();
+                    NotifyStackChanged();
+                });
+                Border moveDownChip = CreateEffectChipButton("↓", Color.FromRgb(52, 68, 86), "Move this effect one step later.", () =>
+                {
+                    if (index >= effect.Layers.Count - 1)
+                    {
+                        return;
+                    }
+
+                    (effect.Layers[index + 1], effect.Layers[index]) = (effect.Layers[index], effect.Layers[index + 1]);
+                    RebuildLayers();
+                    NotifyStackChanged();
+                });
+                Border removeChip = CreateEffectChipButton("✕", Color.FromRgb(122, 46, 46), "Remove this effect.", () =>
+                {
+                    effect.Layers.RemoveAt(index);
+                    RebuildLayers();
+                    NotifyStackChanged();
+                });
+                moveUpChip.Margin = new Thickness(0, 0, 4, 0);
+                moveDownChip.Margin = new Thickness(0, 0, 4, 0);
+                moveUpChip.Opacity = index > 0 ? 1.0 : 0.35;
+                moveDownChip.Opacity = index < effect.Layers.Count - 1 ? 1.0 : 0.35;
+                layerActions.Children.Add(moveUpChip);
+                layerActions.Children.Add(moveDownChip);
+                layerActions.Children.Add(removeChip);
+
+                Grid layerHeaderGrid = new Grid();
+                layerHeaderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                layerHeaderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                layerHeaderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                layerHeaderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                Grid.SetColumn(layerChevron, 0);
+                Grid.SetColumn(layerTitleText, 1);
+                Grid.SetColumn(layerSummaryText, 2);
+                Grid.SetColumn(layerActions, 3);
+                layerHeaderGrid.Children.Add(layerChevron);
+                layerHeaderGrid.Children.Add(layerTitleText);
+                layerHeaderGrid.Children.Add(layerSummaryText);
+                layerHeaderGrid.Children.Add(layerActions);
+
+                Border layerHeader = new Border
+                {
+                    Background = Brushes.Transparent,
+                    Cursor = Cursors.Hand,
+                    Child = layerHeaderGrid
+                };
+                cardRoot.Children.Add(layerHeader);
+
+                StackPanel layerBody = new StackPanel { Margin = new Thickness(0, 8, 0, 0) };
+                Border layerBodyHost = new Border { ClipToBounds = true, Child = layerBody };
+                cardRoot.Children.Add(layerBodyHost);
+
+                void RefreshLayerSummary()
+                {
+                    layerSummaryText.Text = GetButtonEffectLayerSummary(layer);
+                }
+
+                switch (layer.Kind)
+                {
+                    case ButtonEffectLayerKind.ReduceOpacity:
+                    {
+                        Slider opacitySlider = new Slider
+                        {
+                            Minimum = 0,
+                            Maximum = 100,
+                            TickFrequency = 5,
+                            IsSnapToTickEnabled = true,
+                            Value = Math.Clamp(layer.OpacityPercent, 0, 100)
+                        };
+                        TextBlock opacityValueText = new TextBlock
+                        {
+                            Text = $"{Math.Clamp(layer.OpacityPercent, 0, 100)}%",
+                            Foreground = new SolidColorBrush(Color.FromRgb(198, 212, 224)),
+                            Margin = new Thickness(0, 4, 0, 0)
+                        };
+                        opacitySlider.ValueChanged += (_, _) =>
+                        {
+                            layer.OpacityPercent = (int)Math.Round(opacitySlider.Value);
+                            opacityValueText.Text = $"{layer.OpacityPercent}%";
+                            RefreshLayerSummary();
+                            NotifyStackChanged();
+                        };
+                        layerBody.Children.Add(CreateDialogFieldHeader(
+                            "Opacity",
+                            "Lower values make everything drawn so far more transparent."));
+                        layerBody.Children.Add(opacitySlider);
+                        layerBody.Children.Add(opacityValueText);
+                        break;
+                    }
+
+                    case ButtonEffectLayerKind.Darken:
+                    {
+                        Slider darknessSlider = new Slider
+                        {
+                            Minimum = 0,
+                            Maximum = 100,
+                            TickFrequency = 5,
+                            IsSnapToTickEnabled = true,
+                            Value = Math.Clamp(layer.DarknessPercent, 0, 100)
+                        };
+                        TextBlock darknessValueText = new TextBlock
+                        {
+                            Text = $"{Math.Clamp(layer.DarknessPercent, 0, 100)}%",
+                            Foreground = new SolidColorBrush(Color.FromRgb(198, 212, 224)),
+                            Margin = new Thickness(0, 4, 0, 0)
+                        };
+                        darknessSlider.ValueChanged += (_, _) =>
+                        {
+                            layer.DarknessPercent = (int)Math.Round(darknessSlider.Value);
+                            darknessValueText.Text = $"{layer.DarknessPercent}%";
+                            RefreshLayerSummary();
+                            NotifyStackChanged();
+                        };
+                        layerBody.Children.Add(CreateDialogFieldHeader(
+                            "Darkness",
+                            "Higher values add more black over everything drawn so far."));
+                        layerBody.Children.Add(darknessSlider);
+                        layerBody.Children.Add(darknessValueText);
+                        break;
+                    }
+
+                    case ButtonEffectLayerKind.Overlay:
+                    {
+                        Grid overlayGrid = new Grid();
+                        overlayGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                        overlayGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                        Button overlayButton = CreateDialogButton("Select overlay...", isPrimary: false);
+                        overlayButton.Width = 150;
+                        TextBlock overlayPathText = new TextBlock
+                        {
+                            Margin = new Thickness(10, 0, 0, 0),
+                            VerticalAlignment = VerticalAlignment.Center,
+                            Foreground = new SolidColorBrush(Color.FromRgb(198, 212, 224)),
+                            TextWrapping = TextWrapping.Wrap,
+                            Text = string.IsNullOrWhiteSpace(layer.OverlayImagePath)
+                                ? "No overlay selected"
+                                : Path.GetFileName(layer.OverlayImagePath)
+                        };
+                        overlayButton.Click += (_, _) =>
+                        {
+                            OpenFileDialog picker = new OpenFileDialog
+                            {
+                                Title = "Select overlay image",
+                                Filter = "Image files (*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp;*.apng)|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp;*.apng|All files (*.*)|*.*"
+                            };
+                            if (picker.ShowDialog() != true)
+                            {
+                                return;
+                            }
+
+                            layer.OverlayImagePath = picker.FileName;
+                            overlayPathText.Text = Path.GetFileName(picker.FileName);
+                            RefreshLayerSummary();
+                            NotifyStackChanged();
+                        };
+                        Grid.SetColumn(overlayButton, 0);
+                        Grid.SetColumn(overlayPathText, 1);
+                        overlayGrid.Children.Add(overlayButton);
+                        overlayGrid.Children.Add(overlayPathText);
+                        layerBody.Children.Add(CreateDialogFieldHeader(
+                            "Overlay Image",
+                            "The overlay image is fitted into the same square button area."));
+                        layerBody.Children.Add(overlayGrid);
+                        break;
+                    }
+
+                    default:
+                    {
+                        Grid borderGrid = new Grid();
+                        borderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                        borderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                        borderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                        Button pickBorderColorButton = CreateDialogButton("Pick color...", isPrimary: false);
+                        pickBorderColorButton.Width = 130;
+                        Border borderColorPreview = new Border
+                        {
+                            Width = 48,
+                            Height = 30,
+                            Margin = new Thickness(8, 0, 8, 0),
+                            BorderBrush = new SolidColorBrush(Color.FromRgb(84, 104, 126)),
+                            BorderThickness = new Thickness(1),
+                            Background = new SolidColorBrush(layer.BorderColor)
+                        };
+                        TextBlock borderColorHexText = new TextBlock
+                        {
+                            VerticalAlignment = VerticalAlignment.Center,
+                            Foreground = new SolidColorBrush(Color.FromRgb(198, 212, 224)),
+                            Text = ToHexColor(layer.BorderColor)
+                        };
+                        pickBorderColorButton.Click += (_, _) =>
+                        {
+                            Color? picked = ShowAdvancedColorPickerDialog(layer.BorderColor);
+                            if (!picked.HasValue)
+                            {
+                                return;
+                            }
+
+                            layer.BorderColor = picked.Value;
+                            borderColorPreview.Background = new SolidColorBrush(picked.Value);
+                            borderColorHexText.Text = ToHexColor(picked.Value);
+                            RefreshLayerSummary();
+                            NotifyStackChanged();
+                        };
+                        Grid.SetColumn(pickBorderColorButton, 0);
+                        Grid.SetColumn(borderColorPreview, 1);
+                        Grid.SetColumn(borderColorHexText, 2);
+                        borderGrid.Children.Add(pickBorderColorButton);
+                        borderGrid.Children.Add(borderColorPreview);
+                        borderGrid.Children.Add(borderColorHexText);
+
+                        Slider borderWidthSlider = new Slider
+                        {
+                            Minimum = 1,
+                            Maximum = 32,
+                            TickFrequency = 1,
+                            IsSnapToTickEnabled = true,
+                            Margin = new Thickness(0, 8, 0, 0),
+                            Value = Math.Clamp(layer.BorderWidth, 1, 32)
+                        };
+                        TextBlock borderWidthText = new TextBlock
+                        {
+                            Foreground = new SolidColorBrush(Color.FromRgb(198, 212, 224)),
+                            Margin = new Thickness(0, 4, 0, 0),
+                            Text = $"Border width: {Math.Clamp(layer.BorderWidth, 1, 32)} px"
+                        };
+                        borderWidthSlider.ValueChanged += (_, _) =>
+                        {
+                            layer.BorderWidth = (int)Math.Round(borderWidthSlider.Value);
+                            borderWidthText.Text = $"Border width: {layer.BorderWidth} px";
+                            RefreshLayerSummary();
+                            NotifyStackChanged();
+                        };
+
+                        layerBody.Children.Add(CreateDialogFieldHeader(
+                            "Border",
+                            "Outline drawn on top of everything added so far."));
+                        layerBody.Children.Add(borderGrid);
+                        layerBody.Children.Add(borderWidthSlider);
+                        layerBody.Children.Add(borderWidthText);
+                        break;
+                    }
+                }
+
+                AnimateSectionExpansion(layerBodyHost, layerBody, layer.IsExpanded, animate: false);
+                layerHeader.MouseLeftButtonUp += (_, args) =>
+                {
+                    args.Handled = true;
+                    layer.IsExpanded = !layer.IsExpanded;
+                    layerChevron.Text = layer.IsExpanded ? "▼" : "▶";
+                    AnimateSectionExpansion(layerBodyHost, layerBody, layer.IsExpanded, animate: true);
+                };
+
+                return card;
+            }
+
+            void ShowAddEffectMenu(Border target)
+            {
+                ContextMenu addMenu = new ContextMenu
+                {
+                    PlacementTarget = target,
+                    Placement = PlacementMode.Bottom
+                };
+                foreach (ButtonEffectLayerKind kind in ButtonEffectLayerKindOptions)
+                {
+                    ButtonEffectLayerKind capturedKind = kind;
+                    addMenu.Items.Add(CreateContextMenuItem(GetButtonEffectLayerKindName(capturedKind), () =>
+                    {
+                        effect.Layers.Add(new ButtonEffectLayer { Kind = capturedKind });
+                        RebuildLayers();
+                        NotifyStackChanged();
+                    }));
+                }
+
+                addMenu.IsOpen = true;
+            }
+
+            presetDropdown.TextValueChanged += (_, _) =>
+            {
+                if (suppressPresetDropdownChange)
                 {
                     return;
                 }
 
-                if (TryResolveButtonEffectCustomPreset(effectDropdown.Text, out CharacterCreatorButtonEffectPreset? selectedPreset))
+                if (TryResolveButtonEffectCustomPreset(presetDropdown.Text, out CharacterCreatorButtonEffectPreset? selectedPreset))
                 {
                     ApplyButtonEffectCustomPreset(selectedPreset, effect);
-                }
-                else
-                {
-                    effect.Mode = ParseButtonEffectsGenerationMode(effectDropdown.Text);
-                    MarkButtonEffectCustomPresetDirty(effect);
-                }
-
-                RefreshUi();
-                onPreviewChanged();
-            };
-
-            opacitySlider.ValueChanged += (_, _) =>
-            {
-                if (suppressSliderEvents)
-                {
+                    RebuildLayers();
+                    RefreshPresetUi();
+                    onPreviewChanged();
                     return;
                 }
 
-                effect.OpacityPercent = (int)Math.Round(opacitySlider.Value);
-                opacityValueText.Text = $"{effect.OpacityPercent}%";
-                MarkButtonEffectCustomPresetDirty(effect);
-                RefreshUi();
-                onPreviewChanged();
-            };
-
-            darknessSlider.ValueChanged += (_, _) =>
-            {
-                if (suppressSliderEvents)
-                {
-                    return;
-                }
-
-                effect.DarknessPercent = (int)Math.Round(darknessSlider.Value);
-                darknessValueText.Text = $"{effect.DarknessPercent}%";
-                MarkButtonEffectCustomPresetDirty(effect);
-                RefreshUi();
-                onPreviewChanged();
-            };
-
-            overlayButton.Click += (_, _) =>
-            {
-                OpenFileDialog picker = new OpenFileDialog
-                {
-                    Title = "Select overlay image",
-                    Filter = "Image files (*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp;*.apng)|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp;*.apng|All files (*.*)|*.*"
-                };
-                if (picker.ShowDialog() != true)
-                {
-                    return;
-                }
-
-                effect.OverlayImagePath = picker.FileName;
-                MarkButtonEffectCustomPresetDirty(effect);
-                RefreshUi();
-                onPreviewChanged();
-            };
-
-            addBorderCheckBox.Checked += (_, _) =>
-            {
-                if (suppressBorderEvents)
-                {
-                    return;
-                }
-
-                effect.AddBorder = true;
-                MarkButtonEffectCustomPresetDirty(effect);
-                RefreshUi();
-                onPreviewChanged();
-            };
-            addBorderCheckBox.Unchecked += (_, _) =>
-            {
-                if (suppressBorderEvents)
-                {
-                    return;
-                }
-
-                effect.AddBorder = false;
-                MarkButtonEffectCustomPresetDirty(effect);
-                RefreshUi();
-                onPreviewChanged();
-            };
-
-            pickBorderColorButton.Click += (_, _) =>
-            {
-                Color? picked = ShowAdvancedColorPickerDialog(effect.BorderColor);
-                if (!picked.HasValue)
-                {
-                    return;
-                }
-
-                effect.BorderColor = picked.Value;
-                MarkButtonEffectCustomPresetDirty(effect);
-                RefreshUi();
-                onPreviewChanged();
-            };
-
-            borderWidthSlider.ValueChanged += (_, _) =>
-            {
-                if (suppressBorderEvents)
-                {
-                    return;
-                }
-
-                effect.BorderWidth = (int)Math.Round(borderWidthSlider.Value);
-                borderWidthText.Text = $"Border width: {effect.BorderWidth} px";
-                MarkButtonEffectCustomPresetDirty(effect);
-                RefreshUi();
-                onPreviewChanged();
+                effect.CustomPresetId = string.Empty;
+                RefreshPresetUi();
             };
 
             saveAsPresetButton.Click += (_, _) =>
@@ -12694,7 +12965,8 @@ namespace OceanyaClient
                 }
 
                 ApplyButtonEffectCustomPreset(savedPreset, effect);
-                RefreshUi();
+                RebuildLayers();
+                RefreshPresetUi();
                 onPreviewChanged();
             };
 
@@ -12718,7 +12990,8 @@ namespace OceanyaClient
                 }
 
                 ApplyButtonEffectCustomPreset(savedPreset, effect);
-                RefreshUi();
+                RebuildLayers();
+                RefreshPresetUi();
                 onPreviewChanged();
             };
 
@@ -12748,7 +13021,8 @@ namespace OceanyaClient
                 }
 
                 ApplyButtonEffectCustomPreset(savedPreset, effect);
-                RefreshUi();
+                RebuildLayers();
+                RefreshPresetUi();
                 onPreviewChanged();
             };
 
@@ -12773,12 +13047,30 @@ namespace OceanyaClient
 
                 DeleteButtonEffectCustomPreset(currentPreset.Id);
                 MarkButtonEffectCustomPresetDirty(effect);
-                RefreshUi();
+                RefreshPresetUi();
                 onPreviewChanged();
             };
 
-            RefreshUi();
-            sectionCard.Child = root;
+            sectionHeader.MouseLeftButtonUp += (_, args) =>
+            {
+                args.Handled = true;
+                sectionExpanded = !sectionExpanded;
+                sectionChevron.Text = sectionExpanded ? "▼" : "▶";
+                AnimateSectionExpansion(bodyHost, body, sectionExpanded, animate: true);
+            };
+
+            Border? addEffectButton = null;
+            addEffectButton = CreateEffectChipButton(
+                "Add effect",
+                Color.FromRgb(58, 70, 84),
+                effectToolTip,
+                () => ShowAddEffectMenu(addEffectButton!),
+                accentPrefix: "+",
+                accentColor: Color.FromRgb(96, 208, 122));
+            addEffectHost.Child = addEffectButton;
+
+            RebuildLayers();
+            AnimateSectionExpansion(bodyHost, body, sectionExpanded, animate: false);
             return sectionCard;
         }
 
@@ -12863,11 +13155,7 @@ namespace OceanyaClient
                 {
                     Mode = ButtonIconMode.Automatic,
                     OnEffect = (bulkButtonIconConfig.OnEffect ?? new ButtonEffectConfig()).Clone(),
-                    OffEffect = (bulkButtonIconConfig.OffEffect ?? new ButtonEffectConfig
-                    {
-                        Mode = ButtonEffectsGenerationMode.Darken,
-                        DarknessPercent = 50
-                    }).Clone(),
+                    OffEffect = (bulkButtonIconConfig.OffEffect ?? ButtonEffectConfig.CreateDarken(50)).Clone(),
                     AutomaticBackgroundMode = bulkButtonIconConfig.AutomaticBackgroundMode,
                     AutomaticBackgroundPreset = bulkButtonIconConfig.AutomaticBackgroundPreset,
                     AutomaticSolidColor = bulkButtonIconConfig.AutomaticSolidColor,
@@ -12940,11 +13228,7 @@ namespace OceanyaClient
                 HostWindow,
                 RefreshPreview));
             root.Children.Add(BuildButtonEffectEditorSection(
-                bulkButtonIconConfig.OffEffect ??= new ButtonEffectConfig
-                {
-                    Mode = ButtonEffectsGenerationMode.Darken,
-                    DarknessPercent = 50
-                },
+                bulkButtonIconConfig.OffEffect ??= ButtonEffectConfig.CreateDarken(50),
                 "Unselected Button (button_off)",
                 "AO2 uses button_off for emote buttons that are not currently selected.",
                 "This generates button_off. AO2 shows it for unselected/inactive emote buttons.",
@@ -13536,41 +13820,114 @@ namespace OceanyaClient
             return ButtonIconMode.SingleImage;
         }
 
-        private static string GetButtonEffectsGenerationName(ButtonEffectsGenerationMode mode)
+        /// <summary>Human readable name of one stacked effect kind.</summary>
+        private static string GetButtonEffectLayerKindName(ButtonEffectLayerKind kind)
         {
-            return mode switch
+            return kind switch
             {
-                ButtonEffectsGenerationMode.ReduceOpacity => "Reduce opacity",
-                ButtonEffectsGenerationMode.Darken => "Darken",
-                ButtonEffectsGenerationMode.Overlay => "Overlay",
-                _ => "None"
+                ButtonEffectLayerKind.ReduceOpacity => "Reduce opacity",
+                ButtonEffectLayerKind.Overlay => "Overlay",
+                ButtonEffectLayerKind.Border => "Border",
+                _ => "Darken"
             };
         }
 
-        private static ButtonEffectsGenerationMode ParseButtonEffectsGenerationMode(string text)
+        /// <summary>Short one-line summary of a layer's settings, shown on its collapsed header.</summary>
+        private static string GetButtonEffectLayerSummary(ButtonEffectLayer layer)
         {
-            if (string.Equals(text?.Trim(), "None", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(text?.Trim(), "Use asset as both versions", StringComparison.OrdinalIgnoreCase))
+            return layer.Kind switch
             {
-                return ButtonEffectsGenerationMode.UseAssetAsBothVersions;
+                ButtonEffectLayerKind.ReduceOpacity => $"{Math.Clamp(layer.OpacityPercent, 0, 100)}% opacity",
+                ButtonEffectLayerKind.Darken => $"{Math.Clamp(layer.DarknessPercent, 0, 100)}% darker",
+                ButtonEffectLayerKind.Overlay => string.IsNullOrWhiteSpace(layer.OverlayImagePath)
+                    ? "no image selected"
+                    : Path.GetFileName(layer.OverlayImagePath),
+                _ => $"{Math.Clamp(layer.BorderWidth, 1, 32)} px {ToHexColor(layer.BorderColor)}"
+            };
+        }
+
+        /// <summary>Short one-line summary of a whole stack, shown on the collapsed section header.</summary>
+        private static string GetButtonEffectStackSummary(ButtonEffectConfig? effect)
+        {
+            List<ButtonEffectLayer> layers = effect?.Layers?.Where(static layer => layer != null).ToList()
+                ?? new List<ButtonEffectLayer>();
+            if (layers.Count == 0)
+            {
+                return "No effects (uses the base image as-is)";
             }
 
-            if (string.Equals(text?.Trim(), "Reduce opacity", StringComparison.OrdinalIgnoreCase))
+            return string.Join(" → ", layers.Select(static layer => GetButtonEffectLayerKindName(layer.Kind)));
+        }
+
+        private static ButtonEffectLayerKind ToUiButtonEffectLayerKind(CharacterCreatorButtonEffectLayerKind kind)
+        {
+            return kind switch
             {
-                return ButtonEffectsGenerationMode.ReduceOpacity;
+                CharacterCreatorButtonEffectLayerKind.ReduceOpacity => ButtonEffectLayerKind.ReduceOpacity,
+                CharacterCreatorButtonEffectLayerKind.Overlay => ButtonEffectLayerKind.Overlay,
+                CharacterCreatorButtonEffectLayerKind.Border => ButtonEffectLayerKind.Border,
+                _ => ButtonEffectLayerKind.Darken
+            };
+        }
+
+        private static CharacterCreatorButtonEffectLayerKind ToSavedButtonEffectLayerKind(ButtonEffectLayerKind kind)
+        {
+            return kind switch
+            {
+                ButtonEffectLayerKind.ReduceOpacity => CharacterCreatorButtonEffectLayerKind.ReduceOpacity,
+                ButtonEffectLayerKind.Overlay => CharacterCreatorButtonEffectLayerKind.Overlay,
+                ButtonEffectLayerKind.Border => CharacterCreatorButtonEffectLayerKind.Border,
+                _ => CharacterCreatorButtonEffectLayerKind.Darken
+            };
+        }
+
+        private static ButtonEffectLayer CreateButtonEffectLayerFromSaved(CharacterCreatorButtonEffectLayer saved)
+        {
+            ButtonEffectLayer layer = new ButtonEffectLayer
+            {
+                Kind = ToUiButtonEffectLayerKind(saved.Kind),
+                OpacityPercent = Math.Clamp(saved.OpacityPercent, 0, 100),
+                DarknessPercent = Math.Clamp(saved.DarknessPercent, 0, 100),
+                OverlayImagePath = string.IsNullOrWhiteSpace(saved.OverlayPath) ? null : saved.OverlayPath.Trim(),
+                BorderWidth = Math.Clamp(saved.BorderWidth, 1, 32),
+                BorderColor = Colors.Black
+            };
+
+            if (TryParseColor(saved.BorderColor, out Color borderColor))
+            {
+                layer.BorderColor = borderColor;
             }
 
-            if (string.Equals(text?.Trim(), "Darken", StringComparison.OrdinalIgnoreCase))
-            {
-                return ButtonEffectsGenerationMode.Darken;
-            }
+            return layer;
+        }
 
-            if (string.Equals(text?.Trim(), "Overlay", StringComparison.OrdinalIgnoreCase))
+        private static CharacterCreatorButtonEffectLayer CreateSavedButtonEffectLayer(
+            ButtonEffectLayer layer,
+            string? overlayPathOverride = null)
+        {
+            return new CharacterCreatorButtonEffectLayer
             {
-                return ButtonEffectsGenerationMode.Overlay;
-            }
+                Kind = ToSavedButtonEffectLayerKind(layer.Kind),
+                OpacityPercent = Math.Clamp(layer.OpacityPercent, 0, 100),
+                DarknessPercent = Math.Clamp(layer.DarknessPercent, 0, 100),
+                OverlayPath = (overlayPathOverride ?? layer.OverlayImagePath)?.Trim() ?? string.Empty,
+                BorderColor = ToHexColor(layer.BorderColor),
+                BorderWidth = Math.Clamp(layer.BorderWidth, 1, 32)
+            };
+        }
 
-            return ButtonEffectsGenerationMode.UseAssetAsBothVersions;
+        /// <summary>Enumerates every overlay image path referenced by an effect stack.</summary>
+        private static IEnumerable<string> EnumerateButtonEffectOverlayPaths(ButtonEffectConfig? effect)
+        {
+            foreach (ButtonEffectLayer layer in effect?.Layers ?? new List<ButtonEffectLayer>())
+            {
+                if (layer != null
+                    && layer.Kind == ButtonEffectLayerKind.Overlay
+                    && !string.IsNullOrWhiteSpace(layer.OverlayImagePath))
+                {
+                    yield return layer.OverlayImagePath!;
+                }
+            }
         }
 
         private static List<ButtonBackgroundGradientStop> CreateDefaultAutomaticGradientStops()
@@ -13593,11 +13950,7 @@ namespace OceanyaClient
             {
                 Mode = ButtonIconMode.Automatic,
                 OnEffect = new ButtonEffectConfig(),
-                OffEffect = new ButtonEffectConfig
-                {
-                    Mode = ButtonEffectsGenerationMode.Darken,
-                    DarknessPercent = 50
-                },
+                OffEffect = ButtonEffectConfig.CreateDarken(50),
                 AutomaticBackgroundMode = ButtonAutomaticBackgroundMode.None,
                 AutomaticBackgroundPreset = DefaultButtonBackgroundPresetName,
                 AutomaticSolidColor = Colors.Transparent,
@@ -13636,17 +13989,13 @@ namespace OceanyaClient
                 .ToList();
         }
 
-        private IReadOnlyList<AutoCompleteDropdownItem> GetButtonEffectOptionItems()
+        /// <summary>Dropdown rows for loading a saved effect-stack preset.</summary>
+        private IReadOnlyList<AutoCompleteDropdownItem> GetButtonEffectPresetOptionItems()
         {
             List<AutoCompleteDropdownItem> items = new List<AutoCompleteDropdownItem>
             {
-                new AutoCompleteDropdownItem(ButtonEffectBuiltInCategoryName, isSelectable: false)
+                new AutoCompleteDropdownItem(ButtonEffectNoPresetOptionName)
             };
-
-            foreach (string effectName in ButtonEffectsGenerationOptionNames)
-            {
-                items.Add(new AutoCompleteDropdownItem(effectName));
-            }
 
             IReadOnlyList<CharacterCreatorButtonEffectPreset> customPresets = GetSavedButtonEffectPresets();
             if (customPresets.Count > 0)
@@ -13663,18 +14012,9 @@ namespace OceanyaClient
 
         private static string GetButtonEffectCustomPresetDisplayName(CharacterCreatorButtonEffectPreset preset)
         {
-            return $"{preset.Name} (Custom - {GetButtonEffectCustomPresetModeLabel(preset.Mode)})";
-        }
-
-        private static string GetButtonEffectCustomPresetModeLabel(CharacterCreatorButtonEffectPresetMode mode)
-        {
-            return mode switch
-            {
-                CharacterCreatorButtonEffectPresetMode.ReduceOpacity => "Reduce opacity",
-                CharacterCreatorButtonEffectPresetMode.Darken => "Darken",
-                CharacterCreatorButtonEffectPresetMode.Overlay => "Overlay",
-                _ => "None"
-            };
+            int layerCount = preset.Layers?.Count(static layer => layer != null) ?? 0;
+            string layerLabel = layerCount == 1 ? "1 effect" : $"{layerCount} effects";
+            return $"{preset.Name} ({layerLabel})";
         }
 
         private bool TryResolveButtonEffectCustomPreset(
@@ -13685,28 +14025,6 @@ namespace OceanyaClient
             preset = GetSavedButtonEffectPresets().FirstOrDefault(candidate =>
                 string.Equals(GetButtonEffectCustomPresetDisplayName(candidate), selected, StringComparison.OrdinalIgnoreCase));
             return preset != null;
-        }
-
-        private static CharacterCreatorButtonEffectPresetMode ToSavedButtonEffectPresetMode(ButtonEffectsGenerationMode mode)
-        {
-            return mode switch
-            {
-                ButtonEffectsGenerationMode.ReduceOpacity => CharacterCreatorButtonEffectPresetMode.ReduceOpacity,
-                ButtonEffectsGenerationMode.Darken => CharacterCreatorButtonEffectPresetMode.Darken,
-                ButtonEffectsGenerationMode.Overlay => CharacterCreatorButtonEffectPresetMode.Overlay,
-                _ => CharacterCreatorButtonEffectPresetMode.None
-            };
-        }
-
-        private static ButtonEffectsGenerationMode ToUiButtonEffectMode(CharacterCreatorButtonEffectPresetMode mode)
-        {
-            return mode switch
-            {
-                CharacterCreatorButtonEffectPresetMode.ReduceOpacity => ButtonEffectsGenerationMode.ReduceOpacity,
-                CharacterCreatorButtonEffectPresetMode.Darken => ButtonEffectsGenerationMode.Darken,
-                CharacterCreatorButtonEffectPresetMode.Overlay => ButtonEffectsGenerationMode.Overlay,
-                _ => ButtonEffectsGenerationMode.UseAssetAsBothVersions
-            };
         }
 
         private static string GetButtonIconAssetCacheDirectoryPath()
@@ -13832,26 +14150,38 @@ namespace OceanyaClient
 
                 foreach (CharacterCreatorButtonEffectPreset preset in SaveFile.Data.CharacterCreatorButtonEffectPresets ?? new List<CharacterCreatorButtonEffectPreset>())
                 {
-                    AddIfCached(referencedPaths, preset.OverlayPath);
+                    foreach (CharacterCreatorButtonEffectLayer layer in preset.Layers ?? new List<CharacterCreatorButtonEffectLayer>())
+                    {
+                        AddIfCached(referencedPaths, layer?.OverlayPath);
+                    }
                 }
 
                 CharacterCreatorLastBulkButtonIconConfig? savedBulk = SaveFile.Data.CharacterCreatorLastBulkButtonIconConfig;
                 if (savedBulk != null)
                 {
                     AddIfCached(referencedPaths, savedBulk.BackgroundUploadPath);
-                    AddIfCached(referencedPaths, savedBulk.OnEffect?.OverlayPath);
-                    AddIfCached(referencedPaths, savedBulk.OffEffect?.OverlayPath);
+                    foreach (CharacterCreatorButtonEffectLayer layer in (savedBulk.OnEffect?.Layers ?? new List<CharacterCreatorButtonEffectLayer>())
+                        .Concat(savedBulk.OffEffect?.Layers ?? new List<CharacterCreatorButtonEffectLayer>()))
+                    {
+                        AddIfCached(referencedPaths, layer?.OverlayPath);
+                    }
                 }
 
                 AddIfCached(referencedPaths, bulkButtonIconConfig.AutomaticBackgroundUploadPath);
-                AddIfCached(referencedPaths, bulkButtonIconConfig.OnEffect?.OverlayImagePath);
-                AddIfCached(referencedPaths, bulkButtonIconConfig.OffEffect?.OverlayImagePath);
+                foreach (string overlayPath in EnumerateButtonEffectOverlayPaths(bulkButtonIconConfig.OnEffect)
+                    .Concat(EnumerateButtonEffectOverlayPaths(bulkButtonIconConfig.OffEffect)))
+                {
+                    AddIfCached(referencedPaths, overlayPath);
+                }
 
                 foreach (CharacterCreationEmoteViewModel emote in emotes)
                 {
                     AddIfCached(referencedPaths, emote.ButtonAutomaticBackgroundUploadAssetSourcePath);
-                    AddIfCached(referencedPaths, emote.ButtonOnEffect?.OverlayImagePath);
-                    AddIfCached(referencedPaths, emote.ButtonOffEffect?.OverlayImagePath);
+                    foreach (string overlayPath in EnumerateButtonEffectOverlayPaths(emote.ButtonOnEffect)
+                        .Concat(EnumerateButtonEffectOverlayPaths(emote.ButtonOffEffect)))
+                    {
+                        AddIfCached(referencedPaths, overlayPath);
+                    }
                 }
 
                 foreach (string filePath in Directory.EnumerateFiles(cacheDirectory))
@@ -13888,26 +14218,14 @@ namespace OceanyaClient
 
         private static ButtonEffectConfig CreateButtonEffectConfigFromSnapshot(CharacterCreatorButtonEffectSnapshot? snapshot)
         {
-            ButtonEffectConfig effect = new ButtonEffectConfig
+            return new ButtonEffectConfig
             {
-                Mode = snapshot == null ? ButtonEffectsGenerationMode.UseAssetAsBothVersions : ToUiButtonEffectMode(snapshot.Mode),
-                OpacityPercent = Math.Clamp(snapshot?.OpacityPercent ?? 75, 0, 100),
-                DarknessPercent = Math.Clamp(snapshot?.DarknessPercent ?? 50, 0, 100),
-                OverlayImagePath = string.IsNullOrWhiteSpace(snapshot?.OverlayPath)
-                    ? null
-                    : snapshot.OverlayPath.Trim(),
-                AddBorder = snapshot?.AddBorder == true,
-                BorderColor = Colors.Black,
-                BorderWidth = Math.Clamp(snapshot?.BorderWidth ?? 5, 1, 32),
+                Layers = (snapshot?.Layers ?? new List<CharacterCreatorButtonEffectLayer>())
+                    .Where(static layer => layer != null)
+                    .Select(CreateButtonEffectLayerFromSaved)
+                    .ToList(),
                 CustomPresetId = snapshot?.CustomPresetId?.Trim() ?? string.Empty
             };
-
-            if (snapshot != null && TryParseColor(snapshot.BorderColor, out Color borderColor))
-            {
-                effect.BorderColor = borderColor;
-            }
-
-            return effect;
         }
 
         private static CharacterCreatorButtonEffectSnapshot CreatePersistedButtonEffectSnapshot(ButtonEffectConfig? effect)
@@ -13915,64 +14233,45 @@ namespace OceanyaClient
             ButtonEffectConfig config = effect ?? new ButtonEffectConfig();
             return new CharacterCreatorButtonEffectSnapshot
             {
-                Mode = ToSavedButtonEffectPresetMode(config.Mode),
-                OpacityPercent = Math.Clamp(config.OpacityPercent, 0, 100),
-                DarknessPercent = Math.Clamp(config.DarknessPercent, 0, 100),
-                OverlayPath = config.OverlayImagePath?.Trim() ?? string.Empty,
-                AddBorder = config.AddBorder,
-                BorderColor = ToHexColor(config.BorderColor),
-                BorderWidth = Math.Clamp(config.BorderWidth, 1, 32),
+                Layers = config.Layers
+                    .Where(static layer => layer != null)
+                    .Select(layer => CreateSavedButtonEffectLayer(layer))
+                    .ToList(),
                 CustomPresetId = config.CustomPresetId?.Trim() ?? string.Empty
             };
         }
 
-        private static string GetButtonEffectSelectionName(ButtonEffectConfig effect, IReadOnlyList<CharacterCreatorButtonEffectPreset> presets)
-        {
-            string presetId = effect?.CustomPresetId?.Trim() ?? string.Empty;
-            if (!string.IsNullOrWhiteSpace(presetId))
-            {
-                CharacterCreatorButtonEffectPreset? preset = presets.FirstOrDefault(candidate =>
-                    string.Equals(candidate.Id, presetId, StringComparison.OrdinalIgnoreCase));
-                if (preset != null)
-                {
-                    return GetButtonEffectCustomPresetDisplayName(preset);
-                }
-            }
-
-            return GetButtonEffectsGenerationName(effect?.Mode ?? ButtonEffectsGenerationMode.UseAssetAsBothVersions);
-        }
-
+        /// <summary>Replaces the stack with a copy of a saved preset's layers and marks the stack as that preset.</summary>
         private static void ApplyButtonEffectCustomPreset(CharacterCreatorButtonEffectPreset preset, ButtonEffectConfig effect)
         {
-            effect.Mode = ToUiButtonEffectMode(preset.Mode);
-            effect.OpacityPercent = Math.Clamp(preset.OpacityPercent, 0, 100);
-            effect.DarknessPercent = Math.Clamp(preset.DarknessPercent, 0, 100);
-            effect.OverlayImagePath = string.IsNullOrWhiteSpace(preset.OverlayPath) ? null : preset.OverlayPath.Trim();
-            effect.AddBorder = preset.AddBorder;
-            effect.BorderWidth = Math.Clamp(preset.BorderWidth, 1, 32);
+            effect.Layers = (preset.Layers ?? new List<CharacterCreatorButtonEffectLayer>())
+                .Where(static layer => layer != null)
+                .Select(CreateButtonEffectLayerFromSaved)
+                .ToList();
             effect.CustomPresetId = preset.Id?.Trim() ?? string.Empty;
-            if (TryParseColor(preset.BorderColor, out Color borderColor))
-            {
-                effect.BorderColor = borderColor;
-            }
         }
 
         private static bool TryValidateButtonEffectCustomPresetForSave(
             ButtonEffectConfig effect,
             [NotNullWhen(false)] out string? error)
         {
-            if (effect.Mode == ButtonEffectsGenerationMode.Overlay)
+            foreach (ButtonEffectLayer layer in effect.Layers.Where(static layer => layer != null))
             {
-                string overlayPath = effect.OverlayImagePath ?? string.Empty;
+                if (layer.Kind != ButtonEffectLayerKind.Overlay)
+                {
+                    continue;
+                }
+
+                string overlayPath = layer.OverlayImagePath ?? string.Empty;
                 if (string.IsNullOrWhiteSpace(overlayPath))
                 {
-                    error = "Choose an overlay image before saving this effect preset.";
+                    error = "Choose an image for every Overlay effect before saving this preset.";
                     return false;
                 }
 
                 if (!TryLoadButtonBitmap(overlayPath, out _, out _))
                 {
-                    error = "The selected overlay image could not be loaded.";
+                    error = $"The overlay image \"{Path.GetFileName(overlayPath)}\" could not be loaded.";
                     return false;
                 }
             }
@@ -13982,22 +14281,15 @@ namespace OceanyaClient
         }
 
         private static CharacterCreatorButtonEffectPreset BuildButtonEffectCustomPreset(
-            ButtonEffectConfig effect,
+            IReadOnlyList<CharacterCreatorButtonEffectLayer> persistedLayers,
             string name,
-            string overlayPath,
             string? existingId = null)
         {
             return new CharacterCreatorButtonEffectPreset
             {
                 Id = string.IsNullOrWhiteSpace(existingId) ? Guid.NewGuid().ToString("N") : existingId.Trim(),
                 Name = name.Trim(),
-                Mode = ToSavedButtonEffectPresetMode(effect.Mode),
-                OpacityPercent = Math.Clamp(effect.OpacityPercent, 0, 100),
-                DarknessPercent = Math.Clamp(effect.DarknessPercent, 0, 100),
-                OverlayPath = overlayPath,
-                AddBorder = effect.AddBorder,
-                BorderColor = ToHexColor(effect.BorderColor),
-                BorderWidth = Math.Clamp(effect.BorderWidth, 1, 32)
+                Layers = persistedLayers.ToList()
             };
         }
 
@@ -14022,15 +14314,21 @@ namespace OceanyaClient
                 return false;
             }
 
-            string persistedOverlayPath = effect.OverlayImagePath?.Trim() ?? string.Empty;
-            if (effect.Mode == ButtonEffectsGenerationMode.Overlay)
+            List<CharacterCreatorButtonEffectLayer> persistedLayers = new List<CharacterCreatorButtonEffectLayer>();
+            foreach (ButtonEffectLayer layer in effect.Layers.Where(static layer => layer != null))
             {
-                if (!TryCreatePersistableCachedButtonIconAssetPath(effect.OverlayImagePath, out string? cachedOverlayPath, out error))
+                string? overlayOverride = null;
+                if (layer.Kind == ButtonEffectLayerKind.Overlay)
                 {
-                    return false;
+                    if (!TryCreatePersistableCachedButtonIconAssetPath(layer.OverlayImagePath, out string? cachedOverlayPath, out error))
+                    {
+                        return false;
+                    }
+
+                    overlayOverride = cachedOverlayPath ?? string.Empty;
                 }
 
-                persistedOverlayPath = cachedOverlayPath?.Trim() ?? string.Empty;
+                persistedLayers.Add(CreateSavedButtonEffectLayer(layer, overlayOverride));
             }
 
             List<CharacterCreatorButtonEffectPreset> presets =
@@ -14045,9 +14343,8 @@ namespace OceanyaClient
             }
 
             CharacterCreatorButtonEffectPreset nextPreset = BuildButtonEffectCustomPreset(
-                effect,
+                persistedLayers,
                 trimmedName,
-                persistedOverlayPath,
                 existingId);
             int existingIndex = presets.FindIndex(preset =>
                 string.Equals(preset.Id, nextPreset.Id, StringComparison.OrdinalIgnoreCase));
@@ -14372,24 +14669,29 @@ namespace OceanyaClient
             [NotNullWhen(false)] out string? error)
         {
             error = null;
-            effect.OpacityPercent = Math.Clamp(effect.OpacityPercent, 0, 100);
-            effect.DarknessPercent = Math.Clamp(effect.DarknessPercent, 0, 100);
-            effect.BorderWidth = Math.Clamp(effect.BorderWidth, 1, 32);
             effect.CustomPresetId = effect.CustomPresetId?.Trim() ?? string.Empty;
-            effect.OverlayImagePath = string.IsNullOrWhiteSpace(effect.OverlayImagePath)
-                ? null
-                : effect.OverlayImagePath.Trim();
-            if (effect.Mode != ButtonEffectsGenerationMode.Overlay || string.IsNullOrWhiteSpace(effect.OverlayImagePath))
+            effect.Layers = effect.Layers.Where(static layer => layer != null).ToList();
+            foreach (ButtonEffectLayer layer in effect.Layers)
             {
-                return true;
+                layer.OpacityPercent = Math.Clamp(layer.OpacityPercent, 0, 100);
+                layer.DarknessPercent = Math.Clamp(layer.DarknessPercent, 0, 100);
+                layer.BorderWidth = Math.Clamp(layer.BorderWidth, 1, 32);
+                layer.OverlayImagePath = string.IsNullOrWhiteSpace(layer.OverlayImagePath)
+                    ? null
+                    : layer.OverlayImagePath.Trim();
+                if (layer.Kind != ButtonEffectLayerKind.Overlay || string.IsNullOrWhiteSpace(layer.OverlayImagePath))
+                {
+                    continue;
+                }
+
+                if (!TryCreatePersistableCachedButtonIconAssetPath(layer.OverlayImagePath, out string? cachedOverlayPath, out error))
+                {
+                    return false;
+                }
+
+                layer.OverlayImagePath = cachedOverlayPath;
             }
 
-            if (!TryCreatePersistableCachedButtonIconAssetPath(effect.OverlayImagePath, out string? cachedOverlayPath, out error))
-            {
-                return false;
-            }
-
-            effect.OverlayImagePath = cachedOverlayPath;
             return true;
         }
 
@@ -14419,11 +14721,7 @@ namespace OceanyaClient
             }
 
             if (!TryPrepareButtonEffectConfigForPersistence(
-                bulkButtonIconConfig.OffEffect ??= new ButtonEffectConfig
-                {
-                    Mode = ButtonEffectsGenerationMode.Darken,
-                    DarknessPercent = 50
-                },
+                bulkButtonIconConfig.OffEffect ??= ButtonEffectConfig.CreateDarken(50),
                 out error))
             {
                 return false;
@@ -15029,54 +15327,72 @@ namespace OceanyaClient
             return rendered;
         }
 
+        /// <summary>
+        /// Applies every layer of an effect stack in order, each one drawn on top of the previous result.
+        /// An empty stack returns an untouched copy of <paramref name="source"/>.
+        /// </summary>
         private static BitmapSource ApplyButtonEffectToBitmap(BitmapSource source, ButtonEffectConfig effect)
         {
-            ButtonEffectConfig config = effect ?? new ButtonEffectConfig();
-            bool hasBorder = config.AddBorder && config.BorderWidth > 0;
-
-            if (config.Mode == ButtonEffectsGenerationMode.UseAssetAsBothVersions && !hasBorder)
+            List<ButtonEffectLayer> layers = (effect?.Layers ?? new List<ButtonEffectLayer>())
+                .Where(static layer => layer != null)
+                .ToList();
+            if (layers.Count == 0)
             {
                 return CloneBitmapSource(source)!;
             }
 
+            BitmapSource current = source;
+            foreach (ButtonEffectLayer layer in layers)
+            {
+                current = ApplyButtonEffectLayerToBitmap(current, layer);
+            }
+
+            return current;
+        }
+
+        private static BitmapSource ApplyButtonEffectLayerToBitmap(BitmapSource source, ButtonEffectLayer layer)
+        {
             return RenderBitmap(source.PixelWidth, source.PixelHeight, drawingContext =>
             {
                 Rect bounds = new Rect(0, 0, source.PixelWidth, source.PixelHeight);
-                if (config.Mode == ButtonEffectsGenerationMode.ReduceOpacity)
+                switch (layer.Kind)
                 {
-                    double opacity = Math.Clamp(config.OpacityPercent, 0, 100) / 100.0;
-                    DrawImageContain(drawingContext, source, bounds, opacity);
-                }
-                else if (config.Mode == ButtonEffectsGenerationMode.Darken)
-                {
-                    DrawImageContain(drawingContext, source, bounds);
-                    byte alpha = (byte)Math.Round(Math.Clamp(config.DarknessPercent, 0, 100) * 255 / 100.0);
-                    drawingContext.DrawRectangle(new SolidColorBrush(Color.FromArgb(alpha, 0, 0, 0)), null, bounds);
-                }
-                else if (config.Mode == ButtonEffectsGenerationMode.Overlay
-                    && TryLoadButtonBitmap(config.OverlayImagePath ?? string.Empty, out BitmapSource? overlayImage, out _)
-                    && overlayImage != null)
-                {
-                    DrawImageContain(drawingContext, source, bounds);
-                    DrawImageContain(drawingContext, overlayImage, bounds);
-                }
-                else
-                {
-                    DrawImageContain(drawingContext, source, bounds);
-                }
+                    case ButtonEffectLayerKind.ReduceOpacity:
+                        DrawImageContain(drawingContext, source, bounds, Math.Clamp(layer.OpacityPercent, 0, 100) / 100.0);
+                        break;
+                    case ButtonEffectLayerKind.Darken:
+                    {
+                        DrawImageContain(drawingContext, source, bounds);
+                        byte alpha = (byte)Math.Round(Math.Clamp(layer.DarknessPercent, 0, 100) * 255 / 100.0);
+                        drawingContext.DrawRectangle(new SolidColorBrush(Color.FromArgb(alpha, 0, 0, 0)), null, bounds);
+                        break;
+                    }
+                    case ButtonEffectLayerKind.Overlay:
+                    {
+                        DrawImageContain(drawingContext, source, bounds);
+                        if (TryLoadButtonBitmap(layer.OverlayImagePath ?? string.Empty, out BitmapSource? overlayImage, out _)
+                            && overlayImage != null)
+                        {
+                            DrawImageContain(drawingContext, overlayImage, bounds);
+                        }
 
-                if (hasBorder)
-                {
-                    double thickness = Math.Clamp(config.BorderWidth, 1, 32);
-                    Rect borderRect = new Rect(
-                        bounds.X + (thickness * 0.5),
-                        bounds.Y + (thickness * 0.5),
-                        Math.Max(0, bounds.Width - thickness),
-                        Math.Max(0, bounds.Height - thickness));
-                    drawingContext.DrawRectangle(
-                        null,
-                        new Pen(new SolidColorBrush(config.BorderColor), thickness),
-                        borderRect);
+                        break;
+                    }
+                    default:
+                    {
+                        DrawImageContain(drawingContext, source, bounds);
+                        double thickness = Math.Clamp(layer.BorderWidth, 1, 32);
+                        Rect borderRect = new Rect(
+                            bounds.X + (thickness * 0.5),
+                            bounds.Y + (thickness * 0.5),
+                            Math.Max(0, bounds.Width - thickness),
+                            Math.Max(0, bounds.Height - thickness));
+                        drawingContext.DrawRectangle(
+                            null,
+                            new Pen(new SolidColorBrush(layer.BorderColor), thickness),
+                            borderRect);
+                        break;
+                    }
                 }
             });
         }
@@ -15099,19 +15415,24 @@ namespace OceanyaClient
                 return true;
             }
 
-            if (effect.Mode == ButtonEffectsGenerationMode.Overlay
-                && string.IsNullOrWhiteSpace(effect.OverlayImagePath))
+            foreach (ButtonEffectLayer layer in effect.Layers.Where(static layer => layer != null))
             {
-                validationMessage = $"Overlay effect for {roleLabel} requires an overlay image.";
-                return false;
-            }
+                if (layer.Kind != ButtonEffectLayerKind.Overlay)
+                {
+                    continue;
+                }
 
-            if (effect.Mode == ButtonEffectsGenerationMode.Overlay
-                && !string.IsNullOrWhiteSpace(effect.OverlayImagePath)
-                && !TryLoadButtonBitmap(effect.OverlayImagePath, out _, out _))
-            {
-                validationMessage = $"Overlay effect for {roleLabel} could not load the selected image.";
-                return false;
+                if (string.IsNullOrWhiteSpace(layer.OverlayImagePath))
+                {
+                    validationMessage = $"An overlay effect for {roleLabel} has no image selected.";
+                    return false;
+                }
+
+                if (!TryLoadButtonBitmap(layer.OverlayImagePath, out _, out _))
+                {
+                    validationMessage = $"An overlay effect for {roleLabel} could not load the selected image.";
+                    return false;
+                }
             }
 
             return true;
@@ -15267,11 +15588,7 @@ namespace OceanyaClient
         {
             emote.ButtonIconMode = config.Mode;
             emote.ButtonOnEffect = config.OnEffect?.Clone() ?? new ButtonEffectConfig();
-            emote.ButtonOffEffect = config.OffEffect?.Clone() ?? new ButtonEffectConfig
-            {
-                Mode = ButtonEffectsGenerationMode.Darken,
-                DarknessPercent = 50
-            };
+            emote.ButtonOffEffect = config.OffEffect?.Clone() ?? ButtonEffectConfig.CreateDarken(50);
             emote.ButtonSingleImageAssetSourcePath = config.SingleImagePath;
             emote.ButtonTwoImagesOnAssetSourcePath = config.TwoImagesOnPath;
             emote.ButtonTwoImagesOffAssetSourcePath = config.TwoImagesOffPath;
@@ -15550,11 +15867,7 @@ namespace OceanyaClient
             {
                 Mode = ButtonIconMode.Automatic,
                 OnEffect = new ButtonEffectConfig(),
-                OffEffect = new ButtonEffectConfig
-                {
-                    Mode = ButtonEffectsGenerationMode.Darken,
-                    DarknessPercent = 50
-                }
+                OffEffect = ButtonEffectConfig.CreateDarken(50)
             };
 
             AutoCompleteDropdownField modeDropdown = CreateDialogAutoCompleteField(
@@ -15700,91 +16013,15 @@ namespace OceanyaClient
 
             void AddEffectsFields(Panel panel)
             {
-                ButtonEffectConfig effect = config.OffEffect ??= new ButtonEffectConfig
-                {
-                    Mode = ButtonEffectsGenerationMode.Darken,
-                    DarknessPercent = 50
-                };
-                AutoCompleteDropdownField effectsDropdown = CreateDialogAutoCompleteField(
-                    ButtonEffectsGenerationOptionNames,
-                    GetButtonEffectsGenerationName(effect.Mode),
-                    "Effects generation",
-                    isReadOnly: true);
-                effectsDropdown.TextValueChanged += (_, _) =>
-                {
-                    effect.Mode = ParseButtonEffectsGenerationMode(effectsDropdown.Text);
-                    RefreshFields();
-                };
-                AddSimpleField(panel, "Effects generation", effectsDropdown);
-
-                if (effect.Mode == ButtonEffectsGenerationMode.ReduceOpacity)
-                {
-                    Slider opacitySlider = new Slider
-                    {
-                        Minimum = 0,
-                        Maximum = 100,
-                        Value = effect.OpacityPercent,
-                        TickFrequency = 1,
-                        IsSnapToTickEnabled = true
-                    };
-                    opacitySlider.ValueChanged += (_, _) =>
-                    {
-                        effect.OpacityPercent = (int)Math.Round(opacitySlider.Value);
-                        RefreshPreview();
-                    };
-                    AddSimpleField(panel, "Opacity", opacitySlider);
-                }
-                else if (effect.Mode == ButtonEffectsGenerationMode.Darken)
-                {
-                    Slider darknessSlider = new Slider
-                    {
-                        Minimum = 0,
-                        Maximum = 100,
-                        Value = effect.DarknessPercent,
-                        TickFrequency = 1,
-                        IsSnapToTickEnabled = true
-                    };
-                    darknessSlider.ValueChanged += (_, _) =>
-                    {
-                        effect.DarknessPercent = (int)Math.Round(darknessSlider.Value);
-                        RefreshPreview();
-                    };
-                    AddSimpleField(panel, "Darkness", darknessSlider);
-                }
-                else if (effect.Mode == ButtonEffectsGenerationMode.Overlay)
-                {
-                    Grid overlayGrid = new Grid();
-                    overlayGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                    overlayGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                    Button overlayButton = CreateDialogButton("Select overlay...", isPrimary: false);
-                    overlayButton.Width = 140;
-                    overlayButton.Click += (_, _) =>
-                    {
-                        OpenFileDialog picker = new OpenFileDialog
-                        {
-                            Title = "Select overlay image",
-                            Filter = "Image files (*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp;*.apng)|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp;*.apng|All files (*.*)|*.*"
-                        };
-                        if (picker.ShowDialog() == true)
-                        {
-                            effect.OverlayImagePath = picker.FileName;
-                            RefreshFields();
-                        }
-                    };
-                    TextBlock overlayPathText = new TextBlock
-                    {
-                        Margin = new Thickness(10, 0, 0, 0),
-                        VerticalAlignment = VerticalAlignment.Center,
-                        Foreground = new SolidColorBrush(Color.FromRgb(198, 212, 224)),
-                        Text = string.IsNullOrWhiteSpace(effect.OverlayImagePath)
-                            ? "No image selected"
-                            : Path.GetFileName(effect.OverlayImagePath)
-                    };
-                    Grid.SetColumn(overlayPathText, 1);
-                    overlayGrid.Children.Add(overlayButton);
-                    overlayGrid.Children.Add(overlayPathText);
-                    AddSimpleField(panel, "Overlay", overlayGrid);
-                }
+                ButtonEffectConfig effect = config.OffEffect ??= ButtonEffectConfig.CreateDarken(50);
+                panel.Children.Add(BuildButtonEffectEditorSection(
+                    effect,
+                    "Effects",
+                    "Effects applied on top of the generated icon, in order.",
+                    "Each effect is applied on top of the previous one, top to bottom.",
+                    "Add an effect to the stack.",
+                    dialog,
+                    RefreshPreview));
             }
 
             modeDropdown.TextValueChanged += (_, _) =>
@@ -18114,11 +18351,7 @@ namespace OceanyaClient
         private string? buttonIconAssetSourcePath;
         private ButtonIconMode buttonIconMode = ButtonIconMode.SingleImage;
         private ButtonEffectConfig buttonOnEffect = new ButtonEffectConfig();
-        private ButtonEffectConfig buttonOffEffect = new ButtonEffectConfig
-        {
-            Mode = ButtonEffectsGenerationMode.Darken,
-            DarknessPercent = 50
-        };
+        private ButtonEffectConfig buttonOffEffect = ButtonEffectConfig.CreateDarken(50);
         private string? buttonSingleImageAssetSourcePath;
         private string? buttonTwoImagesOnAssetSourcePath;
         private string? buttonTwoImagesOffAssetSourcePath;
@@ -18386,11 +18619,7 @@ namespace OceanyaClient
         public ButtonEffectConfig ButtonOffEffect
         {
             get => buttonOffEffect;
-            set => SetField(ref buttonOffEffect, value ?? new ButtonEffectConfig
-            {
-                Mode = ButtonEffectsGenerationMode.Darken,
-                DarknessPercent = 50
-            });
+            set => SetField(ref buttonOffEffect, value ?? ButtonEffectConfig.CreateDarken(50));
         }
 
         public string? ButtonSingleImageAssetSourcePath
@@ -18562,11 +18791,7 @@ namespace OceanyaClient
         {
             ButtonIconMode = ButtonIconMode.SingleImage;
             ButtonOnEffect = new ButtonEffectConfig();
-            ButtonOffEffect = new ButtonEffectConfig
-            {
-                Mode = ButtonEffectsGenerationMode.Darken,
-                DarknessPercent = 50
-            };
+            ButtonOffEffect = ButtonEffectConfig.CreateDarken(50);
             ButtonSingleImageAssetSourcePath = null;
             ButtonTwoImagesOnAssetSourcePath = null;
             ButtonTwoImagesOffAssetSourcePath = null;
@@ -18928,12 +19153,15 @@ namespace OceanyaClient
         Automatic = 2
     }
 
-    public enum ButtonEffectsGenerationMode
+    /// <summary>
+    /// One stackable button effect kind. Layers are applied in order, each on top of the previous result.
+    /// </summary>
+    public enum ButtonEffectLayerKind
     {
-        UseAssetAsBothVersions = 0,
         ReduceOpacity = 1,
         Darken = 2,
-        Overlay = 3
+        Overlay = 3,
+        Border = 4
     }
 
     public enum ButtonAutomaticBackgroundMode
@@ -18960,29 +19188,67 @@ namespace OceanyaClient
         public Color Color { get; set; } = Colors.Transparent;
     }
 
-    public sealed class ButtonEffectConfig
+    /// <summary>
+    /// A single entry of a button effect stack. Only the fields relevant to <see cref="Kind"/> are used.
+    /// </summary>
+    public sealed class ButtonEffectLayer
     {
-        public ButtonEffectsGenerationMode Mode { get; set; } = ButtonEffectsGenerationMode.UseAssetAsBothVersions;
+        public ButtonEffectLayerKind Kind { get; set; } = ButtonEffectLayerKind.Darken;
         public int OpacityPercent { get; set; } = 75;
         public int DarknessPercent { get; set; } = 50;
         public string? OverlayImagePath { get; set; }
-        public bool AddBorder { get; set; }
         public Color BorderColor { get; set; } = Colors.Black;
         public int BorderWidth { get; set; } = 5;
+
+        /// <summary>UI-only: whether this layer's editor card is expanded. Never persisted.</summary>
+        public bool IsExpanded { get; set; } = true;
+
+        public ButtonEffectLayer Clone()
+        {
+            return new ButtonEffectLayer
+            {
+                Kind = Kind,
+                OpacityPercent = OpacityPercent,
+                DarknessPercent = DarknessPercent,
+                OverlayImagePath = OverlayImagePath,
+                BorderColor = BorderColor,
+                BorderWidth = BorderWidth,
+                IsExpanded = IsExpanded
+            };
+        }
+    }
+
+    /// <summary>
+    /// An ordered stack of button effects for one button state (button_on or button_off).
+    /// An empty stack means the square base asset is used unchanged.
+    /// </summary>
+    public sealed class ButtonEffectConfig
+    {
+        public List<ButtonEffectLayer> Layers { get; set; } = new List<ButtonEffectLayer>();
         public string CustomPresetId { get; set; } = string.Empty;
 
         public ButtonEffectConfig Clone()
         {
             return new ButtonEffectConfig
             {
-                Mode = Mode,
-                OpacityPercent = OpacityPercent,
-                DarknessPercent = DarknessPercent,
-                OverlayImagePath = OverlayImagePath,
-                AddBorder = AddBorder,
-                BorderColor = BorderColor,
-                BorderWidth = BorderWidth,
+                Layers = Layers.Where(static layer => layer != null).Select(layer => layer.Clone()).ToList(),
                 CustomPresetId = CustomPresetId
+            };
+        }
+
+        /// <summary>Creates a stack containing a single darken layer, the historical button_off default.</summary>
+        public static ButtonEffectConfig CreateDarken(int darknessPercent)
+        {
+            return new ButtonEffectConfig
+            {
+                Layers = new List<ButtonEffectLayer>
+                {
+                    new ButtonEffectLayer
+                    {
+                        Kind = ButtonEffectLayerKind.Darken,
+                        DarknessPercent = darknessPercent
+                    }
+                }
             };
         }
     }
@@ -18991,11 +19257,7 @@ namespace OceanyaClient
     {
         public ButtonIconMode Mode { get; set; } = ButtonIconMode.SingleImage;
         public ButtonEffectConfig OnEffect { get; set; } = new ButtonEffectConfig();
-        public ButtonEffectConfig OffEffect { get; set; } = new ButtonEffectConfig
-        {
-            Mode = ButtonEffectsGenerationMode.Darken,
-            DarknessPercent = 50
-        };
+        public ButtonEffectConfig OffEffect { get; set; } = ButtonEffectConfig.CreateDarken(50);
         public string? SingleImagePath { get; set; }
         public string? TwoImagesOnPath { get; set; }
         public string? TwoImagesOffPath { get; set; }
