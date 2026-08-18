@@ -49,6 +49,11 @@ namespace OceanyaClient.Features.Theme
     {
         private const double ResizeGripSize = 5;
 
+        /// <summary>
+        /// Z-index of the floating edit toolbar. Must stay above <see cref="ResolveOverlayZIndex"/>.
+        /// </summary>
+        private const int EditToolbarZIndex = 1000000;
+
         private readonly Canvas surface;
         private readonly IDictionary<string, OceanyaPanelElements> panels;
         private readonly Action onLayoutPersisted;
@@ -85,6 +90,12 @@ namespace OceanyaClient.Features.Theme
         /// Gets or sets a provider of extra, host-specific menu entries for a panel (header, action).
         /// </summary>
         public Func<string, IEnumerable<OceanyaPanelMenuEntry>>? ExtraPanelMenuItemsProvider { get; set; }
+
+        /// <summary>
+        /// Gets or sets a host handler that performs the full theme reset. The host owns the pieces the
+        /// editor does not: user-added panels and the viewport rendering mode.
+        /// </summary>
+        public Action? FullResetHandler { get; set; }
 
         /// <summary>Gets a value indicating whether edit mode is currently active.</summary>
         public bool IsActive { get; private set; }
@@ -163,6 +174,7 @@ namespace OceanyaClient.Features.Theme
 
             ShowEditToolbar();
             surface.MouseRightButtonUp += Surface_MouseRightButtonUp;
+            surface.SizeChanged += Surface_SizeChanged;
             Window? hostWindow = Window.GetWindow(surface);
             if (hostWindow != null)
             {
@@ -173,9 +185,13 @@ namespace OceanyaClient.Features.Theme
         }
 
         /// <summary>
-        /// Turns edit mode off, removes the overlays and saves the layout.
+        /// Turns edit mode off, removes the overlays and (by default) saves the layout.
         /// </summary>
-        public void Deactivate()
+        /// <param name="persistLayout">
+        /// False when the caller is replacing the layout wholesale (reset or theme import): saving the
+        /// panels' current positions on the way out would write the old layout straight back.
+        /// </param>
+        public void Deactivate(bool persistLayout = true)
         {
             if (!IsActive)
             {
@@ -195,6 +211,7 @@ namespace OceanyaClient.Features.Theme
             }
 
             surface.MouseRightButtonUp -= Surface_MouseRightButtonUp;
+            surface.SizeChanged -= Surface_SizeChanged;
             Window? hostWindow = Window.GetWindow(surface);
             if (hostWindow != null)
             {
@@ -203,7 +220,11 @@ namespace OceanyaClient.Features.Theme
 
             activePanelId = null;
             IsActive = false;
-            PersistLayout();
+            if (persistLayout)
+            {
+                PersistLayout();
+            }
+
             ActiveChanged?.Invoke(this, false);
         }
 
@@ -212,6 +233,12 @@ namespace OceanyaClient.Features.Theme
         /// </summary>
         public void ResetLayout()
         {
+            if (FullResetHandler != null)
+            {
+                FullResetHandler();
+                return;
+            }
+
             // Styling (fonts, swapped images, item sizes) is applied straight onto the live controls, so
             // clearing the saved layout is not enough: each panel is restored from the baseline captured
             // before its first restyle.
@@ -255,9 +282,44 @@ namespace OceanyaClient.Features.Theme
                 return;
             }
 
-            foreach (string panelId in overlays.Keys)
+            foreach (string panelId in overlays.Keys.ToList())
             {
                 SyncOverlayToPanel(panelId);
+            }
+
+            PositionEditToolbar();
+        }
+
+        /// <summary>
+        /// Rebuilds the overlays from the current panel visibility, for when the host shows or hides a
+        /// panel while edit mode is running (switching the viewport in or out of the window).
+        /// </summary>
+        public void RebuildOverlays()
+        {
+            if (!IsActive)
+            {
+                return;
+            }
+
+            foreach (Border overlay in overlays.Values)
+            {
+                surface.Children.Remove(overlay);
+            }
+
+            overlays.Clear();
+            foreach (KeyValuePair<string, OceanyaPanelElements> pair in panels)
+            {
+                OceanyaPanelDescriptor? descriptor = OceanyaPanelCatalog.TryGet(pair.Key);
+                if (descriptor == null || pair.Value.Element.Visibility != Visibility.Visible)
+                {
+                    continue;
+                }
+
+                Border overlay = CreateOverlay(pair.Key, descriptor.DisplayName, isHidden: false);
+                overlays[pair.Key] = overlay;
+                surface.Children.Add(overlay);
+                Panel.SetZIndex(overlay, ResolveOverlayZIndex(pair.Key));
+                SyncOverlayToPanel(pair.Key);
             }
 
             PositionEditToolbar();
@@ -291,7 +353,12 @@ namespace OceanyaClient.Features.Theme
                     FontFamily = style?.FontFamily ?? string.Empty,
                     IsBold = style?.IsBold ?? false,
                     ImagePath = style?.ImagePath ?? string.Empty,
-                    ZOrder = style?.ZOrder ?? 0
+                    ZOrder = style?.ZOrder ?? 0,
+                    TextColor = style?.TextColor ?? string.Empty,
+                    IsItalic = style?.IsItalic ?? false,
+                    IsUnderlined = style?.IsUnderlined ?? false,
+                    Opacity = style?.Opacity ?? 0,
+                    BackgroundColor = style?.BackgroundColor ?? string.Empty
                 };
             }
 
@@ -307,6 +374,11 @@ namespace OceanyaClient.Features.Theme
             SaveFile.Data.OceanyaThemeLayout = layout;
             SaveFile.Save();
             onLayoutPersisted();
+        }
+
+        private void Surface_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            PositionEditToolbar();
         }
 
         private void Surface_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
@@ -379,7 +451,8 @@ namespace OceanyaClient.Features.Theme
             };
 
             surface.Children.Add(editToolbar);
-            Panel.SetZIndex(editToolbar, 10001);
+            // Above every panel overlay (100000 + panel order), or the overlays swallow its clicks.
+            Panel.SetZIndex(editToolbar, EditToolbarZIndex);
             RefreshHiddenControlsButton();
             PositionEditToolbar();
         }
@@ -470,12 +543,12 @@ namespace OceanyaClient.Features.Theme
                 return;
             }
 
-            Rect bounds = OceanyaPanelLayout.CalculateBounds(new Dictionary<string, OceanyaPanelElements>(panels));
+            // Pinned to the surface's own top-right so it follows the window as it is resized, rather
+            // than to the panels' bounding box.
             editToolbar.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
             double toolbarWidth = editToolbar.DesiredSize.Width;
-            double right = bounds.IsEmpty ? surface.ActualWidth : bounds.Right;
-            Canvas.SetLeft(editToolbar, Math.Max(0, right - toolbarWidth - 4));
-            Canvas.SetTop(editToolbar, Math.Max(0, (bounds.IsEmpty ? 0 : bounds.Top) + 4));
+            Canvas.SetLeft(editToolbar, Math.Max(0, surface.ActualWidth - toolbarWidth - 6));
+            Canvas.SetTop(editToolbar, 6);
         }
 
         /// <summary>
@@ -513,6 +586,7 @@ namespace OceanyaClient.Features.Theme
             {
                 overlay.Background = Brushes.Transparent;
                 overlay.BorderThickness = new Thickness(1);
+                overlay.Cursor = Cursors.SizeAll;
             };
 
             // The name is a tooltip rather than painted text: with many small overlapping panels the
@@ -759,6 +833,15 @@ namespace OceanyaClient.Features.Theme
                             state)));
                     break;
 
+                case OceanyaPanelKind.Static when OceanyaPanelCatalog.IsCustomPanel(descriptor.Id):
+                    AddMenuItem(menu, "Image settings...", () => EditPanelSettings(
+                        descriptor.Id,
+                        state => OceanyaPanelSettingsDialogs.ShowImageSettings(
+                            Window.GetWindow(surface),
+                            descriptor.DisplayName,
+                            state)));
+                    break;
+
                 case OceanyaPanelKind.ItemGrid:
                     AddMenuItem(menu, "Grid settings...", () => EditPanelSettings(
                         descriptor.Id,
@@ -808,8 +891,12 @@ namespace OceanyaClient.Features.Theme
         {
             OceanyaPanelPlacementState state = ResolvePanelState(panelId);
             int[] usedOrders = panels.Keys
-                .Select(id => ResolvePanelState(id).ZOrder)
+                .Select(id => ResolveEffectiveZOrder(id))
                 .ToArray();
+            if (state.ZOrder == 0)
+            {
+                state.ZOrder = OceanyaPanelCatalog.GetDefaultZOrder(panelId);
+            }
             int minimum = usedOrders.Length == 0 ? 0 : usedOrders.Min();
             int maximum = usedOrders.Length == 0 ? 0 : usedOrders.Max();
 
@@ -822,6 +909,17 @@ namespace OceanyaClient.Features.Theme
             };
 
             ApplyResolvedPanelState(panelId, state);
+        }
+
+        /// <summary>
+        /// Resolves a panel's stacking order, falling back to the historic default when unset.
+        /// </summary>
+        /// <param name="panelId">Panel id.</param>
+        /// <returns>The effective z-order.</returns>
+        private int ResolveEffectiveZOrder(string panelId)
+        {
+            int saved = ResolvePanelState(panelId).ZOrder;
+            return saved != 0 ? saved : OceanyaPanelCatalog.GetDefaultZOrder(panelId);
         }
 
         /// <summary>
@@ -881,8 +979,10 @@ namespace OceanyaClient.Features.Theme
         /// <returns>The overlay z-index.</returns>
         private int ResolveOverlayZIndex(string panelId)
         {
-            int panelOrder = panelStyleStates.TryGetValue(panelId, out OceanyaPanelPlacementState? state) ? state.ZOrder : 0;
-            return 10000 + panelOrder;
+            int panelOrder = panelStyleStates.TryGetValue(panelId, out OceanyaPanelPlacementState? state) && state.ZOrder != 0
+                ? state.ZOrder
+                : OceanyaPanelCatalog.GetDefaultZOrder(panelId);
+            return 100000 + panelOrder;
         }
 
         /// <summary>
@@ -1025,12 +1125,27 @@ namespace OceanyaClient.Features.Theme
             isResizing = localPoint.X >= overlay.ActualWidth - ResizeGripSize
                 && localPoint.Y >= overlay.ActualHeight - ResizeGripSize;
 
+            if (editToolbar != null)
+            {
+                // The toolbar sits top-right; hiding it mid-drag keeps the area under it visible.
+                editToolbar.Visibility = Visibility.Hidden;
+            }
+
             overlay.CaptureMouse();
             e.Handled = true;
         }
 
         private void Overlay_MouseMove(object sender, MouseEventArgs e)
         {
+            if (sender is Border hovered && activePanelId == null)
+            {
+                // Show the resize cursor over the grip so it is discoverable without guessing.
+                Point local = e.GetPosition(hovered);
+                bool overGrip = local.X >= hovered.ActualWidth - ResizeGripSize
+                    && local.Y >= hovered.ActualHeight - ResizeGripSize;
+                hovered.Cursor = overGrip ? Cursors.SizeNWSE : Cursors.SizeAll;
+            }
+
             if (activePanelId == null || e.LeftButton != MouseButtonState.Pressed)
             {
                 return;
@@ -1058,6 +1173,15 @@ namespace OceanyaClient.Features.Theme
                     dragStartPlacement.Width,
                     dragStartPlacement.Height);
 
+            if (isResizing && descriptor.MaintainsAspectRatio && dragStartPlacement.Height > 0)
+            {
+                // Content that always renders uniformly gets an aspect-locked resize; a free one would
+                // only add dead space around it.
+                double aspect = dragStartPlacement.Width / dragStartPlacement.Height;
+                double width = Math.Max(descriptor.MinimumWidth, requested.Width);
+                requested = new OceanyaPanelPlacement(requested.Left, requested.Top, width, width / aspect);
+            }
+
             OceanyaPanelPlacement resolved = OceanyaPanelLayout.SanitizePlacement(requested, descriptor);
             OceanyaPanelElements elements = panels[activePanelId];
             OceanyaPanelPlacement previous = OceanyaPanelLayout.CapturePlacement(elements.Element);
@@ -1072,6 +1196,11 @@ namespace OceanyaClient.Features.Theme
             if (sender is Border overlay)
             {
                 overlay.ReleaseMouseCapture();
+            }
+
+            if (editToolbar != null)
+            {
+                editToolbar.Visibility = Visibility.Visible;
             }
 
             if (activePanelId != null)

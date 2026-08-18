@@ -3,6 +3,9 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:components="clr-namespace:OceanyaClient.Components">
     <Grid x:Name="PanelRoot" Background="#FF8B8B8B" ClipToBounds="True">
+        <!-- The log's chat text, header and inputs are their own panels now, so this panel is just the
+             grey background layer the OOC block was drawn on. The control itself stays in the tree
+             (collapsed) because it owns the code-behind for the pieces handed to the surface. -->
         <components:OOCLog x:Name="HostedLog"
                            Width="NaN"
                            Height="NaN"

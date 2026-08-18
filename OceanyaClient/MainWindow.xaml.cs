@@ -630,6 +630,10 @@ namespace OceanyaClient
         /// this is visually identical until a theme supplies different placements.
         /// </summary>
         private OceanyaPanelEditModeController? panelEditModeController;
+        private bool surfaceSizeFollowsWindow;
+        private Point editModeWindowOrigin;
+        private double lastEditModeSurfaceWidth;
+        private double lastEditModeSurfaceHeight;
         private ShoutSelectionGroup shoutSelection = new ShoutSelectionGroup();
         private IReadOnlyDictionary<string, FrameworkElement> reparentedPanelControls =
             new Dictionary<string, FrameworkElement>();
@@ -656,7 +660,6 @@ namespace OceanyaClient
                 [OceanyaPanelCatalog.ViewportPanelId] = new OceanyaPanelElements(ViewportPanelHost),
                 [OceanyaPanelCatalog.DingButtonPanelId] = new OceanyaPanelElements(THEDINGBUTTON),
                 [OceanyaPanelCatalog.OocDividerPanelId] = new OceanyaPanelElements(OocDivider),
-                [OceanyaPanelCatalog.IcSettingsPanelId] = new OceanyaPanelElements(ICMessageSettingsControl),
                 [OceanyaPanelCatalog.DreddFeatureRowPanelId] = new OceanyaPanelElements(DreddFeatureRow)
             };
 
@@ -695,6 +698,11 @@ namespace OceanyaClient
                 adopted[pair.Key] = pair.Value;
             }
 
+            foreach (KeyValuePair<string, FrameworkElement> pair in OocLog.LogControl.ExtractPlaceableControls())
+            {
+                adopted[pair.Key] = pair.Value;
+            }
+
             foreach (FrameworkElement element in adopted.Values)
             {
                 MainCanvas.Children.Add(element);
@@ -712,9 +720,115 @@ namespace OceanyaClient
             Dictionary<string, OceanyaPanelElements> panels = BuildPanelElementMap();
             OceanyaPanelLayout.ApplyLayout(panels, SaveFile.Data.OceanyaThemeLayout);
             OceanyaPanelEditModeController.ApplyHiddenPanels(panels, SaveFile.Data.OceanyaThemeLayout);
-            RecalculateSurfaceSizeFromPanels();
+            ApplySurfaceSizeFromLayout();
             // Applied after layout so the panel host and the button swap in the right order.
             Dispatcher.BeginInvoke(new Action(ApplyViewportRenderInPanel));
+        }
+
+        /// <summary>
+        /// Keeps the bottom bar toggle and the window's resize behaviour in step with edit mode.
+        /// </summary>
+        /// <param name="isEditing">Whether edit mode is now active.</param>
+        private void OnPanelEditModeActiveChanged(bool isEditing)
+        {
+            BottomBar.SetEditLayoutModeActive(isEditing);
+            ApplyEditModeWindowResizing(isEditing);
+        }
+
+        /// <summary>
+        /// While editing, dragging the window edges resizes the surface (adding or removing empty
+        /// space); outside edit mode a drag rescales the whole UI as usual.
+        /// </summary>
+        /// <param name="isEditing">Whether edit mode is active.</param>
+        private void ApplyEditModeWindowResizing(bool isEditing)
+        {
+            if ((HostWindow ?? Window.GetWindow(this)) is not GenericOceanyaWindow shellWindow)
+            {
+                return;
+            }
+
+            shellWindow.IsResizeScalingEnabled = !isEditing;
+            if (isEditing)
+            {
+                surfaceSizeFollowsWindow = true;
+                editModeWindowOrigin = new Point(shellWindow.Left, shellWindow.Top);
+                lastEditModeSurfaceWidth = Width;
+                lastEditModeSurfaceHeight = Height;
+                shellWindow.LocationChanged += EditModeShellWindowMoved;
+                return;
+            }
+
+            shellWindow.LocationChanged -= EditModeShellWindowMoved;
+            PersistSurfaceSizeFromWindow();
+            surfaceSizeFollowsWindow = false;
+        }
+
+        /// <summary>
+        /// Re-places every panel from the saved layout, after it was replaced wholesale (an AO2 theme
+        /// import or a layout reset).
+        /// </summary>
+        private void ReapplyPanelLayoutFromSavefile()
+        {
+            // Not persisting: the layout was just replaced, and saving the panels' current positions
+            // here would write the previous layout back over it.
+            panelEditModeController?.Deactivate(persistLayout: false);
+            BottomBar.SetEditLayoutModeActive(false);
+            panelEditModeController = null;
+            RestorePanelStyleBaselines();
+            ApplyPanelCatalogPlacements();
+            ApplyViewportRenderInPanel();
+        }
+
+        /// <summary>
+        /// Restores every panel's fonts, images and stacking to how they looked before any styling.
+        /// </summary>
+        private void RestorePanelStyleBaselines()
+        {
+            foreach (KeyValuePair<string, OceanyaPanelElements> pair in BuildPanelElementMap())
+            {
+                OceanyaPanelStyleApplier.RestoreBaseline(pair.Key, pair.Value.Element);
+            }
+        }
+
+        /// <summary>
+        /// Resets everything the Oceanya theme owns: placement, stacking, visibility, styling,
+        /// user-added panels and the viewport rendering mode. The AO2 viewport theme is untouched,
+        /// since that is a separate setting.
+        /// </summary>
+        private void ResetThemeLayoutToDefaults()
+        {
+            foreach (KeyValuePair<string, FrameworkElement> pair in customThemePanelElements)
+            {
+                MainCanvas.Children.Remove(pair.Value);
+                OceanyaPanelCatalog.UnregisterCustomPanel(pair.Key);
+            }
+
+            customThemePanelElements.Clear();
+
+            // Stop tracking the window size BEFORE leaving edit mode: otherwise the deactivate path
+            // persists the current (resized) window into the fresh layout and the reset keeps the size.
+            surfaceSizeFollowsWindow = false;
+            SaveFile.Data.OceanyaThemeLayout = new OceanyaThemeLayoutState();
+            SaveFile.Data.GMViewportRenderInPanel = false;
+            SaveFile.Save();
+
+            // Hidden panels stay collapsed unless visibility is restored explicitly: an empty layout has
+            // no hidden entries to act on, so nothing would bring them back.
+            foreach (OceanyaPanelElements elements in BuildPanelElementMap().Values)
+            {
+                elements.Element.Visibility = Visibility.Visible;
+                if (elements.Backdrop != null)
+                {
+                    elements.Backdrop.Visibility = Visibility.Visible;
+                }
+            }
+
+            ReapplyPanelLayoutFromSavefile();
+
+            // Re-apply the conditional hiding that is not part of the theme.
+            BottomBar.SetDebugButtonVisible(debug);
+            BottomBar.SetOptionCheckBoxesVisible(OceanyaTestMode.Current.IsEnabled);
+            UpdateDreddFeatureVisibility();
         }
 
         /// <summary>
@@ -774,6 +888,12 @@ namespace OceanyaClient
                     ViewportPanelHost.Content = null;
                     hosted.Width = double.NaN;
                     hosted.Height = double.NaN;
+
+                    // Hand the content back to its own window, or the viewport window comes up empty.
+                    if (viewportWindow is GenericOceanyaWindow shell)
+                    {
+                        shell.BodyContent = hosted;
+                    }
                 }
 
                 ViewportPanelHost.Visibility = Visibility.Collapsed;
@@ -783,7 +903,8 @@ namespace OceanyaClient
                 }
 
                 RefreshViewportAttachment();
-                RecalculateSurfaceSizeFromPanels();
+                ApplySurfaceSizeFromLayout();
+                panelEditModeController?.RebuildOverlays();
                 return;
             }
 
@@ -826,8 +947,89 @@ namespace OceanyaClient
                 viewportButton.Visibility = Visibility.Collapsed;
             }
 
+            PlaceViewportPanelOverViewportButton(viewportButton);
+            FitViewportPanelToSurfaceAspect();
             RefreshViewportAttachment();
-            RecalculateSurfaceSizeFromPanels();
+            ApplySurfaceSizeFromLayout();
+            panelEditModeController?.RebuildOverlays();
+        }
+
+        /// <summary>
+        /// Re-fits the viewport panel's height to the viewport surface aspect, so the rendered viewport
+        /// fills the panel exactly.
+        /// </summary>
+        private void FitViewportPanelToSurfaceAspect()
+        {
+            if (!SaveFile.Data.GMViewportRenderInPanel || ViewportPanelHost.Visibility != Visibility.Visible)
+            {
+                return;
+            }
+
+            OceanyaPanelPlacement current = OceanyaPanelLayout.CapturePlacement(ViewportPanelHost);
+            if (current.Width <= 0)
+            {
+                return;
+            }
+
+            double aspect = GetViewportContentAspectRatio();
+            double fittedHeight = Math.Round(current.Width / aspect);
+            if (Math.Abs(fittedHeight - current.Height) < 0.5)
+            {
+                return;
+            }
+
+            OceanyaPanelPlacement fitted = new OceanyaPanelPlacement(current.Left, current.Top, current.Width, fittedHeight);
+            OceanyaPanelLayout.ApplyPlacement(ViewportPanelHost, fitted);
+            SaveFile.Data.OceanyaThemeLayout ??= new OceanyaThemeLayoutState();
+            SaveFile.Data.OceanyaThemeLayout.Panels[OceanyaPanelCatalog.ViewportPanelId] = new OceanyaPanelPlacementState
+            {
+                Left = fitted.Left,
+                Top = fitted.Top,
+                Width = fitted.Width,
+                Height = fitted.Height
+            };
+            SaveFile.Save();
+            panelEditModeController?.RefreshOverlays();
+        }
+
+        /// <summary>
+        /// Puts the viewport panel where the viewport button was, so it literally replaces it instead of
+        /// appearing somewhere unrelated. Only done once: after that the user's own placement wins.
+        /// </summary>
+        /// <param name="viewportButton">The button being replaced.</param>
+        private void PlaceViewportPanelOverViewportButton(FrameworkElement? viewportButton)
+        {
+            SaveFile.Data.OceanyaThemeLayout ??= new OceanyaThemeLayoutState();
+            if (SaveFile.Data.OceanyaThemeLayout.Panels.ContainsKey(OceanyaPanelCatalog.ViewportPanelId))
+            {
+                OceanyaPanelLayout.ApplyLayout(BuildPanelElementMap(), SaveFile.Data.OceanyaThemeLayout);
+                return;
+            }
+
+            OceanyaPanelDescriptor descriptor = OceanyaPanelCatalog.Get(OceanyaPanelCatalog.ViewportPanelId);
+            OceanyaPanelPlacement buttonPlacement = viewportButton != null
+                ? OceanyaPanelLayout.CapturePlacement(viewportButton)
+                : descriptor.Placement;
+
+            // The panel has to match the viewport surface's own aspect, or the content letterboxes and
+            // leaves dead space inside the panel - the separate viewport window enforces the same ratio.
+            double aspect = GetViewportContentAspectRatio();
+            double width = Math.Max(descriptor.MinimumWidth, descriptor.Placement.Width);
+            OceanyaPanelPlacement placement = new OceanyaPanelPlacement(
+                buttonPlacement.Left,
+                buttonPlacement.Top,
+                width,
+                width / aspect);
+
+            OceanyaPanelLayout.ApplyPlacement(ViewportPanelHost, placement);
+            SaveFile.Data.OceanyaThemeLayout.Panels[OceanyaPanelCatalog.ViewportPanelId] = new OceanyaPanelPlacementState
+            {
+                Left = placement.Left,
+                Top = placement.Top,
+                Width = placement.Width,
+                Height = placement.Height
+            };
+            SaveFile.Save();
         }
 
         /// <summary>
@@ -860,38 +1062,31 @@ namespace OceanyaClient
         }
 
         /// <summary>
-        /// Grows the main window surface so every panel is fully visible, in any direction.
+        /// Sizes the main window surface from the saved layout, or the stock size when the user has not
+        /// resized it.
         /// </summary>
         /// <remarks>
-        /// Panels dragged past the left or top edge would otherwise be unreachable, so the whole layout
-        /// is shifted back into view and the surface grows by the same amount - the canvas behaves as if
-        /// it extended in that direction. The surface never shrinks below the stock layout size.
+        /// The surface deliberately does NOT chase the panels around: dragging a panel past an edge just
+        /// clips it, and the user resizes the window in edit mode to make room. Auto-growing moved every
+        /// other panel on screen, which made a single drag feel like the whole layout jumped.
         /// </remarks>
-        private void RecalculateSurfaceSizeFromPanels()
+        private void ApplySurfaceSizeFromLayout()
         {
-            Dictionary<string, OceanyaPanelElements> panels = BuildPanelElementMap();
-            Rect bounds = OceanyaPanelLayout.CalculateBounds(panels);
-            if (bounds.IsEmpty)
+            if (surfaceSizeFollowsWindow)
             {
+                // Edit mode: the window size is whatever the user dragged it to. Re-applying the saved
+                // size here snapped the surface back to stock every time a panel was dropped.
+                PersistSurfaceSizeFromWindow();
+                panelEditModeController?.RefreshOverlays();
                 return;
             }
 
-            if (bounds.Left < 0 || bounds.Top < 0)
-            {
-                // Growing left/up means every panel shifts right/down inside the surface. Moving the
-                // window by the same amount keeps all the panels the user did NOT touch in exactly the
-                // same place on screen, so only the dragged panel appears to move.
-                double shiftX = bounds.Left < 0 ? -bounds.Left : 0;
-                double shiftY = bounds.Top < 0 ? -bounds.Top : 0;
-                OceanyaPanelLayout.OffsetAll(panels, shiftX, shiftY);
-                bounds = OceanyaPanelLayout.CalculateBounds(panels);
-                MoveHostWindowForSurfaceGrowth(shiftX, shiftY);
-            }
+            double stockHeight = GetMainWindowTargetHeight(isDreddFeatureEnabled);
+            double savedWidth = SaveFile.Data.OceanyaThemeLayout?.SurfaceWidth ?? 0;
+            double savedHeight = SaveFile.Data.OceanyaThemeLayout?.SurfaceHeight ?? 0;
 
-            double surfaceWidth = Math.Max(MainWindowWidth, bounds.Right);
-            double surfaceHeight = Math.Max(
-                GetMainWindowTargetHeight(isDreddFeatureEnabled),
-                bounds.Bottom + ConnectionInfoBarHeight);
+            double surfaceWidth = savedWidth > 0 ? savedWidth : MainWindowWidth;
+            double surfaceHeight = savedHeight > 0 ? savedHeight : stockHeight;
 
             Width = surfaceWidth;
             Height = surfaceHeight;
@@ -901,30 +1096,111 @@ namespace OceanyaClient
         }
 
         /// <summary>
-        /// Moves the host window so that a surface that grew left or upwards does not visually push
-        /// the untouched panels across the screen.
+        /// Keeps the panels visually still when the window is resized from its left or top edge.
         /// </summary>
-        /// <param name="shiftX">Horizontal growth in content units.</param>
-        /// <param name="shiftY">Vertical growth in content units.</param>
-        private void MoveHostWindowForSurfaceGrowth(double shiftX, double shiftY)
+        /// <remarks>
+        /// In edit mode the window is a canvas viewport: dragging the left edge removes or adds empty
+        /// space on the left, it does not slide the layout. Canvas coordinates are relative to the
+        /// window, so they have to be shifted by the same amount the window's origin moved, or every
+        /// panel appears to travel across the screen.
+        /// </remarks>
+        private void EditModeShellWindowMoved(object? sender, EventArgs e)
         {
-            Window? hostWindow = HostWindow ?? Window.GetWindow(this);
-            if (hostWindow == null || hostWindow.WindowState != WindowState.Normal)
+            if (!surfaceSizeFollowsWindow || sender is not GenericOceanyaWindow shellWindow)
             {
                 return;
             }
 
-            double scale = ResolveHostWindowContentScale(hostWindow);
-            if (shiftX > 0 && !double.IsNaN(hostWindow.Left))
+            if (double.IsNaN(shellWindow.Left) || double.IsNaN(shellWindow.Top))
             {
-                hostWindow.Left -= shiftX * scale;
+                return;
             }
 
-            if (shiftY > 0 && !double.IsNaN(hostWindow.Top))
+            double scale = UiScaleMath.ClampScale(shellWindow.ContentScale);
+            double deltaX = (shellWindow.Left - editModeWindowOrigin.X) / scale;
+            double deltaY = (shellWindow.Top - editModeWindowOrigin.Y) / scale;
+            editModeWindowOrigin = new Point(shellWindow.Left, shellWindow.Top);
+
+            if (Math.Abs(deltaX) < 0.5 && Math.Abs(deltaY) < 0.5)
             {
-                hostWindow.Top -= shiftY * scale;
+                return;
             }
+
+            // A plain window move (title bar drag) shifts the origin without changing the size, and the
+            // panels should travel with it; only an edge resize needs compensating.
+            bool isResize = Math.Abs(Width - lastEditModeSurfaceWidth) > 0.5
+                || Math.Abs(Height - lastEditModeSurfaceHeight) > 0.5;
+            lastEditModeSurfaceWidth = Width;
+            lastEditModeSurfaceHeight = Height;
+            if (!isResize)
+            {
+                return;
+            }
+
+            Dictionary<string, OceanyaPanelElements> panels = BuildPanelElementMap();
+            OceanyaPanelLayout.OffsetAll(panels, -deltaX, -deltaY);
+            PersistPanelPlacements(panels);
+            panelEditModeController?.RefreshOverlays();
         }
+
+        /// <summary>
+        /// Writes the current placement of every panel into the saved layout.
+        /// </summary>
+        /// <param name="panels">Panel elements keyed by their stable panel id.</param>
+        private void PersistPanelPlacements(IReadOnlyDictionary<string, OceanyaPanelElements> panels)
+        {
+            SaveFile.Data.OceanyaThemeLayout ??= new OceanyaThemeLayoutState();
+            foreach (KeyValuePair<string, OceanyaPanelElements> pair in panels)
+            {
+                if (OceanyaPanelCatalog.TryGet(pair.Key) == null)
+                {
+                    continue;
+                }
+
+                OceanyaPanelPlacement placement = OceanyaPanelLayout.CapturePlacement(pair.Value.Element);
+                if (!SaveFile.Data.OceanyaThemeLayout.Panels.TryGetValue(pair.Key, out OceanyaPanelPlacementState? state) || state == null)
+                {
+                    state = new OceanyaPanelPlacementState();
+                    SaveFile.Data.OceanyaThemeLayout.Panels[pair.Key] = state;
+                }
+
+                state.Left = placement.Left;
+                state.Top = placement.Top;
+                state.Width = placement.Width;
+                state.Height = placement.Height;
+            }
+
+            SaveFile.Save();
+        }
+
+        /// <summary>
+        /// Stores the surface size the user resized the window to while editing.
+        /// </summary>
+        private void PersistSurfaceSizeFromWindow()
+        {
+            if (!surfaceSizeFollowsWindow || Width <= 0 || Height <= 0)
+            {
+                return;
+            }
+
+            SaveFile.Data.OceanyaThemeLayout ??= new OceanyaThemeLayoutState();
+            SaveFile.Data.OceanyaThemeLayout.SurfaceWidth = Width;
+            SaveFile.Data.OceanyaThemeLayout.SurfaceHeight = Height;
+            SaveFile.Save();
+        }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
         /// <summary>
         /// Toggles the panel layout editor, which overlays draggable/resizable handles on every panel.
@@ -937,8 +1213,12 @@ namespace OceanyaClient
                 panelEditModeController = new OceanyaPanelEditModeController(
                     MainCanvas,
                     BuildPanelElementMap(),
-                    onLayoutPersisted: RecalculateSurfaceSizeFromPanels);
+                    onLayoutPersisted: ApplySurfaceSizeFromLayout);
                 panelEditModeController.ExtraPanelMenuItemsProvider = BuildExtraPanelMenuItems;
+                panelEditModeController.FullResetHandler = ResetThemeLayoutToDefaults;
+                // Leaving edit mode from the floating toolbar or Escape has to unpress the toggle,
+                // otherwise the next click just unchecks it and appears to do nothing.
+                panelEditModeController.ActiveChanged += (_, isEditing) => OnPanelEditModeActiveChanged(isEditing);
             }
 
             if (isActive)
@@ -4060,7 +4340,7 @@ namespace OceanyaClient
 
             double verticalOffset = enabled ? GetDreddFeatureRowHeight() : 0;
             Canvas.SetTop(BottomBar, 603 + verticalOffset);
-            RecalculateSurfaceSizeFromPanels();
+            ApplySurfaceSizeFromLayout();
 
             UpdateDreddFeatureEnabledState();
         }
@@ -6948,6 +7228,8 @@ namespace OceanyaClient
             SettingsWindow content = new SettingsWindow(initialPage);
             settingsContent = content;
             content.SettingsSaved += ApplySavedClientSettingsToRuntime;
+            content.PanelLayoutChanged += ReapplyPanelLayoutFromSavefile;
+            content.PanelLayoutResetRequested += ResetThemeLayoutToDefaults;
             content.SettingsSaved += ao2TextLogWriter.RefreshSession;
             Action liveVolumeRefresh = () =>
             {
@@ -6976,6 +7258,8 @@ namespace OceanyaClient
             settingsWindow.Closed += (_, _) =>
             {
                 content.SettingsSaved -= ApplySavedClientSettingsToRuntime;
+                content.PanelLayoutChanged -= ReapplyPanelLayoutFromSavefile;
+                content.PanelLayoutResetRequested -= ResetThemeLayoutToDefaults;
                 content.SettingsSaved -= ao2TextLogWriter.RefreshSession;
                 content.VolumeLiveChanged -= liveVolumeRefresh;
                 // Safety net for closing via the title-bar X, which runs neither Save nor Cancel and
@@ -7440,6 +7724,10 @@ namespace OceanyaClient
 
         private void OnViewportSurfaceLayoutChanged()
         {
+            // A theme swap or chatbox-overlap toggle changes the surface ratio, so an in-window viewport
+            // has to be re-fitted or it starts letterboxing again.
+            FitViewportPanelToSurfaceAspect();
+
             if (viewportWindow != null && viewportContent != null)
             {
                 viewportWindow.MinWidth = GetViewportMinimumWindowWidth();

@@ -99,7 +99,8 @@ namespace OceanyaClient.Components
                 ["ic_button_pairing"] = btnPairingStudio,
                 ["ic_catchphrase"] = lblCatchphrase,
                 ["ic_settings_backdrop"] = bgSettings,
-                ["ic_loremaster"] = imgLoremaster
+                ["ic_loremaster"] = imgLoremaster,
+                ["ic_settings"] = imgOceanyaLogo
             };
 
             if (Content is Panel rootPanel)
@@ -109,6 +110,9 @@ namespace OceanyaClient.Components
                     rootPanel.Children.Remove(element);
                 }
             }
+
+            // Everything visible now lives on the host surface; this shell only carries the code-behind.
+            Visibility = Visibility.Collapsed;
 
             return placeable;
         }

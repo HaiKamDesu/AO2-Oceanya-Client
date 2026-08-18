@@ -65,7 +65,8 @@ namespace OceanyaClient.Features.Theme
             double minimumWidth,
             double minimumHeight,
             OceanyaPanelPlacement? backdropPlacement = null,
-            OceanyaPanelKind kind = OceanyaPanelKind.Static)
+            OceanyaPanelKind kind = OceanyaPanelKind.Static,
+            bool maintainsAspectRatio = false)
         {
             Id = id;
             DisplayName = displayName;
@@ -74,6 +75,7 @@ namespace OceanyaClient.Features.Theme
             MinimumHeight = minimumHeight;
             BackdropPlacement = backdropPlacement;
             Kind = kind;
+            MaintainsAspectRatio = maintainsAspectRatio;
         }
 
         /// <summary>Gets the stable panel id used by theme files.</summary>
@@ -96,6 +98,12 @@ namespace OceanyaClient.Features.Theme
 
         /// <summary>Gets the control kind, which decides resize rules and editor options.</summary>
         public OceanyaPanelKind Kind { get; }
+
+        /// <summary>
+        /// Gets a value indicating whether resizing keeps the panel's aspect ratio. Set for content that
+        /// renders uniformly anyway (the viewport), where a free resize would only add dead space.
+        /// </summary>
+        public bool MaintainsAspectRatio { get; }
 
         /// <summary>
         /// Gets a value indicating whether the user may change this panel's height directly. Text
@@ -200,6 +208,22 @@ namespace OceanyaClient.Features.Theme
 
         /// <summary>Panel id for the pairing studio button.</summary>
         public const string IcButtonPairingPanelId = "ic_button_pairing";
+        /// <summary>Panel id for the ooc chat text.</summary>
+        public const string OocChatPanelId = "ooc_chat";
+
+        /// <summary>Panel id for the ooc header backdrop.</summary>
+        public const string OocStreamBackdropPanelId = "ooc_stream_backdrop";
+
+        /// <summary>Panel id for the ooc header text.</summary>
+        public const string OocStreamTextPanelId = "ooc_stream_text";
+        /// <summary>Panel id for the ooc message box.</summary>
+        public const string OocMessagePanelId = "ooc_message";
+
+        /// <summary>Panel id for the ooc showname.</summary>
+        public const string OocShownamePanelId = "ooc_showname";
+
+        /// <summary>Panel id for the server console button.</summary>
+        public const string OocServerConsolePanelId = "ooc_server_console";
         /// <summary>Panel id for the ding button.</summary>
         public const string DingButtonPanelId = "ding_button";
 
@@ -318,10 +342,10 @@ namespace OceanyaClient.Features.Theme
                 kind: OceanyaPanelKind.ImageButton),
             new OceanyaPanelDescriptor(
                 IcSettingsPanelId,
-                "IC Message Settings",
-                new OceanyaPanelPlacement(0, 343, 509, 260),
-                minimumWidth: 320,
-                minimumHeight: 160),
+                "Oceanya Logo",
+                new OceanyaPanelPlacement(33, 353, 452, 115),
+                minimumWidth: 20,
+                minimumHeight: 20),
             new OceanyaPanelDescriptor(
                 IcShownamePanelId,
                 "IC Showname",
@@ -442,6 +466,48 @@ namespace OceanyaClient.Features.Theme
                 minimumHeight: 16,
                 kind: OceanyaPanelKind.ImageButton),
             new OceanyaPanelDescriptor(
+                OocChatPanelId,
+                "OOC Chat Text",
+                new OceanyaPanelPlacement(287, 24, 222, 238),
+                minimumWidth: 60,
+                minimumHeight: 30,
+                kind: OceanyaPanelKind.Static),
+            new OceanyaPanelDescriptor(
+                OocStreamBackdropPanelId,
+                "OOC Header Backdrop",
+                new OceanyaPanelPlacement(287, 0, 222, 24),
+                minimumWidth: 20,
+                minimumHeight: 6,
+                kind: OceanyaPanelKind.Static),
+            new OceanyaPanelDescriptor(
+                OocStreamTextPanelId,
+                "OOC Header Text",
+                new OceanyaPanelPlacement(287, 0, 222, 24),
+                minimumWidth: 20,
+                minimumHeight: 10,
+                kind: OceanyaPanelKind.TextToggle),
+            new OceanyaPanelDescriptor(
+                OocMessagePanelId,
+                "OOC Message Box",
+                new OceanyaPanelPlacement(287, 262, 222, 18),
+                minimumWidth: 60,
+                minimumHeight: 12,
+                kind: OceanyaPanelKind.TextInput),
+            new OceanyaPanelDescriptor(
+                OocShownamePanelId,
+                "OOC Showname",
+                new OceanyaPanelPlacement(287, 281, 93, 17),
+                minimumWidth: 40,
+                minimumHeight: 12,
+                kind: OceanyaPanelKind.TextInput),
+            new OceanyaPanelDescriptor(
+                OocServerConsolePanelId,
+                "Server Console Button",
+                new OceanyaPanelPlacement(380, 281, 129, 17),
+                minimumWidth: 40,
+                minimumHeight: 12,
+                kind: OceanyaPanelKind.TextToggle),
+            new OceanyaPanelDescriptor(
                 DingButtonPanelId,
                 "Ding Button",
                 new OceanyaPanelPlacement(322, 532, 12, 12),
@@ -479,9 +545,10 @@ namespace OceanyaClient.Features.Theme
             new OceanyaPanelDescriptor(
                 ViewportPanelId,
                 "Viewport",
-                new OceanyaPanelPlacement(0, 0, 256, 192),
+                new OceanyaPanelPlacement(404, 603, 256, 192),
                 minimumWidth: 96,
-                minimumHeight: 72),
+                minimumHeight: 72,
+                maintainsAspectRatio: true),
             new OceanyaPanelDescriptor(
                 BottomBarPanelId,
                 "Bottom Bar",
@@ -584,6 +651,78 @@ namespace OceanyaClient.Features.Theme
                 minimumWidth: 320,
                 minimumHeight: 30)
         };
+
+        /// <summary>
+        /// Draw order that reproduces the pre-theme (7.12) stacking exactly. Reparenting the regions
+        /// onto one canvas replaced the original XAML child order with dictionary order, which pushed
+        /// backdrops in front of the controls they sit behind.
+        /// </summary>
+        private static readonly Dictionary<string, int> DefaultZOrders = new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            ["ooc_log"] = 10,
+            ["ooc_chat"] = 12,
+            ["ooc_stream_backdrop"] = 14,
+            ["ooc_stream_text"] = 16,
+            ["ooc_message"] = 20,
+            ["ooc_showname"] = 30,
+            ["ooc_server_console"] = 40,
+            ["ooc_divider"] = 50,
+            ["ic_log"] = 60,
+            ["shout_backdrop"] = 70,
+            ["shout_holdit"] = 80,
+            ["shout_objection"] = 90,
+            ["shout_takethat"] = 100,
+            ["shout_custom"] = 110,
+            ["clients_add"] = 120,
+            ["clients_remove"] = 130,
+            ["clients_list"] = 140,
+            ["clients_title"] = 150,
+            ["ic_settings"] = 160,
+            ["ic_catchphrase"] = 170,
+            ["ic_settings_backdrop"] = 180,
+            ["ic_loremaster"] = 190,
+            ["ic_showname"] = 200,
+            ["ic_message"] = 210,
+            ["ic_emote_grid"] = 220,
+            ["ic_check_preanim"] = 230,
+            ["ic_check_flip"] = 240,
+            ["ic_check_additive"] = 250,
+            ["ic_check_immediate"] = 260,
+            ["ic_combo_character"] = 270,
+            ["ic_combo_emote"] = 280,
+            ["ic_combo_position"] = 290,
+            ["ic_combo_textcolor"] = 300,
+            ["ic_combo_effect"] = 310,
+            ["ic_combo_sfx"] = 320,
+            ["ic_button_realization"] = 330,
+            ["ic_button_screenshake"] = 340,
+            ["ic_button_offset"] = 350,
+            ["ic_button_pairing"] = 360,
+            ["dredd_row"] = 370,
+            ["bottom_bar"] = 380,
+            ["bar_check_sticky"] = 390,
+            ["bar_button_refresh"] = 400,
+            ["bar_button_settings"] = 410,
+            ["bar_check_switchpos"] = 420,
+            ["bar_button_debug"] = 430,
+            ["bar_check_invertlog"] = 440,
+            ["bar_button_area"] = 450,
+            ["bar_button_music"] = 460,
+            ["bar_button_viewport"] = 470,
+            ["bar_button_editlayout"] = 480,
+            ["viewport"] = 490,
+            ["ding_button"] = 500
+        };
+
+        /// <summary>
+        /// Gets the default stacking order for a panel, reproducing the historic draw order.
+        /// </summary>
+        /// <param name="panelId">Panel id.</param>
+        /// <returns>The z-index to use when the layout does not override it.</returns>
+        public static int GetDefaultZOrder(string panelId)
+        {
+            return DefaultZOrders.TryGetValue(panelId, out int zOrder) ? zOrder : 0;
+        }
 
         private static readonly Dictionary<string, OceanyaPanelDescriptor> CustomPanels =
             new Dictionary<string, OceanyaPanelDescriptor>(StringComparer.Ordinal);

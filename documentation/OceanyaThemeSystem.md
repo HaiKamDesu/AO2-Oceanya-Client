@@ -66,22 +66,33 @@ and on leaving edit mode; `OceanyaPanelLayout.ApplyLayout` applies catalog defau
 saved layout on top, so panels missing from the save keep their default.
 `OceanyaPanelEditModeController.ResetLayout()` clears it back to defaults - including **styling**:
 fonts, swapped images, scaling and item sizes are applied straight onto the live controls, so the
-applier snapshots each panel's untouched appearance on first restyle
+applier snapshots each panel's untouched appearance (as *local* dependency-property values, with
+`UnsetValue` marking "no local value" so a deliberate `{x:Null}` is not confused with an absent one) on
+first restyle
 (`OceanyaPanelStyleApplier.CaptureBaseline`) and reset restores from it (`RestoreBaseline`), then
 un-hides every panel and re-applies the default placements. User-added panels survive a reset.
 
 Right-clicking a panel in edit mode offers **Set default position**, **Set default size**, **Set
 default position and size**, and **Set all panels to default**.
 
-### Surface growth
-`MainWindow.RecalculateSurfaceSizeFromPanels` runs after every layout change: it unions every panel
-rectangle, shifts the whole layout back into view when a panel was dragged past the left or top edge,
-and sizes the surface to the union (never smaller than the stock layout). Growing left or up also
-moves the host window by the same amount (`MoveHostWindowForSurfaceGrowth`, scaled by the shell's
-`ContentScale`), so every panel the user did *not* touch stays exactly where it was on screen and only
-the dragged panel appears to move. So the canvas behaves as if it extended in whichever direction the
-user drags. Negative coordinates are therefore *legal* during a
-drag - `SanitizePlacement` clamps size but not position.
+### Surface size
+The surface does **not** chase the panels. Auto-growing meant one drag moved every other panel on
+screen, which read as the whole layout jumping. Instead:
+
+- **While edit mode is active the window resizes freely** (`ApplyEditModeWindowResizing` turns off
+  `IsResizeScalingEnabled` for the duration), so dragging an edge adds or removes empty space. The size
+  the user settles on is stored in `OceanyaThemeLayoutState.SurfaceWidth/Height` and re-applied by
+  `MainWindow.ApplySurfaceSizeFromLayout`. That method early-returns while edit mode is active (it
+  persists the current window size instead): it runs after every panel drop, and re-applying the stored
+  size there snapped the window back to stock mid-edit.
+- **Resizing from the left or top edge does not move the panels.** Canvas coordinates are relative to
+  the window, so `MainWindow.EditModeShellWindowMoved` shifts every panel by however far the window's
+  origin moved (scaled by `ContentScale`), which turns a left-edge drag into "add/remove empty space on
+  the left" instead of sliding the whole layout across the screen. A plain title-bar move changes the
+  origin without changing the size and is left alone, so the layout travels with the window as expected.
+- Outside edit mode a window drag rescales the whole UI as before.
+- Panels are kept on the surface (`SanitizePlacement` clamps position to non-negative); a panel dragged
+  past an edge is simply clipped until the user makes room.
 
 ### Panels adapt to their size
 Panels are responsive, not fixed art at a fixed spot:
@@ -103,16 +114,20 @@ resize rules and the options its right-click menu offers:
 
 | Kind | Resize | Right-click opens |
 |---|---|---|
-| `TextInput`, `Dropdown`, `TextToggle` | width only - height comes from the font | **Font settings...** (family, size, bold) |
-| `ImageButton` | free | **Image settings...** (replacement image, scaling) |
+| `TextInput`, `Dropdown`, `TextToggle` | width only - height comes from the font | **Font settings...** (family, size, bold/italic/underline, colour) |
+| `ImageButton` | free | **Image settings...** (replacement image, scaling, opacity, background colour) |
 | `ItemGrid` | free | **Grid settings...** (item size, empty = default) |
-| `Static` | free | nothing kind-specific |
+| `Static` | free | **Image settings...** for user-added panels, otherwise nothing kind-specific |
+
+Every dialog is built from the same two-column field grid (`CreateFieldGrid`/`AddField`) with shared
+colour-picker and opacity rows, so they read consistently: a swatch plus Pick/Clear for colours (Clear
+returns to the control's own colour) and a slider with a live percentage for opacity.
 
 Each family of settings is one reusable popup in `OceanyaPanelSettingsDialogs`, not a list of literal
 values in the menu: menus of "Font size 8 / 10 / 12..." do not scale and cannot express combinations
 (family + size + bold), and left no way back to "default". Settings persist per panel on
-`OceanyaPanelPlacementState` (`FontSize`, `FontFamily`, `IsBold`, `ImageScaling`, `ImagePath`,
-`ItemSize`, `ZOrder`) and are applied by `OceanyaPanelStyleApplier` at startup and on every change.
+`OceanyaPanelPlacementState` (`FontSize`, `FontFamily`, `IsBold`, `IsItalic`, `IsUnderlined`,
+`TextColor`, `ImageScaling`, `ImagePath`, `Opacity`, `BackgroundColor`, `ItemSize`, `ZOrder`) and are applied by `OceanyaPanelStyleApplier` at startup and on every change.
 Stretching a text box vertically only added dead space, which is why those panels derive their height.
 
 ### Stacking order
@@ -156,6 +171,14 @@ through the toolbar's **Hidden controls** button, which lists every hidden panel
 *Show all hidden controls*. Hidden state persists via `OceanyaPanelPlacementState.IsHidden` and is
 applied at startup by `OceanyaPanelEditModeController.ApplyHiddenPanels`. Panels hidden for other
 reasons (an advanced feature being off) are left alone by the editor.
+
+### OOC block layers
+The OOC log is split into layers so each can be moved, restyled or dropped: `ooc_log` is just the grey
+background, `ooc_chat` the transparent chat text, `ooc_stream_backdrop` the translucent black header bar
+(previously the label's own `Background`, now a separate rectangle), `ooc_stream_text` the header text
+(`[0] Franziska ("Client1")`), plus `ooc_message`, `ooc_showname` and `ooc_server_console`. The `OOCLog`
+control itself is collapsed after handing everything over; it stays in the tree because it owns the
+code-behind. `ic_settings` went the same way and is now literally the Oceanya logo.
 
 ### Panel granularity
 Grouped only where separation makes no sense (IC log, OOC log, clients, viewport). Everything else is

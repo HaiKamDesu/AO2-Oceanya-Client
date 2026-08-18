@@ -12,6 +12,7 @@ using System.Windows.Media.Imaging;
 using Common;
 using OceanyaClient.Components.Forms;
 using OceanyaClient.Features.Chat;
+using OceanyaClient.Features.Theme;
 using OceanyaClient.Features.Ui;
 using OceanyaClient.Features.Viewport;
 
@@ -46,6 +47,16 @@ namespace OceanyaClient
         private bool lastCommittedUiScaleWasManual;
 
         public event Action? SettingsSaved;
+
+        /// <summary>
+        /// Fired after the panel layout was replaced, so the host can re-place its panels.
+        /// </summary>
+        public event Action? PanelLayoutChanged;
+
+        /// <summary>
+        /// Fired when the user asks for a full theme reset, which the host performs.
+        /// </summary>
+        public event Action? PanelLayoutResetRequested;
 
         /// <summary>
         /// Fired whenever a volume slider changes, so the host can apply the new level in real time.
@@ -138,6 +149,7 @@ namespace OceanyaClient
             lastCommittedUiScalePercent = UiScaleSlider.Value;
             lastCommittedUiScaleWasManual = SaveFile.Data.UiScaleMode == UiScaleMode.Manual;
             RefreshUiScaleControls();
+            RefreshAo2LayoutThemeControls();
             ViewportPreviewCheckBox.IsChecked = SaveFile.Data.GMViewportWindowPreviewPriority;
             ViewportOverlapCheckBox.IsChecked = SaveFile.Data.GMViewportChatboxOverlapsViewport;
             RefreshViewportThemeControls();
@@ -368,6 +380,76 @@ namespace OceanyaClient
         {
             UiScaleMode mode = UiScaleManualRadioButton.IsChecked == true ? UiScaleMode.Manual : UiScaleMode.Automatic;
             UiScaleManager.SetLivePreview(mode, UiScaleSlider.Value / 100d);
+        }
+
+        /// <summary>
+        /// Fills the AO2 theme picker used for importing a panel layout.
+        /// </summary>
+        private void RefreshAo2LayoutThemeControls()
+        {
+            List<string> themes = AO2ThemeCatalog.GetThemes().ToList();
+            Ao2LayoutThemeComboBox.ItemsSource = themes;
+            string configuredTheme = AO2ThemeCatalog.GetConfiguredThemeName(configValues);
+            Ao2LayoutThemeComboBox.SelectedItem = themes.FirstOrDefault(theme =>
+                string.Equals(theme, configuredTheme, StringComparison.OrdinalIgnoreCase)) ?? themes.FirstOrDefault();
+        }
+
+        private void ImportAo2LayoutButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (Ao2LayoutThemeComboBox.SelectedItem is not string themeName || string.IsNullOrWhiteSpace(themeName))
+            {
+                return;
+            }
+
+            MessageBoxResult confirm = OceanyaMessageBox.Show(
+                $"Import the panel layout from the AO2 theme \"{themeName}\"?\n\n"
+                + "This replaces your current Oceanya panel layout. Controls the theme does not describe "
+                + "are hidden, and the clients strip is placed on the left because AO2 has no equivalent.\n\n"
+                + "You can undo this with \"Reset layout to Oceanya default\".",
+                "Import AO2 layout",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+            if (confirm != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            int scalingFactor = Math.Max(1, Ao2ConfigIniSettings.GetInt(configValues, "theme_scaling_factor", 1));
+            Ao2ThemeImportResult? result = Ao2ThemeLayoutImporter.ImportTheme(themeName, scalingFactor);
+            if (result == null)
+            {
+                Ao2LayoutResultTextBlock.Text = $"\"{themeName}\" has no courtroom_design.ini to import.";
+                return;
+            }
+
+            SaveFile.Data.OceanyaThemeLayout = result.Value.Layout;
+            // Every AO2 theme places the viewport inside the window, so that mode comes along with it.
+            SaveFile.Data.GMViewportRenderInPanel = true;
+            SaveFile.Save();
+
+            Ao2LayoutResultTextBlock.Text =
+                $"Imported {result.Value.ImportedPanelIds.Count} panels from \"{themeName}\" "
+                + $"({result.Value.SurfaceWidth:0}x{result.Value.SurfaceHeight:0}). "
+                + $"{result.Value.HiddenPanelIds.Count} panels hidden; "
+                + $"{result.Value.UnmappedIdentifiers.Count} AO2 widgets have no Oceanya equivalent.";
+            PanelLayoutChanged?.Invoke();
+        }
+
+        private void ResetPanelLayoutButton_Click(object sender, RoutedEventArgs e)
+        {
+            MessageBoxResult confirm = OceanyaMessageBox.Show(
+                "Reset every panel back to the Oceanya default layout?",
+                "Reset panel layout",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+            if (confirm != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            // The host performs the reset: it owns the user-added panel elements and the viewport mode.
+            PanelLayoutResetRequested?.Invoke();
+            Ao2LayoutResultTextBlock.Text = "Panel layout, styling and added panels reset to the Oceanya default.";
         }
 
         private void RefreshViewportThemeControls()

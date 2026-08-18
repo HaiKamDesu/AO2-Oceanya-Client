@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using NUnit.Framework;
 using OceanyaClient;
 using OceanyaClient.Features.Theme;
@@ -37,7 +38,7 @@ namespace UnitTests
                     "ic_button_screenshake", "ic_button_offset", "ic_button_pairing", "bottom_bar",
                     "bar_check_sticky", "bar_check_switchpos", "bar_check_invertlog",
                     "bar_button_editlayout", "bar_button_refresh", "bar_button_viewport",
-                    "bar_button_area", "bar_button_debug", "bar_button_music", "bar_button_settings", "viewport", "ding_button", "ooc_divider", "ic_catchphrase",
+                    "bar_button_area", "bar_button_debug", "bar_button_music", "bar_button_settings", "viewport", "ooc_chat", "ooc_stream_backdrop", "ooc_stream_text", "ooc_message", "ooc_showname", "ooc_server_console", "ding_button", "ooc_divider", "ic_catchphrase",
                     "ic_settings_backdrop", "ic_loremaster",
                     "dredd_row"
                 }),
@@ -68,13 +69,21 @@ namespace UnitTests
             AssertPlacement("shout_backdrop", 2, 296, 428, 42);
             AssertPlacement("shout_holdit", 4, 298, 102, 40);
             AssertPlacement("shout_custom", 324, 298, 102, 40);
-            AssertPlacement("ic_settings", 0, 343, 509, 260);
+            AssertPlacement("ic_settings", 33, 353, 452, 115);
             // IC sub-panels are placed relative to the main canvas (IC settings sits at y=343).
             AssertPlacement("ic_message", 87, 343, 422, 17);
             AssertPlacement("ic_emote_grid", 4, 360, 505, 120);
             AssertPlacement("ic_combo_sfx", 294, 511, 140, 21);
             AssertPlacement("bottom_bar", 0, 603, 509, 24);
+            // The viewport panel replaces the viewport button, so it starts at the button spot.
+            AssertPlacement("viewport", 404, 603, 256, 192);
             AssertPlacement("dredd_row", 0, 603, 509, 30);
+            // The OOC input controls were extracted from the log; these are the exact spots they
+            // occupied inside it in 7.12 (36px input strip at the bottom of a 298-tall log).
+            AssertPlacement("ooc_message", 287, 262, 222, 18);
+            AssertPlacement("ooc_showname", 287, 281, 93, 17);
+            // LastChildFill gave the console button the width left over next to the 93px showname.
+            AssertPlacement("ooc_server_console", 380, 281, 129, 17);
 
         }
 
@@ -151,17 +160,17 @@ namespace UnitTests
         }
 
         [Test]
-        public void SanitizePlacement_ClampsSizeButKeepsNegativeCoordinatesForSurfaceGrowth()
+        public void SanitizePlacement_ClampsSizeAndKeepsPanelsOnTheSurface()
         {
             OceanyaPanelDescriptor descriptor = OceanyaPanelCatalog.Get("ic_log");
 
             OceanyaPanelPlacement tooSmall = OceanyaPanelLayout.SanitizePlacement(
                 new OceanyaPanelPlacement(-50, -20, 10, 10), descriptor);
 
-            // Negative coordinates are legal: the surface grows left/up and the layout shifts back
-            // into view, so a panel dragged past an edge stays reachable instead of being blocked.
-            Assert.That(tooSmall.Left, Is.EqualTo(-50));
-            Assert.That(tooSmall.Top, Is.EqualTo(-20));
+            // The surface no longer auto-grows to swallow negative coordinates; the user resizes the
+            // window in edit mode instead, so panels are kept on the surface.
+            Assert.That(tooSmall.Left, Is.EqualTo(0));
+            Assert.That(tooSmall.Top, Is.EqualTo(0));
             Assert.That(tooSmall.Width, Is.EqualTo(descriptor.MinimumWidth));
             Assert.That(tooSmall.Height, Is.EqualTo(descriptor.MinimumHeight));
 
@@ -176,7 +185,7 @@ namespace UnitTests
 
         [Test]
         [Apartment(ApartmentState.STA)]
-        public void CalculateBoundsAndOffsetAll_SupportPanelsDraggedPastTheEdges()
+        public void CalculateBoundsAndOffsetAll_MeasureAndShiftPanelRectangles()
         {
             Border panel = new Border();
             Canvas canvas = new Canvas();
@@ -258,6 +267,68 @@ namespace UnitTests
 
             Assert.That(OceanyaPanelCatalog.IsCustomPanel(definition.Id), Is.False);
             Assert.That(OceanyaPanelCatalog.Panels.Count, Is.EqualTo(builtInCount));
+        }
+
+        [Test]
+        public void DefaultZOrder_ReproducesThe712DrawOrder()
+        {
+            // Backdrops must sit behind the controls they were drawn behind in MainWindow.xaml.
+            Assert.That(
+                OceanyaPanelCatalog.GetDefaultZOrder("ic_settings_backdrop"),
+                Is.LessThan(OceanyaPanelCatalog.GetDefaultZOrder("ic_message")),
+                "The IC settings backdrop was drawn before the IC controls.");
+            Assert.That(
+                OceanyaPanelCatalog.GetDefaultZOrder("ic_loremaster"),
+                Is.LessThan(OceanyaPanelCatalog.GetDefaultZOrder("ic_emote_grid")));
+            Assert.That(
+                OceanyaPanelCatalog.GetDefaultZOrder("shout_backdrop"),
+                Is.LessThan(OceanyaPanelCatalog.GetDefaultZOrder("shout_holdit")));
+            Assert.That(
+                OceanyaPanelCatalog.GetDefaultZOrder("bottom_bar"),
+                Is.LessThan(OceanyaPanelCatalog.GetDefaultZOrder("bar_button_settings")));
+            Assert.That(
+                OceanyaPanelCatalog.GetDefaultZOrder("ooc_log"),
+                Is.LessThan(OceanyaPanelCatalog.GetDefaultZOrder("ooc_message")));
+
+            // Every built-in panel needs an order, or it silently lands at 0 behind everything.
+            foreach (OceanyaPanelDescriptor panel in OceanyaPanelCatalog.BuiltInPanels)
+            {
+                Assert.That(OceanyaPanelCatalog.GetDefaultZOrder(panel.Id), Is.GreaterThan(0), panel.Id);
+            }
+        }
+
+        [Test]
+        public void ViewportPanel_ResizesUniformly()
+        {
+            // Viewport content always renders uniformly, so a free resize would only add dead space.
+            Assert.That(OceanyaPanelCatalog.Get("viewport").MaintainsAspectRatio, Is.True);
+            Assert.That(OceanyaPanelCatalog.Get("ic_log").MaintainsAspectRatio, Is.False);
+        }
+
+        [Test]
+        [Apartment(ApartmentState.STA)]
+        public void StyleBaseline_RoundTripsLocalNullsAndLeavesStyleValuesAlone()
+        {
+            OceanyaPanelDescriptor descriptor = OceanyaPanelCatalog.Get("ic_message");
+
+            // A local Background="{x:Null}" (what the chat logs use to stay transparent) must come back
+            // as null, not be cleared to the control's default brush.
+            TextBox transparent = new TextBox { Background = null };
+            OceanyaPanelStyleApplier.CaptureBaseline("probe_transparent", transparent);
+            transparent.Background = Brushes.Red;
+            OceanyaPanelStyleApplier.RestoreBaseline("probe_transparent", transparent);
+            Assert.That(transparent.Background, Is.Null);
+
+            // A value that came from a style must not be turned into a local value or wiped.
+            Style style = new Style(typeof(TextBox));
+            style.Setters.Add(new Setter(Control.BackgroundProperty, Brushes.Green));
+            TextBox styled = new TextBox { Style = style };
+            OceanyaPanelStyleApplier.CaptureBaseline("probe_styled", styled);
+            styled.Background = Brushes.Red;
+            OceanyaPanelStyleApplier.RestoreBaseline("probe_styled", styled);
+            Assert.That(styled.Background, Is.EqualTo(Brushes.Green));
+            Assert.That(styled.ReadLocalValue(Control.BackgroundProperty), Is.EqualTo(DependencyProperty.UnsetValue));
+            Assert.That(descriptor.Kind, Is.EqualTo(OceanyaPanelKind.TextInput));
         }
 
         private static void AssertPlacement(string id, double left, double top, double width, double height)

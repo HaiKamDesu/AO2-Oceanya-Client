@@ -1,4 +1,4 @@
-# Importing AO2 themes into Oceanya
+﻿# Importing AO2 themes into Oceanya
 
 ## Question
 Can an existing AO2 theme be reused as an Oceanya main-window layout, so users do not have to build
@@ -86,7 +86,50 @@ and `Documentation/ViewportParityGaps.md`; when they arrive they simply gain a m
 - **Cosmetic, safe to hide:** `ic_settings_backdrop`, `ic_loremaster`, `ic_catchphrase`,
   `shout_backdrop`, `ooc_divider`, `ding_button`, `bottom_bar`, `dredd_row` (already feature-gated).
 
-## Proposed import design
+## Implementation (shipped)
+`OceanyaClient/Features/Theme/Ao2ThemeLayoutImporter.cs`:
+- `ParseDesignFile` reads `courtroom_design.ini` (skips `/*...*/`, `;` and `#` comments, keys are
+  case-insensitive because themes are inconsistent - GrayGarden writes `Additive`).
+- `Translate(entries, scalingFactor)` produces an `OceanyaThemeLayoutState`, applying the AO2 theme
+  scaling factor and returning what was imported, hidden and left unmapped.
+- `ImportTheme(themeName, scalingFactor)` resolves the design file across `AO2ThemeCatalog`'s theme
+  folders and translates it. **Theme roots are `<base folder>/themes/<name>`** -
+  `AO2ThemeCatalog.GetAo2ThemeScanFolders()` yields the *base* folders, so the `themes` segment has to
+  be added (matching `AO2ThemeCatalog.ResolveThemeRoot`); without it no theme is ever found.
+
+Policy decisions baked in:
+- **Unmentioned panels are hidden**, mirroring AO2's own behaviour, and written as real hidden entries
+  (a missing entry would otherwise leave the panel at its Oceanya default, visible and misplaced).
+- **The clients strip stays.** GM multi-client has no AO2 equivalent, so every imported rectangle is
+  shifted right by `ClientsStripWidth` (54) and the clients title/add/remove/list plus the remaining
+  Oceanya-only buttons are packed into that left strip, with the client list taking the free height.
+  The surface is widened by the same amount. Users can move it afterwards like any other panel.
+- **Cosmetic Oceanya-only panels are hidden** (`ic_settings*`, `ic_loremaster`, `ic_catchphrase`,
+  `shout_backdrop`, `ooc_divider`, `ding_button`, `bottom_bar`) so the theme's own look comes through.
+- Importing turns on **render viewport in main window**, since every AO2 theme places `viewport`.
+- Identifiers that are not placeable widgets, or that Oceanya already honours through its
+  viewport/chatbox theming (`courtroom`, `chatbox`, `chat_arrow`, `showname`, `message`,
+  `music_display`, `music_name`, spacings), are not reported as unmapped.
+
+UI: Settings → **Interface** → *Panel Layout*: pick any AO2 theme and **Import layout from AO2 theme**
+(confirms first), or **Reset layout to Oceanya default**. `SettingsWindow.PanelLayoutChanged` tells
+`MainWindow` to re-place everything.
+
+**Reset is a full theme reset**, owned by `MainWindow.ResetThemeLayoutToDefaults` (the editor's *Reset
+all* delegates to it through `OceanyaPanelEditModeController.FullResetHandler`, and so does the
+settings button). It clears placement, stacking, visibility and styling (restoring the live controls
+from `OceanyaPanelStyleApplier` baselines), deletes user-added panels, and turns off
+`GMViewportRenderInPanel`. The AO2 *viewport* theme is deliberately untouched - that is a separate
+setting, not part of the Oceanya theme.
+
+### Measured against the 61 installed themes
+Every theme with a design file imports 20-30 panels. GrayGarden (the most heavily customised example)
+imports 30: viewport, both logs, OOC message/showname/console, IC showname/message, emote grid, all six
+dropdowns, all four shouts, all four checkboxes, realization, screenshake, pairing, offset, and the
+settings/music/area buttons. Its unmapped remainder is entirely evidence, judge/HP bars, char select,
+mute, sliders and other features Oceanya does not have.
+
+## Original proposed design
 1. `Ao2ThemeLayoutImporter` (new, under `OceanyaClient/Features/Theme/`): parse
    `courtroom_design.ini` for a chosen theme through the existing theme-chain resolver
    (`AO2ThemeCatalog` + the same subtheme/default fallback AO2 uses), apply

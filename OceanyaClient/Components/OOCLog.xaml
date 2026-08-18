@@ -75,9 +75,15 @@
                         <Paragraph TextAlignment="Left"/>
                     </FlowDocument>
                 </RichTextBox>
+                <!-- Backdrop and text are separate so a theme can move or restyle either one. -->
+                <Rectangle x:Name="rectStreamBackdrop"
+                           Fill="#7F000000"
+                           Height="24"
+                           VerticalAlignment="Top"
+                           HorizontalAlignment="Stretch"/>
                 <Label x:Name="lblStream" Content="[STREAM]" 
            AutomationProperties.AutomationId="Main.Ooc.StreamLabel"
-           Background="#7F000000" Foreground="White" 
+           Background="Transparent" Foreground="White" 
            FontFamily="Arial" VerticalContentAlignment="Center" 
            Height="24" VerticalAlignment="Top"
            HorizontalAlignment="Stretch"/>

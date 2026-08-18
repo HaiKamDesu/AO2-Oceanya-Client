@@ -39,6 +39,8 @@ namespace OceanyaClient.Features.Theme
 
             CaptureBaseline(descriptor.Id, element);
             ApplyZOrder(element, state.ZOrder);
+            ApplyOpacity(element, state.Opacity);
+            ApplyBackgroundColor(element, state.BackgroundColor);
 
             switch (descriptor.Kind)
             {
@@ -69,13 +71,8 @@ namespace OceanyaClient.Features.Theme
                 return;
             }
 
-            List<PanelVisualBaseline> captured = new List<PanelVisualBaseline>();
+            List<PanelVisualBaseline> captured = new List<PanelVisualBaseline> { PanelVisualBaseline.From(element) };
             CaptureBaselineRecursive(element, captured);
-            captured.Add(new PanelVisualBaseline(element)
-            {
-                Height = element.Height,
-                ZIndex = Panel.GetZIndex(element)
-            });
             Baselines[panelId] = captured;
         }
 
@@ -106,6 +103,7 @@ namespace OceanyaClient.Features.Theme
                 captured.Add(PanelVisualBaseline.From(element));
             }
 
+
             int childCount = VisualTreeHelper.GetChildrenCount(element);
             for (int i = 0; i < childCount; i++)
             {
@@ -114,118 +112,102 @@ namespace OceanyaClient.Features.Theme
         }
 
         /// <summary>
-        /// A single element's pre-styling appearance.
+        /// A single element's pre-styling appearance, recorded as *local* values.
         /// </summary>
+        /// <remarks>
+        /// Reading the effective value and writing it back later turns a style-provided value into a
+        /// local one, and writing back a captured null wipes the style's value entirely - which is how
+        /// buttons ended up with no background after a reset. Recording whether each property had a
+        /// local value, and clearing it when it did not, restores the original state exactly.
+        /// </remarks>
         private sealed class PanelVisualBaseline
         {
-            private readonly DependencyObject target;
+            private static readonly DependencyProperty[] TrackedProperties =
+            {
+                Control.FontSizeProperty,
+                Control.FontFamilyProperty,
+                Control.FontWeightProperty,
+                Control.FontStyleProperty,
+                Control.ForegroundProperty,
+                Control.BackgroundProperty,
+                TextBlock.FontSizeProperty,
+                TextBlock.FontFamilyProperty,
+                TextBlock.FontWeightProperty,
+                TextBlock.FontStyleProperty,
+                TextBlock.ForegroundProperty,
+                TextBlock.TextDecorationsProperty,
+                Image.SourceProperty,
+                Image.StretchProperty,
+                FrameworkElement.HeightProperty,
+                UIElement.OpacityProperty,
+                Panel.ZIndexProperty
+            };
 
-            public PanelVisualBaseline(DependencyObject target)
+            private readonly DependencyObject target;
+            private readonly Dictionary<DependencyProperty, object?> localValues = new Dictionary<DependencyProperty, object?>();
+
+            private PanelVisualBaseline(DependencyObject target)
             {
                 this.target = target;
             }
 
-            public double FontSize { get; init; }
-
-            public FontFamily? FontFamily { get; init; }
-
-            public FontWeight? FontWeight { get; init; }
-
-            public ImageSource? ImageSource { get; init; }
-
-            public Stretch? ImageStretch { get; init; }
-
-            public double? Height { get; init; }
-
-            public int? ZIndex { get; init; }
-
+            /// <summary>
+            /// Captures which of the tracked properties currently carry a local value.
+            /// </summary>
+            /// <param name="element">Element to capture.</param>
+            /// <returns>The captured baseline.</returns>
             public static PanelVisualBaseline From(DependencyObject element)
             {
-                if (element is Control control)
+                PanelVisualBaseline baseline = new PanelVisualBaseline(element);
+                foreach (DependencyProperty property in TrackedProperties)
                 {
-                    return new PanelVisualBaseline(element)
+                    if (!IsApplicable(element, property))
                     {
-                        FontSize = control.FontSize,
-                        FontFamily = control.FontFamily,
-                        FontWeight = control.FontWeight
-                    };
+                        continue;
+                    }
+
+                    // Keep UnsetValue as the marker for "no local value": storing null instead cannot be
+                    // told apart from a local Background="{x:Null}", and clearing that gave the control
+                    // WPF's default (white) background back.
+                    baseline.localValues[property] = element.ReadLocalValue(property);
                 }
 
-                if (element is TextBlock textBlock)
-                {
-                    return new PanelVisualBaseline(element)
-                    {
-                        FontSize = textBlock.FontSize,
-                        FontFamily = textBlock.FontFamily,
-                        FontWeight = textBlock.FontWeight
-                    };
-                }
-
-                Image image = (Image)element;
-                return new PanelVisualBaseline(element)
-                {
-                    ImageSource = image.Source,
-                    ImageStretch = image.Stretch
-                };
+                return baseline;
             }
 
+            /// <summary>
+            /// Puts every tracked property back: the original local value, or cleared when it had none.
+            /// </summary>
             public void Restore()
             {
-                switch (target)
+                foreach (KeyValuePair<DependencyProperty, object?> pair in localValues)
                 {
-                    case Control control:
-                        if (FontSize > 0)
-                        {
-                            control.FontSize = FontSize;
-                        }
-
-                        if (FontFamily != null)
-                        {
-                            control.FontFamily = FontFamily;
-                        }
-
-                        if (FontWeight.HasValue)
-                        {
-                            control.FontWeight = FontWeight.Value;
-                        }
-
-                        break;
-                    case TextBlock textBlock:
-                        if (FontSize > 0)
-                        {
-                            textBlock.FontSize = FontSize;
-                        }
-
-                        if (FontFamily != null)
-                        {
-                            textBlock.FontFamily = FontFamily;
-                        }
-
-                        if (FontWeight.HasValue)
-                        {
-                            textBlock.FontWeight = FontWeight.Value;
-                        }
-
-                        break;
-                    case Image image:
-                        image.Source = ImageSource;
-                        if (ImageStretch.HasValue)
-                        {
-                            image.Stretch = ImageStretch.Value;
-                        }
-
-                        break;
+                    if (pair.Value == DependencyProperty.UnsetValue)
+                    {
+                        target.ClearValue(pair.Key);
+                    }
+                    else
+                    {
+                        target.SetValue(pair.Key, pair.Value);
+                    }
                 }
+            }
 
-                if (target is FrameworkElement frameworkElement && Height.HasValue)
+            private static bool IsApplicable(DependencyObject element, DependencyProperty property)
+            {
+                return element switch
                 {
-                    frameworkElement.Height = Height.Value;
-                }
-
-                if (target is UIElement uiElement && ZIndex.HasValue)
-                {
-                    Panel.SetZIndex(uiElement, ZIndex.Value);
-                }
+                    Image => property == Image.SourceProperty
+                        || property == Image.StretchProperty
+                        || property == FrameworkElement.HeightProperty
+                        || property == UIElement.OpacityProperty
+                        || property == Panel.ZIndexProperty,
+                    TextBlock => property != Control.BackgroundProperty && property != Image.SourceProperty && property != Image.StretchProperty,
+                    Control => property != TextBlock.TextDecorationsProperty && property != Image.SourceProperty && property != Image.StretchProperty,
+                    _ => property == FrameworkElement.HeightProperty
+                        || property == UIElement.OpacityProperty
+                        || property == Panel.ZIndexProperty
+                };
             }
         }
 
@@ -255,22 +237,42 @@ namespace OceanyaClient.Features.Theme
             }
 
             FontWeight? weight = state.IsBold ? FontWeights.Bold : null;
-            if (state.FontSize <= 0 && family == null && !state.IsBold)
+            FontStyle? style = state.IsItalic ? FontStyles.Italic : null;
+            Brush? foreground = TryParseBrush(state.TextColor);
+            bool underline = state.IsUnderlined;
+            if (state.FontSize <= 0 && family == null && !state.IsBold && !state.IsItalic && !underline && foreground == null)
             {
                 return;
             }
 
-            SetFontRecursive(element, state.FontSize, family, weight);
+            SetFontRecursive(element, state.FontSize, family, weight, style, foreground, underline);
             if (state.FontSize > 0)
             {
                 element.Height = ResolveTextPanelHeight(state.FontSize);
             }
         }
 
-        private static void SetFontRecursive(DependencyObject element, double fontSize, FontFamily? family, FontWeight? weight)
+        private static void SetFontRecursive(
+            DependencyObject element,
+            double fontSize,
+            FontFamily? family,
+            FontWeight? weight,
+            FontStyle? style,
+            Brush? foreground,
+            bool underline)
         {
             if (element is Control control)
             {
+                if (style.HasValue)
+                {
+                    control.FontStyle = style.Value;
+                }
+
+                if (foreground != null)
+                {
+                    control.Foreground = foreground;
+                }
+
                 if (fontSize > 0)
                 {
                     control.FontSize = fontSize;
@@ -302,12 +304,27 @@ namespace OceanyaClient.Features.Theme
                 {
                     textBlock.FontWeight = weight.Value;
                 }
+
+                if (style.HasValue)
+                {
+                    textBlock.FontStyle = style.Value;
+                }
+
+                if (foreground != null)
+                {
+                    textBlock.Foreground = foreground;
+                }
+
+                if (underline)
+                {
+                    textBlock.TextDecorations = TextDecorations.Underline;
+                }
             }
 
             int childCount = VisualTreeHelper.GetChildrenCount(element);
             for (int i = 0; i < childCount; i++)
             {
-                SetFontRecursive(VisualTreeHelper.GetChild(element, i), fontSize, family, weight);
+                SetFontRecursive(VisualTreeHelper.GetChild(element, i), fontSize, family, weight, style, foreground, underline);
             }
         }
 
@@ -322,6 +339,78 @@ namespace OceanyaClient.Features.Theme
             {
                 Panel.SetZIndex(element, zOrder);
             }
+        }
+
+        /// <summary>
+        /// Applies a panel opacity, letting a picture or colour block be faded.
+        /// </summary>
+        /// <param name="element">Panel element.</param>
+        /// <param name="opacity">Opacity between 0 and 1; zero leaves it untouched.</param>
+        private static void ApplyOpacity(FrameworkElement element, double opacity)
+        {
+            if (opacity > 0 && opacity <= 1)
+            {
+                element.Opacity = opacity;
+            }
+        }
+
+        /// <summary>
+        /// Applies a background colour behind a panel's content.
+        /// </summary>
+        /// <param name="element">Panel element.</param>
+        /// <param name="backgroundColor">Colour string, or empty to leave it alone.</param>
+        private static void ApplyBackgroundColor(FrameworkElement element, string backgroundColor)
+        {
+            Brush? brush = TryParseBrush(backgroundColor);
+            if (brush == null)
+            {
+                return;
+            }
+
+            switch (element)
+            {
+                case Control control:
+                    control.Background = brush;
+                    break;
+                case Panel panel:
+                    panel.Background = brush;
+                    break;
+                case Border border:
+                    border.Background = brush;
+                    break;
+                case System.Windows.Shapes.Shape shape:
+                    shape.Fill = brush;
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Parses a colour string into a frozen brush.
+        /// </summary>
+        /// <param name="color">Colour in #AARRGGBB or #RRGGBB form, or a named colour.</param>
+        /// <returns>The brush, or null when the value is empty or unparseable.</returns>
+        public static Brush? TryParseBrush(string color)
+        {
+            if (string.IsNullOrWhiteSpace(color))
+            {
+                return null;
+            }
+
+            try
+            {
+                if (ColorConverter.ConvertFromString(color) is Color parsed)
+                {
+                    SolidColorBrush brush = new SolidColorBrush(parsed);
+                    brush.Freeze();
+                    return brush;
+                }
+            }
+            catch (FormatException)
+            {
+                // An unparseable colour leaves the control's own brush in place.
+            }
+
+            return null;
         }
 
         private static void ApplyImageOverride(FrameworkElement element, string imagePath)

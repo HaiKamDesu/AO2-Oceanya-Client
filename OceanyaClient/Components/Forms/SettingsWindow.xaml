@@ -373,6 +373,31 @@
                                          LostFocus="UiScaleValueTextBox_LostFocus"/>
                             </Grid>
                             <TextBlock x:Name="UiScaleEffectiveTextBlock" Style="{StaticResource SubText}" Margin="0,2,0,0" TextWrapping="Wrap"/>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,18,0,8">
+                                <TextBlock Text="Panel Layout" Foreground="White" FontWeight="SemiBold"/>
+                                <TextBlock Style="{StaticResource HelpGlyph}" ToolTip="Import an existing AO2 theme's widget positions as your Oceanya panel layout. Controls the theme does not describe are hidden, and the clients strip is kept on the left because AO2 has no equivalent."/>
+                            </StackPanel>
+                            <Grid Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="140"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="AO2 theme" Style="{StaticResource LabelText}"/>
+                                <ComboBox x:Name="Ao2LayoutThemeComboBox"
+                                          Grid.Column="1"
+                                          Style="{StaticResource DarkComboBox}"/>
+                            </Grid>
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="Import layout from AO2 theme"
+                                        Style="{StaticResource ModernButton}"
+                                        Margin="0,0,8,0"
+                                        Click="ImportAo2LayoutButton_Click"/>
+                                <Button Content="Reset layout to Oceanya default"
+                                        Style="{StaticResource ModernButton}"
+                                        Click="ResetPanelLayoutButton_Click"/>
+                            </StackPanel>
+                            <TextBlock x:Name="Ao2LayoutResultTextBlock" Style="{StaticResource SubText}" Margin="0,6,0,0" TextWrapping="Wrap"/>
                         </StackPanel>
 
                         <StackPanel x:Name="ViewportPage" Visibility="Collapsed">

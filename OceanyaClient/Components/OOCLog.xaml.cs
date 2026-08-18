@@ -51,6 +51,55 @@ namespace OceanyaClient.Components
         // URL detection regex pattern
         private static readonly Regex UrlRegex = new Regex(@"(https?:\/\/[^\s]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+        /// <summary>
+        /// Hands the OOC input controls over to the host surface so they can be placed independently.
+        /// </summary>
+        /// <remarks>
+        /// AO2 themes position `ooc_chat_message` and `ooc_chat_name` as separate widgets, which is
+        /// impossible while they live inside this control's dock panel. Reparenting keeps every handler
+        /// and field here working; only the layout parent changes. The log itself keeps the panel.
+        /// </remarks>
+        /// <returns>Placeable child controls keyed by their stable panel id.</returns>
+        public IReadOnlyDictionary<string, FrameworkElement> ExtractPlaceableControls()
+        {
+            Dictionary<string, FrameworkElement> placeable = new Dictionary<string, FrameworkElement>(StringComparer.Ordinal)
+            {
+                ["ooc_message"] = grdOOCMessage,
+                ["ooc_showname"] = grdOOCShowname,
+                ["ooc_server_console"] = btnServerConsole,
+                ["ooc_chat"] = LogBox,
+                ["ooc_stream_backdrop"] = rectStreamBackdrop,
+                ["ooc_stream_text"] = lblStream
+            };
+
+            if (grdOOCMessage.Parent is Panel messageParent)
+            {
+                messageParent.Children.Remove(grdOOCMessage);
+            }
+
+            if (grdOOCShowname.Parent is Panel shownameParent)
+            {
+                shownameParent.Children.Remove(grdOOCShowname);
+            }
+
+            if (btnServerConsole.Parent is Panel consoleParent)
+            {
+                consoleParent.Children.Remove(btnServerConsole);
+            }
+
+            if (LogBox.Parent is Panel logParent)
+            {
+                logParent.Children.Remove(LogBox);
+                logParent.Children.Remove(rectStreamBackdrop);
+                logParent.Children.Remove(lblStream);
+            }
+
+            // Everything visible was handed over; this control only carries the code-behind now.
+            dockInputSection.Visibility = Visibility.Collapsed;
+            Visibility = Visibility.Collapsed;
+            return placeable;
+        }
+
         public OOCLog()
         {
             InitializeComponent();

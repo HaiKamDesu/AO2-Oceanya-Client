@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Globalization;
 using System.Linq;
 using System.Windows;
@@ -26,8 +26,8 @@ namespace OceanyaClient.Features.Theme
         /// <returns>True when the user accepted the dialog.</returns>
         public static bool ShowFontSettings(Window? owner, string panelName, OceanyaPanelPlacementState state)
         {
-            ComboBox familyBox = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
-            familyBox.Items.Add("(default)");
+            ComboBox familyBox = StyledComboBox();
+            familyBox.Items.Add(DefaultOption);
             foreach (string family in Fonts.SystemFontFamilies
                 .Select(font => font.Source)
                 .OrderBy(source => source, StringComparer.OrdinalIgnoreCase))
@@ -35,47 +35,45 @@ namespace OceanyaClient.Features.Theme
                 familyBox.Items.Add(family);
             }
 
-            familyBox.SelectedItem = string.IsNullOrWhiteSpace(state.FontFamily) ? "(default)" : state.FontFamily;
+            familyBox.SelectedItem = string.IsNullOrWhiteSpace(state.FontFamily) ? DefaultOption : state.FontFamily;
             if (familyBox.SelectedItem == null)
             {
                 familyBox.Items.Add(state.FontFamily);
                 familyBox.SelectedItem = state.FontFamily;
             }
 
-            TextBox sizeBox = new TextBox
-            {
-                Text = state.FontSize > 0 ? state.FontSize.ToString("0.##", CultureInfo.InvariantCulture) : string.Empty,
-                Margin = new Thickness(0, 0, 0, 8),
-                ToolTip = "Leave empty to use the control's own size. The panel height follows this size."
-            };
+            TextBox sizeBox = StyledTextBox(
+                state.FontSize > 0 ? state.FontSize.ToString("0.##", CultureInfo.InvariantCulture) : string.Empty,
+                "Empty uses the control's own size. The panel height follows this size.");
 
-            CheckBox boldBox = new CheckBox
-            {
-                Content = "Bold",
-                IsChecked = state.IsBold,
-                Foreground = Brushes.White,
-                Margin = new Thickness(0, 0, 0, 8)
-            };
+            CheckBox boldBox = StyledCheckBox("Bold", state.IsBold);
+            CheckBox italicBox = StyledCheckBox("Italic", state.IsItalic);
+            CheckBox underlineBox = StyledCheckBox("Underline", state.IsUnderlined);
+            StackPanel styleRow = new StackPanel { Orientation = Orientation.Horizontal };
+            styleRow.Children.Add(boldBox);
+            styleRow.Children.Add(italicBox);
+            styleRow.Children.Add(underlineBox);
 
-            StackPanel body = new StackPanel();
-            body.Children.Add(CreateLabel("Font family"));
-            body.Children.Add(familyBox);
-            body.Children.Add(CreateLabel("Font size (px)"));
-            body.Children.Add(sizeBox);
-            body.Children.Add(boldBox);
+            ColorPickerRow colorRow = CreateColorPickerRow(owner, state.TextColor, "Text colour");
 
-            if (!ShowDialog(owner, $"Font settings - {panelName}", body, 340, 260))
+            Grid body = CreateFieldGrid();
+            AddField(body, "Font", familyBox);
+            AddField(body, "Size (px)", sizeBox);
+            AddField(body, "Style", styleRow);
+            AddField(body, "Colour", colorRow.Content);
+
+            if (!ShowDialog(owner, $"Font settings - {panelName}", body, 400))
             {
                 return false;
             }
 
-            string selectedFamily = familyBox.SelectedItem as string ?? "(default)";
-            state.FontFamily = string.Equals(selectedFamily, "(default)", StringComparison.Ordinal) ? string.Empty : selectedFamily;
-            state.FontSize = double.TryParse(sizeBox.Text?.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out double parsedSize)
-                && parsedSize > 0
-                    ? parsedSize
-                    : 0;
+            string selectedFamily = familyBox.SelectedItem as string ?? DefaultOption;
+            state.FontFamily = string.Equals(selectedFamily, DefaultOption, StringComparison.Ordinal) ? string.Empty : selectedFamily;
+            state.FontSize = ParsePositiveDouble(sizeBox.Text);
             state.IsBold = boldBox.IsChecked == true;
+            state.IsItalic = italicBox.IsChecked == true;
+            state.IsUnderlined = underlineBox.IsChecked == true;
+            state.TextColor = colorRow.SelectedColor;
             return true;
         }
 
@@ -88,25 +86,16 @@ namespace OceanyaClient.Features.Theme
         /// <returns>True when the user accepted the dialog.</returns>
         public static bool ShowImageSettings(Window? owner, string panelName, OceanyaPanelPlacementState state)
         {
-            TextBox pathBox = new TextBox
-            {
-                Text = state.ImagePath,
-                Margin = new Thickness(0, 0, 0, 4),
-                ToolTip = "Leave empty to keep the built-in artwork."
-            };
-
-            Button browse = new Button
-            {
-                Content = "Browse...",
-                Padding = new Thickness(8, 2, 8, 2),
-                HorizontalAlignment = HorizontalAlignment.Left,
-                Margin = new Thickness(0, 0, 0, 8)
-            };
+            TextBox pathBox = StyledTextBox(state.ImagePath, "Empty keeps the built-in artwork.");
+            pathBox.Margin = new Thickness(0);
+            Button browse = StyledButton("Browse...");
+            browse.Margin = new Thickness(6, 0, 0, 0);
+            browse.MinWidth = 86;
             browse.Click += (_, _) =>
             {
                 Microsoft.Win32.OpenFileDialog dialog = new Microsoft.Win32.OpenFileDialog
                 {
-                    Title = "Pick the button image",
+                    Title = "Pick the panel image",
                     Filter = "Images|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp|All files|*.*"
                 };
                 if (dialog.ShowDialog() == true)
@@ -115,29 +104,41 @@ namespace OceanyaClient.Features.Theme
                 }
             };
 
-            ComboBox scalingBox = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
-            foreach (string option in new[] { "(default)", "Fill", "Uniform", "UniformToFill", "None" })
+            Grid imageRow = new Grid();
+            imageRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            imageRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            Grid.SetColumn(pathBox, 0);
+            Grid.SetColumn(browse, 1);
+            imageRow.Children.Add(pathBox);
+            imageRow.Children.Add(browse);
+
+            ComboBox scalingBox = StyledComboBox();
+            foreach (string option in new[] { DefaultOption, "Fill", "Uniform", "UniformToFill", "None" })
             {
                 scalingBox.Items.Add(option);
             }
 
-            scalingBox.SelectedItem = string.IsNullOrWhiteSpace(state.ImageScaling) ? "(default)" : state.ImageScaling;
+            scalingBox.SelectedItem = string.IsNullOrWhiteSpace(state.ImageScaling) ? DefaultOption : state.ImageScaling;
 
-            StackPanel body = new StackPanel();
-            body.Children.Add(CreateLabel("Image file"));
-            body.Children.Add(pathBox);
-            body.Children.Add(browse);
-            body.Children.Add(CreateLabel("Scaling"));
-            body.Children.Add(scalingBox);
+            (StackPanel opacityRow, Slider opacitySlider) = CreateOpacityRow(state.Opacity);
+            ColorPickerRow backgroundRow = CreateColorPickerRow(owner, state.BackgroundColor, "Background");
 
-            if (!ShowDialog(owner, $"Image settings - {panelName}", body, 420, 260))
+            Grid body = CreateFieldGrid();
+            AddField(body, "Image", imageRow);
+            AddField(body, "Scaling", scalingBox);
+            AddField(body, "Opacity", opacityRow);
+            AddField(body, "Background", backgroundRow.Content);
+
+            if (!ShowDialog(owner, $"Image settings - {panelName}", body, 470))
             {
                 return false;
             }
 
             state.ImagePath = pathBox.Text?.Trim() ?? string.Empty;
-            string selectedScaling = scalingBox.SelectedItem as string ?? "(default)";
-            state.ImageScaling = string.Equals(selectedScaling, "(default)", StringComparison.Ordinal) ? string.Empty : selectedScaling;
+            string selectedScaling = scalingBox.SelectedItem as string ?? DefaultOption;
+            state.ImageScaling = string.Equals(selectedScaling, DefaultOption, StringComparison.Ordinal) ? string.Empty : selectedScaling;
+            state.Opacity = Math.Round(opacitySlider.Value / 100d, 2);
+            state.BackgroundColor = backgroundRow.SelectedColor;
             return true;
         }
 
@@ -150,46 +151,245 @@ namespace OceanyaClient.Features.Theme
         /// <returns>True when the user accepted the dialog.</returns>
         public static bool ShowGridSettings(Window? owner, string panelName, OceanyaPanelPlacementState state)
         {
-            TextBox itemSizeBox = new TextBox
-            {
-                Text = state.ItemSize > 0 ? state.ItemSize.ToString("0.##", CultureInfo.InvariantCulture) : string.Empty,
-                Margin = new Thickness(0, 0, 0, 8),
-                ToolTip = "Size of one item including spacing. Leave empty to restore the default."
-            };
+            TextBox itemSizeBox = StyledTextBox(
+                state.ItemSize > 0 ? state.ItemSize.ToString("0.##", CultureInfo.InvariantCulture) : string.Empty,
+                "Size of one item including spacing. Empty restores the default.");
 
-            StackPanel body = new StackPanel();
-            body.Children.Add(CreateLabel("Item size (px)"));
-            body.Children.Add(itemSizeBox);
-            body.Children.Add(new TextBlock
-            {
-                Text = "How many items fit is derived from this size and the panel's size.",
-                Foreground = new SolidColorBrush(Color.FromRgb(0xB0, 0xB0, 0xB0)),
-                FontSize = 10,
-                TextWrapping = TextWrapping.Wrap
-            });
+            Grid body = CreateFieldGrid();
+            AddField(body, "Item size (px)", itemSizeBox);
+            AddHint(body, "How many items fit is derived from this size and the panel's size.");
 
-            if (!ShowDialog(owner, $"Grid settings - {panelName}", body, 340, 220))
+            if (!ShowDialog(owner, $"Grid settings - {panelName}", body, 380))
             {
                 return false;
             }
 
-            state.ItemSize = double.TryParse(itemSizeBox.Text?.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
-                && parsed > 0
-                    ? parsed
-                    : 0;
+            state.ItemSize = ParsePositiveDouble(itemSizeBox.Text);
             return true;
         }
 
-        private static TextBlock CreateLabel(string text)
+        /// <summary>Option text meaning "leave the control's own value alone".</summary>
+        private const string DefaultOption = "(default)";
+
+        /// <summary>A colour field: the row of controls plus the colour currently chosen.</summary>
+        private sealed class ColorPickerRow
         {
-            return new TextBlock
+            public required FrameworkElement Content { get; init; }
+
+            public required Func<string> Resolve { get; init; }
+
+            public string SelectedColor => Resolve();
+        }
+
+        /// <summary>
+        /// Builds the two-column label/control grid every settings dialog uses.
+        /// </summary>
+        /// <returns>An empty field grid.</returns>
+        private static Grid CreateFieldGrid()
+        {
+            Grid grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(112) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            return grid;
+        }
+
+        /// <summary>
+        /// Adds a labelled row to a field grid.
+        /// </summary>
+        /// <param name="grid">Grid being filled.</param>
+        /// <param name="label">Row label.</param>
+        /// <param name="field">Control for the row.</param>
+        private static void AddField(Grid grid, string label, FrameworkElement field)
+        {
+            int row = grid.RowDefinitions.Count;
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            TextBlock caption = new TextBlock
+            {
+                Text = label,
+                Style = FindDialogStyle("OceanyaDialogLabel"),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 8, 10)
+            };
+            Grid.SetRow(caption, row);
+            Grid.SetColumn(caption, 0);
+            grid.Children.Add(caption);
+
+            field.Margin = new Thickness(0, 0, 0, 10);
+            field.VerticalAlignment = VerticalAlignment.Center;
+            Grid.SetRow(field, row);
+            Grid.SetColumn(field, 1);
+            grid.Children.Add(field);
+        }
+
+        /// <summary>
+        /// Adds a full-width hint line to a field grid.
+        /// </summary>
+        /// <param name="grid">Grid being filled.</param>
+        /// <param name="text">Hint text.</param>
+        private static void AddHint(Grid grid, string text)
+        {
+            int row = grid.RowDefinitions.Count;
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            TextBlock hint = new TextBlock { Text = text, Style = FindDialogStyle("OceanyaDialogHint") };
+            Grid.SetRow(hint, row);
+            Grid.SetColumn(hint, 1);
+            grid.Children.Add(hint);
+        }
+
+        /// <summary>
+        /// Builds a colour field: a swatch, a Pick button and a Clear button.
+        /// </summary>
+        /// <param name="owner">Owner window for the colour picker.</param>
+        /// <param name="initialColor">Currently stored colour, or empty.</param>
+        /// <param name="pickerTitle">Title used when picking.</param>
+        /// <returns>The colour field.</returns>
+        private static ColorPickerRow CreateColorPickerRow(Window? owner, string initialColor, string pickerTitle)
+        {
+            string current = initialColor ?? string.Empty;
+            Border swatch = new Border
+            {
+                Width = 34,
+                Height = 22,
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0x55, 0x55, 0x55)),
+                BorderThickness = new Thickness(1),
+                Background = OceanyaPanelStyleApplier.TryParseBrush(current) ?? Brushes.Transparent,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            TextBlock valueText = new TextBlock
+            {
+                Text = string.IsNullOrWhiteSpace(current) ? DefaultOption : current,
+                Style = FindDialogStyle("OceanyaDialogHint"),
+                Margin = new Thickness(8, 0, 8, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            Button pick = StyledButton("Pick...");
+            pick.MinWidth = 72;
+            pick.Click += (_, _) =>
+            {
+                Color seed = (OceanyaPanelStyleApplier.TryParseBrush(current) as SolidColorBrush)?.Color ?? Colors.White;
+                Color? picked = AOCharacterFileCreatorWindow.ShowSolidColorPickerDialog(owner, seed);
+                if (picked == null)
+                {
+                    return;
+                }
+
+                current = picked.Value.ToString();
+                swatch.Background = new SolidColorBrush(picked.Value);
+                valueText.Text = current;
+            };
+
+            Button clear = StyledButton("Clear");
+            clear.MinWidth = 64;
+            clear.Margin = new Thickness(0);
+            clear.ToolTip = pickerTitle + ": use the control's own colour";
+            clear.Click += (_, _) =>
+            {
+                current = string.Empty;
+                swatch.Background = Brushes.Transparent;
+                valueText.Text = DefaultOption;
+            };
+
+            StackPanel row = new StackPanel { Orientation = Orientation.Horizontal };
+            row.Children.Add(swatch);
+            row.Children.Add(valueText);
+            row.Children.Add(pick);
+            row.Children.Add(clear);
+
+            return new ColorPickerRow { Content = row, Resolve = () => current };
+        }
+
+        /// <summary>
+        /// Builds an opacity field: a slider plus a live percentage readout.
+        /// </summary>
+        /// <param name="storedOpacity">Stored opacity, 0 to 1; zero means untouched.</param>
+        /// <returns>The row and its slider.</returns>
+        private static (StackPanel Row, Slider Slider) CreateOpacityRow(double storedOpacity)
+        {
+            Slider slider = new Slider
+            {
+                Minimum = 0,
+                Maximum = 100,
+                Width = 190,
+                TickFrequency = 5,
+                IsSnapToTickEnabled = true,
+                Value = storedOpacity > 0 ? storedOpacity * 100 : 100,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            TextBlock readout = new TextBlock
+            {
+                Style = FindDialogStyle("OceanyaDialogHint"),
+                Margin = new Thickness(8, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Text = $"{slider.Value:0}%"
+            };
+            slider.ValueChanged += (_, _) => readout.Text = $"{slider.Value:0}%";
+
+            StackPanel row = new StackPanel { Orientation = Orientation.Horizontal };
+            row.Children.Add(slider);
+            row.Children.Add(readout);
+            return (row, slider);
+        }
+
+        private static double ParsePositiveDouble(string? text)
+        {
+            return double.TryParse(text?.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed) && parsed > 0
+                ? parsed
+                : 0;
+        }
+
+        private static TextBox StyledTextBox(string text, string toolTip)
+        {
+            return new TextBox
             {
                 Text = text,
-                Foreground = Brushes.White,
-                FontWeight = FontWeights.SemiBold,
-                FontSize = 11,
-                Margin = new Thickness(0, 0, 0, 2)
+                ToolTip = toolTip,
+                Style = FindDialogStyle("DarkTextBox"),
+                Margin = new Thickness(0, 0, 0, 10)
             };
+        }
+
+        private static ComboBox StyledComboBox()
+        {
+            return new ComboBox
+            {
+                Style = FindDialogStyle("DarkComboBox"),
+                Margin = new Thickness(0, 0, 0, 10)
+            };
+        }
+
+        private static CheckBox StyledCheckBox(string content, bool isChecked)
+        {
+            return new CheckBox
+            {
+                Content = content,
+                IsChecked = isChecked,
+                Style = FindDialogStyle("OceanyaDialogCheckBox")
+            };
+        }
+
+        private static Button StyledButton(string caption)
+        {
+            return new Button
+            {
+                Content = caption,
+                Style = FindDialogStyle("ModernButton"),
+                MinWidth = 92,
+                Margin = new Thickness(0, 0, 6, 0)
+            };
+        }
+
+        /// <summary>
+        /// Resolves one of the shared dialog styles from the application resources.
+        /// </summary>
+        /// <param name="key">Style resource key.</param>
+        /// <returns>The style, or null when the application resources are unavailable (tests).</returns>
+        private static Style? FindDialogStyle(string key)
+        {
+            return Application.Current?.TryFindResource(key) as Style;
         }
 
         /// <summary>
@@ -201,26 +401,20 @@ namespace OceanyaClient.Features.Theme
         /// <param name="width">Requested width.</param>
         /// <param name="height">Requested height.</param>
         /// <returns>True when the user accepted.</returns>
-        private static bool ShowDialog(Window? owner, string title, FrameworkElement body, double width, double height)
+        private static bool ShowDialog(Window? owner, string title, FrameworkElement body, double width)
         {
-            Grid root = new Grid { Margin = new Thickness(12) };
-            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            Grid root = new Grid { Margin = new Thickness(14) };
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-            ScrollViewer scroll = new ScrollViewer
-            {
-                Content = body,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
-            };
-            Grid.SetRow(scroll, 0);
-            root.Children.Add(scroll);
+            Grid.SetRow(body, 0);
+            root.Children.Add(body);
 
             StackPanel buttons = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
                 HorizontalAlignment = HorizontalAlignment.Right,
-                Margin = new Thickness(0, 8, 0, 0)
+                Margin = new Thickness(0, 10, 0, 0)
             };
             Grid.SetRow(buttons, 1);
             root.Children.Add(buttons);
@@ -232,24 +426,25 @@ namespace OceanyaClient.Features.Theme
                 Title = title,
                 HeaderText = title,
                 Width = width,
-                Height = height,
+                // The shell sizes itself to the content, so the dialog has no dead space at the bottom.
+                SizeToContent = SizeToContent.Height,
                 MinWidth = Math.Min(width, 300),
-                MinHeight = Math.Min(height, 200),
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 ShowInTaskbar = false,
-                IsUserResizeEnabled = true,
+                IsUserResizeEnabled = false,
                 IsUserMoveEnabled = true,
                 IsCloseButtonVisible = true,
                 BodyContent = root
             };
 
-            Button apply = new Button { Content = "Apply", Padding = new Thickness(12, 3, 12, 3), Margin = new Thickness(0, 0, 6, 0) };
+            Button apply = StyledButton("Apply");
             apply.Click += (_, _) =>
             {
                 accepted = true;
                 dialog.Close();
             };
-            Button cancel = new Button { Content = "Cancel", Padding = new Thickness(12, 3, 12, 3) };
+            Button cancel = StyledButton("Cancel");
+            cancel.Margin = new Thickness(0);
             cancel.Click += (_, _) => dialog.Close();
             buttons.Children.Add(apply);
             buttons.Children.Add(cancel);

@@ -7,7 +7,7 @@
              xmlns:components="clr-namespace:OceanyaClient.Components"
              mc:Ignorable="d" Height="288" Width="528" Background="#FF585858">
     <Canvas>
-        <Rectangle Height="115" Canvas.Top="10" Width="452" Fill="#FF464646" HorizontalAlignment="Center" VerticalAlignment="Top" Canvas.Left="33">
+        <Rectangle x:Name="imgOceanyaLogo" Fill="#FF464646" HorizontalAlignment="Center" VerticalAlignment="Top">
             <Rectangle.OpacityMask>
                 <ImageBrush ImageSource="pack://application:,,,/OceanyaClient;component/Resources/OceanyaFullLogo.png" Stretch="UniformToFill"/>
             </Rectangle.OpacityMask>

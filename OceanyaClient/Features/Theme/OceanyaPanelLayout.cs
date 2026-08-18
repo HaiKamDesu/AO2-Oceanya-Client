@@ -44,6 +44,7 @@ namespace OceanyaClient.Features.Theme
                 }
 
                 ApplyPlacement(pair.Value.Element, descriptor.Placement);
+                Panel.SetZIndex(pair.Value.Element, OceanyaPanelCatalog.GetDefaultZOrder(pair.Key));
                 if (pair.Value.Backdrop != null && descriptor.BackdropPlacement.HasValue)
                 {
                     ApplyPlacement(pair.Value.Backdrop, descriptor.BackdropPlacement.Value);
@@ -99,6 +100,10 @@ namespace OceanyaClient.Features.Theme
                 }
 
                 ApplyPlacement(pair.Value.Element, placement);
+                // A saved ZOrder of zero means "unset", so the historic default still applies.
+                Panel.SetZIndex(
+                    pair.Value.Element,
+                    savedPlacement.ZOrder != 0 ? savedPlacement.ZOrder : OceanyaPanelCatalog.GetDefaultZOrder(pair.Key));
                 OceanyaPanelStyleApplier.Apply(descriptor, pair.Value.Element, savedPlacement);
                 if (pair.Value.Backdrop != null && descriptor.BackdropPlacement.HasValue)
                 {
@@ -208,8 +213,10 @@ namespace OceanyaClient.Features.Theme
         {
             double width = Math.Max(descriptor.MinimumWidth, IsUsable(placement.Width) ? placement.Width : descriptor.Placement.Width);
             double height = Math.Max(descriptor.MinimumHeight, IsUsable(placement.Height) ? placement.Height : descriptor.Placement.Height);
-            double left = IsFinite(placement.Left) ? placement.Left : descriptor.Placement.Left;
-            double top = IsFinite(placement.Top) ? placement.Top : descriptor.Placement.Top;
+            // The surface no longer grows to swallow negative coordinates: the user resizes the window
+            // in edit mode instead, so panels stay on the surface.
+            double left = IsFinite(placement.Left) ? Math.Max(0, placement.Left) : descriptor.Placement.Left;
+            double top = IsFinite(placement.Top) ? Math.Max(0, placement.Top) : descriptor.Placement.Top;
             return new OceanyaPanelPlacement(left, top, width, height);
         }
 

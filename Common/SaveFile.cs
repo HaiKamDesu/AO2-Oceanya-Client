@@ -257,6 +257,21 @@ namespace OceanyaClient
 
         /// <summary>Stacking order on the surface; higher values draw on top. Zero means default.</summary>
         public int ZOrder { get; set; }
+
+        /// <summary>Text colour override in #AARRGGBB form; empty keeps the control's own colour.</summary>
+        public string TextColor { get; set; } = string.Empty;
+
+        /// <summary>True when the panel's text is rendered italic.</summary>
+        public bool IsItalic { get; set; }
+
+        /// <summary>True when the panel's text is underlined.</summary>
+        public bool IsUnderlined { get; set; }
+
+        /// <summary>Opacity of the panel, 0 to 1. Zero means untouched.</summary>
+        public double Opacity { get; set; }
+
+        /// <summary>Background colour override in #AARRGGBB form; empty keeps the panel's own fill.</summary>
+        public string BackgroundColor { get; set; } = string.Empty;
     }
 
     /// <summary>
@@ -294,6 +309,12 @@ namespace OceanyaClient
 
         /// <summary>Panels the user added themselves (pictures and colour blocks).</summary>
         public List<OceanyaCustomPanelDefinition> CustomPanels { get; set; } = new List<OceanyaCustomPanelDefinition>();
+
+        /// <summary>Surface width the user resized the window to; zero means the stock width.</summary>
+        public double SurfaceWidth { get; set; }
+
+        /// <summary>Surface height the user resized the window to; zero means the stock height.</summary>
+        public double SurfaceHeight { get; set; }
     }
 
     public class ViewportWindowState
