@@ -39,6 +39,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Documentation", "Documentat
 		Documentation\DebugConsoleAndLogging.md = Documentation\DebugConsoleAndLogging.md
 		Documentation\FeatureIndex.md = Documentation\FeatureIndex.md
 		Documentation\UiScaling.md = Documentation\UiScaling.md
+		Documentation\AO2ThemeImport.md = Documentation\AO2ThemeImport.md
 		Documentation\OceanyaThemeSystem.md = Documentation\OceanyaThemeSystem.md
 		Documentation\GmMultiClientSnapshotRestore.md = Documentation\GmMultiClientSnapshotRestore.md
 		Documentation\MusicList.md = Documentation\MusicList.md

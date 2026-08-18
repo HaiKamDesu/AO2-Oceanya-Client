@@ -157,3 +157,7 @@ Use this file as the first stop before broad repository searches. It should poin
 - Doc: `Documentation/OceanyaThemeSystem.md`
 - Notes: Planned photoshop-style dockable panel theme system for the main window (separate from the AO2 viewport theme). Records the decisions taken (AvalonDock, viewport dockable in both modes, schema-driven per-panel settings), the phase order (UI scaling -> panel extraction -> dock host -> theme package/editor), the `.oceanyatheme` zip layout, and the `layoutCompat` versioning rule. No dock-host code exists yet; Phase 1 (UI scaling) is shipped.
 
+## AO2 Theme Import (investigation)
+- Doc: `Documentation/AO2ThemeImport.md`
+- Notes: Viability study for reusing existing AO2 themes as Oceanya main-window layouts. AO2 positions widgets as absolute `x, y, w, h` in `courtroom_design.ini` (`Courtroom::set_size_and_pos` -> `AOApplication::get_element_dimensions`), scaled by `theme_scaling_factor`, with `courtroom = 0, 0, W, H` as the window size; 55 of the 61 themes in the reference install define the same key widget set, sizes ranging `450x256`..`1918x982`. Contains the full AO2-identifier -> Oceanya-panel mapping table (direct / approximate / absent / Oceanya-only), the proposed `Ao2ThemeLayoutImporter` design, and the risks. Chatbox, `chat_config.ini`, sounds and in-viewport art are ALREADY consumed by `AO2ChatPreviewResolver`/`AO2ViewportAssetResolver`, so an importer only covers main-window widgets. Not implemented yet.
+
