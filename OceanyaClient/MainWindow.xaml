@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:OceanyaClient"
         xmlns:components="clr-namespace:OceanyaClient.Components"
+        xmlns:panels="clr-namespace:OceanyaClient.Components.Panels"
         Height="652" Width="510"
         Background="Transparent">
 
@@ -52,38 +53,8 @@
             <DoubleAnimation Storyboard.TargetProperty="Opacity" From="1" To="0" Duration="0:0:0.3"/>
         </Storyboard>
 
-        <Style x:Key="DreddRowButtonStyle" TargetType="{x:Type Button}" BasedOn="{StaticResource ModernButton}">
-            <Setter Property="Height" Value="22"/>
-            <Setter Property="FontSize" Value="10"/>
-            <Setter Property="Padding" Value="8,2"/>
-            <Setter Property="Background" Value="#FF1F1F1F"/>
-            <Setter Property="BorderBrush" Value="#FF4A4A4A"/>
-        </Style>
 
-        <Style x:Key="DreddRowCheckBoxStyle" TargetType="{x:Type CheckBox}">
-            <Setter Property="Foreground" Value="#FFE5E5E5"/>
-            <Setter Property="FontFamily" Value="Arial"/>
-            <Setter Property="FontSize" Value="10"/>
-            <Setter Property="VerticalContentAlignment" Value="Center"/>
-            <Setter Property="Padding" Value="0"/>
-        </Style>
 
-        <Style x:Key="DreddRowListItemStyle" TargetType="{x:Type ListBoxItem}">
-            <Setter Property="Foreground" Value="#FFE8E8E8"/>
-            <Setter Property="Background" Value="#FF1E1E1E"/>
-            <Setter Property="Padding" Value="6,3"/>
-            <Setter Property="HorizontalContentAlignment" Value="Left"/>
-            <Setter Property="VerticalContentAlignment" Value="Center"/>
-            <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#FF2D3C4A"/>
-                </Trigger>
-                <Trigger Property="IsSelected" Value="True">
-                    <Setter Property="Background" Value="#FF36506A"/>
-                    <Setter Property="Foreground" Value="White"/>
-                </Trigger>
-            </Style.Triggers>
-        </Style>
 
         <Style x:Key="CompactIconButtonStyle" TargetType="{x:Type Button}" BasedOn="{StaticResource ModernButton}">
             <Setter Property="Width" Value="24"/>
@@ -141,94 +112,9 @@
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
-            <Border x:Name="ConnectionInfoBar"
-                    Grid.Row="0"
-                    Background="#FF090B0E"
-                    BorderBrush="#FF252525"
-                    BorderThickness="0,0,0,1"
-                    SizeChanged="ConnectionInfoBar_SizeChanged">
-                <WrapPanel Margin="4,2,4,2" Orientation="Horizontal">
-
-                    <Border x:Name="ServerChip" Margin="0,1,4,1" CornerRadius="3" Background="#FF171B21" BorderBrush="#FF2D3744" BorderThickness="1">
-                        <DockPanel Margin="5,1">
-                            <TextBlock Text="SERVER" DockPanel.Dock="Left" Foreground="#FF7FA8D8" FontSize="8" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                            <TextBlock x:Name="txtSelectedServerInfo"
-                                       AutomationProperties.AutomationId="Main.ConnectionInfo.Server"
-                                       Text="Disconnected"
-                                       Foreground="#FFE8E8E8"
-                                       FontFamily="Consolas"
-                                       FontSize="10"
-                                       VerticalAlignment="Center"/>
-                        </DockPanel>
-                    </Border>
-
-                    <Border x:Name="AreaChip" Margin="0,1,4,1" CornerRadius="3" Background="#FF151D18" BorderBrush="#FF284332" BorderThickness="1">
-                        <DockPanel Margin="5,1">
-                            <TextBlock Text="AREA" DockPanel.Dock="Left" Foreground="#FF89C796" FontSize="8" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                            <TextBlock x:Name="txtSelectedAreaInfo"
-                                       AutomationProperties.AutomationId="Main.ConnectionInfo.Area"
-                                       Text="Unknown"
-                                       Foreground="#FFE8E8E8"
-                                       FontFamily="Consolas"
-                                       FontSize="10"
-                                       VerticalAlignment="Center"/>
-                        </DockPanel>
-                    </Border>
-
-                    <Border x:Name="UsersChip" Margin="0,1,4,1" CornerRadius="3" Background="#FF211B13" BorderBrush="#FF4B3B20" BorderThickness="1">
-                        <DockPanel Margin="5,1">
-                            <TextBlock Text="USERS" DockPanel.Dock="Left" Foreground="#FFD9B56D" FontSize="8" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                            <TextBlock x:Name="txtSelectedAreaUsersInfo"
-                                       AutomationProperties.AutomationId="Main.ConnectionInfo.Users"
-                                       Text="-"
-                                       Foreground="#FFF0E7D2"
-                                       FontFamily="Consolas"
-                                       FontSize="10"
-                                       VerticalAlignment="Center"/>
-                        </DockPanel>
-                    </Border>
-
-                    <Border x:Name="StatusChip" Margin="0,1,4,1" CornerRadius="3" Background="#FF181520" BorderBrush="#FF352C4A" BorderThickness="1" Visibility="Collapsed">
-                        <DockPanel Margin="5,1">
-                            <TextBlock Text="STATUS" DockPanel.Dock="Left" Foreground="#FFAA88DD" FontSize="8" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                            <TextBlock x:Name="txtSelectedAreaStatusInfo"
-                                       AutomationProperties.AutomationId="Main.ConnectionInfo.Status"
-                                       Text="-"
-                                       Foreground="#FFE8E8E8"
-                                       FontFamily="Consolas"
-                                       FontSize="10"
-                                       VerticalAlignment="Center"/>
-                        </DockPanel>
-                    </Border>
-
-                    <Border x:Name="LockChip" Margin="0,1,4,1" CornerRadius="3" Background="#FF1D1515" BorderBrush="#FF4A2828" BorderThickness="1" Visibility="Collapsed">
-                        <DockPanel Margin="5,1">
-                            <TextBlock Text="LOCK" DockPanel.Dock="Left" Foreground="#FFDD8888" FontSize="8" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                            <TextBlock x:Name="txtSelectedAreaLockInfo"
-                                       AutomationProperties.AutomationId="Main.ConnectionInfo.Lock"
-                                       Text="-"
-                                       Foreground="#FFE8E8E8"
-                                       FontFamily="Consolas"
-                                       FontSize="10"
-                                       VerticalAlignment="Center"/>
-                        </DockPanel>
-                    </Border>
-
-                    <Border x:Name="CmChip" Margin="0,1,0,1" CornerRadius="3" Background="#FF1C1720" BorderBrush="#FF3C3148" BorderThickness="1" Visibility="Collapsed">
-                        <DockPanel Margin="5,1">
-                            <TextBlock Text="CM" DockPanel.Dock="Left" Foreground="#FFC0A1D8" FontSize="8" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                            <TextBlock x:Name="txtSelectedAreaMetaInfo"
-                                       AutomationProperties.AutomationId="Main.ConnectionInfo.Meta"
-                                       Text="-"
-                                       Foreground="#FFE8E8E8"
-                                       FontFamily="Consolas"
-                                       FontSize="10"
-                                       VerticalAlignment="Center"/>
-                        </DockPanel>
-                    </Border>
-
-                </WrapPanel>
-            </Border>
+            <panels:ConnectionInfoPanel x:Name="ConnectionInfoBar"
+                                        Grid.Row="0"
+                                        SizeChanged="ConnectionInfoBar_SizeChanged"/>
 
             <!-- Optional body background treatment. -->
                 <Rectangle x:Name="imgScienceBlur" 
@@ -258,271 +144,30 @@
                 <!-- Entire original body content lives here. -->
 
 
-                <Rectangle x:Name="bgRectangleOOC" Height="333" Canvas.Left="287" Width="222" Fill="#FF8B8B8B"/>
-                <components:OOCLog x:Name="OOCLogControl" DockPanel.Dock="Top" Height="298" Canvas.Left="287" Width="222"/>
+                <!-- Placement for panel elements comes from OceanyaPanelCatalog (see ApplyPanelCatalogPlacements). -->
+                <Rectangle x:Name="bgRectangleOOC" Fill="#FF8B8B8B"/>
+                <components:OOCLog x:Name="OOCLogControl" DockPanel.Dock="Top"/>
 
                 <Rectangle Height="18" Canvas.Left="426" Canvas.Top="318" Width="83" Fill="#FF4E5056" HorizontalAlignment="Left" VerticalAlignment="Center"/>
 
-                <DockPanel x:Name="Dock_ICLog" Height="323" Width="232" Canvas.Left="55">
+                <DockPanel x:Name="Dock_ICLog">
                     <DockPanel.Background>
                         <ImageBrush ImageSource="pack://application:,,,/OceanyaClient;component/Resources/LogBG.png"/>
                     </DockPanel.Background>
                 </DockPanel>
-                <components:ICLog x:Name="ICLogControl" DockPanel.Dock="Top" Height="298" Width="228" Canvas.Left="59" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                <components:ICLog x:Name="ICLogControl" DockPanel.Dock="Top" HorizontalAlignment="Center" VerticalAlignment="Center"/>
 
-                <Image x:Name="imgShoutModifierBG" Height="42" Canvas.Left="2" Canvas.Top="296" Width="428" Source="pack://application:,,,/OceanyaClient;component/Resources/ObjectionButtonsBG.png" Stretch="None"/>
-                <ToggleButton x:Name="HoldIt" Height="40" Width="102" Canvas.Left="4" Canvas.Top="298"
-                              AutomationProperties.AutomationId="Main.Shout.HoldIt"
-                              AutomationProperties.Name="Hold It"
-                              BorderBrush="{x:Null}" HorizontalAlignment="Left" VerticalAlignment="Top"
-                              Padding="0,0,0,0" Checked="ToggleButton_Checked"
-                              Focusable="False" IsTabStop="False">
-                    <ToggleButton.Style>
-                        <Style TargetType="{x:Type ToggleButton}">
-                            <Setter Property="Template">
-                                <Setter.Value>
-                                    <ControlTemplate TargetType="{x:Type ToggleButton}">
-                                        <Grid>
-                                            <Image x:Name="ButtonImage" Source="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Hold It.png"/>
-                                        </Grid>
-                                        <ControlTemplate.Triggers>
-                                            <Trigger Property="IsChecked" Value="True">
-                                                <Setter TargetName="ButtonImage" Property="Source" Value="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Hold It_Selected.png"/>
-                                            </Trigger>
-                                        </ControlTemplate.Triggers>
-                                    </ControlTemplate>
-                                </Setter.Value>
-                            </Setter>
-                        </Style>
-                    </ToggleButton.Style>
-                </ToggleButton>
+                <panels:ShoutRowPanel x:Name="ShoutRow"/>
 
-                <ToggleButton x:Name="Objection" Height="40" Width="102" Canvas.Left="111" Canvas.Top="298"
-                              AutomationProperties.AutomationId="Main.Shout.Objection"
-                              AutomationProperties.Name="Objection"
-                              BorderBrush="{x:Null}" Padding="0,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Top"
-                              Checked="ToggleButton_Checked"
-                              Focusable="False" IsTabStop="False">
-                    <ToggleButton.Style>
-                        <Style TargetType="{x:Type ToggleButton}">
-                            <Setter Property="Template">
-                                <Setter.Value>
-                                    <ControlTemplate TargetType="{x:Type ToggleButton}">
-                                        <Grid>
-                                            <Image x:Name="ButtonImage" Source="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Objection.png"/>
-                                        </Grid>
-                                        <ControlTemplate.Triggers>
-                                            <Trigger Property="IsChecked" Value="True">
-                                                <Setter TargetName="ButtonImage" Property="Source" Value="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Objection_Selected.png"/>
-                                            </Trigger>
-                                        </ControlTemplate.Triggers>
-                                    </ControlTemplate>
-                                </Setter.Value>
-                            </Setter>
-                        </Style>
-                    </ToggleButton.Style>
-                </ToggleButton>
+                <panels:ClientsListPanel x:Name="ClientsList"/>
 
-                <ToggleButton x:Name="TakeThat" Height="40" Width="102" Canvas.Left="218" Canvas.Top="298"
-                              AutomationProperties.AutomationId="Main.Shout.TakeThat"
-                              AutomationProperties.Name="Take That"
-                              BorderBrush="{x:Null}" Padding="0,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Top"
-                              Checked="ToggleButton_Checked"
-                              Focusable="False" IsTabStop="False">
-                    <ToggleButton.Style>
-                        <Style TargetType="{x:Type ToggleButton}">
-                            <Setter Property="Template">
-                                <Setter.Value>
-                                    <ControlTemplate TargetType="{x:Type ToggleButton}">
-                                        <Grid>
-                                            <Image x:Name="ButtonImage" Source="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Take That.png"/>
-                                        </Grid>
-                                        <ControlTemplate.Triggers>
-                                            <Trigger Property="IsChecked" Value="True">
-                                                <Setter TargetName="ButtonImage" Property="Source" Value="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Take That_Selected.png"/>
-                                            </Trigger>
-                                        </ControlTemplate.Triggers>
-                                    </ControlTemplate>
-                                </Setter.Value>
-                            </Setter>
-                        </Style>
-                    </ToggleButton.Style>
-                </ToggleButton>
 
-                <ToggleButton x:Name="Custom" Height="40" Width="102" Canvas.Left="324" Canvas.Top="298"
-                              AutomationProperties.AutomationId="Main.Shout.Custom"
-                              AutomationProperties.Name="Custom"
-                              BorderBrush="{x:Null}" Padding="0,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center"
-                              Checked="ToggleButton_Checked"
-                              Focusable="False" IsTabStop="False">
-                    <ToggleButton.Style>
-                        <Style TargetType="{x:Type ToggleButton}">
-                            <Setter Property="Template">
-                                <Setter.Value>
-                                    <ControlTemplate TargetType="{x:Type ToggleButton}">
-                                        <Grid>
-                                            <Image x:Name="ButtonImage" Source="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Custom.png"/>
-                                        </Grid>
-                                        <ControlTemplate.Triggers>
-                                            <Trigger Property="IsChecked" Value="True">
-                                                <Setter TargetName="ButtonImage" Property="Source" Value="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Custom_Selected.png"/>
-                                            </Trigger>
-                                        </ControlTemplate.Triggers>
-                                    </ControlTemplate>
-                                </Setter.Value>
-                            </Setter>
-                        </Style>
-                    </ToggleButton.Style>
-                </ToggleButton>
 
-                <Button x:Name="btnAddClient" Height="24" Width="24" BorderBrush="{x:Null}" Foreground="{x:Null}" Padding="0"
-                        AutomationProperties.AutomationId="Main.AddClient"
-                        AutomationProperties.Name="Add Client"
-                        HorizontalAlignment="Center" VerticalAlignment="Top"
-                        Click="btnAddClient_Click" Canvas.Left="2" Canvas.Top="24">
-                    <Button.Style>
-                        <Style TargetType="{x:Type Button}">
-                            <Setter Property="Template">
-                                <Setter.Value>
-                                    <ControlTemplate TargetType="{x:Type Button}">
-                                        <Grid>
-                                            <Image x:Name="ButtonImage" Source="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Plus.png" Stretch="Fill"/>
-                                        </Grid>
-                                        <ControlTemplate.Triggers>
-                                            <Trigger Property="IsMouseOver" Value="True">
-                                                <Setter TargetName="ButtonImage" Property="Opacity" Value="0.7"/>
-                                            </Trigger>
-                                            <Trigger Property="IsEnabled" Value="False">
-                                                <Setter TargetName="ButtonImage" Property="Opacity" Value="0.3"/>
-                                            </Trigger>
-                                        </ControlTemplate.Triggers>
-                                    </ControlTemplate>
-                                </Setter.Value>
-                            </Setter>
-                        </Style>
-                    </Button.Style>
-                </Button>
 
-                <Button x:Name="btnRemoveClient" Height="24" Width="24" BorderBrush="{x:Null}" Foreground="{x:Null}" Padding="0"
-                        AutomationProperties.AutomationId="Main.RemoveClient"
-                        AutomationProperties.Name="Remove Client"
-                        HorizontalAlignment="Left" VerticalAlignment="Top"
-                        Click="btnRemoveClient_Click" Canvas.Left="28" Canvas.Top="24">
-                    <Button.Style>
-                        <Style TargetType="{x:Type Button}">
-                            <Setter Property="Template">
-                                <Setter.Value>
-                                    <ControlTemplate TargetType="{x:Type Button}">
-                                        <Grid>
-                                            <Image x:Name="ButtonImage" Source="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Minus.png" Stretch="Fill"/>
-                                        </Grid>
-                                        <ControlTemplate.Triggers>
-                                            <Trigger Property="IsMouseOver" Value="True">
-                                                <Setter TargetName="ButtonImage" Property="Opacity" Value="0.7"/>
-                                            </Trigger>
-                                            <Trigger Property="IsEnabled" Value="False">
-                                                <Setter TargetName="ButtonImage" Property="Opacity" Value="0.3"/>
-                                            </Trigger>
-                                        </ControlTemplate.Triggers>
-                                    </ControlTemplate>
-                                </Setter.Value>
-                            </Setter>
-                        </Style>
-                    </Button.Style>
-                </Button>
+                <components:ICMessageSettings x:Name="ICMessageSettingsControl"
+                                              HorizontalAlignment="Center" VerticalAlignment="Center"/>
 
-                <components:PageButtonGrid x:Name="EmoteGrid" Canvas.Left="2" Canvas.Top="48" BorderBrush="#FF545454" 
-                                           Background="DimGray" BorderThickness="1" Width="50" Height="248"/>
-
-                <Label x:Name="lblClients" Content="Clients" Height="24" Width="46" 
-                       FontFamily="pack://application:,,,/Resources/Fonts/#Igiari Cyrillic" Foreground="White" 
-                       Canvas.Left="4" Canvas.Top="2"/>
-
-                <components:ICMessageSettings x:Name="ICMessageSettingsControl" Canvas.Top="343" 
-                                              Width="509" Height="260" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-
-                <Rectangle x:Name="FeatureRowBackground" Height="30" Canvas.Top="603" Width="509" Fill="#FF1B1C1F" Visibility="Collapsed"/>
-                <TextBlock x:Name="DreddFeatureLabel"
-                           Text="Dredd's Background&#x0a;Overlay Override"
-                           Canvas.Left="8"
-                           Canvas.Top="606"
-                           Width="108"
-                           TextWrapping="Wrap"
-                           ToolTip="Dredd's Background Overlay Override"
-                           Foreground="#FFE8E8E8"
-                           FontSize="8.5"
-                           VerticalAlignment="Center"
-                           Visibility="Collapsed"/>
-                <Grid x:Name="DreddOverlaySelector"
-                      Canvas.Left="120"
-                      Canvas.Top="607"
-                      Width="170"
-                      Height="22"
-                      Visibility="Collapsed">
-                    <Border Background="#FF1E1E1E" BorderBrush="#FF4A4A4A" BorderThickness="1" CornerRadius="2"/>
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="20"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock x:Name="DreddOverlaySelectedText"
-                                   Grid.Column="0"
-                                   Margin="6,0,2,0"
-                                   VerticalAlignment="Center"
-                                   TextTrimming="CharacterEllipsis"
-                                   Foreground="#FFE8E8E8"
-                                   FontSize="10"/>
-                        <Button x:Name="DreddOverlayDropButton"
-                                Grid.Column="1"
-                                Background="#00000000"
-                                BorderThickness="0"
-                                Foreground="#FFE8E8E8"
-                                FontSize="10"
-                                Content="▼"
-                                Click="DreddOverlayDropButton_Click"/>
-                    </Grid>
-                </Grid>
-                <Popup x:Name="DreddOverlayPopup"
-                       PlacementTarget="{Binding ElementName=DreddOverlaySelector}"
-                       Placement="Bottom"
-                       StaysOpen="False"
-                       AllowsTransparency="True">
-                    <Border Width="260" MaxHeight="220" Background="#FF1E1E1E" BorderBrush="#FF4A4A4A" BorderThickness="1" CornerRadius="2">
-                        <ListBox x:Name="DreddOverlayListBox"
-                                 Background="#FF1E1E1E"
-                                 BorderThickness="0"
-                                 Foreground="#FFE8E8E8"
-                                 FontSize="10"
-                                 SelectionChanged="DreddOverlayListBox_SelectionChanged"
-                                 ItemContainerStyle="{StaticResource DreddRowListItemStyle}"/>
-                    </Border>
-                </Popup>
-                <CheckBox x:Name="DreddStickyOverlayCheckBox"
-                          Content="Sticky overlay"
-                          Canvas.Left="294"
-                          Canvas.Top="609"
-                          Style="{StaticResource DreddRowCheckBoxStyle}"
-                          Checked="DreddStickyOverlayCheckBox_Checked"
-                          Unchecked="DreddStickyOverlayCheckBox_Checked"
-                          Visibility="Collapsed"/>
-                <Button x:Name="DreddOverlayConfigButton"
-                        Content="Config"
-                        Canvas.Left="376"
-                        Canvas.Top="607"
-                        Width="40"
-                        Height="22"
-                        Style="{StaticResource DreddRowButtonStyle}"
-                        Click="DreddOverlayConfigButton_Click"
-                        Visibility="Collapsed"/>
-                <Button x:Name="DreddViewChangesButton"
-                        Content="View Changes"
-                        Canvas.Left="418"
-                        Canvas.Top="607"
-                        Width="87"
-                        Height="22"
-                        Style="{StaticResource DreddRowButtonStyle}"
-                        Click="DreddViewChangesButton_Click"
-                        Visibility="Collapsed"/>
+                <panels:DreddFeatureRowPanel x:Name="DreddFeatureRow" Visibility="Collapsed"/>
 
                 <Rectangle x:Name="BottomStatusBar" Height="24" Canvas.Top="603" Width="509" Fill="#FF36393F" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 <CheckBox x:Name="chkSticky" Content="Sticky Effects" 

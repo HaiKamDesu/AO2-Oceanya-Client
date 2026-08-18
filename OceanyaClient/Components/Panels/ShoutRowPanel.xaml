@@ -1,0 +1,110 @@
+﻿<UserControl x:Class="OceanyaClient.Components.Panels.ShoutRowPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Canvas x:Name="PanelCanvas">
+        <Image x:Name="imgShoutModifierBG" Height="42" Canvas.Left="0" Canvas.Top="0" Width="428" Source="pack://application:,,,/OceanyaClient;component/Resources/ObjectionButtonsBG.png" Stretch="None"/>
+                <ToggleButton x:Name="HoldIt" Height="40" Width="102" Canvas.Left="2" Canvas.Top="2"
+                              AutomationProperties.AutomationId="Main.Shout.HoldIt"
+                              AutomationProperties.Name="Hold It"
+                              BorderBrush="{x:Null}" HorizontalAlignment="Left" VerticalAlignment="Top"
+                              Padding="0,0,0,0" Checked="ToggleButton_Checked"
+                              Focusable="False" IsTabStop="False">
+                    <ToggleButton.Style>
+                        <Style TargetType="{x:Type ToggleButton}">
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="{x:Type ToggleButton}">
+                                        <Grid>
+                                            <Image x:Name="ButtonImage" Source="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Hold It.png"/>
+                                        </Grid>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter TargetName="ButtonImage" Property="Source" Value="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Hold It_Selected.png"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </ToggleButton.Style>
+                </ToggleButton>
+        
+                <ToggleButton x:Name="Objection" Height="40" Width="102" Canvas.Left="109" Canvas.Top="2"
+                              AutomationProperties.AutomationId="Main.Shout.Objection"
+                              AutomationProperties.Name="Objection"
+                              BorderBrush="{x:Null}" Padding="0,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Top"
+                              Checked="ToggleButton_Checked"
+                              Focusable="False" IsTabStop="False">
+                    <ToggleButton.Style>
+                        <Style TargetType="{x:Type ToggleButton}">
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="{x:Type ToggleButton}">
+                                        <Grid>
+                                            <Image x:Name="ButtonImage" Source="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Objection.png"/>
+                                        </Grid>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter TargetName="ButtonImage" Property="Source" Value="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Objection_Selected.png"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </ToggleButton.Style>
+                </ToggleButton>
+        
+                <ToggleButton x:Name="TakeThat" Height="40" Width="102" Canvas.Left="216" Canvas.Top="2"
+                              AutomationProperties.AutomationId="Main.Shout.TakeThat"
+                              AutomationProperties.Name="Take That"
+                              BorderBrush="{x:Null}" Padding="0,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Top"
+                              Checked="ToggleButton_Checked"
+                              Focusable="False" IsTabStop="False">
+                    <ToggleButton.Style>
+                        <Style TargetType="{x:Type ToggleButton}">
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="{x:Type ToggleButton}">
+                                        <Grid>
+                                            <Image x:Name="ButtonImage" Source="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Take That.png"/>
+                                        </Grid>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter TargetName="ButtonImage" Property="Source" Value="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Take That_Selected.png"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </ToggleButton.Style>
+                </ToggleButton>
+        
+                <ToggleButton x:Name="Custom" Height="40" Width="102" Canvas.Left="322" Canvas.Top="2"
+                              AutomationProperties.AutomationId="Main.Shout.Custom"
+                              AutomationProperties.Name="Custom"
+                              BorderBrush="{x:Null}" Padding="0,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center"
+                              Checked="ToggleButton_Checked"
+                              Focusable="False" IsTabStop="False">
+                    <ToggleButton.Style>
+                        <Style TargetType="{x:Type ToggleButton}">
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="{x:Type ToggleButton}">
+                                        <Grid>
+                                            <Image x:Name="ButtonImage" Source="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Custom.png"/>
+                                        </Grid>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter TargetName="ButtonImage" Property="Source" Value="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Custom_Selected.png"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </ToggleButton.Style>
+                </ToggleButton>
+    </Canvas>
+</UserControl>

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -581,10 +581,13 @@ namespace UnitTests
                 new System.Windows.Controls.Primitives.ToggleButton();
             clients.Add(toggleButton, client);
 
-            object emoteGrid = GetPrivateField(window, "EmoteGrid");
-            MethodInfo addElement = emoteGrid.GetType().GetMethod("AddElement", BindingFlags.Instance | BindingFlags.Public)!
-                ?? throw new InvalidOperationException("EmoteGrid.AddElement not found.");
-            addElement.Invoke(emoteGrid, new object[] { toggleButton });
+            object clientsList = GetPrivateField(window, "ClientsList");
+            object buttonGrid = clientsList.GetType().GetProperty("ButtonGrid", BindingFlags.Instance | BindingFlags.Public)!
+                .GetValue(clientsList)
+                ?? throw new InvalidOperationException("ClientsListPanel.ButtonGrid not found.");
+            MethodInfo addElement = buttonGrid.GetType().GetMethod("AddElement", BindingFlags.Instance | BindingFlags.Public)!
+                ?? throw new InvalidOperationException("PageButtonGrid.AddElement not found.");
+            addElement.Invoke(buttonGrid, new object[] { toggleButton });
         }
 
         private OceanyanFileHivemindWindow CreateHivemindWindow(FileHivemindBackgroundAgentLauncher launcher)

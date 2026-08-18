@@ -1,0 +1,90 @@
+﻿<UserControl x:Class="OceanyaClient.Components.Panels.ConnectionInfoPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Border x:Name="PanelRoot"
+            Background="#FF090B0E"
+            BorderBrush="#FF252525"
+            BorderThickness="0,0,0,1">
+        <WrapPanel Margin="4,2,4,2" Orientation="Horizontal">
+
+            <Border x:Name="ServerChip" Margin="0,1,4,1" CornerRadius="3" Background="#FF171B21" BorderBrush="#FF2D3744" BorderThickness="1">
+                <DockPanel Margin="5,1">
+                    <TextBlock Text="SERVER" DockPanel.Dock="Left" Foreground="#FF7FA8D8" FontSize="8" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <TextBlock x:Name="txtSelectedServerInfo"
+                               AutomationProperties.AutomationId="Main.ConnectionInfo.Server"
+                               Text="Disconnected"
+                               Foreground="#FFE8E8E8"
+                               FontFamily="Consolas"
+                               FontSize="10"
+                               VerticalAlignment="Center"/>
+                </DockPanel>
+            </Border>
+
+            <Border x:Name="AreaChip" Margin="0,1,4,1" CornerRadius="3" Background="#FF151D18" BorderBrush="#FF284332" BorderThickness="1">
+                <DockPanel Margin="5,1">
+                    <TextBlock Text="AREA" DockPanel.Dock="Left" Foreground="#FF89C796" FontSize="8" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <TextBlock x:Name="txtSelectedAreaInfo"
+                               AutomationProperties.AutomationId="Main.ConnectionInfo.Area"
+                               Text="Unknown"
+                               Foreground="#FFE8E8E8"
+                               FontFamily="Consolas"
+                               FontSize="10"
+                               VerticalAlignment="Center"/>
+                </DockPanel>
+            </Border>
+
+            <Border x:Name="UsersChip" Margin="0,1,4,1" CornerRadius="3" Background="#FF211B13" BorderBrush="#FF4B3B20" BorderThickness="1">
+                <DockPanel Margin="5,1">
+                    <TextBlock Text="USERS" DockPanel.Dock="Left" Foreground="#FFD9B56D" FontSize="8" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <TextBlock x:Name="txtSelectedAreaUsersInfo"
+                               AutomationProperties.AutomationId="Main.ConnectionInfo.Users"
+                               Text="-"
+                               Foreground="#FFF0E7D2"
+                               FontFamily="Consolas"
+                               FontSize="10"
+                               VerticalAlignment="Center"/>
+                </DockPanel>
+            </Border>
+
+            <Border x:Name="StatusChip" Margin="0,1,4,1" CornerRadius="3" Background="#FF181520" BorderBrush="#FF352C4A" BorderThickness="1" Visibility="Collapsed">
+                <DockPanel Margin="5,1">
+                    <TextBlock Text="STATUS" DockPanel.Dock="Left" Foreground="#FFAA88DD" FontSize="8" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <TextBlock x:Name="txtSelectedAreaStatusInfo"
+                               AutomationProperties.AutomationId="Main.ConnectionInfo.Status"
+                               Text="-"
+                               Foreground="#FFE8E8E8"
+                               FontFamily="Consolas"
+                               FontSize="10"
+                               VerticalAlignment="Center"/>
+                </DockPanel>
+            </Border>
+
+            <Border x:Name="LockChip" Margin="0,1,4,1" CornerRadius="3" Background="#FF1D1515" BorderBrush="#FF4A2828" BorderThickness="1" Visibility="Collapsed">
+                <DockPanel Margin="5,1">
+                    <TextBlock Text="LOCK" DockPanel.Dock="Left" Foreground="#FFDD8888" FontSize="8" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <TextBlock x:Name="txtSelectedAreaLockInfo"
+                               AutomationProperties.AutomationId="Main.ConnectionInfo.Lock"
+                               Text="-"
+                               Foreground="#FFE8E8E8"
+                               FontFamily="Consolas"
+                               FontSize="10"
+                               VerticalAlignment="Center"/>
+                </DockPanel>
+            </Border>
+
+            <Border x:Name="CmChip" Margin="0,1,0,1" CornerRadius="3" Background="#FF1C1720" BorderBrush="#FF3C3148" BorderThickness="1" Visibility="Collapsed">
+                <DockPanel Margin="5,1">
+                    <TextBlock Text="CM" DockPanel.Dock="Left" Foreground="#FFC0A1D8" FontSize="8" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <TextBlock x:Name="txtSelectedAreaMetaInfo"
+                               AutomationProperties.AutomationId="Main.ConnectionInfo.Meta"
+                               Text="-"
+                               Foreground="#FFE8E8E8"
+                               FontFamily="Consolas"
+                               FontSize="10"
+                               VerticalAlignment="Center"/>
+                </DockPanel>
+            </Border>
+
+        </WrapPanel>
+    </Border>
+</UserControl>

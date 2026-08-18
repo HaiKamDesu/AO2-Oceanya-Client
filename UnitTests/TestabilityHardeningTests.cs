@@ -1264,8 +1264,12 @@ namespace UnitTests
         [Test]
         public void MainWindow_AndChildControls_HaveCoreAutomationIds()
         {
+            // Panel regions were extracted out of MainWindow.xaml into Components/Panels, so the
+            // automation ids live across those files now. The contract is that they still exist.
             string mainWindowXamlPath = Path.Combine(GetRepositoryRoot(), "OceanyaClient", "MainWindow.xaml");
-            string mainWindowXaml = File.ReadAllText(mainWindowXamlPath);
+            string panelDirectory = Path.Combine(GetRepositoryRoot(), "OceanyaClient", "Components", "Panels");
+            string mainWindowXaml = File.ReadAllText(mainWindowXamlPath)
+                + string.Concat(Directory.EnumerateFiles(panelDirectory, "*.xaml").Select(File.ReadAllText));
             OOCLog oocLog = new OOCLog();
             ICMessageSettings icSettings = new ICMessageSettings();
 

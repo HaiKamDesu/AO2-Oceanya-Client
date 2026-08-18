@@ -27,6 +27,8 @@ using OceanyaClient.AdvancedFeatures;
 using OceanyaClient.Components;
 using OceanyaClient.Features.Chat;
 using OceanyaClient.Features.Startup;
+using OceanyaClient.Components.Panels;
+using OceanyaClient.Features.Theme;
 using OceanyaClient.Features.Ui;
 using OceanyaClient.Features.Viewport;
 using OceanyaClient.Features.WebAssets;
@@ -238,14 +240,6 @@ namespace OceanyaClient
             ReservedBySnapshot
         }
 
-        private sealed class DreddOverlaySelectionItem
-        {
-            public string Name { get; set; } = string.Empty;
-            public string DisplayText { get; set; } = string.Empty;
-            public string FilePath { get; set; } = string.Empty;
-            public bool IsNone { get; set; }
-            public bool IsTransient { get; set; }
-        }
 
         private sealed class PendingAiOriginResponse
         {
@@ -260,12 +254,12 @@ namespace OceanyaClient
             public DateTime CreatedUtc { get; set; }
         }
 
-        List<ToggleButton> objectionModifiers;
         public MainWindow(bool aiModeEnabled = false)
         {
             StartupTimingLogger.Log("main_window_ctor_begin");
             this.aiModeEnabled = aiModeEnabled;
             InitializeComponent();
+            ApplyPanelCatalogPlacements();
             StartupTimingLogger.Log("main_window_initializecomponent_end");
             InitializeClientsHeaderContextMenu();
             Title = aiModeEnabled ? "Oceanya Online - AO2 AI Bot" : "Oceanya Online";
@@ -276,10 +270,10 @@ namespace OceanyaClient
             AddHandler(Keyboard.GotKeyboardFocusEvent, new KeyboardFocusChangedEventHandler(MainWindow_GotKeyboardFocus), true);
             AddHandler(Mouse.PreviewMouseDownEvent, new MouseButtonEventHandler(MainWindow_PreviewMouseDown), true);
 
-            objectionModifiers = new List<ToggleButton> { HoldIt, Objection, TakeThat, Custom };
             // Set grid mode and size
-            EmoteGrid.SetScrollMode(PageButtonGrid.ScrollMode.Vertical);
-            EmoteGrid.SetPageSize(4, 1);
+            ClientsList.ConfigureGrid(rowCount: 4, columnCount: 1, scrollMode: PageButtonGrid.ScrollMode.Vertical);
+            ClientsList.AddClientRequested += (_, _) => AddClientFromPanelRequest();
+            ClientsList.RemoveClientRequested += async (_, _) => await RemoveClientAsync(currentClient);
             OOCLogControl.IsEnabled = false;
             ICLogControl.IsEnabled = false;
             ICMessageSettingsControl.IsEnabled = false;
@@ -364,22 +358,7 @@ namespace OceanyaClient
 
                 client.shoutModifiers = ICMessage.ShoutModifiers.Nothing;
 
-                if (HoldIt.IsChecked == true)
-                {
-                    client.shoutModifiers = ICMessage.ShoutModifiers.HoldIt;
-                }
-                else if (Objection.IsChecked == true)
-                {
-                    client.shoutModifiers = ICMessage.ShoutModifiers.Objection;
-                }
-                else if (TakeThat.IsChecked == true)
-                {
-                    client.shoutModifiers = ICMessage.ShoutModifiers.TakeThat;
-                }
-                else if (Custom.IsChecked == true)
-                {
-                    client.shoutModifiers = ICMessage.ShoutModifiers.Custom;
-                }
+                client.shoutModifiers = ShoutRow.SelectedShoutModifier;
 
 
                 // The CharId that will actually be sent. The echo-clear matches against THIS value, which is set
@@ -522,10 +501,7 @@ namespace OceanyaClient
 
             ICMessageSettingsControl.OnResetMessageEffects += () =>
             {
-                HoldIt.IsChecked = false;
-                Objection.IsChecked = false;
-                TakeThat.IsChecked = false;
-                Custom.IsChecked = false;
+                ShoutRow.ClearSelection();
             };
             ICMessageSettingsControl.OnRefreshCharacterRequested += async characterName =>
             {
@@ -623,6 +599,24 @@ namespace OceanyaClient
             RefreshAreaNavigatorForCurrentClient();
             RefreshMusicListForCurrentClient();
             UpdateConnectionInfoBar();
+        }
+
+        /// <summary>
+        /// Places the panel regions from <see cref="OceanyaPanelCatalog"/> instead of from hardcoded
+        /// XAML attributes. The catalog's default placements reproduce the historic fixed layout, so
+        /// this is visually identical until a theme supplies different placements.
+        /// </summary>
+        private void ApplyPanelCatalogPlacements()
+        {
+            OceanyaPanelLayout.ApplyDefaultPlacements(new Dictionary<string, OceanyaPanelElements>
+            {
+                [OceanyaPanelCatalog.IcLogPanelId] = new OceanyaPanelElements(ICLogControl, Dock_ICLog),
+                [OceanyaPanelCatalog.OocLogPanelId] = new OceanyaPanelElements(OOCLogControl, bgRectangleOOC),
+                [OceanyaPanelCatalog.ClientsListPanelId] = new OceanyaPanelElements(ClientsList),
+                [OceanyaPanelCatalog.ShoutRowPanelId] = new OceanyaPanelElements(ShoutRow),
+                [OceanyaPanelCatalog.IcSettingsPanelId] = new OceanyaPanelElements(ICMessageSettingsControl),
+                [OceanyaPanelCatalog.DreddFeatureRowPanelId] = new OceanyaPanelElements(DreddFeatureRow)
+            });
         }
 
         /// <inheritdoc/>
@@ -816,9 +810,7 @@ namespace OceanyaClient
 
         private void InitializeClientsHeaderContextMenu()
         {
-            lblClients.ContextMenu = BuildClientsHeaderContextMenu();
-            btnAddClient.ContextMenu = BuildClientsHeaderContextMenu();
-            btnRemoveClient.ContextMenu = BuildClientsHeaderContextMenu();
+            ClientsList.SetHeaderContextMenuFactory(BuildClientsHeaderContextMenu);
         }
 
         private ContextMenu BuildClientsHeaderContextMenu()
@@ -3571,68 +3563,7 @@ namespace OceanyaClient
             string status = NormalizeAreaMetric(areaInfo?.Status, "IDLE");
             string lockState = NormalizeAreaMetric(areaInfo?.LockState, "FREE");
 
-            txtSelectedServerInfo.Text = server;
-            txtSelectedAreaInfo.Text = area;
-            txtSelectedAreaUsersInfo.Text = users >= 0 ? users.ToString() : "-";
-            txtSelectedServerInfo.ToolTip = server;
-            txtSelectedAreaInfo.ToolTip = area;
-            txtSelectedAreaUsersInfo.ToolTip = users >= 0 ? $"{users} users" : "Unknown users";
-
-            // STATUS chip — hidden when IDLE (the boring default state)
-            bool showStatus = !string.Equals(status, "IDLE", StringComparison.OrdinalIgnoreCase);
-            if (showStatus)
-            {
-                txtSelectedAreaStatusInfo.Text = status;
-                StatusChip.Background = GetStatusChipBrush(status);
-                StatusChip.Visibility = Visibility.Visible;
-                txtSelectedAreaStatusInfo.ToolTip = $"Area status: {status}";
-            }
-            else
-            {
-                StatusChip.Visibility = Visibility.Collapsed;
-            }
-
-            // LOCK chip — hidden when FREE (normal unlocked state)
-            bool showLock = !string.Equals(lockState, "FREE", StringComparison.OrdinalIgnoreCase)
-                && !string.Equals(lockState, "OPEN", StringComparison.OrdinalIgnoreCase);
-            if (showLock)
-            {
-                txtSelectedAreaLockInfo.Text = lockState;
-                LockChip.Visibility = Visibility.Visible;
-                txtSelectedAreaLockInfo.ToolTip = $"Lock: {lockState}";
-            }
-            else
-            {
-                LockChip.Visibility = Visibility.Collapsed;
-            }
-
-            // CM chip — hidden when FREE (no active case manager)
-            bool showCm = !string.Equals(caseManager, "FREE", StringComparison.OrdinalIgnoreCase);
-            if (showCm)
-            {
-                txtSelectedAreaMetaInfo.Text = caseManager;
-                CmChip.Visibility = Visibility.Visible;
-                txtSelectedAreaMetaInfo.ToolTip = $"Case manager: {caseManager}";
-            }
-            else
-            {
-                CmChip.Visibility = Visibility.Collapsed;
-            }
-        }
-
-        private static Brush GetStatusChipBrush(string status)
-        {
-            if (string.Equals(status, "LOOKING-FOR-PLAYERS", StringComparison.OrdinalIgnoreCase))
-                return new SolidColorBrush(Color.FromRgb(0x12, 0x23, 0x18));
-            if (string.Equals(status, "CASING", StringComparison.OrdinalIgnoreCase))
-                return new SolidColorBrush(Color.FromRgb(0x1E, 0x1A, 0x0E));
-            if (string.Equals(status, "RECESS", StringComparison.OrdinalIgnoreCase))
-                return new SolidColorBrush(Color.FromRgb(0x18, 0x18, 0x2A));
-            if (string.Equals(status, "RP", StringComparison.OrdinalIgnoreCase))
-                return new SolidColorBrush(Color.FromRgb(0x22, 0x14, 0x28));
-            if (string.Equals(status, "GAMING", StringComparison.OrdinalIgnoreCase))
-                return new SolidColorBrush(Color.FromRgb(0x10, 0x24, 0x24));
-            return new SolidColorBrush(Color.FromRgb(0x18, 0x15, 0x20));
+            ConnectionInfoBar.SetConnectionInfo(server, area, users, status, lockState, caseManager);
         }
 
         private AreaNavigatorListItem CreateAreaNavigatorListItem(AreaInfo areaInfo)
@@ -3773,7 +3704,11 @@ namespace OceanyaClient
         private void InitializeDreddFeatureUi()
         {
             isDreddFeatureEnabled = SaveFile.Data.AdvancedFeatures.IsEnabled(AdvancedFeatureIds.DreddBackgroundOverlayOverride);
-            DreddStickyOverlayCheckBox.IsChecked = SaveFile.Data.DreddBackgroundOverlayOverride.StickyOverlay;
+            DreddFeatureRow.IsStickyOverlayChecked = SaveFile.Data.DreddBackgroundOverlayOverride.StickyOverlay;
+            DreddFeatureRow.OverlaySelected += DreddFeatureRow_OverlaySelected;
+            DreddFeatureRow.StickyOverlayChanged += DreddFeatureRow_StickyOverlayChanged;
+            DreddFeatureRow.ConfigRequested += (_, _) => OpenDreddOverlayConfigDialog();
+            DreddFeatureRow.ViewChangesRequested += (_, _) => ShowDreddOverlayChangesWindow();
             Height = GetMainWindowTargetHeight(isDreddFeatureEnabled);
             imgScienceBlur.Height = GetMainWindowBodyHeight(isDreddFeatureEnabled);
             imgScienceBlur_darken.Height = GetMainWindowBodyHeight(isDreddFeatureEnabled);
@@ -3787,12 +3722,7 @@ namespace OceanyaClient
         {
             bool enabled = isDreddFeatureEnabled;
             Visibility visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
-            FeatureRowBackground.Visibility = visibility;
-            DreddFeatureLabel.Visibility = visibility;
-            DreddOverlaySelector.Visibility = visibility;
-            DreddStickyOverlayCheckBox.Visibility = visibility;
-            DreddOverlayConfigButton.Visibility = visibility;
-            DreddViewChangesButton.Visibility = visibility;
+            DreddFeatureRow.Visibility = visibility;
 
             double verticalOffset = enabled ? GetDreddFeatureRowHeight() : 0;
             Canvas.SetTop(BottomStatusBar, 603 + verticalOffset);
@@ -3834,20 +3764,13 @@ namespace OceanyaClient
 
         private double GetDreddFeatureRowHeight()
         {
-            return FeatureRowBackground.Height > 0 ? FeatureRowBackground.Height : DreddFeatureRowHeight;
+            return DreddFeatureRow.Height > 0 ? DreddFeatureRow.Height : DreddFeatureRowHeight;
         }
 
         private void UpdateDreddFeatureEnabledState()
         {
             bool enabledForClient = isDreddFeatureEnabled && currentClient != null;
-            DreddOverlaySelector.IsEnabled = enabledForClient;
-            DreddOverlayDropButton.IsEnabled = enabledForClient;
-            DreddStickyOverlayCheckBox.IsEnabled = enabledForClient;
-            DreddFeatureLabel.Opacity = enabledForClient ? 1.0 : 0.65;
-
-            // Always keep these available for configuration/review.
-            DreddOverlayConfigButton.IsEnabled = isDreddFeatureEnabled;
-            DreddViewChangesButton.IsEnabled = isDreddFeatureEnabled;
+            DreddFeatureRow.SetInteractionEnabled(enabledForClient, isDreddFeatureEnabled);
         }
 
         private static string GetOverlayDisplayName(string overlayReference)
@@ -3875,8 +3798,7 @@ namespace OceanyaClient
             {
                 lastDreddOverlayContextKey = string.Empty;
                 lastUnknownOverlayPromptKey = string.Empty;
-                DreddOverlayListBox.ItemsSource = Array.Empty<DreddOverlaySelectionItem>();
-                DreddOverlaySelectedText.Text = DreddNoneOverlayName;
+                DreddFeatureRow.ClearOverlays(DreddNoneOverlayName);
                 return;
             }
 
@@ -4009,10 +3931,7 @@ namespace OceanyaClient
                     }
                 }
 
-                DreddOverlayListBox.ItemsSource = overlays;
-                DreddOverlayListBox.DisplayMemberPath = nameof(DreddOverlaySelectionItem.DisplayText);
-                DreddOverlayListBox.SelectedItem = selectedItem;
-                DreddOverlaySelectedText.Text = selectedItem.DisplayText;
+                DreddFeatureRow.SetOverlays(overlays, selectedItem);
             }
             finally
             {
@@ -4022,7 +3941,7 @@ namespace OceanyaClient
 
         private DreddOverlaySelectionItem? GetSelectedDreddOverlayEntry()
         {
-            return DreddOverlayListBox.SelectedItem as DreddOverlaySelectionItem;
+            return DreddFeatureRow.SelectedOverlay;
         }
 
         private void HookClientForDreddOverlay(AOClient client)
@@ -4056,7 +3975,7 @@ namespace OceanyaClient
                 return;
             }
 
-            if (DreddStickyOverlayCheckBox.IsChecked == true)
+            if (DreddFeatureRow.IsStickyOverlayChecked)
             {
                 ApplyStoredDreddStickyOverlay(showFeedbackOnFailure: false);
             }
@@ -5104,7 +5023,7 @@ namespace OceanyaClient
         private void MoveClient(AOClient client, int offset)
         {
             ToggleButton? button = clients.FirstOrDefault(pair => ReferenceEquals(pair.Value, client)).Key;
-            if (button == null || !EmoteGrid.MoveElement(button, offset))
+            if (button == null || !ClientsList.ButtonGrid.MoveElement(button, offset))
             {
                 return;
             }
@@ -6344,7 +6263,7 @@ namespace OceanyaClient
 
                         clients.Remove(button);
                         clientOrder.Remove(bot);
-                        EmoteGrid.DeleteElement(button);
+                        ClientsList.ButtonGrid.DeleteElement(button);
 
                         if (!suppressClientDisconnectNotifications)
                         {
@@ -6389,7 +6308,7 @@ namespace OceanyaClient
                 clients.Add(toggleBtn, bot);
                 clientOrder.Add(bot);
 
-                EmoteGrid.AddElement(toggleBtn);
+                ClientsList.ButtonGrid.AddElement(toggleBtn);
 
                 toggleBtn.IsChecked = true;
                 UpdateClientTooltip(bot);
@@ -6470,7 +6389,7 @@ namespace OceanyaClient
                 if (clients[button] == client)
                 {
                     button.IsChecked = true;
-                    EmoteGrid.SetPageToElement(button);
+                    ClientsList.ButtonGrid.SetPageToElement(button);
                     break;
                 }
             }
@@ -6502,7 +6421,7 @@ namespace OceanyaClient
             RefreshMusicListForCurrentClient();
             double msMusicList = Lap();
 
-            if (isDreddFeatureEnabled && DreddStickyOverlayCheckBox.IsChecked == true)
+            if (isDreddFeatureEnabled && DreddFeatureRow.IsStickyOverlayChecked)
             {
                 ApplyStoredDreddStickyOverlay(showFeedbackOnFailure: false);
             }
@@ -6520,7 +6439,7 @@ namespace OceanyaClient
             }
         }
 
-        private void btnAddClient_Click(object sender, RoutedEventArgs e)
+        private void AddClientFromPanelRequest()
         {
             AddClient();
         }
@@ -9361,11 +9280,6 @@ namespace OceanyaClient
         }
 
 
-        private async void btnRemoveClient_Click(object sender, RoutedEventArgs e)
-        {
-            await RemoveClientAsync(currentClient);
-        }
-
         private async Task RemoveClientAsync(AOClient? clientToRemove)
         {
             if (clientToRemove == null)
@@ -9392,7 +9306,7 @@ namespace OceanyaClient
                 }
                 clients.Remove(button);
                 clientOrder.Remove(clientToRemove);
-                EmoteGrid.DeleteElement(button);
+                ClientsList.ButtonGrid.DeleteElement(button);
             }
 
             if (clients.Count == 0)
@@ -9467,23 +9381,6 @@ namespace OceanyaClient
                 clickedButton.IsChecked = true;
             }
         }
-        private void ToggleButton_Checked(object sender, RoutedEventArgs e)
-        {
-            ToggleButton? clickedButton = sender as ToggleButton;
-            if (clickedButton == null)
-            {
-                return;
-            }
-
-            foreach (var button in objectionModifiers)
-            {
-                if (button != clickedButton)
-                {
-                    button.IsChecked = false; // Uncheck other buttons
-                }
-            }
-        }
-
         private void chkStickyEffects_Checked(object sender, RoutedEventArgs e)
         {
             if (sender is CheckBox checkBox)
@@ -10028,45 +9925,21 @@ namespace OceanyaClient
             }
         }
 
-        private void DreddOverlayDropButton_Click(object sender, RoutedEventArgs e)
+        private void DreddFeatureRow_OverlaySelected(object? sender, DreddOverlaySelectionItem selectedOverlay)
         {
-            if (!DreddOverlaySelector.IsEnabled)
+            if (isLoadingDreddOverlaySelection || currentClient == null)
             {
                 return;
             }
 
-            DreddOverlayPopup.IsOpen = !DreddOverlayPopup.IsOpen;
-        }
-
-        private void DreddOverlayListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (isLoadingDreddOverlaySelection)
-            {
-                return;
-            }
-
-            if (currentClient == null)
-            {
-                return;
-            }
-
-            DreddOverlaySelectionItem? selectedOverlay = GetSelectedDreddOverlayEntry();
-            if (selectedOverlay == null)
-            {
-                return;
-            }
-
-            DreddOverlaySelectedText.Text = selectedOverlay.DisplayText;
             SaveFile.Data.DreddBackgroundOverlayOverride.SelectedOverlayName = selectedOverlay?.Name?.Trim() ?? string.Empty;
             SaveFile.Save();
 
             TryApplySelectedDreddOverlayToCurrentContext(showFeedbackOnFailure: true);
-            DreddOverlayPopup.IsOpen = false;
         }
 
-        private void DreddStickyOverlayCheckBox_Checked(object sender, RoutedEventArgs e)
+        private void DreddFeatureRow_StickyOverlayChanged(object? sender, bool sticky)
         {
-            bool sticky = DreddStickyOverlayCheckBox.IsChecked == true;
             SaveFile.Data.DreddBackgroundOverlayOverride.StickyOverlay = sticky;
             SaveFile.Save();
 
@@ -10077,12 +9950,7 @@ namespace OceanyaClient
             }
         }
 
-        private void DreddOverlayConfigButton_Click(object sender, RoutedEventArgs e)
-        {
-            OpenDreddOverlayConfigDialog();
-        }
-
-        private void DreddViewChangesButton_Click(object sender, RoutedEventArgs e)
+        private void ShowDreddOverlayChangesWindow()
         {
             DreddOverlayChangesWindow window = new DreddOverlayChangesWindow
             {

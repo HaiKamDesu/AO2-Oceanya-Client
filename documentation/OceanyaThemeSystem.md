@@ -1,4 +1,4 @@
-# Oceanya Theme System (roadmap)
+﻿# Oceanya Theme System (roadmap)
 
 ## Goal
 Users complain that the main window's look is not customizable. AO2 solves this with themes, but AO2
@@ -19,15 +19,38 @@ mapping exists. So the main window carries **two** theme concepts:
 
 ## Phases
 1. **UI scaling** — done, see `Documentation/UiScaling.md`.
-2. **Panel extraction** — turn each `MainWindow.xaml` region into a self-contained `UserControl`
-   with no sibling reach-in, *behind the current layout* (no visual change), tests green. Already
-   self-contained: `ICMessageSettings`, `ICLog`, `OOCLog`, `AO2ViewportWindowContent`. The rest is
-   inline XAML plus `MainWindow.xaml.cs` code-behind touching named elements directly, and that
-   extraction is the bulk of the work. Highest regression risk: the single/multi internal client
-   logic, viewport attachment, snapshot restore, and the send/echo gating.
-3. **Dock host** — swap the fixed layout for the dock host. Panels register in a catalog
-   (`{ Id, DisplayName, MinSize, SettingsSchema, ContentFactory }`), mirroring how
-   `StartupFunctionalityCatalog` registers launch modes. Panel IDs are stable strings
+2. **Panel extraction** — in progress. Two halves:
+   - *Placement becomes data* (done for the already self-contained regions): `OceanyaPanelCatalog`
+     owns each panel's id, display name, minimum size and default placement; `OceanyaPanelLayout`
+     applies it to the controls on `MainCanvas`. `MainWindow` calls `ApplyPanelCatalogPlacements()`
+     right after `InitializeComponent()`, and the corresponding `Canvas.Left/Top/Width/Height`
+     attributes are gone from `MainWindow.xaml`. Registered so far: `ic_log`, `ooc_log`,
+     `emote_grid`, `ic_settings` (all already `UserControl`s: `ICLog`, `OOCLog`, `PageButtonGrid`,
+     `ICMessageSettings`). Default placements reproduce the historic fixed layout exactly, so nothing
+     moves on screen.
+   - *Regions extracted into self-contained controls so far* (under `OceanyaClient/Components/Panels/`):
+     `ConnectionInfoPanel` (server/area/users/status/lock/CM chips; host pushes values through
+     `SetConnectionInfo`, panel owns chip visibility and `GetStatusChipBrush`), `DreddFeatureRowPanel`
+     (overlay selector, sticky checkbox, Config and View Changes buttons; raises `OverlaySelected` /
+     `StickyOverlayChanged` / `ConfigRequested` / `ViewChangesRequested` while `MainWindow` keeps the
+     overlay logic and savefile handling), `ClientsListPanel` (the "Clients" header, add/remove
+     buttons and the paged client button grid; raises `AddClientRequested` / `RemoveClientRequested`,
+     exposes `ButtonGrid` and `SetHeaderContextMenuFactory`), and `ShoutRowPanel` (Hold It /
+     Objection / Take That / Custom as a radio group behind a single `SelectedShoutModifier`
+     property). `DreddOverlaySelectionItem` moved out of `MainWindow` into the panels namespace.
+     Together these removed ~560 lines from `MainWindow.xaml`/`.xaml.cs`.
+   - *Naming correction*: `MainWindow`'s `PageButtonGrid` was named `EmoteGrid` but holds **client**
+     buttons (the emote grid lives inside `ICMessageSettings`). It is now `ClientsListPanel.ButtonGrid`
+     and the panel id is `clients_list`, not `emote_grid`.
+   - *Still inline XAML plus code-behind*: the bottom status bar and the area navigator / music list
+     popups. Highest regression risk remains: the single/multi internal client logic, viewport
+     attachment, snapshot restore, and the send/echo gating.
+
+   **Extraction pattern to follow:** the panel owns visuals and raises events; the host keeps the
+   logic and pushes state in through methods. No sibling reach-in, and no exposing raw child elements.
+3. **Dock host** — swap the fixed layout for the dock host, reading placement from the theme file
+   instead of `OceanyaPanelCatalog`'s defaults. The catalog descriptor grows `SettingsSchema` and
+   `ContentFactory` at that point; today it carries id, display name, minimums and default placement. Panel IDs are stable strings
    (`viewport`, `ic_log`, `ooc_log`, `clients_list`, `emote_grid`, `ic_settings`, `music_list`,
    `area_nav`, `sound_list`, ...) because the theme file references them.
 4. **Theme package + editor** — schema-driven per-panel settings, palette/fonts, images.
