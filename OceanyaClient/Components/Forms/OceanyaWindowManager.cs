@@ -1,6 +1,8 @@
-using System;
+﻿using System;
 using System.ComponentModel;
 using System.Windows;
+using Common;
+using static Common.CustomConsole;
 
 namespace OceanyaClient
 {
@@ -46,7 +48,8 @@ namespace OceanyaClient
                 IsUserResizeEnabled = content.IsUserResizeEnabled,
                 IsUserMoveEnabled = content.IsUserMoveEnabled,
                 IsCloseButtonVisible = content.IsCloseButtonVisible,
-                BodyMargin = content.BodyMargin
+                BodyMargin = content.BodyMargin,
+                IsResizeScalingEnabled = content.IsResizeScalingEnabled
             };
 
             return CreateWindow(content, options);
@@ -131,7 +134,9 @@ namespace OceanyaClient
                 IsUserMoveEnabled = options.IsUserMoveEnabled ?? content.IsUserMoveEnabled,
                 IsCloseButtonVisible = options.IsCloseButtonVisible ?? content.IsCloseButtonVisible,
                 BodyMargin = options.BodyMargin ?? content.BodyMargin,
-                BodyContent = content
+                BodyContent = content,
+                IsContentScaleEnabled = options.IsContentScaleEnabled,
+                IsResizeScalingEnabled = options.IsResizeScalingEnabled
             };
 
             if (options.Owner != null)
@@ -188,6 +193,7 @@ namespace OceanyaClient
             private bool isDisposed;
             private bool suppressContentToWindowSync;
             private bool suppressWindowToContentSync;
+            private bool isDrivingWindowSize;
 
             public HostedSizingSyncController(OceanyaWindowContentControl content, GenericOceanyaWindow window)
             {
@@ -214,6 +220,10 @@ namespace OceanyaClient
 
                 window.SizeChanged += OnWindowSizeChanged;
                 window.StateChanged += OnWindowStateChanged;
+                window.ContentScaleChanged += OnWindowContentScaleChanged;
+                window.Loaded += OnWindowLoaded;
+                window.ContentRendered += OnWindowContentRendered;
+                window.IsVisibleChanged += OnWindowIsVisibleChanged;
 
                 ApplyContentConstraintsToWindow();
                 ApplyContentSizeToWindow();
@@ -237,6 +247,76 @@ namespace OceanyaClient
                 bodyMarginDescriptor?.RemoveValueChanged(window, OnContentConstraintsChanged);
                 window.SizeChanged -= OnWindowSizeChanged;
                 window.StateChanged -= OnWindowStateChanged;
+                window.ContentScaleChanged -= OnWindowContentScaleChanged;
+                window.Loaded -= OnWindowLoaded;
+                window.ContentRendered -= OnWindowContentRendered;
+                window.IsVisibleChanged -= OnWindowIsVisibleChanged;
+            }
+
+            /// <summary>
+            /// The first sizing pass runs before the window exists on screen, so scale, monitor, and
+            /// content sizes are only provisional there. Re-applying once the window is actually laid
+            /// out is what a scale change would have done anyway, and is why "it fixes itself as soon
+            /// as I change the scale" was the reported symptom.
+            /// </summary>
+            private void OnWindowLoaded(object sender, RoutedEventArgs e)
+            {
+                ReapplySizing();
+            }
+
+            private void OnWindowContentRendered(object? sender, EventArgs e)
+            {
+                ReapplySizing();
+            }
+
+            /// <summary>
+            /// Windows that are hidden and shown again (the launcher hides the initial configuration
+            /// window while a functionality runs) never raise Loaded or ContentRendered a second time,
+            /// so the scale that changed while they were hidden has to be re-applied on re-show.
+            /// </summary>
+            private void OnWindowIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+            {
+                if (e.NewValue is bool isVisible && isVisible)
+                {
+                    ReapplySizing();
+                }
+            }
+
+            private void ReapplySizing()
+            {
+                if (isDisposed || window.IsInteractiveResizeScaling)
+                {
+                    return;
+                }
+
+                window.RefreshContentScaleFromSettings();
+                ApplyContentConstraintsToWindow();
+                ApplyContentSizeToWindow();
+            }
+
+            private void OnWindowContentScaleChanged(object? sender, EventArgs e)
+            {
+                // Content keeps its logical (unscaled) size; the host window grows or shrinks around it.
+                // Do NOT sync window -> content here: the window has not been laid out yet, so its
+                // ActualWidth/ActualHeight still describe the previous scale. Dividing that stale size
+                // by the new scale inflated (or shrank) the content on every scale change, which then
+                // fed back into the next window size - the "window comes back super tall" ratchet.
+                double contentWidth = content.Width;
+                double contentHeight = content.Height;
+                ApplyContentConstraintsToWindow();
+                ApplyContentSizeToWindow();
+                double requestedWidth = window.Width;
+                double requestedHeight = window.Height;
+
+                // A requested size the OS refuses (for example a window taller than the monitor) shows
+                // up here as actual != requested, which is the first thing to check on a scaling report.
+                window.Dispatcher.BeginInvoke(new Action(() => CustomConsole.Debug(
+                    $"[UISCALE] scale={GetContentScale():0.00} content={contentWidth:0}x{contentHeight:0} "
+                    + $"requestedWindow={requestedWidth:0}x{requestedHeight:0} "
+                    + $"actualWindow={window.ActualWidth:0}x{window.ActualHeight:0} "
+                    + $"windowMin={window.MinWidth:0}x{window.MinHeight:0} windowMax={window.MaxWidth:0}x{window.MaxHeight:0} "
+                    + $"title=\"{window.Title}\"",
+                    CustomConsole.LogCategory.System)));
             }
 
             private void OnContentSizeChanged(object? sender, EventArgs e)
@@ -246,19 +326,25 @@ namespace OceanyaClient
                     return;
                 }
 
+                // New content size can change what still fits the monitor, so re-resolve the clamp
+                // before sizing the window to it.
+                window.RefreshContentScaleFromSettings();
                 ApplyContentSizeToWindow();
             }
 
             private void OnContentConstraintsChanged(object? sender, EventArgs e)
             {
+                // Content stays authoritative here for the same staleness reason as a scale change.
                 ApplyContentConstraintsToWindow();
                 ApplyContentSizeToWindow();
-                ApplyWindowSizeToContent();
             }
 
             private void OnWindowSizeChanged(object sender, SizeChangedEventArgs e)
             {
-                if (suppressWindowToContentSync)
+                // isDrivingWindowSize means this resize is the echo of our own content -> window write.
+                // Feeding it back would let an OS-clamped size (work area, max track size) rewrite the
+                // content size and ratchet the layout on every scale change.
+                if (suppressWindowToContentSync || isDrivingWindowSize)
                 {
                     return;
                 }
@@ -278,19 +364,28 @@ namespace OceanyaClient
                     return;
                 }
 
+                // Writing Width/Height mid-drag would snap the window away from the pointer.
+                if (window.IsInteractiveResizeScaling)
+                {
+                    return;
+                }
+
                 (double horizontalOffset, double verticalOffset) = GetChromeOffsets();
+                double scale = GetContentScale();
 
                 if (IsFinite(content.Width) && content.Width > 0)
                 {
-                    double desiredWidth = content.Width + horizontalOffset;
+                    double desiredWidth = (content.Width * scale) + horizontalOffset;
                     window.Width = Clamp(desiredWidth, window.MinWidth, window.MaxWidth);
                 }
 
                 if (IsFinite(content.Height) && content.Height > 0)
                 {
-                    double desiredHeight = content.Height + verticalOffset;
+                    double desiredHeight = (content.Height * scale) + verticalOffset;
                     window.Height = Clamp(desiredHeight, window.MinHeight, window.MaxHeight);
                 }
+
+                BeginDrivingWindowSize();
             }
 
             private void ApplyWindowSizeToContent()
@@ -300,9 +395,17 @@ namespace OceanyaClient
                     return;
                 }
 
+                // In resize-scaling mode the window size means "scale", not "content size": the shell
+                // already converted the drag into a ContentScale, so the content keeps its logical size.
+                if (window.IsResizeScalingEnabled)
+                {
+                    return;
+                }
+
                 (double horizontalOffset, double verticalOffset) = GetChromeOffsets();
-                double contentWidth = Math.Max(0, window.ActualWidth - horizontalOffset);
-                double contentHeight = Math.Max(0, window.ActualHeight - verticalOffset);
+                double scale = GetContentScale();
+                double contentWidth = Math.Max(0, window.ActualWidth - horizontalOffset) / scale;
+                double contentHeight = Math.Max(0, window.ActualHeight - verticalOffset) / scale;
 
                 suppressContentToWindowSync = true;
                 try
@@ -326,15 +429,16 @@ namespace OceanyaClient
             private void ApplyContentConstraintsToWindow()
             {
                 (double horizontalOffset, double verticalOffset) = GetChromeOffsets();
+                double scale = GetContentScale();
 
-                double minWidth = Math.Max(0, content.MinWidth) + horizontalOffset;
-                double minHeight = Math.Max(0, content.MinHeight) + verticalOffset;
+                double minWidth = (Math.Max(0, content.MinWidth) * scale) + horizontalOffset;
+                double minHeight = (Math.Max(0, content.MinHeight) * scale) + verticalOffset;
                 double maxWidth = double.IsPositiveInfinity(content.MaxWidth)
                     ? double.PositiveInfinity
-                    : Math.Max(0, content.MaxWidth) + horizontalOffset;
+                    : (Math.Max(0, content.MaxWidth) * scale) + horizontalOffset;
                 double maxHeight = double.IsPositiveInfinity(content.MaxHeight)
                     ? double.PositiveInfinity
-                    : Math.Max(0, content.MaxHeight) + verticalOffset;
+                    : (Math.Max(0, content.MaxHeight) * scale) + verticalOffset;
 
                 if (IsFinite(maxWidth))
                 {
@@ -360,20 +464,31 @@ namespace OceanyaClient
                 }
             }
 
+            /// <summary>
+            /// Marks the window resize we just requested as self-inflicted until layout settles, so the
+            /// resulting SizeChanged does not write back into the content size.
+            /// </summary>
+            private void BeginDrivingWindowSize()
+            {
+                if (isDrivingWindowSize)
+                {
+                    return;
+                }
+
+                isDrivingWindowSize = true;
+                window.Dispatcher.BeginInvoke(
+                    new Action(() => isDrivingWindowSize = false),
+                    System.Windows.Threading.DispatcherPriority.Loaded);
+            }
+
             private (double HorizontalOffset, double VerticalOffset) GetChromeOffsets()
             {
-                Thickness bodyMargin = window.BodyMargin;
-                double horizontalOffset =
-                    (GenericOceanyaWindow.SharedFrameBorderThickness * 2)
-                    + bodyMargin.Left
-                    + bodyMargin.Right;
-                double verticalOffset =
-                    GenericOceanyaWindow.SharedHeaderHeight
-                    + (GenericOceanyaWindow.SharedFrameBorderThickness * 2)
-                    + bodyMargin.Top
-                    + bodyMargin.Bottom;
+                return GenericOceanyaWindow.GetChromeOffsets(window.BodyMargin, GetContentScale());
+            }
 
-                return (horizontalOffset, verticalOffset);
+            private double GetContentScale()
+            {
+                return UiScaleMath.ClampScale(window.ContentScale);
             }
 
             private static bool IsFinite(double value)
@@ -498,5 +613,17 @@ namespace OceanyaClient
         /// Gets or sets an optional override for host body margin.
         /// </summary>
         public Thickness? BodyMargin { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether dragging the hosted window's edges rescales the
+        /// content instead of stretching its layout.
+        /// </summary>
+        public bool IsResizeScalingEnabled { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the hosted window participates in global UI scaling.
+        /// Resolution-driven surfaces such as the AO2 viewport opt out.
+        /// </summary>
+        public bool IsContentScaleEnabled { get; set; } = true;
     }
 }

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.ObjectModel;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -271,6 +271,9 @@ namespace OceanyaClient
 
         /// <inheritdoc/>
         public override bool IsUserResizeEnabled => true;
+
+        /// <inheritdoc/>
+        public override bool ManagesOwnWindowSize => true;
 
         private void Window_SourceInitialized(object? sender, EventArgs e)
         {

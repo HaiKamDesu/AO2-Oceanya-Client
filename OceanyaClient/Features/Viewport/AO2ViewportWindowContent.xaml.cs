@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -456,6 +456,9 @@ namespace OceanyaClient.Features.Viewport
 
         /// <inheritdoc/>
         public override bool IsUserResizeEnabled => true;
+
+        /// <inheritdoc/>
+        public override bool ManagesOwnWindowSize => true;
 
         /// <inheritdoc/>
         public override bool IsUserMoveEnabled => true;

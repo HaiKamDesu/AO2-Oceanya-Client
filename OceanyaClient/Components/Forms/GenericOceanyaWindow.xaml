@@ -60,7 +60,10 @@
 
             <Rectangle HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Fill="#7F000000"/>
 
-            <Rectangle HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Margin="0,30,0,0">
+            <Rectangle x:Name="HeaderOffsetBackdropRectangle"
+                       HorizontalAlignment="Stretch"
+                       VerticalAlignment="Stretch"
+                       Margin="0,30,0,0">
                 <Rectangle.Fill>
                     <ImageBrush ImageSource="pack://application:,,,/OceanyaClient;component/Resources/Logo_O_centered.png"
                                 AlignmentX="Center"
@@ -70,7 +73,10 @@
                 </Rectangle.Fill>
             </Rectangle>
 
-            <Grid>
+            <Grid x:Name="ShellRootGrid">
+                <Grid.LayoutTransform>
+                    <ScaleTransform x:Name="ShellContentScaleTransform" ScaleX="1" ScaleY="1"/>
+                </Grid.LayoutTransform>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="30"/>
                     <RowDefinition Height="*"/>

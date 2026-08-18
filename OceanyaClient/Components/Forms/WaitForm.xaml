@@ -14,7 +14,10 @@
         WindowStartupLocation="CenterOwner">
     <Border BorderBrush="#222222" BorderThickness="1" CornerRadius="5">
 
-        <Grid Background="#7F000000">
+        <Grid x:Name="WaitFormRootGrid" Background="#7F000000">
+            <Grid.LayoutTransform>
+                <ScaleTransform x:Name="WaitFormScaleTransform" ScaleX="1" ScaleY="1"/>
+            </Grid.LayoutTransform>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>

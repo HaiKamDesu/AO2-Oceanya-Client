@@ -1,4 +1,4 @@
-using Common;
+﻿using Common;
 using OceanyaClient.Features.FileHivemind;
 using OceanyaClient.Utilities;
 using System.Configuration;
@@ -8,6 +8,7 @@ using System.ComponentModel;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media;
+using OceanyaClient.Features.Ui;
 
 namespace OceanyaClient;
 
@@ -249,7 +250,7 @@ public partial class App : Application
             return;
         }
 
-        if (!IsWindowPersistenceEligible(window))
+        if (!IsWindowPersistenceEligible(window) || !WindowStatePersistence.ShouldPersistSize(window))
         {
             return;
         }
@@ -257,8 +258,9 @@ public partial class App : Application
         string key = BuildWindowPersistenceKey(window);
         if (SaveFile.Data.PopupWindowStates.TryGetValue(key, out VisualizerWindowState? state))
         {
-            window.Width = Math.Max(window.MinWidth, state.Width);
-            window.Height = Math.Max(window.MinHeight, state.Height);
+            // Sizes are restored in hosted content space, so they mean the same thing at any UI
+            // scale; the helper converts legacy window-space states and clamps to the monitor.
+            WindowStatePersistence.ApplySize(window, state);
 
             if (state.Left.HasValue
                 && state.Top.HasValue
@@ -271,8 +273,8 @@ public partial class App : Application
                     SystemParameters.VirtualScreenTop,
                     SystemParameters.VirtualScreenWidth,
                     SystemParameters.VirtualScreenHeight);
-                double maxLeft = virtualBounds.Right - Math.Max(window.MinWidth, state.Width);
-                double maxTop = virtualBounds.Bottom - Math.Max(window.MinHeight, state.Height);
+                double maxLeft = virtualBounds.Right - Math.Max(window.MinWidth, window.Width);
+                double maxTop = virtualBounds.Bottom - Math.Max(window.MinHeight, window.Height);
                 window.Left = Clamp(state.Left.Value, virtualBounds.Left, maxLeft);
                 window.Top = Clamp(state.Top.Value, virtualBounds.Top, maxTop);
             }
@@ -291,7 +293,9 @@ public partial class App : Application
 
     private static void Window_ClosingForPersistence(object? sender, CancelEventArgs e)
     {
-        if (sender is not Window window || !IsWindowPersistenceEligible(window))
+        if (sender is not Window window
+            || !IsWindowPersistenceEligible(window)
+            || !WindowStatePersistence.ShouldPersistSize(window))
         {
             return;
         }
@@ -305,14 +309,14 @@ public partial class App : Application
         }
 
         string key = BuildWindowPersistenceKey(window);
-        SaveFile.Data.PopupWindowStates[key] = new VisualizerWindowState
+        VisualizerWindowState capturedState = new VisualizerWindowState
         {
-            Width = bounds.Width,
-            Height = bounds.Height,
             Left = bounds.X,
             Top = bounds.Y,
             IsMaximized = window.WindowState == WindowState.Maximized
         };
+        WindowStatePersistence.CaptureSize(window, capturedState, bounds.Width, bounds.Height);
+        SaveFile.Data.PopupWindowStates[key] = capturedState;
         SaveFile.Save();
     }
 

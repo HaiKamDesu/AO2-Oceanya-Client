@@ -210,6 +210,18 @@ namespace OceanyaClient
         public double? Left { get; set; }
         public double? Top { get; set; }
         public bool IsMaximized { get; set; }
+
+        /// <summary>
+        /// UI scale that was active when this size was captured. Zero means a legacy save captured
+        /// before UI scaling existed and is treated as 1.0.
+        /// </summary>
+        public double UiScale { get; set; }
+
+        /// <summary>
+        /// True when Width/Height describe the hosted content size (scale independent) rather than the
+        /// outer window size. Legacy saves are window-space and are converted on read.
+        /// </summary>
+        public bool IsContentSpace { get; set; }
     }
 
     public class ViewportWindowState
@@ -558,6 +570,13 @@ namespace OceanyaClient
         public bool SwitchPosOnIniSwap { get; set; } = false;
         public bool InvertICLog { get; set; } = false;
         public int LogMaxMessages { get; set; } = 0;
+
+        /// <summary>How the Oceanya window shell picks its UI scale factor.</summary>
+        public UiScaleMode UiScaleMode { get; set; } = UiScaleMode.Automatic;
+
+        /// <summary>User-selected UI scale factor, used when <see cref="UiScaleMode"/> is Manual.</summary>
+        public double UiScaleFactor { get; set; } = 1.0;
+
         public FolderVisualizerConfig FolderVisualizer { get; set; } = new FolderVisualizerConfig();
         public EmoteVisualizerConfig EmoteVisualizer { get; set; } = new EmoteVisualizerConfig();
         public VisualizerWindowState FolderVisualizerWindowState { get; set; } = new VisualizerWindowState();
@@ -927,6 +946,7 @@ namespace OceanyaClient
                 Width = 510,
                 Height = 676
             };
+            data.UiScaleFactor = UiScaleMath.ClampScale(data.UiScaleFactor);
             data.GMMultiClientSnapshot = NormalizeGmMultiClientSnapshot(data.GMMultiClientSnapshot);
             data.GMMultiClientSnapshotPresets = NormalizeGmMultiClientSnapshotPresets(data.GMMultiClientSnapshotPresets);
             data.GMViewportChatBackgroundColor = NormalizeOptionalColor(data.GMViewportChatBackgroundColor);
@@ -2032,8 +2052,9 @@ namespace OceanyaClient
 
         private static void ClampWindowState(VisualizerWindowState state)
         {
-            state.Width = Math.Clamp(state.Width, 760, 6000);
-            state.Height = Math.Clamp(state.Height, 520, 4000);
+            double scale = ResolveWindowStateScale(state);
+            state.Width = Math.Clamp(state.Width, 760 * scale, 6000);
+            state.Height = Math.Clamp(state.Height, 520 * scale, 4000);
             if (state.Left.HasValue && (double.IsInfinity(state.Left.Value) || double.IsNaN(state.Left.Value)))
             {
                 state.Left = null;
@@ -2047,8 +2068,9 @@ namespace OceanyaClient
 
         private static void ClampMainWindowState(VisualizerWindowState state)
         {
-            state.Width = Math.Clamp(state.Width, 510, 6000);
-            state.Height = Math.Clamp(state.Height, 676, 4000);
+            double scale = ResolveWindowStateScale(state);
+            state.Width = Math.Clamp(state.Width, 510 * scale, 6000);
+            state.Height = Math.Clamp(state.Height, 676 * scale, 4000);
             if (state.Left.HasValue && (double.IsInfinity(state.Left.Value) || double.IsNaN(state.Left.Value)))
             {
                 state.Left = null;
@@ -2058,6 +2080,17 @@ namespace OceanyaClient
             {
                 state.Top = null;
             }
+        }
+
+        private static double ResolveWindowStateScale(VisualizerWindowState state)
+        {
+            if (state.UiScale <= 0 || double.IsNaN(state.UiScale) || double.IsInfinity(state.UiScale))
+            {
+                return 1d;
+            }
+
+            state.UiScale = UiScaleMath.ClampScale(state.UiScale);
+            return state.UiScale;
         }
 
         private static void ClampViewportWindowState(ViewportWindowState state)

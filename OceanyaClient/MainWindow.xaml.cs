@@ -27,6 +27,7 @@ using OceanyaClient.AdvancedFeatures;
 using OceanyaClient.Components;
 using OceanyaClient.Features.Chat;
 using OceanyaClient.Features.Startup;
+using OceanyaClient.Features.Ui;
 using OceanyaClient.Features.Viewport;
 using OceanyaClient.Features.WebAssets;
 using OceanyaClient.Utilities;
@@ -628,7 +629,18 @@ namespace OceanyaClient
         public override string HeaderText => "OCEANYA ONLINE";
 
         /// <inheritdoc/>
-        public override bool IsUserResizeEnabled => false;
+        /// <remarks>
+        /// The GM layout is fixed-DIP, so resizing does not reflow it. Resizing is enabled only
+        /// because <see cref="IsResizeScalingEnabled"/> turns a drag into a rescale, the same way the
+        /// AO2 viewport window resizes.
+        /// </remarks>
+        public override bool IsUserResizeEnabled => true;
+
+        /// <inheritdoc/>
+        public override bool IsResizeScalingEnabled => true;
+
+        /// <inheritdoc/>
+        public override bool ManagesOwnWindowSize => true;
 
         private void HandleOocShownameTextChanged()
         {
@@ -1389,6 +1401,21 @@ namespace OceanyaClient
             hostWindow.LocationChanged += (_, _) => CaptureMainWindowState();
         }
 
+        /// <summary>
+        /// Resolves the UI scale currently applied by a hosted Oceanya shell window.
+        /// </summary>
+        /// <param name="hostWindow">Host window whose shell scale should be read.</param>
+        /// <returns>The shell content scale, or 1.0 when the window is not an Oceanya shell.</returns>
+        private static double ResolveHostWindowContentScale(Window? hostWindow)
+        {
+            if (hostWindow is GenericOceanyaWindow shellWindow)
+            {
+                return UiScaleMath.ClampScale(shellWindow.ContentScale);
+            }
+
+            return 1d;
+        }
+
         private void CaptureMainWindowState()
         {
             Window? hostWindow = HostWindow ?? Window.GetWindow(this);
@@ -1397,13 +1424,15 @@ namespace OceanyaClient
                 return;
             }
 
+            double hostScale = ResolveHostWindowContentScale(hostWindow);
             SaveFile.Data.GMMainWindowState = new VisualizerWindowState
             {
-                Width = Math.Max(510, hostWindow.Width),
-                Height = Math.Max(GetMainWindowTargetHeight(isDreddFeatureEnabled), hostWindow.Height),
+                Width = Math.Max(510 * hostScale, hostWindow.Width),
+                Height = Math.Max(GetMainWindowTargetHeight(isDreddFeatureEnabled) * hostScale, hostWindow.Height),
                 Left = hostWindow.Left,
                 Top = hostWindow.Top,
-                IsMaximized = false
+                IsMaximized = false,
+                UiScale = hostScale
             };
             SaveFile.Save();
         }
@@ -6553,6 +6582,9 @@ namespace OceanyaClient
                     Height = initialHeight,
                     MinWidth = GetViewportMinimumWindowWidth(),
                     MinHeight = GetViewportMinimumWindowHeight(),
+                    // Viewport surfaces size themselves from AO2 theme geometry, so global UI scaling
+                    // must not multiply their window size on top of that.
+                    IsContentScaleEnabled = false,
                     ShowInTaskbar = false,
                     IsUserResizeEnabled = true,
                     IsUserMoveEnabled = true,
@@ -6704,6 +6736,7 @@ namespace OceanyaClient
                 // Safety net for closing via the title-bar X, which runs neither Save nor Cancel and
                 // would otherwise leave the unsaved slider preview permanently in force.
                 AudioSettings.ClearLivePreviewVolumes();
+                UiScaleManager.ClearLivePreview();
                 liveVolumeRefresh();
                 settingsWindow = null;
                 if (ReferenceEquals(settingsContent, content))
@@ -6901,6 +6934,7 @@ namespace OceanyaClient
                     Height = initialHeight,
                     MinWidth = GetViewportMinimumWindowWidth(),
                     MinHeight = GetViewportMinimumWindowHeight(),
+                    IsContentScaleEnabled = false,
                     ShowInTaskbar = false,
                     IsUserResizeEnabled = true,
                     IsUserMoveEnabled = true,

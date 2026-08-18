@@ -27,6 +27,7 @@ using AOBot_Testing.Structures;
 using Common;
 using OceanyaClient.Features.CharacterCreator;
 using OceanyaClient.Features.Startup;
+using OceanyaClient.Features.Ui;
 using OceanyaClient.Utilities;
 
 namespace OceanyaClient
@@ -395,6 +396,9 @@ namespace OceanyaClient
 
         /// <inheritdoc/>
         public override bool IsUserResizeEnabled => true;
+
+        /// <inheritdoc/>
+        public override bool ManagesOwnWindowSize => true;
 
         private void LoadPersistedCutSelections()
         {
@@ -13011,14 +13015,18 @@ namespace OceanyaClient
             double capturedHeight = bounds.Height > 0 ? bounds.Height : window.Height;
             double? capturedLeft = IsFinite(bounds.X) ? bounds.X : null;
             double? capturedTop = IsFinite(bounds.Y) ? bounds.Y : null;
-            return new VisualizerWindowState
+            VisualizerWindowState capturedState = new VisualizerWindowState
             {
-                Width = Math.Max(window.MinWidth, capturedWidth),
-                Height = Math.Max(window.MinHeight, capturedHeight),
                 Left = capturedLeft,
                 Top = capturedTop,
                 IsMaximized = window.WindowState == WindowState.Maximized
             };
+            WindowStatePersistence.CaptureSize(
+                window,
+                capturedState,
+                Math.Max(window.MinWidth, capturedWidth),
+                Math.Max(window.MinHeight, capturedHeight));
+            return capturedState;
         }
 
         private void ApplyPopupState(Window window, string popupStateKey)
@@ -13028,8 +13036,7 @@ namespace OceanyaClient
                 return;
             }
 
-            window.Width = Math.Max(window.MinWidth, state.Width);
-            window.Height = Math.Max(window.MinHeight, state.Height);
+            WindowStatePersistence.ApplySize(window, state);
             if (state.Left.HasValue
                 && state.Top.HasValue
                 && IsFinite(state.Left.Value)

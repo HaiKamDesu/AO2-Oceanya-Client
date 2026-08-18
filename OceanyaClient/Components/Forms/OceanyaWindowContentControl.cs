@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.ComponentModel;
 using System.Runtime;
 using System.Windows;
@@ -88,6 +88,21 @@ namespace OceanyaClient
         /// Gets a value indicating whether the host window can be moved by dragging the header.
         /// </summary>
         public virtual bool IsUserMoveEnabled => true;
+
+        /// <summary>
+        /// Gets a value indicating whether dragging the host window's edges rescales this content
+        /// instead of stretching its layout. Opt-in: windows whose layout is fixed-DIP (the GM main
+        /// window) want this, resizable list/grid windows do not.
+        /// </summary>
+        public virtual bool IsResizeScalingEnabled => false;
+
+        /// <summary>
+        /// Gets a value indicating whether this content persists and restores its own window size.
+        /// When true, the generic popup-state persistence in <c>App</c> must not also size this window:
+        /// two owners writing the same size in different spaces is what made restored windows ignore
+        /// the UI scale until the user resized them.
+        /// </summary>
+        public virtual bool ManagesOwnWindowSize => false;
 
         /// <summary>
         /// Gets a value indicating whether the host close button is visible.
@@ -501,6 +516,7 @@ namespace OceanyaClient
                 IsUserResizeEnabled = IsUserResizeEnabled,
                 IsUserMoveEnabled = IsUserMoveEnabled,
                 IsCloseButtonVisible = IsCloseButtonVisible,
+                IsResizeScalingEnabled = IsResizeScalingEnabled,
                 BodyMargin = BodyMargin,
                 WindowStartupLocation = windowStartupLocation == WindowStartupLocation.CenterOwner
                     || windowStartupLocation == WindowStartupLocation.CenterScreen

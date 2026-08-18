@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.ObjectModel;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -12,6 +12,7 @@ using System.Windows.Media.Imaging;
 using Common;
 using OceanyaClient.Components.Forms;
 using OceanyaClient.Features.Chat;
+using OceanyaClient.Features.Ui;
 using OceanyaClient.Features.Viewport;
 
 namespace OceanyaClient
@@ -20,6 +21,7 @@ namespace OceanyaClient
     {
         Audio,
         Client,
+        Interface,
         Viewport,
         Logging,
         Ao2Config,
@@ -40,6 +42,8 @@ namespace OceanyaClient
         private double originalSfxVolume;
         private double originalBlipVolume;
         private SettingsWindowPage initialPage;
+        private double lastCommittedUiScalePercent = 100;
+        private bool lastCommittedUiScaleWasManual;
 
         public event Action? SettingsSaved;
 
@@ -75,6 +79,9 @@ namespace OceanyaClient
             {
                 case SettingsWindowPage.Client:
                     ClientPageButton.IsChecked = true;
+                    break;
+                case SettingsWindowPage.Interface:
+                    InterfacePageButton.IsChecked = true;
                     break;
                 case SettingsWindowPage.Viewport:
                     ViewportPageButton.IsChecked = true;
@@ -125,6 +132,12 @@ namespace OceanyaClient
 
             StickyEffectsCheckBox.IsChecked = SaveFile.Data.StickyEffect;
             SwitchPosOnIniSwapCheckBox.IsChecked = SaveFile.Data.SwitchPosOnIniSwap;
+            UiScaleAutomaticRadioButton.IsChecked = SaveFile.Data.UiScaleMode == UiScaleMode.Automatic;
+            UiScaleManualRadioButton.IsChecked = SaveFile.Data.UiScaleMode == UiScaleMode.Manual;
+            UiScaleSlider.Value = Math.Round(UiScaleMath.ClampScale(SaveFile.Data.UiScaleFactor) * 100);
+            lastCommittedUiScalePercent = UiScaleSlider.Value;
+            lastCommittedUiScaleWasManual = SaveFile.Data.UiScaleMode == UiScaleMode.Manual;
+            RefreshUiScaleControls();
             ViewportPreviewCheckBox.IsChecked = SaveFile.Data.GMViewportWindowPreviewPriority;
             ViewportOverlapCheckBox.IsChecked = SaveFile.Data.GMViewportChatboxOverlapsViewport;
             RefreshViewportThemeControls();
@@ -192,10 +205,169 @@ namespace OceanyaClient
 
             AudioPage.Visibility = AudioPageButton.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
             ClientPage.Visibility = ClientPageButton.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+            InterfacePage.Visibility = InterfacePageButton.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
             ViewportPage.Visibility = ViewportPageButton.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
             LoggingPage.Visibility = LoggingPageButton.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
             ConfigPage.Visibility = ConfigPageButton.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
             CallwordsPage.Visibility = CallwordsPageButton.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void UiScaleModeRadioButton_Checked(object sender, RoutedEventArgs e)
+        {
+            if (suppressControlEvents)
+            {
+                return;
+            }
+
+            RefreshUiScaleControls();
+            CommitUiScaleSelection(force: true);
+        }
+
+        /// <summary>
+        /// Slider drags only update the readout. Rescaling mid-drag would move the slider out from
+        /// under the pointer and make the value jump again, so the scale is applied once the gesture
+        /// finishes.
+        /// </summary>
+        private void UiScaleSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (suppressControlEvents)
+            {
+                return;
+            }
+
+            RefreshUiScaleControls();
+        }
+
+        private void UiScaleSlider_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            CommitUiScaleSelection();
+        }
+
+        private void UiScaleSlider_LostMouseCapture(object sender, MouseEventArgs e)
+        {
+            CommitUiScaleSelection();
+        }
+
+        private void UiScaleSlider_KeyUp(object sender, KeyEventArgs e)
+        {
+            CommitUiScaleSelection();
+        }
+
+        private void UiScaleValueTextBox_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.Enter)
+            {
+                return;
+            }
+
+            e.Handled = true;
+            CommitUiScaleFromTextBox();
+        }
+
+        private void UiScaleValueTextBox_LostFocus(object sender, RoutedEventArgs e)
+        {
+            CommitUiScaleFromTextBox();
+        }
+
+        /// <summary>
+        /// Reads the typed percentage, clamps it into the supported range, and applies it.
+        /// </summary>
+        private void CommitUiScaleFromTextBox()
+        {
+            if (suppressControlEvents)
+            {
+                return;
+            }
+
+            int fallbackPercent = (int)Math.Round(lastCommittedUiScalePercent);
+            double parsedPercent = TryParseInt(UiScaleValueTextBox.Text, fallbackPercent);
+            double clampedPercent = Math.Round(UiScaleMath.ClampScale(parsedPercent / 100d) * 100);
+
+            suppressControlEvents = true;
+            try
+            {
+                UiScaleSlider.Value = clampedPercent;
+            }
+            finally
+            {
+                suppressControlEvents = false;
+            }
+
+            RefreshUiScaleControls();
+            CommitUiScaleSelection();
+        }
+
+        /// <summary>
+        /// Publishes the selected scale as a live preview, but only when it actually changed, so a
+        /// stray mouse-up or arrow key does not rescale every window for nothing.
+        /// </summary>
+        /// <param name="force">When true, applies even if the percentage did not change (mode switch).</param>
+        private void CommitUiScaleSelection(bool force = false)
+        {
+            if (suppressControlEvents)
+            {
+                return;
+            }
+
+            bool isManual = UiScaleManualRadioButton.IsChecked == true;
+            if (!force
+                && Math.Abs(UiScaleSlider.Value - lastCommittedUiScalePercent) < 0.01
+                && isManual == lastCommittedUiScaleWasManual)
+            {
+                return;
+            }
+
+            lastCommittedUiScalePercent = UiScaleSlider.Value;
+            lastCommittedUiScaleWasManual = isManual;
+            ApplyUiScaleLivePreview();
+        }
+
+        /// <summary>
+        /// Refreshes the UI scale value text, slider availability, and the effective-scale hint.
+        /// </summary>
+        private void RefreshUiScaleControls()
+        {
+            if (UiScaleSlider == null || UiScaleValueTextBox == null || UiScaleEffectiveTextBlock == null)
+            {
+                return;
+            }
+
+            bool isManual = UiScaleManualRadioButton.IsChecked == true;
+            UiScaleSlider.IsEnabled = isManual;
+            UiScaleValueTextBox.IsEnabled = isManual;
+            string percentText = $"{Math.Round(UiScaleSlider.Value):0}";
+            if (!string.Equals(UiScaleValueTextBox.Text, percentText, StringComparison.Ordinal))
+            {
+                bool previousSuppress = suppressControlEvents;
+                suppressControlEvents = true;
+                try
+                {
+                    UiScaleValueTextBox.Text = percentText;
+                }
+                finally
+                {
+                    suppressControlEvents = previousSuppress;
+                }
+            }
+
+            if (isManual)
+            {
+                UiScaleEffectiveTextBlock.Text = "Manual scale applies to every Oceanya window on every monitor.";
+                return;
+            }
+
+            double automaticScale = UiScaleManager.ResolveScaleForWindow(HostWindow ?? Window.GetWindow(this));
+            UiScaleEffectiveTextBlock.Text =
+                $"This monitor resolves to {Math.Round(automaticScale * 100):0}% automatically.";
+        }
+
+        /// <summary>
+        /// Publishes the currently selected scale settings as an unsaved live preview.
+        /// </summary>
+        private void ApplyUiScaleLivePreview()
+        {
+            UiScaleMode mode = UiScaleManualRadioButton.IsChecked == true ? UiScaleMode.Manual : UiScaleMode.Automatic;
+            UiScaleManager.SetLivePreview(mode, UiScaleSlider.Value / 100d);
         }
 
         private void RefreshViewportThemeControls()
@@ -442,6 +614,9 @@ namespace OceanyaClient
             SaveFile.Data.StickyEffect = StickyEffectsCheckBox.IsChecked == true;
             SaveFile.Data.SwitchPosOnIniSwap = SwitchPosOnIniSwapCheckBox.IsChecked == true;
             SaveFile.Data.GMViewportWindowPreviewPriority = ViewportPreviewCheckBox.IsChecked == true;
+            UiScaleManager.ApplySettings(
+                UiScaleManualRadioButton.IsChecked == true ? UiScaleMode.Manual : UiScaleMode.Automatic,
+                UiScaleSlider.Value / 100d);
             SaveFile.Data.GMViewportChatboxOverlapsViewport = ViewportOverlapCheckBox.IsChecked == true;
             SaveFile.Data.InvertICLog = InvertIcLogsCheckBox.IsChecked == true;
             SaveFile.Data.CallwordRules = new List<CallwordRule>(callwordRules);
@@ -494,6 +669,7 @@ namespace OceanyaClient
         private void CancelButton_Click(object sender, RoutedEventArgs e)
         {
             AudioSettings.ClearLivePreviewVolumes();
+            UiScaleManager.ClearLivePreview();
             SaveFile.Data.AudioMusicVolume = originalMusicVolume;
             SaveFile.Data.AudioSfxVolume = originalSfxVolume;
             SaveFile.Data.AudioBlipVolume = originalBlipVolume;

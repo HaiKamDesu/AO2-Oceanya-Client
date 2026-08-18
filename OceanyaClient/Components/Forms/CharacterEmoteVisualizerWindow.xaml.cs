@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -200,6 +200,9 @@ namespace OceanyaClient
 
         /// <inheritdoc/>
         public override bool IsUserResizeEnabled => true;
+
+        /// <inheritdoc/>
+        public override bool ManagesOwnWindowSize => true;
 
         private static CharacterFolder EnsureCharacterLoaded(CharacterFolder source)
         {

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -9,6 +9,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shell;
+using OceanyaClient.Features.Ui;
 
 namespace OceanyaClient
 {
@@ -32,9 +33,28 @@ namespace OceanyaClient
         public const double SharedFrameBorderThickness = 1d;
 
         /// <summary>
+        /// Resize grip thickness used by the generic shell at scale 1.0.
+        /// </summary>
+        private const double BaseResizeBorderThickness = 6d;
+
+        /// <summary>
         /// Gets the client version text shown in the shared header.
         /// </summary>
         public static string ClientVersionDisplayText { get; } = ResolveClientVersionDisplayText();
+
+        /// <summary>
+        /// Current UI scale applied to this shell's header and hosted body content.
+        /// </summary>
+        public static readonly DependencyProperty ContentScaleProperty = DependencyProperty.Register(
+            nameof(ContentScale),
+            typeof(double),
+            typeof(GenericOceanyaWindow),
+            new PropertyMetadata(1d, OnContentScaleChanged));
+
+        /// <summary>
+        /// Raised after <see cref="ContentScale"/> changed and the shell chrome was re-applied.
+        /// </summary>
+        public event EventHandler? ContentScaleChanged;
 
         /// <summary>
         /// Enables Generic Oceanya shared chrome behavior on any <see cref="Window"/> using the shared template.
@@ -114,6 +134,10 @@ namespace OceanyaClient
             WindowHelper.AddWindow(this);
             Loaded += OnWindowLoaded;
             UpdateAutomationReadyMarker(OceanyaWindowContentControl.AutomationReadyStateLoading);
+            ContentScale = UiScaleMath.ClampScale(UiScaleManager.GlobalScale);
+            UiScaleManager.ScaleChanged += OnGlobalUiScaleChanged;
+            Closed += (_, _) => UiScaleManager.ScaleChanged -= OnGlobalUiScaleChanged;
+            LocationChanged += (_, _) => RefreshContentScaleFromSettings();
         }
 
         /// <inheritdoc/>
@@ -124,6 +148,165 @@ namespace OceanyaClient
             IntPtr handle = new WindowInteropHelper(this).Handle;
             HwndSource? source = HwndSource.FromHwnd(handle);
             source?.AddHook(WndProc);
+            RefreshContentScaleFromSettings();
+        }
+
+        /// <inheritdoc/>
+        protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
+        {
+            base.OnDpiChanged(oldDpi, newDpi);
+            RefreshContentScaleFromSettings();
+        }
+
+        /// <summary>
+        /// Gets or sets the UI scale applied to the shell header and hosted body content.
+        /// </summary>
+        public double ContentScale
+        {
+            get => (double)GetValue(ContentScaleProperty);
+            set => SetValue(ContentScaleProperty, value);
+        }
+
+        /// <summary>
+        /// Computes the non-content chrome padding a hosted window adds around its body content.
+        /// </summary>
+        /// <param name="bodyMargin">Body margin applied inside the scaled shell.</param>
+        /// <param name="scale">Active shell content scale.</param>
+        /// <returns>Horizontal and vertical chrome offsets in window device independent pixels.</returns>
+        public static (double HorizontalOffset, double VerticalOffset) GetChromeOffsets(Thickness bodyMargin, double scale)
+        {
+            double normalizedScale = UiScaleMath.ClampScale(scale);
+            double horizontalOffset =
+                (SharedFrameBorderThickness * 2)
+                + ((bodyMargin.Left + bodyMargin.Right) * normalizedScale);
+            double verticalOffset =
+                (SharedHeaderHeight * normalizedScale)
+                + (SharedFrameBorderThickness * 2)
+                + ((bodyMargin.Top + bodyMargin.Bottom) * normalizedScale);
+
+            return (horizontalOffset, verticalOffset);
+        }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether this shell participates in global UI scaling.
+        /// Windows whose body content is already resolution-driven (the AO2 viewport surfaces) opt out.
+        /// </summary>
+        public bool IsContentScaleEnabled
+        {
+            get => isContentScaleEnabled;
+            set
+            {
+                isContentScaleEnabled = value;
+                RefreshContentScaleFromSettings();
+            }
+        }
+
+        private bool isContentScaleEnabled = true;
+
+        /// <summary>
+        /// Gets or sets a value indicating whether dragging this window's edges rescales its content
+        /// instead of stretching the layout. Opt-in per window; the resulting scale is published as
+        /// the global manual scale when the drag finishes.
+        /// </summary>
+        public bool IsResizeScalingEnabled { get; set; }
+
+        /// <summary>
+        /// Gets a value indicating whether an interactive rescale drag is in progress, so the hosted
+        /// sizing controller must not fight the drag by re-applying the content size.
+        /// </summary>
+        public bool IsInteractiveResizeScaling { get; private set; }
+
+        /// <summary>
+        /// Splits this shell's chrome into the part that scales with the content and the part that
+        /// never scales (the frame border drawn outside the scaled shell).
+        /// </summary>
+        /// <returns>Scaled and fixed chrome lengths per axis, in device independent pixels.</returns>
+        public (double ScaledWidth, double ScaledHeight, double FixedWidth, double FixedHeight) GetChromeParts()
+        {
+            Thickness bodyMargin = BodyMargin;
+            double scaledWidth = bodyMargin.Left + bodyMargin.Right;
+            double scaledHeight = SharedHeaderHeight + bodyMargin.Top + bodyMargin.Bottom;
+            double fixedLength = SharedFrameBorderThickness * 2;
+            return (scaledWidth, scaledHeight, fixedLength, fixedLength);
+        }
+
+        /// <summary>
+        /// Clamps a requested scale so the resulting window still fits the monitor's work area.
+        /// Without this a large manual scale can grow a window past the screen edges, taking its own
+        /// settings entry point out of reach.
+        /// </summary>
+        /// <param name="requestedScale">Scale the settings resolved to.</param>
+        /// <returns>The requested scale, reduced when it would not fit.</returns>
+        public double ClampScaleToMonitor(double requestedScale)
+        {
+            if (BodyContent is not FrameworkElement bodyElement)
+            {
+                return requestedScale;
+            }
+
+            double contentWidth = IsUsableLength(bodyElement.Width) ? bodyElement.Width : bodyElement.ActualWidth;
+            double contentHeight = IsUsableLength(bodyElement.Height) ? bodyElement.Height : bodyElement.ActualHeight;
+            if (!IsUsableLength(contentWidth) || !IsUsableLength(contentHeight))
+            {
+                return requestedScale;
+            }
+
+            (double scaledWidth, double scaledHeight, double fixedWidth, double fixedHeight) = GetChromeParts();
+            (double availableWidth, double availableHeight) = UiScaleManager.GetLogicalWorkAreaSize(this);
+
+            double widthFit = UiScaleMath.ResolveMaximumFittingScale(contentWidth, scaledWidth, fixedWidth, availableWidth);
+            double heightFit = UiScaleMath.ResolveMaximumFittingScale(contentHeight, scaledHeight, fixedHeight, availableHeight);
+            double fitScale = Math.Min(widthFit, heightFit);
+            if (double.IsInfinity(fitScale) || fitScale <= 0)
+            {
+                return requestedScale;
+            }
+
+            return Math.Min(requestedScale, fitScale);
+        }
+
+        private static bool IsUsableLength(double value)
+        {
+            return !double.IsNaN(value) && !double.IsInfinity(value) && value > 0;
+        }
+
+        /// <summary>
+        /// Re-resolves this shell's scale from the current scale settings and monitor.
+        /// </summary>
+        public void RefreshContentScaleFromSettings()
+        {
+            double resolvedScale = isContentScaleEnabled
+                ? UiScaleMath.ClampScale(ClampScaleToMonitor(UiScaleManager.ResolveScaleForWindow(this)))
+                : 1d;
+            if (Math.Abs(resolvedScale - ContentScale) < 0.0001d)
+            {
+                return;
+            }
+
+            ContentScale = resolvedScale;
+        }
+
+        private void OnGlobalUiScaleChanged(object? sender, EventArgs e)
+        {
+            RefreshContentScaleFromSettings();
+        }
+
+        private static void OnContentScaleChanged(DependencyObject dependencyObject, DependencyPropertyChangedEventArgs e)
+        {
+            if (dependencyObject is GenericOceanyaWindow window)
+            {
+                window.ApplyContentScale();
+            }
+        }
+
+        private void ApplyContentScale()
+        {
+            double scale = UiScaleMath.ClampScale(ContentScale);
+            ShellContentScaleTransform.ScaleX = scale;
+            ShellContentScaleTransform.ScaleY = scale;
+            HeaderOffsetBackdropRectangle.Margin = new Thickness(0, SharedHeaderHeight * scale, 0, 0);
+            ApplyInteractionSettings();
+            ContentScaleChanged?.Invoke(this, EventArgs.Empty);
         }
 
         /// <summary>
@@ -242,6 +425,9 @@ namespace OceanyaClient
 
         private void OnWindowLoaded(object sender, RoutedEventArgs e)
         {
+            // Content sizes are only real once layout ran, so the fit-to-monitor clamp is re-resolved
+            // here; before this point auto-sized content reports 0 and cannot constrain anything.
+            RefreshContentScaleFromSettings();
             ApplyInteractionSettings();
             ApplyWindowFrameForState();
             UpdateHeaderCollisionOpacity();
@@ -255,10 +441,11 @@ namespace OceanyaClient
             WindowChrome? chrome = WindowChrome.GetWindowChrome(this);
             if (chrome != null)
             {
+                double scale = UiScaleMath.ClampScale(ContentScale);
                 chrome.ResizeBorderThickness = IsUserResizeEnabled && WindowState != WindowState.Maximized
-                    ? new Thickness(6)
+                    ? new Thickness(BaseResizeBorderThickness * scale)
                     : new Thickness(0);
-                chrome.CaptionHeight = IsUserMoveEnabled ? 30 : 0;
+                chrome.CaptionHeight = IsUserMoveEnabled ? SharedHeaderHeight * scale : 0;
             }
 
             ApplyWindowFrameForState();
@@ -441,12 +628,14 @@ namespace OceanyaClient
         /// </summary>
         public Window? SynchronizedMovePartner { get; set; }
 
+        private double contentScaleAtGestureStart = 1d;
         private GenericRect? synchronizedMoveStartRect;
         private GenericRect? synchronizedMovePartnerStartRect;
 
         private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
             const int WM_GETMINMAXINFO = 0x0024;
+            const int WM_SIZING = 0x0214;
             const int WM_MOVING = 0x0216;
             const int WM_ENTERSIZEMOVE = 0x0231;
             const int WM_EXITSIZEMOVE = 0x0232;
@@ -456,6 +645,12 @@ namespace OceanyaClient
                 WmGetMinMaxInfo(this, hwnd, lParam);
                 handled = true;
             }
+            else if (msg == WM_SIZING && IsResizeScalingEnabled && isContentScaleEnabled)
+            {
+                ApplyResizeScalingSizingRect(wParam.ToInt32(), lParam);
+                handled = true;
+                return new IntPtr(1);
+            }
             else if (msg == WM_MOVING)
             {
                 HandleWindowMovingSynchronize(hwnd, lParam);
@@ -463,14 +658,151 @@ namespace OceanyaClient
             else if (msg == WM_ENTERSIZEMOVE)
             {
                 InitializeSynchronizedMoveTracking(hwnd);
+                IsInteractiveResizeScaling = IsResizeScalingEnabled && isContentScaleEnabled;
+                contentScaleAtGestureStart = ContentScale;
             }
             else if (msg == WM_EXITSIZEMOVE)
             {
                 ResetSynchronizedMoveTracking();
+                if (IsInteractiveResizeScaling)
+                {
+                    IsInteractiveResizeScaling = false;
+
+                    // ENTERSIZEMOVE/EXITSIZEMOVE also bracket a plain window MOVE, so publishing
+                    // unconditionally turned "I dragged the window by its header" into "switch the whole
+                    // app to manual scale at this window's clamped value".
+                    if (Math.Abs(ContentScale - contentScaleAtGestureStart) >= 0.0001d)
+                    {
+                        PublishResizeScaleToSettings();
+                    }
+                }
             }
 
             return IntPtr.Zero;
         }
+
+        /// <summary>
+        /// Rewrites a drag-resize rectangle so the window keeps the hosted content's aspect ratio and
+        /// applies the matching content scale live, the way the AO2 viewport window resizes.
+        /// </summary>
+        /// <param name="sizingEdge">WMSZ_* edge being dragged.</param>
+        /// <param name="lParam">Pointer to the proposed window rectangle, in device pixels.</param>
+        private void ApplyResizeScalingSizingRect(int sizingEdge, IntPtr lParam)
+        {
+            if (BodyContent is not FrameworkElement bodyElement)
+            {
+                return;
+            }
+
+            double contentWidth = IsUsableLength(bodyElement.Width) ? bodyElement.Width : bodyElement.ActualWidth;
+            double contentHeight = IsUsableLength(bodyElement.Height) ? bodyElement.Height : bodyElement.ActualHeight;
+            if (!IsUsableLength(contentWidth) || !IsUsableLength(contentHeight))
+            {
+                return;
+            }
+
+            GenericRect rect = Marshal.PtrToStructure<GenericRect>(lParam);
+            (double dpiScaleX, double dpiScaleY) = GetWindowDeviceScale(this);
+            double proposedWidth = (rect.right - rect.left) / dpiScaleX;
+            double proposedHeight = (rect.bottom - rect.top) / dpiScaleY;
+
+            (double scaledWidth, double scaledHeight, double fixedWidth, double fixedHeight) = GetChromeParts();
+            double widthDrivenScale = UiScaleMath.ResolveScaleFromWindowLength(
+                proposedWidth, contentWidth, scaledWidth, fixedWidth);
+            double heightDrivenScale = UiScaleMath.ResolveScaleFromWindowLength(
+                proposedHeight, contentHeight, scaledHeight, fixedHeight);
+
+            // Side handles drive their own axis; corners follow whichever axis the user pulled further.
+            bool isHorizontalEdge = sizingEdge is WmszLeft or WmszRight;
+            bool isVerticalEdge = sizingEdge is WmszTop or WmszBottom;
+            double requestedScale;
+            if (isHorizontalEdge)
+            {
+                requestedScale = widthDrivenScale;
+            }
+            else if (isVerticalEdge)
+            {
+                requestedScale = heightDrivenScale;
+            }
+            else
+            {
+                requestedScale = Math.Max(widthDrivenScale, heightDrivenScale);
+            }
+
+            double resolvedScale = UiScaleMath.ClampScale(requestedScale);
+            double windowWidth = (contentWidth + scaledWidth) * resolvedScale + fixedWidth;
+            double windowHeight = (contentHeight + scaledHeight) * resolvedScale + fixedHeight;
+
+            ResizeNativeRect(
+                ref rect,
+                sizingEdge,
+                (int)Math.Round(windowWidth * dpiScaleX),
+                (int)Math.Round(windowHeight * dpiScaleY));
+            Marshal.StructureToPtr(rect, lParam, true);
+
+            if (Math.Abs(resolvedScale - ContentScale) >= 0.0001d)
+            {
+                ContentScale = resolvedScale;
+            }
+        }
+
+        /// <summary>
+        /// Persists the scale reached by a drag resize as the global manual scale, so every other
+        /// Oceanya window follows and the choice survives a restart.
+        /// </summary>
+        private void PublishResizeScaleToSettings()
+        {
+            UiScaleManager.ApplySettings(UiScaleMode.Manual, ContentScale);
+        }
+
+        private static void ResizeNativeRect(ref GenericRect rect, int sizingEdge, int width, int height)
+        {
+            switch (sizingEdge)
+            {
+                case WmszLeft:
+                    rect.left = rect.right - width;
+                    rect.bottom = rect.top + height;
+                    break;
+                case WmszRight:
+                    rect.right = rect.left + width;
+                    rect.bottom = rect.top + height;
+                    break;
+                case WmszTop:
+                    rect.top = rect.bottom - height;
+                    rect.right = rect.left + width;
+                    break;
+                case WmszTopLeft:
+                    rect.left = rect.right - width;
+                    rect.top = rect.bottom - height;
+                    break;
+                case WmszTopRight:
+                    rect.right = rect.left + width;
+                    rect.top = rect.bottom - height;
+                    break;
+                case WmszBottom:
+                    rect.bottom = rect.top + height;
+                    rect.right = rect.left + width;
+                    break;
+                case WmszBottomLeft:
+                    rect.left = rect.right - width;
+                    rect.bottom = rect.top + height;
+                    break;
+                case WmszBottomRight:
+                default:
+                    rect.right = rect.left + width;
+                    rect.bottom = rect.top + height;
+                    break;
+            }
+        }
+
+        private const int WmszLeft = 1;
+        private const int WmszRight = 2;
+        private const int WmszTop = 3;
+        private const int WmszTopLeft = 4;
+        private const int WmszTopRight = 5;
+        private const int WmszBottom = 6;
+        private const int WmszBottomLeft = 7;
+        private const int WmszBottomRight = 8;
 
         private void HandleWindowMovingSynchronize(IntPtr hwnd, IntPtr lParam)
         {
@@ -577,10 +909,20 @@ namespace OceanyaClient
             {
                 mmi.ptMaxTrackSize.x = Math.Max(mmi.ptMinTrackSize.x, ToDevicePixels(window.MaxWidth, scaleX));
             }
+            else
+            {
+                mmi.ptMaxTrackSize.x = Math.Max(mmi.ptMaxTrackSize.x, ToDevicePixels(SystemParameters.VirtualScreenWidth, scaleX));
+            }
 
             if (!double.IsInfinity(window.MaxHeight) && !double.IsNaN(window.MaxHeight) && window.MaxHeight > 0)
             {
                 mmi.ptMaxTrackSize.y = Math.Max(mmi.ptMinTrackSize.y, ToDevicePixels(window.MaxHeight, scaleY));
+            }
+            else
+            {
+                // Windows defaults MaxTrackSize to roughly one monitor, which silently clipped scaled
+                // windows taller than the screen (width grew, height did not). Allow the whole desktop.
+                mmi.ptMaxTrackSize.y = Math.Max(mmi.ptMaxTrackSize.y, ToDevicePixels(SystemParameters.VirtualScreenHeight, scaleY));
             }
 
             Marshal.StructureToPtr(mmi, lParam, true);

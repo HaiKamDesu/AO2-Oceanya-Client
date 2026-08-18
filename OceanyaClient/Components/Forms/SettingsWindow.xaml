@@ -1,4 +1,4 @@
-<local:OceanyaWindowContentControl x:Class="OceanyaClient.SettingsWindow"
+﻿<local:OceanyaWindowContentControl x:Class="OceanyaClient.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:OceanyaClient"
@@ -229,6 +229,7 @@
             <StackPanel Grid.Column="0" Margin="0,0,12,0">
                 <RadioButton x:Name="AudioPageButton" Content="Audio" IsChecked="True" Style="{StaticResource PageButton}" Checked="PageButton_Checked"/>
                 <RadioButton x:Name="ClientPageButton" Content="Client" Style="{StaticResource PageButton}" Checked="PageButton_Checked"/>
+                <RadioButton x:Name="InterfacePageButton" Content="Interface" Style="{StaticResource PageButton}" Checked="PageButton_Checked"/>
                 <RadioButton x:Name="ViewportPageButton" Content="Viewport" Style="{StaticResource PageButton}" Checked="PageButton_Checked"/>
                 <RadioButton x:Name="LoggingPageButton" Content="Logging" Style="{StaticResource PageButton}" Checked="PageButton_Checked"/>
                 <RadioButton x:Name="ConfigPageButton" Content="AO2 Config" Style="{StaticResource PageButton}" Checked="PageButton_Checked"/>
@@ -320,6 +321,58 @@
                             <TextBlock Text="Client" Foreground="White" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10"/>
                             <CheckBox x:Name="StickyEffectsCheckBox" Content="Sticky effects" Foreground="White" Margin="0,0,0,10" ToolTip="Keep selected effects around instead of clearing them after send."/>
                             <CheckBox x:Name="SwitchPosOnIniSwapCheckBox" Content="Switch position on INI swap" Foreground="White" Margin="0,0,0,10" ToolTip="When changing character INI, also switch to that character's preferred side/position when known."/>
+                        </StackPanel>
+
+                        <StackPanel x:Name="InterfacePage" Visibility="Collapsed">
+                            <TextBlock Text="Interface" Foreground="White" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10"/>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <TextBlock Text="UI Scale" Foreground="White" FontWeight="SemiBold"/>
+                                <TextBlock Style="{StaticResource HelpGlyph}" ToolTip="Scales every Oceanya window, including the main client window. Automatic picks a factor from the monitor a window is on, so high resolution displays no longer render the client tiny. The AO2 viewport window is sized by its own theme geometry and is not affected."/>
+                            </StackPanel>
+
+                            <RadioButton x:Name="UiScaleAutomaticRadioButton"
+                                         GroupName="UiScaleMode"
+                                         Content="Automatic (match monitor resolution)"
+                                         Foreground="White"
+                                         Margin="0,0,0,6"
+                                         Checked="UiScaleModeRadioButton_Checked"/>
+                            <RadioButton x:Name="UiScaleManualRadioButton"
+                                         GroupName="UiScaleMode"
+                                         Content="Manual"
+                                         Foreground="White"
+                                         Margin="0,0,0,10"
+                                         Checked="UiScaleModeRadioButton_Checked"/>
+
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="140"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="72"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Scale" Style="{StaticResource LabelText}"/>
+                                <Slider Grid.Column="1"
+                                        x:Name="UiScaleSlider"
+                                        Minimum="75"
+                                        Maximum="300"
+                                        TickFrequency="5"
+                                        IsSnapToTickEnabled="True"
+                                        VerticalAlignment="Center"
+                                        ValueChanged="UiScaleSlider_ValueChanged"
+                                        PreviewMouseLeftButtonUp="UiScaleSlider_PreviewMouseLeftButtonUp"
+                                        KeyUp="UiScaleSlider_KeyUp"
+                                        LostMouseCapture="UiScaleSlider_LostMouseCapture"/>
+                                <TextBox Grid.Column="2"
+                                         x:Name="UiScaleValueTextBox"
+                                         Style="{StaticResource DarkTextBox}"
+                                         Margin="6,0,0,0"
+                                         VerticalAlignment="Center"
+                                         TextAlignment="Right"
+                                         ToolTip="Type a percentage between 75 and 300, then press Enter."
+                                         KeyDown="UiScaleValueTextBox_KeyDown"
+                                         LostFocus="UiScaleValueTextBox_LostFocus"/>
+                            </Grid>
+                            <TextBlock x:Name="UiScaleEffectiveTextBlock" Style="{StaticResource SubText}" Margin="0,2,0,0" TextWrapping="Wrap"/>
                         </StackPanel>
 
                         <StackPanel x:Name="ViewportPage" Visibility="Collapsed">

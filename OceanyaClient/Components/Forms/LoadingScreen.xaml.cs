@@ -4,11 +4,19 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
+using Common;
+using OceanyaClient.Features.Ui;
 
 namespace OceanyaClient
 {
     public partial class LoadingScreen : Window
     {
+        /// <summary>Unscaled design width of the loading screen.</summary>
+        private const double BaseWidth = 318d;
+
+        /// <summary>Unscaled design height of the loading screen.</summary>
+        private const double BaseHeight = 127d;
+
         private bool _isClosing = false;
 
         public static readonly DependencyProperty ProgressProperty =
@@ -24,6 +32,7 @@ namespace OceanyaClient
         {
             InitializeComponent();
             WindowHelper.AddWindow(this);
+            ApplyUiScale();
             // Set initial clip rect with height 0 (nothing showing)
             UpdateProgressDisplay();
 
@@ -37,6 +46,28 @@ namespace OceanyaClient
         }
 
 
+
+        /// <summary>
+        /// Applies the global UI scale. The loading screen is a standalone window outside the
+        /// GenericOceanyaWindow shell, so it scales itself like the wait form does. Progress clip math
+        /// keeps working because it measures inside the scaled visual tree, in unscaled units.
+        /// </summary>
+        private void ApplyUiScale()
+        {
+            double requestedScale = UiScaleMath.ClampScale(UiScaleManager.ResolveScaleForWindow(this));
+            (double availableWidth, double availableHeight) = UiScaleManager.GetLogicalWorkAreaSize(this);
+            double widthFit = UiScaleMath.ResolveMaximumFittingScale(BaseWidth, 0, 0, availableWidth);
+            double heightFit = UiScaleMath.ResolveMaximumFittingScale(BaseHeight, 0, 0, availableHeight);
+            double fitScale = Math.Min(widthFit, heightFit);
+            double scale = double.IsInfinity(fitScale) || fitScale <= 0
+                ? requestedScale
+                : Math.Min(requestedScale, fitScale);
+
+            LoadingScreenScaleTransform.ScaleX = scale;
+            LoadingScreenScaleTransform.ScaleY = scale;
+            Width = BaseWidth * scale;
+            Height = BaseHeight * scale;
+        }
 
         private static void OnProgressChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {

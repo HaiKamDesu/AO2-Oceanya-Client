@@ -6,6 +6,8 @@ using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
+using Common;
+using OceanyaClient.Features.Ui;
 
 namespace OceanyaClient
 {
@@ -15,6 +17,12 @@ namespace OceanyaClient
     public partial class WaitForm : Window
     {
         public static bool Showing = false;
+
+        /// <summary>Unscaled minimum width of the wait form.</summary>
+        private const double BaseMinimumWidth = 300d;
+
+        /// <summary>Unscaled minimum height of the wait form.</summary>
+        private const double BaseMinimumHeight = 120d;
         private static WaitForm? _instance;
         private static Thread? _uiThread;
         private static Dispatcher? _formDispatcher;
@@ -39,11 +47,11 @@ namespace OceanyaClient
             lblSubtitle.Text = _currentSubtitle;
             lblSubtitle.Visibility = Visibility.Collapsed;
 
-            // Fixed size window
-            Width = 300;
-            Height = 120;
-            MinWidth = 300;
-            MinHeight = 120;
+            // Base (unscaled) size; ResizeWindow applies the global UI scale on top of it.
+            Width = BaseMinimumWidth;
+            Height = BaseMinimumHeight;
+            MinWidth = BaseMinimumWidth;
+            MinHeight = BaseMinimumHeight;
 
             // Set up window close event
             Closed += (s, e) =>
@@ -451,7 +459,7 @@ namespace OceanyaClient
         {
             double horizontalPadding = 72;
             double baseVerticalSpace = 95;
-            double minWidth = 300;
+            double minWidth = BaseMinimumWidth;
             double maxWidth = 760;
 
             double pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
@@ -498,9 +506,38 @@ namespace OceanyaClient
                 newHeight += subtitleHeight;
             }
 
-            // Apply final sizes
-            this.Width = Math.Min(Math.Max(newWidth + horizontalPadding, minWidth), maxWidth);
-            this.Height = Math.Max(MinHeight, newHeight + baseVerticalSpace);
+            // Apply final sizes. Content is measured unscaled, then the whole form is scaled by the
+            // global UI scale (the wait form is a standalone window, so it is not covered by the
+            // GenericOceanyaWindow shell scaling).
+            double contentWidth = Math.Min(Math.Max(newWidth + horizontalPadding, minWidth), maxWidth);
+            double contentHeight = Math.Max(BaseMinimumHeight, newHeight + baseVerticalSpace);
+            double scale = ResolveContentScale(contentWidth, contentHeight);
+
+            WaitFormScaleTransform.ScaleX = scale;
+            WaitFormScaleTransform.ScaleY = scale;
+            this.MinWidth = BaseMinimumWidth * scale;
+            this.MinHeight = BaseMinimumHeight * scale;
+            this.Width = contentWidth * scale;
+            this.Height = contentHeight * scale;
+        }
+
+        /// <summary>
+        /// Resolves the UI scale for this form, reduced when the scaled form would not fit the monitor.
+        /// </summary>
+        /// <param name="contentWidth">Unscaled content width.</param>
+        /// <param name="contentHeight">Unscaled content height.</param>
+        /// <returns>The scale to apply.</returns>
+        private double ResolveContentScale(double contentWidth, double contentHeight)
+        {
+            double requestedScale = UiScaleMath.ClampScale(UiScaleManager.ResolveScaleForWindow(this));
+            (double availableWidth, double availableHeight) = UiScaleManager.GetLogicalWorkAreaSize(this);
+            double widthFit = UiScaleMath.ResolveMaximumFittingScale(contentWidth, 0, 0, availableWidth);
+            double heightFit = UiScaleMath.ResolveMaximumFittingScale(contentHeight, 0, 0, availableHeight);
+            double fitScale = Math.Min(widthFit, heightFit);
+
+            return double.IsInfinity(fitScale) || fitScale <= 0
+                ? requestedScale
+                : Math.Min(requestedScale, fitScale);
         }
 
         private static bool TryCenterRelativeToOwner(Window waitWindow, Window owner)
