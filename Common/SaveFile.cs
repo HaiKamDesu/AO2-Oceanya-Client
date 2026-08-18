@@ -224,6 +224,78 @@ namespace OceanyaClient
         public bool IsContentSpace { get; set; }
     }
 
+    /// <summary>
+    /// One panel's user-adjusted placement inside the Oceanya theme layout.
+    /// </summary>
+    public class OceanyaPanelPlacementState
+    {
+        public double Left { get; set; }
+        public double Top { get; set; }
+        public double Width { get; set; }
+        public double Height { get; set; }
+
+        /// <summary>True when the user hid this panel from the main window.</summary>
+        public bool IsHidden { get; set; }
+
+        /// <summary>Font size override for text-like panels; zero means the control's own default.</summary>
+        public double FontSize { get; set; }
+
+        /// <summary>Image scaling mode for image-button panels (Fill, Uniform, UniformToFill, None).</summary>
+        public string ImageScaling { get; set; } = string.Empty;
+
+        /// <summary>Item size override for grid panels, deciding how many items fit; zero means default.</summary>
+        public double ItemSize { get; set; }
+
+        /// <summary>Font family override for text-like panels; empty means the control's own default.</summary>
+        public string FontFamily { get; set; } = string.Empty;
+
+        /// <summary>True when the panel's text is rendered bold.</summary>
+        public bool IsBold { get; set; }
+
+        /// <summary>Replacement image for image-button panels; empty keeps the built-in art.</summary>
+        public string ImagePath { get; set; } = string.Empty;
+
+        /// <summary>Stacking order on the surface; higher values draw on top. Zero means default.</summary>
+        public int ZOrder { get; set; }
+    }
+
+    /// <summary>
+    /// A panel the user added themselves: a picture or a flat colour block.
+    /// </summary>
+    public class OceanyaCustomPanelDefinition
+    {
+        /// <summary>Stable id, generated when the panel is created.</summary>
+        public string Id { get; set; } = string.Empty;
+
+        /// <summary>Display name shown in the layout editor.</summary>
+        public string DisplayName { get; set; } = string.Empty;
+
+        /// <summary>Either "image" or "color".</summary>
+        public string Kind { get; set; } = "color";
+
+        /// <summary>Absolute path of the picture, for image panels.</summary>
+        public string ImagePath { get; set; } = string.Empty;
+
+        /// <summary>Colour in #AARRGGBB or #RRGGBB form, for colour panels.</summary>
+        public string Color { get; set; } = "#FF3F8CD8";
+
+        /// <summary>Placement of the panel on the surface.</summary>
+        public OceanyaPanelPlacementState Placement { get; set; } = new OceanyaPanelPlacementState();
+    }
+
+    /// <summary>
+    /// User-adjusted panel layout for the GM main window, keyed by stable panel id.
+    /// Panels missing from the dictionary use their catalog default placement.
+    /// </summary>
+    public class OceanyaThemeLayoutState
+    {
+        public Dictionary<string, OceanyaPanelPlacementState> Panels { get; set; } =
+            new Dictionary<string, OceanyaPanelPlacementState>(StringComparer.Ordinal);
+
+        /// <summary>Panels the user added themselves (pictures and colour blocks).</summary>
+        public List<OceanyaCustomPanelDefinition> CustomPanels { get; set; } = new List<OceanyaCustomPanelDefinition>();
+    }
+
     public class ViewportWindowState
     {
         public const string MainViewportWindowKind = "main_viewport";
@@ -571,6 +643,9 @@ namespace OceanyaClient
         public bool InvertICLog { get; set; } = false;
         public int LogMaxMessages { get; set; } = 0;
 
+        /// <summary>User-adjusted panel layout for the GM main window.</summary>
+        public OceanyaThemeLayoutState OceanyaThemeLayout { get; set; } = new OceanyaThemeLayoutState();
+
         /// <summary>How the Oceanya window shell picks its UI scale factor.</summary>
         public UiScaleMode UiScaleMode { get; set; } = UiScaleMode.Automatic;
 
@@ -602,6 +677,9 @@ namespace OceanyaClient
 
         /// <summary>When true and the viewport is visible, the viewport window takes the taskbar slot instead of the main window.</summary>
         public bool GMViewportWindowPreviewPriority { get; set; } = true;
+
+        /// <summary>When true, the viewport renders inside a main-window panel instead of its own window.</summary>
+        public bool GMViewportRenderInPanel { get; set; }
 
         /// <summary>When true, a separate topmost passive viewport mirror remains visible until closed or toggled off.</summary>
         public bool GMPictureInPictureViewport { get; set; }
@@ -947,6 +1025,9 @@ namespace OceanyaClient
                 Height = 676
             };
             data.UiScaleFactor = UiScaleMath.ClampScale(data.UiScaleFactor);
+            data.OceanyaThemeLayout ??= new OceanyaThemeLayoutState();
+            data.OceanyaThemeLayout.Panels ??= new Dictionary<string, OceanyaPanelPlacementState>(StringComparer.Ordinal);
+            data.OceanyaThemeLayout.CustomPanels ??= new List<OceanyaCustomPanelDefinition>();
             data.GMMultiClientSnapshot = NormalizeGmMultiClientSnapshot(data.GMMultiClientSnapshot);
             data.GMMultiClientSnapshotPresets = NormalizeGmMultiClientSnapshotPresets(data.GMMultiClientSnapshotPresets);
             data.GMViewportChatBackgroundColor = NormalizeOptionalColor(data.GMViewportChatBackgroundColor);

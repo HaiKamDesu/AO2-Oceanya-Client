@@ -1,0 +1,16 @@
+﻿<UserControl x:Class="OceanyaClient.Components.Panels.IcLogPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:components="clr-namespace:OceanyaClient.Components">
+    <Grid x:Name="PanelRoot" ClipToBounds="True">
+        <Grid.Background>
+            <ImageBrush ImageSource="pack://application:,,,/OceanyaClient;component/Resources/LogBG.png"/>
+        </Grid.Background>
+        <components:ICLog x:Name="HostedLog"
+                          Width="NaN"
+                          Height="NaN"
+                          Margin="4,0,0,25"
+                          HorizontalAlignment="Stretch"
+                          VerticalAlignment="Stretch"/>
+    </Grid>
+</UserControl>

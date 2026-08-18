@@ -1,0 +1,195 @@
+﻿<UserControl x:Class="OceanyaClient.Components.Panels.BottomStatusBarPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <UserControl.Resources>
+        <Style x:Key="ModernButton" TargetType="{x:Type Button}">
+                    <Setter Property="Background" Value="#FF262626"/>
+                    <Setter Property="Foreground" Value="White"/>
+                    <Setter Property="BorderBrush" Value="#444444"/>
+                    <Setter Property="BorderThickness" Value="1"/>
+                    <Setter Property="Padding" Value="12,5"/>
+                    <Setter Property="Height" Value="30"/>
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="{x:Type Button}">
+                                <Border x:Name="ButtonBorder" 
+                                        Background="{TemplateBinding Background}" 
+                                        BorderBrush="{TemplateBinding BorderBrush}" 
+                                        BorderThickness="{TemplateBinding BorderThickness}"
+                                        CornerRadius="3">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter Property="Background" Value="#FF3D3D3D" TargetName="ButtonBorder"/>
+                                    </Trigger>
+                                    <Trigger Property="IsPressed" Value="True">
+                                        <Setter Property="Background" Value="#FF171717" TargetName="ButtonBorder"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+        <Style x:Key="CompactIconButtonStyle" TargetType="{x:Type Button}" BasedOn="{StaticResource ModernButton}">
+                    <Setter Property="Width" Value="24"/>
+                    <Setter Property="Height" Value="24"/>
+                    <Setter Property="Padding" Value="0"/>
+                    <Setter Property="FontWeight" Value="Bold"/>
+                    <Setter Property="Background" Value="#FF181C20"/>
+                    <Setter Property="BorderBrush" Value="#FF3E5362"/>
+                </Style>
+    </UserControl.Resources>
+    <Grid Background="#FF36393F">
+        <Canvas x:Name="PanelCanvas">
+            <CheckBox x:Name="chkSticky" Content="Sticky Effects" 
+                              AutomationProperties.AutomationId="Main.Options.StickyEffects"
+                              Canvas.Top="4" Foreground="White" FontFamily="Arial" FontSize="10" 
+                              Width="82" Height="16" BorderBrush="Black" 
+                              Checked="StickyEffectsCheckBox_Changed" Unchecked="StickyEffectsCheckBox_Changed" 
+                              Canvas.Left="10" Focusable="False" IsTabStop="False" VerticalContentAlignment="Center"
+                              Visibility="Collapsed"/>
+            
+                    <ToggleButton x:Name="btnEditLayout"
+                          AutomationProperties.AutomationId="Main.EditLayout"
+                          AutomationProperties.Name="Edit Layout"
+                          Content="&#x270E;"
+                          ToolTip="Edit panel layout: drag panels to move them, drag the bottom-right corner to resize."
+                          Canvas.Left="356"
+                          Canvas.Top="2"
+                          Width="20"
+                          Height="20"
+                          FontSize="11"
+                          Foreground="White"
+                          Background="#FF2B2F36"
+                          BorderBrush="#FF4A4A4A"
+                          BorderThickness="1"
+                          Focusable="False"
+                          IsTabStop="False"
+                          Checked="EditLayoutToggle_Changed"
+                          Unchecked="EditLayoutToggle_Changed"/>
+
+            <Button x:Name="btnRefreshCharacters" Height="24" Width="24" 
+                            AutomationProperties.AutomationId="Main.OpenCharacterFolderVisualizer"
+                            AutomationProperties.Name="Open Character Folder Visualizer"
+                            BorderBrush="{x:Null}" Foreground="{x:Null}" Padding="0"
+                            Canvas.Left="377" Canvas.Top="0"
+                            Click="RefreshCharactersButton_Click"
+                            ToolTip="Character Folder Visualizer">
+                        <Button.Style>
+                            <Style TargetType="{x:Type Button}">
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="{x:Type Button}">
+                                            <Grid>
+                                                <Image x:Name="ButtonImage" Source="pack://application:,,,/OceanyaClient;component/Resources/Buttons/smallFolder.png" Stretch="Fill"/>
+                                            </Grid>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="ButtonImage" Property="Opacity" Value="0.7"/>
+                                                </Trigger>
+                                                <Trigger Property="IsEnabled" Value="False">
+                                                    <Setter TargetName="ButtonImage" Property="Opacity" Value="0.3"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+            
+                    <Button x:Name="btnSettings"
+                            Height="24"
+                            Width="24"
+                            Canvas.Left="485"
+                            Canvas.Top="0"
+                            AutomationProperties.AutomationId="Main.Settings.Open"
+                            AutomationProperties.Name="Open Settings"
+                            BorderBrush="{x:Null}"
+                            Foreground="#FFE8E8E8"
+                            Padding="0"
+                            Click="SettingsButton_Click"
+                            ToolTip="Settings">
+                        <Button.Style>
+                            <Style TargetType="{x:Type Button}">
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="{x:Type Button}">
+                                            <Grid>
+                                                <TextBlock x:Name="ButtonGlyph"
+                                                           Text="&#xE713;"
+                                                           FontFamily="Segoe MDL2 Assets"
+                                                           FontSize="14"
+                                                           HorizontalAlignment="Center"
+                                                           VerticalAlignment="Center"
+                                                           Foreground="{TemplateBinding Foreground}"/>
+                                            </Grid>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="ButtonGlyph" Property="Opacity" Value="0.7"/>
+                                                </Trigger>
+                                                <Trigger Property="IsEnabled" Value="False">
+                                                    <Setter TargetName="ButtonGlyph" Property="Opacity" Value="0.3"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+            
+                    <CheckBox x:Name="chkPosOnIniSwap" Content="Switch Pos on INISwap" 
+                              AutomationProperties.AutomationId="Main.Options.SwitchPosOnIniSwap"
+                              Canvas.Top="4" Foreground="White" FontFamily="Arial" FontSize="10" 
+                              Width="127" Height="16" BorderBrush="Black" 
+                              Checked="SwitchPosCheckBox_Changed" Unchecked="SwitchPosCheckBox_Changed" 
+                              Canvas.Left="97" Focusable="False" IsTabStop="False" VerticalContentAlignment="Center"
+                              Visibility="Collapsed"/>
+            
+                    <Button x:Name="btnDebug" Content="Button" Height="18" 
+                            Canvas.Left="442" Canvas.Top="4" Width="38" 
+                            Click="DebugButton_Click" Visibility="Collapsed"/>
+                    <CheckBox x:Name="chkInvertLog" Content="Invert IC Logs" 
+                        AutomationProperties.AutomationId="Main.Options.InvertIcLogs"
+                        Canvas.Top="4" Foreground="White" FontFamily="Arial" FontSize="10" 
+                        Width="127" Height="16" BorderBrush="Black" 
+                        Checked="InvertLogCheckBox_Changed" Unchecked="InvertLogCheckBox_Changed" 
+                        Canvas.Left="229" Focusable="False" IsTabStop="False" VerticalContentAlignment="Center" HorizontalAlignment="Center" VerticalAlignment="Top"
+                        Visibility="Collapsed"/>
+            
+                    <Button x:Name="btnAreaNavigator"
+                            AutomationProperties.AutomationId="Main.AreaNavigator.Open"
+                            AutomationProperties.Name="Area Navigator"
+                            Canvas.Left="431"
+                            Canvas.Top="0"
+                            Content="A"
+                            Style="{StaticResource CompactIconButtonStyle}"
+                            Click="AreaNavigatorButton_Click"
+                            ToolTip="Area Navigator"/>
+            
+                    <Button x:Name="btnMusicList"
+                            AutomationProperties.AutomationId="Main.MusicList.Open"
+                            AutomationProperties.Name="Music List"
+                            Canvas.Left="458"
+                            Canvas.Top="0"
+                            Content="M"
+                            Style="{StaticResource CompactIconButtonStyle}"
+                            Click="MusicListButton_Click"
+                            ToolTip="Music List"/>
+            
+                    <Button x:Name="btnViewport"
+                            AutomationProperties.AutomationId="Main.Viewport.Open"
+                            AutomationProperties.Name="Open AO2 Viewport"
+                            Width="24"
+                            Height="24"
+                            Canvas.Left="404"
+                            Canvas.Top="0"
+                            Content="V"
+                            FontWeight="Bold"
+                            Click="ViewportButton_Click"
+                            ToolTip="AO2 Viewport"/>
+        </Canvas>
+    </Grid>
+</UserControl>

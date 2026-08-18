@@ -22,6 +22,7 @@ using Common;
 using NUnit.Framework;
 using OceanyaClient;
 using OceanyaClient.Components;
+using OceanyaClient.Components.Panels;
 using OceanyaClient.Features.FileHivemind;
 using OceanyaClient.Features.GoogleDriveSync;
 
@@ -120,8 +121,8 @@ namespace UnitTests
 
             InvokePrivate(window, "SelectClient", firstClient);
 
-            OOCLog oocLog = (OOCLog)window.FindName("OOCLogControl");
-            ICLog icLog = (ICLog)window.FindName("ICLogControl");
+            OOCLog oocLog = GetOocLog(window);
+            ICLog icLog = GetIcLog(window);
             ICMessageSettings settings = (ICMessageSettings)window.FindName("ICMessageSettingsControl");
 
             TextBox oocShowname = (TextBox)oocLog.FindName("txtOOCShowname");
@@ -218,7 +219,7 @@ namespace UnitTests
             // not parked under heavy inbound traffic; pump the dispatcher before asserting on the log.
             WaitForDispatcher();
 
-            ICLog icLog = (ICLog)window.FindName("ICLogControl");
+            ICLog icLog = GetIcLog(window);
             string logText = ReadDocumentText(icLog.FindName("LogBox"));
 
             Assert.That(logText, Does.Contain("Hold it from receive path"));
@@ -244,7 +245,7 @@ namespace UnitTests
 
             WaitForDispatcher();
 
-            OOCLog oocLog = (OOCLog)window.FindName("OOCLogControl");
+            OOCLog oocLog = GetOocLog(window);
             string logText = ReadDocumentText(oocLog.FindName("LogBox"));
 
             Assert.That(logText, Does.Contain("OOC hello from receive path"));
@@ -270,7 +271,7 @@ namespace UnitTests
 
             WaitForDispatcher();
 
-            OOCLog oocLog = (OOCLog)window.FindName("OOCLogControl");
+            OOCLog oocLog = GetOocLog(window);
             string logText = ReadDocumentText(oocLog.FindName("LogBox"));
 
             Assert.Multiple(() =>
@@ -572,6 +573,18 @@ namespace UnitTests
             client.SetICShowname(icShowname);
             client.OOCShowname = oocShowname;
             return client;
+        }
+
+        /// <summary>Resolves the IC log, which lives inside the IC log panel's name scope.</summary>
+        private static ICLog GetIcLog(MainWindow window)
+        {
+            return ((IcLogPanel)window.FindName("IcLog")).LogControl;
+        }
+
+        /// <summary>Resolves the OOC log, which lives inside the OOC log panel's name scope.</summary>
+        private static OOCLog GetOocLog(MainWindow window)
+        {
+            return ((OocLogPanel)window.FindName("OocLog")).LogControl;
         }
 
         private static void AddClientToWindow(MainWindow window, AOClient client)

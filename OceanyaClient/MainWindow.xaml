@@ -145,19 +145,25 @@
 
 
                 <!-- Placement for panel elements comes from OceanyaPanelCatalog (see ApplyPanelCatalogPlacements). -->
-                <Rectangle x:Name="bgRectangleOOC" Fill="#FF8B8B8B"/>
-                <components:OOCLog x:Name="OOCLogControl" DockPanel.Dock="Top"/>
+                <panels:OocLogPanel x:Name="OocLog"/>
 
-                <Rectangle Height="18" Canvas.Left="426" Canvas.Top="318" Width="83" Fill="#FF4E5056" HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                <Rectangle x:Name="OocDivider" Fill="#FF4E5056" HorizontalAlignment="Left" VerticalAlignment="Center"/>
 
-                <DockPanel x:Name="Dock_ICLog">
-                    <DockPanel.Background>
-                        <ImageBrush ImageSource="pack://application:,,,/OceanyaClient;component/Resources/LogBG.png"/>
-                    </DockPanel.Background>
-                </DockPanel>
-                <components:ICLog x:Name="ICLogControl" DockPanel.Dock="Top" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                <panels:IcLogPanel x:Name="IcLog"/>
 
-                <panels:ShoutRowPanel x:Name="ShoutRow"/>
+                <Image x:Name="imgShoutModifierBG" Source="pack://application:,,,/OceanyaClient;component/Resources/ObjectionButtonsBG.png" Stretch="Fill"/>
+                <panels:ShoutButtonPanel x:Name="ShoutHoldIt"
+                                         UncheckedImage="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Hold It.png"
+                                         CheckedImage="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Hold It_Selected.png"/>
+                <panels:ShoutButtonPanel x:Name="ShoutObjection"
+                                         UncheckedImage="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Objection.png"
+                                         CheckedImage="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Objection_Selected.png"/>
+                <panels:ShoutButtonPanel x:Name="ShoutTakeThat"
+                                         UncheckedImage="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Take That.png"
+                                         CheckedImage="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Take That_Selected.png"/>
+                <panels:ShoutButtonPanel x:Name="ShoutCustom"
+                                         UncheckedImage="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Custom.png"
+                                         CheckedImage="pack://application:,,,/OceanyaClient;component/Resources/Buttons/Custom_Selected.png"/>
 
                 <panels:ClientsListPanel x:Name="ClientsList"/>
 
@@ -169,140 +175,15 @@
 
                 <panels:DreddFeatureRowPanel x:Name="DreddFeatureRow" Visibility="Collapsed"/>
 
-                <Rectangle x:Name="BottomStatusBar" Height="24" Canvas.Top="603" Width="509" Fill="#FF36393F" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                <CheckBox x:Name="chkSticky" Content="Sticky Effects" 
-                          AutomationProperties.AutomationId="Main.Options.StickyEffects"
-                          Canvas.Top="607" Foreground="White" FontFamily="Arial" FontSize="10" 
-                          Width="82" Height="16" BorderBrush="Black" 
-                          Checked="chkStickyEffects_Checked" Unchecked="chkStickyEffects_Checked" 
-                          Canvas.Left="10" Focusable="False" IsTabStop="False" VerticalContentAlignment="Center"
-                          Visibility="Collapsed"/>
+                <ContentControl x:Name="ViewportPanelHost"
+                                AutomationProperties.AutomationId="Main.Viewport.Panel"
+                                Visibility="Collapsed"
+                                ClipToBounds="True"/>
 
-                <Button x:Name="btnRefreshCharacters" Height="24" Width="24" 
-                        AutomationProperties.AutomationId="Main.OpenCharacterFolderVisualizer"
-                        AutomationProperties.Name="Open Character Folder Visualizer"
-                        BorderBrush="{x:Null}" Foreground="{x:Null}" Padding="0"
-                        Canvas.Left="377" Canvas.Top="603"
-                        Click="btnCharacterFolderVisualizer_Click"
-                        ToolTip="Character Folder Visualizer">
-                    <Button.Style>
-                        <Style TargetType="{x:Type Button}">
-                            <Setter Property="Template">
-                                <Setter.Value>
-                                    <ControlTemplate TargetType="{x:Type Button}">
-                                        <Grid>
-                                            <Image x:Name="ButtonImage" Source="pack://application:,,,/OceanyaClient;component/Resources/Buttons/smallFolder.png" Stretch="Fill"/>
-                                        </Grid>
-                                        <ControlTemplate.Triggers>
-                                            <Trigger Property="IsMouseOver" Value="True">
-                                                <Setter TargetName="ButtonImage" Property="Opacity" Value="0.7"/>
-                                            </Trigger>
-                                            <Trigger Property="IsEnabled" Value="False">
-                                                <Setter TargetName="ButtonImage" Property="Opacity" Value="0.3"/>
-                                            </Trigger>
-                                        </ControlTemplate.Triggers>
-                                    </ControlTemplate>
-                                </Setter.Value>
-                            </Setter>
-                        </Style>
-                    </Button.Style>
-                </Button>
-
-                <Button x:Name="btnSettings"
-                        Height="24"
-                        Width="24"
-                        Canvas.Left="485"
-                        Canvas.Top="603"
-                        AutomationProperties.AutomationId="Main.Settings.Open"
-                        AutomationProperties.Name="Open Settings"
-                        BorderBrush="{x:Null}"
-                        Foreground="#FFE8E8E8"
-                        Padding="0"
-                        Click="btnSettings_Click"
-                        ToolTip="Settings">
-                    <Button.Style>
-                        <Style TargetType="{x:Type Button}">
-                            <Setter Property="Template">
-                                <Setter.Value>
-                                    <ControlTemplate TargetType="{x:Type Button}">
-                                        <Grid>
-                                            <TextBlock x:Name="ButtonGlyph"
-                                                       Text="&#xE713;"
-                                                       FontFamily="Segoe MDL2 Assets"
-                                                       FontSize="14"
-                                                       HorizontalAlignment="Center"
-                                                       VerticalAlignment="Center"
-                                                       Foreground="{TemplateBinding Foreground}"/>
-                                        </Grid>
-                                        <ControlTemplate.Triggers>
-                                            <Trigger Property="IsMouseOver" Value="True">
-                                                <Setter TargetName="ButtonGlyph" Property="Opacity" Value="0.7"/>
-                                            </Trigger>
-                                            <Trigger Property="IsEnabled" Value="False">
-                                                <Setter TargetName="ButtonGlyph" Property="Opacity" Value="0.3"/>
-                                            </Trigger>
-                                        </ControlTemplate.Triggers>
-                                    </ControlTemplate>
-                                </Setter.Value>
-                            </Setter>
-                        </Style>
-                    </Button.Style>
-                </Button>
-
-                <CheckBox x:Name="chkPosOnIniSwap" Content="Switch Pos on INISwap" 
-                          AutomationProperties.AutomationId="Main.Options.SwitchPosOnIniSwap"
-                          Canvas.Top="607" Foreground="White" FontFamily="Arial" FontSize="10" 
-                          Width="127" Height="16" BorderBrush="Black" 
-                          Checked="chkPosOnIniSwap_Checked" Unchecked="chkPosOnIniSwap_Checked" 
-                          Canvas.Left="97" Focusable="False" IsTabStop="False" VerticalContentAlignment="Center"
-                          Visibility="Collapsed"/>
-
-                <Button x:Name="btnDebug" Content="Button" Height="18" 
-                        Canvas.Left="442" Canvas.Top="607" Width="38" 
-                        Click="Button_Click" Visibility="Collapsed"/>
-                <CheckBox x:Name="chkInvertLog" Content="Invert IC Logs" 
-                    AutomationProperties.AutomationId="Main.Options.InvertIcLogs"
-                    Canvas.Top="607" Foreground="White" FontFamily="Arial" FontSize="10" 
-                    Width="127" Height="16" BorderBrush="Black" 
-                    Checked="chkInvertLog_Checked" Unchecked="chkInvertLog_Checked" 
-                    Canvas.Left="229" Focusable="False" IsTabStop="False" VerticalContentAlignment="Center" HorizontalAlignment="Center" VerticalAlignment="Top"
-                    Visibility="Collapsed"/>
-
-                <Button x:Name="btnAreaNavigator"
-                        AutomationProperties.AutomationId="Main.AreaNavigator.Open"
-                        AutomationProperties.Name="Area Navigator"
-                        Canvas.Left="431"
-                        Canvas.Top="603"
-                        Content="A"
-                        Style="{StaticResource CompactIconButtonStyle}"
-                        Click="btnAreaNavigator_Click"
-                        ToolTip="Area Navigator"/>
-
-                <Button x:Name="btnMusicList"
-                        AutomationProperties.AutomationId="Main.MusicList.Open"
-                        AutomationProperties.Name="Music List"
-                        Canvas.Left="458"
-                        Canvas.Top="603"
-                        Content="M"
-                        Style="{StaticResource CompactIconButtonStyle}"
-                        Click="btnMusicList_Click"
-                        ToolTip="Music List"/>
-
-                <Button x:Name="btnViewport"
-                        AutomationProperties.AutomationId="Main.Viewport.Open"
-                        AutomationProperties.Name="Open AO2 Viewport"
-                        Width="24"
-                        Height="24"
-                        Canvas.Left="404"
-                        Canvas.Top="603"
-                        Content="V"
-                        FontWeight="Bold"
-                        Click="btnViewport_Click"
-                        ToolTip="AO2 Viewport"/>
+                <panels:BottomStatusBarPanel x:Name="BottomBar"/>
 
                 <Popup x:Name="AreaNavigatorPopup"
                        AutomationProperties.AutomationId="Main.AreaNavigator.Popup"
-                       PlacementTarget="{Binding ElementName=btnAreaNavigator}"
                        Placement="Top"
                        StaysOpen="False"
                        AllowsTransparency="True">
@@ -407,7 +288,6 @@
 
                 <Popup x:Name="MusicListPopup"
                        AutomationProperties.AutomationId="Main.MusicList.Popup"
-                       PlacementTarget="{Binding ElementName=btnMusicList}"
                        Placement="Top"
                        StaysOpen="False"
                        AllowsTransparency="True">
@@ -576,9 +456,8 @@
                         </Grid>
                     </Border>
                 </Popup>
-                <Button x:Name="THEDINGBUTTON" Height="12" Width="12" 
+                <Button x:Name="THEDINGBUTTON"
                     BorderBrush="{x:Null}" Foreground="{x:Null}" Padding="0"
-                    Canvas.Left="322" Canvas.Top="532"
                     Click="THEDINGBUTTON_Click" HorizontalAlignment="Left" VerticalAlignment="Top">
                     <Button.Style>
                         <Style TargetType="{x:Type Button}">

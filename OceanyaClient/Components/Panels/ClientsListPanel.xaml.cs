@@ -1,5 +1,6 @@
-using System;
+﻿using System;
 using System.Windows;
+using System.Collections.Generic;
 using System.Windows.Controls;
 using System.Windows.Media;
 
@@ -23,6 +24,33 @@ namespace OceanyaClient.Components.Panels
         public ClientsListPanel()
         {
             InitializeComponent();
+        }
+
+        /// <summary>
+        /// Hands the strip's separable pieces over to the host surface: the title and the add/remove
+        /// button pair. The paging grid stays inside this panel because its buttons and item grid
+        /// cannot be split apart.
+        /// </summary>
+        /// <returns>Placeable child controls keyed by their stable panel id.</returns>
+        public IReadOnlyDictionary<string, FrameworkElement> ExtractPlaceableControls()
+        {
+            Panel buttonRow = (Panel)btnAddClient.Parent;
+            Dictionary<string, FrameworkElement> placeable = new Dictionary<string, FrameworkElement>(StringComparer.Ordinal)
+            {
+                ["clients_title"] = lblClients,
+                ["clients_add"] = btnAddClient,
+                ["clients_remove"] = btnRemoveClient
+            };
+
+            // The add and remove buttons are placed individually, so their shared row goes away.
+            buttonRow.Children.Remove(btnAddClient);
+            buttonRow.Children.Remove(btnRemoveClient);
+            PanelRoot.Children.Remove(lblClients);
+            PanelRoot.Children.Remove(buttonRow);
+            Grid.SetRow(ClientButtonGrid, 0);
+            PanelRoot.RowDefinitions.Clear();
+            PanelRoot.RowDefinitions.Add(new RowDefinition());
+            return placeable;
         }
 
         /// <summary>Raised when the add-client button is pressed.</summary>
@@ -62,6 +90,16 @@ namespace OceanyaClient.Components.Panels
         {
             ClientButtonGrid.SetScrollMode(scrollMode);
             ClientButtonGrid.SetPageSize(rowCount, columnCount);
+        }
+
+        /// <summary>
+        /// Lets the client grid decide how many client buttons fit in the space it was given, instead
+        /// of using a fixed page size.
+        /// </summary>
+        /// <param name="clientButtonSize">Nominal size of one client button including spacing.</param>
+        public void EnableAutomaticClientCount(double clientButtonSize)
+        {
+            ClientButtonGrid.EnableAutomaticPageSize(clientButtonSize);
         }
 
         /// <summary>

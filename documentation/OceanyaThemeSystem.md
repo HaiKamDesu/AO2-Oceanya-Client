@@ -42,9 +42,141 @@ mapping exists. So the main window carries **two** theme concepts:
    - *Naming correction*: `MainWindow`'s `PageButtonGrid` was named `EmoteGrid` but holds **client**
      buttons (the emote grid lives inside `ICMessageSettings`). It is now `ClientsListPanel.ButtonGrid`
      and the panel id is `clients_list`, not `emote_grid`.
-   - *Still inline XAML plus code-behind*: the bottom status bar and the area navigator / music list
-     popups. Highest regression risk remains: the single/multi internal client logic, viewport
-     attachment, snapshot restore, and the send/echo gating.
+     `BottomStatusBarPanel` (option checkboxes plus refresh/settings/debug/area/music/viewport
+     buttons; exposes `AreaNavigatorAnchor` / `MusicListAnchor` because WPF popups need a visual to
+     position against, so `MainWindow` sets `Popup.PlacementTarget` in code instead of by
+     `ElementName` binding).
+   - *Still inline in MainWindow*: the area navigator and music list **popups**. They are overlay
+     surfaces anchored to bottom bar buttons rather than layout panels, and their contents are
+     logic-heavy (area list, music tree), so they stay put until the dock host needs them.
+   - **Panel XAML must carry its own resources.** A panel cannot see `MainWindow.xaml`'s resource
+     dictionary: moving markup that used `{StaticResource CompactIconButtonStyle}` without moving the
+     style threw `XamlParseException` at MainWindow construction. The `MainWindow`-constructing tests
+     in `Phase1/2/3ReleaseConfidenceTests` catch this.
+
+## Layout edit mode (shipped)
+The pencil toggle at the right of the bottom bar (`Main.EditLayout`) turns on
+`OceanyaPanelEditModeController`: a translucent overlay per visible panel, drag anywhere to move,
+drag the bottom-right grip to resize. The overlay sits above the panels, so panel buttons cannot fire
+mid-drag. Placements are clamped by each descriptor's minimums and kept at non-negative coordinates
+(`OceanyaPanelLayout.SanitizePlacement`), and a panel's backdrop keeps its offset and size delta.
+
+Layout persists to `SaveData.OceanyaThemeLayout` (panel id -> Left/Top/Width/Height) on every drop
+and on leaving edit mode; `OceanyaPanelLayout.ApplyLayout` applies catalog defaults first and the
+saved layout on top, so panels missing from the save keep their default.
+`OceanyaPanelEditModeController.ResetLayout()` clears it back to defaults - including **styling**:
+fonts, swapped images, scaling and item sizes are applied straight onto the live controls, so the
+applier snapshots each panel's untouched appearance on first restyle
+(`OceanyaPanelStyleApplier.CaptureBaseline`) and reset restores from it (`RestoreBaseline`), then
+un-hides every panel and re-applies the default placements. User-added panels survive a reset.
+
+Right-clicking a panel in edit mode offers **Set default position**, **Set default size**, **Set
+default position and size**, and **Set all panels to default**.
+
+### Surface growth
+`MainWindow.RecalculateSurfaceSizeFromPanels` runs after every layout change: it unions every panel
+rectangle, shifts the whole layout back into view when a panel was dragged past the left or top edge,
+and sizes the surface to the union (never smaller than the stock layout). Growing left or up also
+moves the host window by the same amount (`MoveHostWindowForSurfaceGrowth`, scaled by the shell's
+`ContentScale`), so every panel the user did *not* touch stays exactly where it was on screen and only
+the dragged panel appears to move. So the canvas behaves as if it extended in whichever direction the
+user drags. Negative coordinates are therefore *legal* during a
+drag - `SanitizePlacement` clamps size but not position.
+
+### Panels adapt to their size
+Panels are responsive, not fixed art at a fixed spot:
+- `IcLogPanel` / `OocLogPanel` own their background art and stretch the log to fill it. Previously the
+  log sat next to a separate, taller backdrop that drew outside the panel bounds and ignored resizing;
+  `ICLog`/`OOCLog` also had hard-coded `Width`/`Height` on their roots, which are now removed.
+- `ClientsListPanel` is a 3-row grid: centered title, centered +/- buttons, and the client grid
+  filling the rest. `PageButtonGrid.EnableAutomaticPageSize(itemSize)` recomputes rows/columns from
+  the available space on every SizeChanged, so a taller panel simply shows more clients.
+
+### Leaving edit mode
+The pencil that turns edit mode on ends up *underneath* the bottom bar's own overlay, so edit mode
+provides its own exits: a floating toolbar (**Done**, **Reset all**) drawn above the overlays at
+z-index 10001 and pinned to the top-right of the occupied area, plus **Escape**.
+
+### Panel kinds and per-type editors
+`OceanyaPanelDescriptor.Kind` (`OceanyaPanelKind`) says what a panel wraps, which decides both its
+resize rules and the options its right-click menu offers:
+
+| Kind | Resize | Right-click opens |
+|---|---|---|
+| `TextInput`, `Dropdown`, `TextToggle` | width only - height comes from the font | **Font settings...** (family, size, bold) |
+| `ImageButton` | free | **Image settings...** (replacement image, scaling) |
+| `ItemGrid` | free | **Grid settings...** (item size, empty = default) |
+| `Static` | free | nothing kind-specific |
+
+Each family of settings is one reusable popup in `OceanyaPanelSettingsDialogs`, not a list of literal
+values in the menu: menus of "Font size 8 / 10 / 12..." do not scale and cannot express combinations
+(family + size + bold), and left no way back to "default". Settings persist per panel on
+`OceanyaPanelPlacementState` (`FontSize`, `FontFamily`, `IsBold`, `ImageScaling`, `ImagePath`,
+`ItemSize`, `ZOrder`) and are applied by `OceanyaPanelStyleApplier` at startup and on every change.
+Stretching a text box vertically only added dead space, which is why those panels derive their height.
+
+### Stacking order
+`OceanyaPanelPlacementState.ZOrder` feeds `Panel.SetZIndex`, and every panel menu carries **Bring to
+front / Bring forward / Send backward / Send to back**. Overlays are z-ordered by the same value
+(`ResolveOverlayZIndex` = 10000 + panel order) so they stack in the same order as their panels, and they
+are **outline-only** (transparent fill, highlight on hover) - stacked translucent fills made overlapping
+panels unreadable and hid the controls underneath. The panel name is the overlay's tooltip rather than
+painted text, and the resize grip is 5px.
+
+### Viewport in the main window
+**Render viewport in main window** is a *checkable* entry on the viewport button's (and the viewport
+panel's) right-click menu. While it is on, the viewport **replaces** the button: the
+`bar_button_viewport` element is collapsed and `AO2ViewportWindowContent` moves out of its own window
+into `ViewportPanelHost` on the main canvas (panel id `viewport`), which is then the panel being laid
+out - so the button's own image settings are simply not reachable any more. Turning it off returns the
+content to the viewport window and brings the button back.
+
+Because there is no separate viewport window to represent while this is on, PiP mode is disabled and
+**taskbar preview mode is forced off** (`GMViewportWindowPreviewPriority = false`). The choice persists
+as `SaveData.GMViewportRenderInPanel` and is re-applied at startup. Host-specific menu entries like this
+come from `OceanyaPanelEditModeController.ExtraPanelMenuItemsProvider`, which returns
+`OceanyaPanelMenuEntry` records (an `IsChecked` value makes the entry checkable).
+
+### User-added panels
+**Add panel** on the toolbar, or right-click empty space in edit mode, adds an **image** panel (file
+picker) or a **solid colour** panel (the character creator's colour picker).
+
+**Gotcha:** the empty-space handler must not mark `MouseRightButtonUp` as handled for clicks that land
+on a panel overlay. WPF opens a `ContextMenu` on that very event, so doing it unconditionally swallowed
+every panel's own menu and showed the add-panel menu instead. `IsOverlayElement` walks the visual tree
+to tell the two cases apart. Definitions live in
+`OceanyaThemeLayoutState.CustomPanels` and are realised by `OceanyaCustomPanelFactory`, which also
+registers a descriptor with `OceanyaPanelCatalog.RegisterCustomPanel` so the editor treats them like
+any other panel. Their right-click menu adds **Delete this panel**. `OceanyaPanelCatalog.Panels`
+includes them; `BuiltInPanels` is the static set (tests assert against that).
+
+### Hiding panels
+Right-click a panel to **Hide panel**: it disappears immediately, in edit mode too. Restoring happens
+through the toolbar's **Hidden controls** button, which lists every hidden panel (with a count) plus
+*Show all hidden controls*. Hidden state persists via `OceanyaPanelPlacementState.IsHidden` and is
+applied at startup by `OceanyaPanelEditModeController.ApplyHiddenPanels`. Panels hidden for other
+reasons (an advanced feature being off) are left alone by the editor.
+
+### Panel granularity
+Grouped only where separation makes no sense (IC log, OOC log, clients, viewport). Everything else is
+individually placeable, down to the leftovers: the bell button (`ding_button`), the OOC divider strip
+(`ooc_divider`) and the IC settings decorations (`ic_catchphrase`, `ic_settings_backdrop`,
+`ic_loremaster`). The bottom bar is split into its three checkboxes and seven buttons
+(`bar_check_*`, `bar_button_*`), and the clients strip into `clients_title`,
+`clients_list` (the paged grid keeps its navigation buttons, which cannot be separated). Each shout is
+its own `ShoutButtonPanel` (`shout_holdit`, `shout_objection`,
+`shout_takethat`, `shout_custom`) with its own images, plus `shout_backdrop` for the art behind them.
+`ShoutSelectionGroup` keeps one-checked-at-a-time now that they are no longer siblings in one control.
+
+**IC settings is split into 17 individual panels.** `ICMessageSettings.ExtractPlaceableControls()`
+hands its showname, message box, emote grid, four checkboxes, six dropdowns and four buttons to
+`MainWindow.AdoptIcSettingsPlaceableControls`, which **reparents** them onto `MainCanvas`. Reparenting
+rather than rewriting means every field, handler and code path inside `ICMessageSettings` keeps
+working - only the layout parent changes. What remains in `ic_settings` is the background art. The IC
+sub-panel default placements are the control's inner canvas coordinates plus its own (0, 343) origin.
+
+Known gap: `UpdateDreddFeatureVisibility` still repositions the bottom bar by the Dredd row height, so
+toggling that advanced feature overrides a custom bottom bar position.
 
    **Extraction pattern to follow:** the panel owns visuals and raises events; the host keeps the
    logic and pushes state in through methods. No sibling reach-in, and no exposing raw child elements.

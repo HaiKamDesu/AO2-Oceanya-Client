@@ -66,6 +66,53 @@ namespace OceanyaClient.Components
         public Func<AOClient, AOClient?>? PairingNetworkClientProvider;
         private const string DefaultPositionDisplayPrefix = "default";
 
+        /// <summary>
+        /// Hands the individually placeable IC controls over to the host surface.
+        /// </summary>
+        /// <remarks>
+        /// The IC settings block used to be one panel, so a user could not move the message box away
+        /// from the emote grid. The controls are reparented onto the host canvas instead of being
+        /// rewritten, so every handler and field in this control keeps working - only their layout
+        /// parent changes. Coordinates returned are relative to this control's own canvas.
+        /// </remarks>
+        /// <returns>Placeable child controls keyed by their stable panel id.</returns>
+        public IReadOnlyDictionary<string, FrameworkElement> ExtractPlaceableControls()
+        {
+            Dictionary<string, FrameworkElement> placeable = new Dictionary<string, FrameworkElement>(StringComparer.Ordinal)
+            {
+                ["ic_showname"] = Showname,
+                ["ic_message"] = Message,
+                ["ic_emote_grid"] = EmoteGrid,
+                ["ic_check_preanim"] = chkPreanim,
+                ["ic_check_flip"] = chkFlip,
+                ["ic_check_additive"] = chkAdditive,
+                ["ic_check_immediate"] = chkImmediate,
+                ["ic_combo_character"] = CharacterDropdown,
+                ["ic_combo_emote"] = EmoteDropdown,
+                ["ic_combo_position"] = PositionDropdown,
+                ["ic_combo_textcolor"] = TextColorDropdown,
+                ["ic_combo_effect"] = EffectDropdown,
+                ["ic_combo_sfx"] = sfxDropdown,
+                ["ic_button_realization"] = btnRealization,
+                ["ic_button_screenshake"] = btnScreenshake,
+                ["ic_button_offset"] = btnOffset,
+                ["ic_button_pairing"] = btnPairingStudio,
+                ["ic_catchphrase"] = lblCatchphrase,
+                ["ic_settings_backdrop"] = bgSettings,
+                ["ic_loremaster"] = imgLoremaster
+            };
+
+            if (Content is Panel rootPanel)
+            {
+                foreach (FrameworkElement element in placeable.Values)
+                {
+                    rootPanel.Children.Remove(element);
+                }
+            }
+
+            return placeable;
+        }
+
         public ICMessageSettings()
         {
             StartupTimingLogger.Log("ic_settings_ctor_begin");

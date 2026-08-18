@@ -156,6 +156,7 @@ namespace OceanyaClient
         private const string DreddNoneOverlayName = "none";
         private const double ConnectionInfoBarHeight = 24;
         private const double MainWindowBodyHeight = 628;
+        private const double MainWindowWidth = 509;
         private const double DreddFeatureRowHeight = 30;
         private const double MainWindowHeight = MainWindowBodyHeight + ConnectionInfoBarHeight;
         private static readonly Key[] KonamiCodeSequence = new[]
@@ -259,6 +260,7 @@ namespace OceanyaClient
             StartupTimingLogger.Log("main_window_ctor_begin");
             this.aiModeEnabled = aiModeEnabled;
             InitializeComponent();
+            AdoptIcSettingsPlaceableControls();
             ApplyPanelCatalogPlacements();
             StartupTimingLogger.Log("main_window_initializecomponent_end");
             InitializeClientsHeaderContextMenu();
@@ -271,16 +273,38 @@ namespace OceanyaClient
             AddHandler(Mouse.PreviewMouseDownEvent, new MouseButtonEventHandler(MainWindow_PreviewMouseDown), true);
 
             // Set grid mode and size
+            ShoutHoldIt.ShoutModifier = ICMessage.ShoutModifiers.HoldIt;
+            ShoutObjection.ShoutModifier = ICMessage.ShoutModifiers.Objection;
+            ShoutTakeThat.ShoutModifier = ICMessage.ShoutModifiers.TakeThat;
+            ShoutCustom.ShoutModifier = ICMessage.ShoutModifiers.Custom;
+            ShoutHoldIt.SetAutomationIdentity("Main.Shout.HoldIt", "Hold It");
+            ShoutObjection.SetAutomationIdentity("Main.Shout.Objection", "Objection");
+            ShoutTakeThat.SetAutomationIdentity("Main.Shout.TakeThat", "Take That");
+            ShoutCustom.SetAutomationIdentity("Main.Shout.Custom", "Custom");
+            shoutSelection = new ShoutSelectionGroup(ShoutHoldIt, ShoutObjection, ShoutTakeThat, ShoutCustom);
             ClientsList.ConfigureGrid(rowCount: 4, columnCount: 1, scrollMode: PageButtonGrid.ScrollMode.Vertical);
+            ClientsList.EnableAutomaticClientCount(clientButtonSize: 44);
+            BottomBar.RefreshCharactersRequested += (_, _) => OpenCharacterFolderVisualizerFromPanelRequest();
+            BottomBar.SettingsRequested += (_, _) => OpenSettingsFromPanelRequest();
+            BottomBar.DebugRequested += (_, _) => DisconnectClientsFromDebugButton();
+            BottomBar.AreaNavigatorRequested += (_, _) => OpenAreaNavigatorFromPanelRequest();
+            BottomBar.MusicListRequested += (_, _) => OpenMusicListFromPanelRequest();
+            BottomBar.ViewportRequested += (_, _) => ToggleViewportFromPanelRequest();
+            BottomBar.StickyEffectsChanged += (_, isChecked) => HandleStickyEffectsChanged(isChecked);
+            BottomBar.SwitchPositionOnIniSwapChanged += (_, isChecked) => HandleSwitchPositionOnIniSwapChanged(isChecked);
+            BottomBar.InvertIcLogChanged += (_, isChecked) => HandleInvertIcLogChanged(isChecked);
+            BottomBar.EditLayoutModeChanged += (_, isActive) => SetPanelEditModeActive(isActive);
+            AreaNavigatorPopup.PlacementTarget = BottomBar.AreaNavigatorAnchor;
+            MusicListPopup.PlacementTarget = BottomBar.MusicListAnchor;
             ClientsList.AddClientRequested += (_, _) => AddClientFromPanelRequest();
             ClientsList.RemoveClientRequested += async (_, _) => await RemoveClientAsync(currentClient);
-            OOCLogControl.IsEnabled = false;
-            ICLogControl.IsEnabled = false;
+            OocLog.LogControl.IsEnabled = false;
+            IcLog.LogControl.IsEnabled = false;
             ICMessageSettingsControl.IsEnabled = false;
-            OOCLogControl.LogKeyResolver = ResolveLogClientKey;
-            ICLogControl.LogKeyResolver = ResolveLogClientKey;
+            OocLog.LogControl.LogKeyResolver = ResolveLogClientKey;
+            IcLog.LogControl.LogKeyResolver = ResolveLogClientKey;
 
-            OOCLogControl.OnSendOOCMessage += async (showName, message) =>
+            OocLog.LogControl.OnSendOOCMessage += async (showName, message) =>
             {
                 SaveFile.Data.OOCName = showName;
                 SaveFile.Save();
@@ -358,7 +382,7 @@ namespace OceanyaClient
 
                 client.shoutModifiers = ICMessage.ShoutModifiers.Nothing;
 
-                client.shoutModifiers = ShoutRow.SelectedShoutModifier;
+                client.shoutModifiers = shoutSelection.SelectedShoutModifier;
 
 
                 // The CharId that will actually be sent. The echo-clear matches against THIS value, which is set
@@ -501,7 +525,7 @@ namespace OceanyaClient
 
             ICMessageSettingsControl.OnResetMessageEffects += () =>
             {
-                ShoutRow.ClearSelection();
+                shoutSelection.ClearSelection();
             };
             ICMessageSettingsControl.OnRefreshCharacterRequested += async characterName =>
             {
@@ -579,23 +603,22 @@ namespace OceanyaClient
                 return GetTargetClientForNetwork(profileClient);
             };
 
-            OOCLogControl.txtOOCShowname.Text = SaveFile.Data.OOCName;
-            OOCLogControl.txtOOCShowname.TextChanged += (_, _) => HandleOocShownameTextChanged();
-            ICLogControl.FindTargetsProvider = GetCurrentLogFindTargets;
-            OOCLogControl.FindTargetsProvider = GetCurrentLogFindTargets;
-            chkPosOnIniSwap.IsChecked = SaveFile.Data.SwitchPosOnIniSwap;
-            chkSticky.IsChecked = SaveFile.Data.StickyEffect;
-            chkInvertLog.IsChecked = SaveFile.Data.InvertICLog;
+            OocLog.LogControl.txtOOCShowname.Text = SaveFile.Data.OOCName;
+            OocLog.LogControl.txtOOCShowname.TextChanged += (_, _) => HandleOocShownameTextChanged();
+            IcLog.LogControl.FindTargetsProvider = GetCurrentLogFindTargets;
+            OocLog.LogControl.FindTargetsProvider = GetCurrentLogFindTargets;
+            BottomBar.IsSwitchPositionOnIniSwapChecked = SaveFile.Data.SwitchPosOnIniSwap;
+            BottomBar.IsStickyEffectsChecked = SaveFile.Data.StickyEffect;
+            BottomBar.IsInvertIcLogChecked = SaveFile.Data.InvertICLog;
             if (OceanyaTestMode.Current.IsEnabled)
             {
-                chkSticky.Visibility = Visibility.Visible;
-                chkPosOnIniSwap.Visibility = Visibility.Visible;
+                BottomBar.SetOptionCheckBoxesVisible(true);
             }
             ApplySavedPopupSettings();
             ApplySavedClientSettingsToRuntime();
             InitializeDreddFeatureUi();
 
-            btnDebug.Visibility = debug ? Visibility.Visible : Visibility.Collapsed;
+            BottomBar.SetDebugButtonVisible(debug);
             RefreshAreaNavigatorForCurrentClient();
             RefreshMusicListForCurrentClient();
             UpdateConnectionInfoBar();
@@ -606,17 +629,328 @@ namespace OceanyaClient
         /// XAML attributes. The catalog's default placements reproduce the historic fixed layout, so
         /// this is visually identical until a theme supplies different placements.
         /// </summary>
-        private void ApplyPanelCatalogPlacements()
+        private OceanyaPanelEditModeController? panelEditModeController;
+        private ShoutSelectionGroup shoutSelection = new ShoutSelectionGroup();
+        private IReadOnlyDictionary<string, FrameworkElement> reparentedPanelControls =
+            new Dictionary<string, FrameworkElement>();
+        private readonly Dictionary<string, FrameworkElement> customThemePanelElements =
+            new Dictionary<string, FrameworkElement>(StringComparer.Ordinal);
+
+        /// <summary>
+        /// Builds the panel id to element map used by the catalog layout and the layout editor.
+        /// </summary>
+        /// <returns>Panel elements keyed by their stable panel id.</returns>
+        private Dictionary<string, OceanyaPanelElements> BuildPanelElementMap()
         {
-            OceanyaPanelLayout.ApplyDefaultPlacements(new Dictionary<string, OceanyaPanelElements>
+            Dictionary<string, OceanyaPanelElements> map = new Dictionary<string, OceanyaPanelElements>
             {
-                [OceanyaPanelCatalog.IcLogPanelId] = new OceanyaPanelElements(ICLogControl, Dock_ICLog),
-                [OceanyaPanelCatalog.OocLogPanelId] = new OceanyaPanelElements(OOCLogControl, bgRectangleOOC),
+                [OceanyaPanelCatalog.IcLogPanelId] = new OceanyaPanelElements(IcLog),
+                [OceanyaPanelCatalog.OocLogPanelId] = new OceanyaPanelElements(OocLog),
                 [OceanyaPanelCatalog.ClientsListPanelId] = new OceanyaPanelElements(ClientsList),
-                [OceanyaPanelCatalog.ShoutRowPanelId] = new OceanyaPanelElements(ShoutRow),
+                [OceanyaPanelCatalog.ShoutBackdropPanelId] = new OceanyaPanelElements(imgShoutModifierBG),
+                [OceanyaPanelCatalog.ShoutHoldItPanelId] = new OceanyaPanelElements(ShoutHoldIt),
+                [OceanyaPanelCatalog.ShoutObjectionPanelId] = new OceanyaPanelElements(ShoutObjection),
+                [OceanyaPanelCatalog.ShoutTakeThatPanelId] = new OceanyaPanelElements(ShoutTakeThat),
+                [OceanyaPanelCatalog.ShoutCustomPanelId] = new OceanyaPanelElements(ShoutCustom),
+                [OceanyaPanelCatalog.BottomBarPanelId] = new OceanyaPanelElements(BottomBar),
+                [OceanyaPanelCatalog.ViewportPanelId] = new OceanyaPanelElements(ViewportPanelHost),
+                [OceanyaPanelCatalog.DingButtonPanelId] = new OceanyaPanelElements(THEDINGBUTTON),
+                [OceanyaPanelCatalog.OocDividerPanelId] = new OceanyaPanelElements(OocDivider),
                 [OceanyaPanelCatalog.IcSettingsPanelId] = new OceanyaPanelElements(ICMessageSettingsControl),
                 [OceanyaPanelCatalog.DreddFeatureRowPanelId] = new OceanyaPanelElements(DreddFeatureRow)
-            });
+            };
+
+            foreach (KeyValuePair<string, FrameworkElement> pair in reparentedPanelControls)
+            {
+                map[pair.Key] = new OceanyaPanelElements(pair.Value);
+            }
+
+            foreach (KeyValuePair<string, FrameworkElement> pair in customThemePanelElements)
+            {
+                map[pair.Key] = new OceanyaPanelElements(pair.Value);
+            }
+
+            return map;
+        }
+
+        /// <summary>
+        /// Moves the individually placeable IC controls out of the IC settings block and onto the main
+        /// canvas, so each of them can be positioned, resized and hidden on its own.
+        /// </summary>
+        private void AdoptIcSettingsPlaceableControls()
+        {
+            Dictionary<string, FrameworkElement> adopted = new Dictionary<string, FrameworkElement>(StringComparer.Ordinal);
+            foreach (KeyValuePair<string, FrameworkElement> pair in ICMessageSettingsControl.ExtractPlaceableControls())
+            {
+                adopted[pair.Key] = pair.Value;
+            }
+
+            foreach (KeyValuePair<string, FrameworkElement> pair in BottomBar.ExtractPlaceableControls())
+            {
+                adopted[pair.Key] = pair.Value;
+            }
+
+            foreach (KeyValuePair<string, FrameworkElement> pair in ClientsList.ExtractPlaceableControls())
+            {
+                adopted[pair.Key] = pair.Value;
+            }
+
+            foreach (FrameworkElement element in adopted.Values)
+            {
+                MainCanvas.Children.Add(element);
+            }
+
+            reparentedPanelControls = adopted;
+        }
+
+        /// <summary>
+        /// Places every panel: catalog defaults first, then the user's saved theme layout on top.
+        /// </summary>
+        private void ApplyPanelCatalogPlacements()
+        {
+            RealiseCustomThemePanels();
+            Dictionary<string, OceanyaPanelElements> panels = BuildPanelElementMap();
+            OceanyaPanelLayout.ApplyLayout(panels, SaveFile.Data.OceanyaThemeLayout);
+            OceanyaPanelEditModeController.ApplyHiddenPanels(panels, SaveFile.Data.OceanyaThemeLayout);
+            RecalculateSurfaceSizeFromPanels();
+            // Applied after layout so the panel host and the button swap in the right order.
+            Dispatcher.BeginInvoke(new Action(ApplyViewportRenderInPanel));
+        }
+
+        /// <summary>
+        /// Supplies host-specific right-click entries for a panel in the layout editor.
+        /// </summary>
+        /// <param name="panelId">Panel the menu is being built for.</param>
+        /// <returns>Extra menu entries, or an empty list.</returns>
+        private IEnumerable<OceanyaPanelMenuEntry> BuildExtraPanelMenuItems(string panelId)
+        {
+            List<OceanyaPanelMenuEntry> items = new List<OceanyaPanelMenuEntry>();
+            bool isViewportSlot = string.Equals(panelId, OceanyaPanelCatalog.ViewportPanelId, StringComparison.Ordinal)
+                || string.Equals(panelId, OceanyaPanelCatalog.BarButtonViewportPanelId, StringComparison.Ordinal);
+            if (isViewportSlot)
+            {
+                bool renderInPanel = SaveFile.Data.GMViewportRenderInPanel;
+                items.Add(new OceanyaPanelMenuEntry(
+                    "Render viewport in main window",
+                    () => SetViewportRenderInPanel(!renderInPanel),
+                    renderInPanel));
+            }
+
+            return items;
+        }
+
+        /// <summary>
+        /// Switches the viewport between its own window and a panel inside the main window.
+        /// </summary>
+        /// <param name="renderInPanel">True to host the viewport inside the main window panel.</param>
+        private void SetViewportRenderInPanel(bool renderInPanel)
+        {
+            SaveFile.Data.GMViewportRenderInPanel = renderInPanel;
+            SaveFile.Save();
+            ApplyViewportRenderInPanel();
+        }
+
+        /// <summary>
+        /// Applies the current "viewport in main window" choice.
+        /// </summary>
+        /// <remarks>
+        /// While the viewport renders in the main window it REPLACES the viewport button: the button
+        /// panel is hidden and the viewport panel takes its place as the thing being laid out. Taskbar
+        /// preview mode is forced off too, since there is no separate viewport window to represent.
+        /// </remarks>
+        private void ApplyViewportRenderInPanel()
+        {
+            bool renderInPanel = SaveFile.Data.GMViewportRenderInPanel;
+            FrameworkElement? viewportButton = reparentedPanelControls.TryGetValue(
+                OceanyaPanelCatalog.BarButtonViewportPanelId,
+                out FrameworkElement? button)
+                    ? button
+                    : null;
+
+            if (!renderInPanel)
+            {
+                if (ViewportPanelHost.Content is AO2ViewportWindowContent hosted)
+                {
+                    ViewportPanelHost.Content = null;
+                    hosted.Width = double.NaN;
+                    hosted.Height = double.NaN;
+                }
+
+                ViewportPanelHost.Visibility = Visibility.Collapsed;
+                if (viewportButton != null)
+                {
+                    viewportButton.Visibility = Visibility.Visible;
+                }
+
+                RefreshViewportAttachment();
+                RecalculateSurfaceSizeFromPanels();
+                return;
+            }
+
+            // The viewport cannot live in two places at once, so its own window and the PiP mirror
+            // step aside first.
+            DisablePictureInPictureViewportMode();
+            if (viewportContent != null)
+            {
+                viewportContent.UseAsWindowsPreview = false;
+            }
+
+            SaveFile.Data.GMViewportWindowPreviewPriority = false;
+            ApplyViewportTaskbarPriority();
+
+            if (viewportWindow?.IsVisible == true)
+            {
+                CaptureViewportWindowState();
+                viewportWindow.Hide();
+            }
+
+            EnsureViewportContent();
+            if (viewportContent == null)
+            {
+                return;
+            }
+
+            if (viewportWindow is GenericOceanyaWindow shellWindow && ReferenceEquals(shellWindow.BodyContent, viewportContent))
+            {
+                shellWindow.BodyContent = null;
+            }
+
+            viewportContent.Width = double.NaN;
+            viewportContent.Height = double.NaN;
+            viewportContent.HorizontalAlignment = HorizontalAlignment.Stretch;
+            viewportContent.VerticalAlignment = VerticalAlignment.Stretch;
+            ViewportPanelHost.Content = viewportContent;
+            ViewportPanelHost.Visibility = Visibility.Visible;
+            if (viewportButton != null)
+            {
+                viewportButton.Visibility = Visibility.Collapsed;
+            }
+
+            RefreshViewportAttachment();
+            RecalculateSurfaceSizeFromPanels();
+        }
+
+        /// <summary>
+        /// Recreates the panels the user added themselves (pictures and colour blocks) from the layout.
+        /// </summary>
+        private void RealiseCustomThemePanels()
+        {
+            foreach (FrameworkElement element in customThemePanelElements.Values)
+            {
+                MainCanvas.Children.Remove(element);
+            }
+
+            customThemePanelElements.Clear();
+            if (SaveFile.Data.OceanyaThemeLayout?.CustomPanels == null)
+            {
+                return;
+            }
+
+            foreach (OceanyaCustomPanelDefinition definition in SaveFile.Data.OceanyaThemeLayout.CustomPanels)
+            {
+                if (string.IsNullOrWhiteSpace(definition.Id))
+                {
+                    continue;
+                }
+
+                FrameworkElement element = OceanyaCustomPanelFactory.CreateElement(definition);
+                MainCanvas.Children.Add(element);
+                customThemePanelElements[definition.Id] = element;
+            }
+        }
+
+        /// <summary>
+        /// Grows the main window surface so every panel is fully visible, in any direction.
+        /// </summary>
+        /// <remarks>
+        /// Panels dragged past the left or top edge would otherwise be unreachable, so the whole layout
+        /// is shifted back into view and the surface grows by the same amount - the canvas behaves as if
+        /// it extended in that direction. The surface never shrinks below the stock layout size.
+        /// </remarks>
+        private void RecalculateSurfaceSizeFromPanels()
+        {
+            Dictionary<string, OceanyaPanelElements> panels = BuildPanelElementMap();
+            Rect bounds = OceanyaPanelLayout.CalculateBounds(panels);
+            if (bounds.IsEmpty)
+            {
+                return;
+            }
+
+            if (bounds.Left < 0 || bounds.Top < 0)
+            {
+                // Growing left/up means every panel shifts right/down inside the surface. Moving the
+                // window by the same amount keeps all the panels the user did NOT touch in exactly the
+                // same place on screen, so only the dragged panel appears to move.
+                double shiftX = bounds.Left < 0 ? -bounds.Left : 0;
+                double shiftY = bounds.Top < 0 ? -bounds.Top : 0;
+                OceanyaPanelLayout.OffsetAll(panels, shiftX, shiftY);
+                bounds = OceanyaPanelLayout.CalculateBounds(panels);
+                MoveHostWindowForSurfaceGrowth(shiftX, shiftY);
+            }
+
+            double surfaceWidth = Math.Max(MainWindowWidth, bounds.Right);
+            double surfaceHeight = Math.Max(
+                GetMainWindowTargetHeight(isDreddFeatureEnabled),
+                bounds.Bottom + ConnectionInfoBarHeight);
+
+            Width = surfaceWidth;
+            Height = surfaceHeight;
+            imgScienceBlur.Height = surfaceHeight - ConnectionInfoBarHeight;
+            imgScienceBlur_darken.Height = surfaceHeight - ConnectionInfoBarHeight;
+            panelEditModeController?.RefreshOverlays();
+        }
+
+        /// <summary>
+        /// Moves the host window so that a surface that grew left or upwards does not visually push
+        /// the untouched panels across the screen.
+        /// </summary>
+        /// <param name="shiftX">Horizontal growth in content units.</param>
+        /// <param name="shiftY">Vertical growth in content units.</param>
+        private void MoveHostWindowForSurfaceGrowth(double shiftX, double shiftY)
+        {
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this);
+            if (hostWindow == null || hostWindow.WindowState != WindowState.Normal)
+            {
+                return;
+            }
+
+            double scale = ResolveHostWindowContentScale(hostWindow);
+            if (shiftX > 0 && !double.IsNaN(hostWindow.Left))
+            {
+                hostWindow.Left -= shiftX * scale;
+            }
+
+            if (shiftY > 0 && !double.IsNaN(hostWindow.Top))
+            {
+                hostWindow.Top -= shiftY * scale;
+            }
+        }
+
+        /// <summary>
+        /// Toggles the panel layout editor, which overlays draggable/resizable handles on every panel.
+        /// </summary>
+        /// <param name="isActive">Whether edit mode should be active.</param>
+        private void SetPanelEditModeActive(bool isActive)
+        {
+            if (panelEditModeController == null)
+            {
+                panelEditModeController = new OceanyaPanelEditModeController(
+                    MainCanvas,
+                    BuildPanelElementMap(),
+                    onLayoutPersisted: RecalculateSurfaceSizeFromPanels);
+                panelEditModeController.ExtraPanelMenuItemsProvider = BuildExtraPanelMenuItems;
+            }
+
+            if (isActive)
+            {
+                panelEditModeController.Activate();
+            }
+            else
+            {
+                panelEditModeController.Deactivate();
+            }
+
+            BottomBar.SetEditLayoutModeActive(panelEditModeController.IsActive);
         }
 
         /// <inheritdoc/>
@@ -643,7 +977,7 @@ namespace OceanyaClient
                 return;
             }
 
-            currentClient.OOCShowname = OOCLogControl.txtOOCShowname.Text?.Trim() ?? string.Empty;
+            currentClient.OOCShowname = OocLog.LogControl.txtOOCShowname.Text?.Trim() ?? string.Empty;
             CaptureGmMultiClientSnapshot();
         }
 
@@ -652,7 +986,7 @@ namespace OceanyaClient
             suppressOocShownameTextChanged = true;
             try
             {
-                OOCLogControl.txtOOCShowname.Text = showname ?? string.Empty;
+                OocLog.LogControl.txtOOCShowname.Text = showname ?? string.Empty;
             }
             finally
             {
@@ -1440,7 +1774,7 @@ namespace OceanyaClient
 
                 if (bot == currentClient)
                 {
-                    OOCLogControl.UpdateStreamLabel(bot);
+                    OocLog.LogControl.UpdateStreamLabel(bot);
                 }
 
                 CaptureGmMultiClientSnapshot();
@@ -1509,7 +1843,7 @@ namespace OceanyaClient
 
         private IReadOnlyList<ILogFindTarget> GetCurrentLogFindTargets()
         {
-            return new ILogFindTarget[] { ICLogControl, OOCLogControl };
+            return new ILogFindTarget[] { IcLog.LogControl, OocLog.LogControl };
         }
 
         private AOClientAgentController EnsureAiController(AOClient profileClient)
@@ -2005,7 +2339,7 @@ namespace OceanyaClient
                     string.IsNullOrWhiteSpace(update.RawResponse) ? null : update.RawResponse,
                     "AI Error",
                     "(see details)");
-                ICLogControl.AddMessage(
+                IcLog.LogControl.AddMessage(
                     profileClient,
                     GetAiClientDisplayName(profileClient),
                     "[AI Error] Could not generate a valid response.",
@@ -2215,7 +2549,7 @@ namespace OceanyaClient
                 nameLinks = BuildRawResponseLinks(profileClient, pendingResponse.RawResponse, "AI Response", "(AI)");
             }
 
-            ICLogControl.AddMessage(
+            IcLog.LogControl.AddMessage(
                 profileClient,
                 showName,
                 message,
@@ -2234,7 +2568,7 @@ namespace OceanyaClient
             bool isSentFromSelf,
             ICMessage.TextColors textColor)
         {
-            ICLogControl.AddActionMessage(
+            IcLog.LogControl.AddActionMessage(
                 profileClient,
                 showName,
                 action,
@@ -2313,7 +2647,7 @@ namespace OceanyaClient
                 nameLinks = BuildRawResponseLinks(profileClient, pendingResponse.RawResponse, "AI Response", "(AI)");
             }
 
-            OOCLogControl.AddMessage(
+            OocLog.LogControl.AddMessage(
                 profileClient,
                 showName,
                 message,
@@ -2413,7 +2747,7 @@ namespace OceanyaClient
                 if (currentClient == profileClient)
                 {
                     ICMessageSettingsControl.SetClient(profileClient);
-                    OOCLogControl.SetCurrentClient(profileClient);
+                    OocLog.LogControl.SetCurrentClient(profileClient);
                     SetOocShownameTextForCurrentClient(profileClient.OOCShowname);
                     RefreshAreaNavigatorForCurrentClient();
                     RefreshMusicListForCurrentClient();
@@ -2655,13 +2989,13 @@ namespace OceanyaClient
             {
                 txtCurrentArea.Text = "Current: Unknown";
                 lstAreas.ItemsSource = null;
-                btnAreaNavigator.IsEnabled = false;
+                BottomBar.AreaNavigatorAnchor.IsEnabled = false;
                 btnGoToArea.IsEnabled = false;
                 UpdateConnectionInfoBar();
                 return;
             }
 
-            btnAreaNavigator.IsEnabled = true;
+            BottomBar.AreaNavigatorAnchor.IsEnabled = true;
             btnGoToArea.IsEnabled = true;
 
             string visibleArea = string.IsNullOrWhiteSpace(networkClient.CurrentArea) ? "Unknown" : networkClient.CurrentArea;
@@ -2737,7 +3071,7 @@ namespace OceanyaClient
 
             if (networkClient == null)
             {
-                btnMusicList.IsEnabled = false;
+                BottomBar.MusicListAnchor.IsEnabled = false;
                 treeMusic.ItemsSource = null;
                 btnStopMusic.IsEnabled = false;
                 btnRefreshMusicList.IsEnabled = false;
@@ -2745,7 +3079,7 @@ namespace OceanyaClient
                 return;
             }
 
-            btnMusicList.IsEnabled = true;
+            BottomBar.MusicListAnchor.IsEnabled = true;
             btnStopMusic.IsEnabled = true;
             btnRefreshMusicList.IsEnabled = true;
             EnsureLocalMusicAssetsScanStarted();
@@ -3725,16 +4059,8 @@ namespace OceanyaClient
             DreddFeatureRow.Visibility = visibility;
 
             double verticalOffset = enabled ? GetDreddFeatureRowHeight() : 0;
-            Canvas.SetTop(BottomStatusBar, 603 + verticalOffset);
-            Canvas.SetTop(chkSticky, 607 + verticalOffset);
-            Canvas.SetTop(btnRefreshCharacters, 603 + verticalOffset);
-            Canvas.SetTop(chkPosOnIniSwap, 607 + verticalOffset);
-            Canvas.SetTop(btnDebug, 607 + verticalOffset);
-            Canvas.SetTop(chkInvertLog, 607 + verticalOffset);
-            Canvas.SetTop(btnAreaNavigator, 603 + verticalOffset);
-            Canvas.SetTop(btnMusicList, 603 + verticalOffset);
-            Canvas.SetTop(btnViewport, 603 + verticalOffset);
-            Canvas.SetTop(btnSettings, 603 + verticalOffset);
+            Canvas.SetTop(BottomBar, 603 + verticalOffset);
+            RecalculateSurfaceSizeFromPanels();
 
             UpdateDreddFeatureEnabledState();
         }
@@ -4251,14 +4577,14 @@ namespace OceanyaClient
                         return;
                     }
 
-                    ICLogControl.AddMessage(
+                    IcLog.LogControl.AddMessage(
                         targetClient,
                         "Oceanya Client",
                         "Connection disconnected.",
                         true,
                         ICMessage.TextColors.Red
                     );
-                    OOCLogControl.AddMessage(targetClient, "Oceanya Client", "Connection disconnected.", true);
+                    OocLog.LogControl.AddMessage(targetClient, "Oceanya Client", "Connection disconnected.", true);
                 });
             };
 
@@ -4273,8 +4599,8 @@ namespace OceanyaClient
                     }
 
                     string message = $"Reconnecting...{(attemptCount != 1 ? $" (Attempt {attemptCount})" : "")}";
-                    ICLogControl.AddMessage(targetClient, "Oceanya Client", message, true, ICMessage.TextColors.Yellow);
-                    OOCLogControl.AddMessage(targetClient, "Oceanya Client", message, true);
+                    IcLog.LogControl.AddMessage(targetClient, "Oceanya Client", message, true, ICMessage.TextColors.Yellow);
+                    OocLog.LogControl.AddMessage(targetClient, "Oceanya Client", message, true);
                 });
             };
 
@@ -4289,8 +4615,8 @@ namespace OceanyaClient
                     }
 
                     string message = $"Attempt {attemptCount} failed.";
-                    ICLogControl.AddMessage(targetClient, "Oceanya Client", message, true, ICMessage.TextColors.Yellow);
-                    OOCLogControl.AddMessage(targetClient, "Oceanya Client", message, true);
+                    IcLog.LogControl.AddMessage(targetClient, "Oceanya Client", message, true, ICMessage.TextColors.Yellow);
+                    OocLog.LogControl.AddMessage(targetClient, "Oceanya Client", message, true);
                 });
             };
 
@@ -4306,8 +4632,8 @@ namespace OceanyaClient
 
                     SyncSingleClientStatusToProfile(targetClient);
                     UpdateClientTooltip(targetClient);
-                    ICLogControl.AddMessage(targetClient, "Oceanya Client", "Reconnected to server.", true, ICMessage.TextColors.Green);
-                    OOCLogControl.AddMessage(targetClient, "Oceanya Client", "Reconnected to server.", true);
+                    IcLog.LogControl.AddMessage(targetClient, "Oceanya Client", "Reconnected to server.", true, ICMessage.TextColors.Green);
+                    OocLog.LogControl.AddMessage(targetClient, "Oceanya Client", "Reconnected to server.", true);
                 });
             };
 
@@ -4324,7 +4650,7 @@ namespace OceanyaClient
                     SyncSingleClientStatusToProfile(targetClient);
                     if (targetClient == currentClient)
                     {
-                        OOCLogControl.UpdateStreamLabel(targetClient);
+                        OocLog.LogControl.UpdateStreamLabel(targetClient);
                     }
                     UpdateClientTooltip(targetClient);
                 });
@@ -5882,7 +6208,7 @@ namespace OceanyaClient
                 }
 
                 bot.OOCShowname = bot.clientName;
-                bot.switchPosWhenChangingINI = chkPosOnIniSwap.IsChecked == true;
+                bot.switchPosWhenChangingINI = BottomBar.IsSwitchPositionOnIniSwapChecked;
                 bot.FrequencyHintsProvider = () => SaveFile.Data.FrequentlyUsedIniPuppets;
                 if (restoredState != null)
                 {
@@ -6274,12 +6600,12 @@ namespace OceanyaClient
                         {
                             //Clear the form entirely.
                             ICMessageSettingsControl.ClearSettings();
-                            OOCLogControl.ClearAllLogs();
-                            ICLogControl.ClearAllLogs();
-                            OOCLogControl.IsEnabled = false;
-                            ICLogControl.IsEnabled = false;
+                            OocLog.LogControl.ClearAllLogs();
+                            IcLog.LogControl.ClearAllLogs();
+                            OocLog.LogControl.IsEnabled = false;
+                            IcLog.LogControl.IsEnabled = false;
                             ICMessageSettingsControl.IsEnabled = false;
-            OOCLogControl.UpdateStreamLabel(null);
+            OocLog.LogControl.UpdateStreamLabel(null);
                             currentClient = null;
                             RefreshAreaNavigatorForCurrentClient();
                         RefreshDreddOverlayForCurrentContext(promptForUnknownOverlay: false);
@@ -6322,8 +6648,8 @@ namespace OceanyaClient
 
                 if (clients.Count == 1)
                 {
-                    OOCLogControl.IsEnabled = true;
-                    ICLogControl.IsEnabled = true;
+                    OocLog.LogControl.IsEnabled = true;
+                    IcLog.LogControl.IsEnabled = true;
                     ICMessageSettingsControl.IsEnabled = true;
                 }
             }
@@ -6405,11 +6731,11 @@ namespace OceanyaClient
             ICMessageSettingsControl.SetClient(currentClient);
             double msIcSettings = Lap();
 
-            OOCLogControl.SetCurrentClient(currentClient);
+            OocLog.LogControl.SetCurrentClient(currentClient);
             SetOocShownameTextForCurrentClient(currentClient.OOCShowname);
             double msOocLog = Lap();
 
-            ICLogControl.SetCurrentClient(currentClient);
+            IcLog.LogControl.SetCurrentClient(currentClient);
             double msIcLog = Lap();
 
             RefreshViewportAttachment();
@@ -6444,7 +6770,7 @@ namespace OceanyaClient
             AddClient();
         }
 
-        private void btnViewport_Click(object sender, RoutedEventArgs e)
+        private void ToggleViewportFromPanelRequest()
         {
             if (viewportWindow?.IsVisible == true)
             {
@@ -6464,7 +6790,7 @@ namespace OceanyaClient
             OpenViewportWindow();
         }
 
-        private void btnSettings_Click(object sender, RoutedEventArgs e)
+        private void OpenSettingsFromPanelRequest()
         {
             OpenSettingsWindow();
         }
@@ -6670,15 +6996,15 @@ namespace OceanyaClient
         private void ApplySavedClientSettingsToRuntime()
         {
             ICMessageSettingsControl.stickyEffects = SaveFile.Data.StickyEffect;
-            chkSticky.IsChecked = SaveFile.Data.StickyEffect;
-            chkPosOnIniSwap.IsChecked = SaveFile.Data.SwitchPosOnIniSwap;
-            chkInvertLog.IsChecked = SaveFile.Data.InvertICLog;
+            BottomBar.IsStickyEffectsChecked = SaveFile.Data.StickyEffect;
+            BottomBar.IsSwitchPositionOnIniSwapChecked = SaveFile.Data.SwitchPosOnIniSwap;
+            BottomBar.IsInvertIcLogChecked = SaveFile.Data.InvertICLog;
             foreach (AOClient client in clientOrder.Where(client => clients.Values.Contains(client)))
             {
                 client.switchPosWhenChangingINI = SaveFile.Data.SwitchPosOnIniSwap;
             }
 
-            ICLogControl.SetInvertOnClientLogs(SaveFile.Data.InvertICLog);
+            IcLog.LogControl.SetInvertOnClientLogs(SaveFile.Data.InvertICLog);
             viewportContent?.RefreshVolumes();
             if (viewportContent != null)
             {
@@ -7829,10 +8155,10 @@ namespace OceanyaClient
                 return ICMessageSettingsControl.txtICMessage;
             }
 
-            if (OOCLogControl?.txtOOCMessage?.IsEnabled == true)
+            if (OocLog.LogControl?.txtOOCMessage?.IsEnabled == true)
             {
-                lastMainWindowFocusedElement = OOCLogControl.txtOOCMessage;
-                return OOCLogControl.txtOOCMessage;
+                lastMainWindowFocusedElement = OocLog.LogControl.txtOOCMessage;
+                return OocLog.LogControl.txtOOCMessage;
             }
 
             return null;
@@ -7844,9 +8170,9 @@ namespace OceanyaClient
                 && textBox.IsEnabled
                 && !textBox.IsReadOnly
                 && (ReferenceEquals(textBox, ICMessageSettingsControl?.txtICMessage)
-                    || ReferenceEquals(textBox, OOCLogControl?.txtOOCMessage)
+                    || ReferenceEquals(textBox, OocLog.LogControl?.txtOOCMessage)
                     || ReferenceEquals(textBox, ICMessageSettingsControl?.txtICShowname)
-                    || ReferenceEquals(textBox, OOCLogControl?.txtOOCShowname));
+                    || ReferenceEquals(textBox, OocLog.LogControl?.txtOOCShowname));
         }
 
         private bool RouteViewportPreviewKeyToTextBox(TextBox target, Key key)
@@ -8008,11 +8334,11 @@ namespace OceanyaClient
         private void SelectNextViewportPreviewInputTarget(TextBox current)
         {
             TextBox next = ReferenceEquals(current, ICMessageSettingsControl.txtICMessage)
-                ? OOCLogControl.txtOOCMessage
-                : ReferenceEquals(current, OOCLogControl.txtOOCMessage)
+                ? OocLog.LogControl.txtOOCMessage
+                : ReferenceEquals(current, OocLog.LogControl.txtOOCMessage)
                     ? ICMessageSettingsControl.txtICMessage
                     : ReferenceEquals(current, ICMessageSettingsControl.txtICShowname)
-                        ? OOCLogControl.txtOOCShowname
+                        ? OocLog.LogControl.txtOOCShowname
                         : ICMessageSettingsControl.txtICShowname;
             lastMainWindowFocusedElement = next;
             SetViewportPreviewInputProxyTarget(next, "tab target switch");
@@ -8107,23 +8433,23 @@ namespace OceanyaClient
                 return;
             }
 
-            if (ReferenceEquals(target, OOCLogControl.txtOOCMessage))
+            if (ReferenceEquals(target, OocLog.LogControl.txtOOCMessage))
             {
-                if (string.IsNullOrWhiteSpace(OOCLogControl.txtOOCShowname.Text))
+                if (string.IsNullOrWhiteSpace(OocLog.LogControl.txtOOCShowname.Text))
                 {
-                    OOCLogControl.AddMessage(currentClient, "Oceanya Client", "You must set a showname before sending a message!", true);
+                    OocLog.LogControl.AddMessage(currentClient, "Oceanya Client", "You must set a showname before sending a message!", true);
                     return;
                 }
 
                 if (currentClient == null)
                 {
-                    OOCLogControl.AddMessage(currentClient, "Oceanya Client", "No client selected. Please select a client first.", true);
+                    OocLog.LogControl.AddMessage(currentClient, "Oceanya Client", "No client selected. Please select a client first.", true);
                     return;
                 }
 
                 string message = target.Text;
                 target.Clear();
-                OOCLogControl.OnSendOOCMessage?.Invoke(OOCLogControl.txtOOCShowname.Text, message);
+                OocLog.LogControl.OnSendOOCMessage?.Invoke(OocLog.LogControl.txtOOCShowname.Text, message);
             }
         }
 
@@ -9320,12 +9646,12 @@ namespace OceanyaClient
                 }
 
                 ICMessageSettingsControl.ClearSettings();
-                OOCLogControl.ClearAllLogs();
-                ICLogControl.ClearAllLogs();
-                OOCLogControl.IsEnabled = false;
-                ICLogControl.IsEnabled = false;
+                OocLog.LogControl.ClearAllLogs();
+                IcLog.LogControl.ClearAllLogs();
+                OocLog.LogControl.IsEnabled = false;
+                IcLog.LogControl.IsEnabled = false;
                 ICMessageSettingsControl.IsEnabled = false;
-                OOCLogControl.UpdateStreamLabel(null);
+                OocLog.LogControl.UpdateStreamLabel(null);
                 currentClient = null;
                 RefreshAreaNavigatorForCurrentClient();
                 RefreshMusicListForCurrentClient();
@@ -9381,32 +9707,27 @@ namespace OceanyaClient
                 clickedButton.IsChecked = true;
             }
         }
-        private void chkStickyEffects_Checked(object sender, RoutedEventArgs e)
+        private void HandleStickyEffectsChanged(bool isChecked)
         {
-            if (sender is CheckBox checkBox)
-            {
-                ICMessageSettingsControl.stickyEffects = checkBox.IsChecked == true;
-
-                SaveFile.Data.StickyEffect = checkBox.IsChecked == true;
-                SaveFile.Save();
-            }
+            ICMessageSettingsControl.stickyEffects = isChecked;
+            SaveFile.Data.StickyEffect = isChecked;
+            SaveFile.Save();
         }
-        private void chkPosOnIniSwap_Checked(object sender, RoutedEventArgs e)
+        private void HandleSwitchPositionOnIniSwapChanged(bool isChecked)
         {
-            if (sender is CheckBox checkBox)
             {
                 foreach (var client in clients.Values)
                 {
-                    client.switchPosWhenChangingINI = checkBox.IsChecked == true;
+                    client.switchPosWhenChangingINI = isChecked;
                 }
 
-                SaveFile.Data.SwitchPosOnIniSwap = checkBox.IsChecked == true;
+                SaveFile.Data.SwitchPosOnIniSwap = isChecked;
                 SaveFile.Save();
             }
         }
         
 
-        private void btnCharacterFolderVisualizer_Click(object sender, RoutedEventArgs e)
+        private void OpenCharacterFolderVisualizerFromPanelRequest()
         {
             MessageBoxResult confirm = OceanyaMessageBox.Show(
                 "Opening the Character Folder Visualizer scans your entire AO2 characters directory and may take a while.\n\nContinue?",
@@ -9840,7 +10161,10 @@ namespace OceanyaClient
             }
         }
 
-        private async void Button_Click(object sender, RoutedEventArgs e)
+        /// <summary>
+        /// Developer-only bottom bar button: force-disconnects the client websockets.
+        /// </summary>
+        private async void DisconnectClientsFromDebugButton()
         {
             if (useSingleInternalClient)
             {
@@ -9915,14 +10239,11 @@ namespace OceanyaClient
             this.Close();
         }
 
-        private void chkInvertLog_Checked(object sender, RoutedEventArgs e)
+        private void HandleInvertIcLogChanged(bool isChecked)
         {
-            if (sender is CheckBox checkBox)
-            {
-                ICLogControl.SetInvertOnClientLogs(checkBox.IsChecked == true);
-                SaveFile.Data.InvertICLog = checkBox.IsChecked == true;
-                SaveFile.Save();
-            }
+            IcLog.LogControl.SetInvertOnClientLogs(isChecked);
+            SaveFile.Data.InvertICLog = isChecked;
+            SaveFile.Save();
         }
 
         private void DreddFeatureRow_OverlaySelected(object? sender, DreddOverlaySelectionItem selectedOverlay)
@@ -9964,7 +10285,7 @@ namespace OceanyaClient
             AudioPlayer.PlayEmbeddedSound("Resources/BellDing.mp3", AudioSettings.ScaleEmbeddedSfxVolume(0.25f));
         }
 
-        private async void btnAreaNavigator_Click(object sender, RoutedEventArgs e)
+        private async void OpenAreaNavigatorFromPanelRequest()
         {
             RefreshAreaNavigatorForCurrentClient();
             AreaNavigatorPopup.IsOpen = true;
@@ -9987,7 +10308,7 @@ namespace OceanyaClient
             RefreshAreaNavigatorForCurrentClient();
         }
 
-        private void btnMusicList_Click(object sender, RoutedEventArgs e)
+        private void OpenMusicListFromPanelRequest()
         {
             MusicListPopup.IsOpen = true;
             _ = Dispatcher.BeginInvoke(new Action(RefreshMusicListForCurrentClient), DispatcherPriority.Background);
@@ -10996,7 +11317,7 @@ namespace OceanyaClient
                     switch (focusedTextBox.Name)
                     {
                         case "txtICMessage":
-                            OOCLogControl.txtOOCMessage.Focus();
+                            OocLog.LogControl.txtOOCMessage.Focus();
                             e.Handled = true;
                             break;
                         case "txtOOCMessage":
@@ -11004,7 +11325,7 @@ namespace OceanyaClient
                             e.Handled = true; // Prevent default tab behavior
                             break;
                         case "txtICShowname":
-                            OOCLogControl.txtOOCShowname.Focus();
+                            OocLog.LogControl.txtOOCShowname.Focus();
                             e.Handled = true; // Prevent default tab behavior
                             break;
                         case "txtOOCShowname":

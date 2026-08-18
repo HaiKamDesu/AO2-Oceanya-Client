@@ -1268,8 +1268,12 @@ namespace UnitTests
             // automation ids live across those files now. The contract is that they still exist.
             string mainWindowXamlPath = Path.Combine(GetRepositoryRoot(), "OceanyaClient", "MainWindow.xaml");
             string panelDirectory = Path.Combine(GetRepositoryRoot(), "OceanyaClient", "Components", "Panels");
+            // Shout ids are applied at runtime (SetAutomationIdentity) because each shout is now its
+            // own panel instance, so the code-behind counts as a declaration site too.
             string mainWindowXaml = File.ReadAllText(mainWindowXamlPath)
-                + string.Concat(Directory.EnumerateFiles(panelDirectory, "*.xaml").Select(File.ReadAllText));
+                + File.ReadAllText(mainWindowXamlPath + ".cs")
+                + string.Concat(Directory.EnumerateFiles(panelDirectory, "*.xaml").Select(File.ReadAllText))
+                + string.Concat(Directory.EnumerateFiles(panelDirectory, "*.xaml.cs").Select(File.ReadAllText));
             OOCLog oocLog = new OOCLog();
             ICMessageSettings icSettings = new ICMessageSettings();
 
@@ -1277,10 +1281,10 @@ namespace UnitTests
             {
                 Assert.That(mainWindowXaml, Does.Contain("AutomationProperties.AutomationId=\"Main.AddClient\""));
                 Assert.That(mainWindowXaml, Does.Contain("AutomationProperties.AutomationId=\"Main.RemoveClient\""));
-                Assert.That(mainWindowXaml, Does.Contain("AutomationProperties.AutomationId=\"Main.Shout.HoldIt\""));
-                Assert.That(mainWindowXaml, Does.Contain("AutomationProperties.AutomationId=\"Main.Shout.Objection\""));
-                Assert.That(mainWindowXaml, Does.Contain("AutomationProperties.AutomationId=\"Main.Shout.TakeThat\""));
-                Assert.That(mainWindowXaml, Does.Contain("AutomationProperties.AutomationId=\"Main.Shout.Custom\""));
+                Assert.That(mainWindowXaml, Does.Contain("Main.Shout.HoldIt"));
+                Assert.That(mainWindowXaml, Does.Contain("Main.Shout.Objection"));
+                Assert.That(mainWindowXaml, Does.Contain("Main.Shout.TakeThat"));
+                Assert.That(mainWindowXaml, Does.Contain("Main.Shout.Custom"));
                 Assert.That(mainWindowXaml, Does.Contain("AutomationProperties.AutomationId=\"Main.OpenCharacterFolderVisualizer\""));
                 Assert.That(mainWindowXaml, Does.Contain("AutomationProperties.AutomationId=\"Main.AreaNavigator.Open\""));
                 Assert.That(mainWindowXaml, Does.Contain("AutomationProperties.AutomationId=\"Main.AreaNavigator.Popup\""));

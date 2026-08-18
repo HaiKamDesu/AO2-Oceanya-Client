@@ -20,6 +20,7 @@ using Common;
 using NUnit.Framework;
 using OceanyaClient;
 using OceanyaClient.Components;
+using OceanyaClient.Components.Panels;
 using OceanyaClient.Features.FileHivemind;
 using OceanyaClient.Features.GoogleDriveSync;
 
@@ -127,8 +128,8 @@ namespace UnitTests
             networkClient.OnReconnectionAttemptFailed?.Invoke(1);
             networkClient.OnReconnect?.Invoke();
 
-            ICLog icLog = (ICLog)window.FindName("ICLogControl");
-            OOCLog oocLog = (OOCLog)window.FindName("OOCLogControl");
+            ICLog icLog = GetIcLog(window);
+            OOCLog oocLog = GetOocLog(window);
             string icText = ReadDocumentText(icLog.FindName("LogBox"));
             string oocText = ReadDocumentText(oocLog.FindName("LogBox"));
 
@@ -575,6 +576,18 @@ namespace UnitTests
             client.SetICShowname(icShowname);
             client.OOCShowname = oocShowname;
             return client;
+        }
+
+        /// <summary>Resolves the IC log, which lives inside the IC log panel's name scope.</summary>
+        private static ICLog GetIcLog(MainWindow window)
+        {
+            return ((IcLogPanel)window.FindName("IcLog")).LogControl;
+        }
+
+        /// <summary>Resolves the OOC log, which lives inside the OOC log panel's name scope.</summary>
+        private static OOCLog GetOocLog(MainWindow window)
+        {
+            return ((OocLogPanel)window.FindName("OocLog")).LogControl;
         }
 
         private static void AddClientToWindow(MainWindow window, AOClient client)

@@ -30,10 +30,50 @@ namespace OceanyaClient.Components
         private List<UIElement> elements = new();
         private List<object> virtualItems = new();
         private Func<object, UIElement>? virtualElementFactory;
+        private double automaticItemSize;
 
         public PageButtonGrid()
         {
             InitializeComponent();
+            SizeChanged += (_, _) => RefreshAutomaticPageSize();
+        }
+
+        /// <summary>
+        /// Sizes the page from the available space instead of a fixed row/column count, so a resized
+        /// panel shows as many items as physically fit.
+        /// </summary>
+        /// <param name="itemSize">Nominal size of one item, including its spacing.</param>
+        public void EnableAutomaticPageSize(double itemSize)
+        {
+            automaticItemSize = itemSize > 0 ? itemSize : 0;
+            RefreshAutomaticPageSize();
+        }
+
+        /// <summary>
+        /// Recomputes rows and columns from the current size when automatic paging is enabled.
+        /// </summary>
+        private void RefreshAutomaticPageSize()
+        {
+            if (automaticItemSize <= 0)
+            {
+                return;
+            }
+
+            // The grid area excludes the paging buttons (30px each) and the 5px control margin.
+            double availableWidth = Math.Max(0, ActualWidth - 10 - (currentScrollMode == ScrollMode.Horizontal ? 60 : 0));
+            double availableHeight = Math.Max(0, ActualHeight - 10 - (currentScrollMode == ScrollMode.Vertical ? 60 : 0));
+
+            int resolvedColumns = currentScrollMode == ScrollMode.Vertical
+                ? Math.Max(1, (int)(availableWidth / automaticItemSize))
+                : Math.Max(1, (int)(availableWidth / automaticItemSize));
+            int resolvedRows = Math.Max(1, (int)(availableHeight / automaticItemSize));
+
+            if (resolvedRows == rows && resolvedColumns == columns)
+            {
+                return;
+            }
+
+            SetPageSize(resolvedRows, resolvedColumns);
         }
 
 

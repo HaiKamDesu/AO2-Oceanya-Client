@@ -12980,6 +12980,13 @@ namespace OceanyaClient
         private Window CreateEmoteDialog(string title, double width, double height)
         {
             Window? ownerWindow = HostWindow ?? Owner;
+
+            // A fixed request can exceed the monitor (small screens, or a large UI scale), which used to
+            // open the dialog cropped so the user had to resize or scroll to reach its buttons.
+            (double availableWidth, double availableHeight) = ResolveDialogSpace(ownerWindow);
+            width = Math.Min(width, availableWidth);
+            height = Math.Min(height, availableHeight);
+
             GenericOceanyaWindow dialog = new GenericOceanyaWindow
             {
                 Owner = ownerWindow,
@@ -12998,6 +13005,24 @@ namespace OceanyaClient
             };
 
             return dialog;
+        }
+
+        /// <summary>
+        /// Resolves how much room a hosted dialog has, in its own content units.
+        /// </summary>
+        /// <param name="ownerWindow">Owner window, used for the monitor and the active UI scale.</param>
+        /// <returns>Usable width and height for dialog content.</returns>
+        private static (double Width, double Height) ResolveDialogSpace(Window? ownerWindow)
+        {
+            (double workAreaWidth, double workAreaHeight) = UiScaleManager.GetLogicalWorkAreaSize(ownerWindow);
+            double scale = ownerWindow is GenericOceanyaWindow shell
+                ? UiScaleMath.ClampScale(shell.ContentScale)
+                : UiScaleMath.ClampScale(UiScaleManager.GlobalScale);
+
+            // Leave room for the shell chrome and a small margin from the screen edges.
+            double usableWidth = Math.Max(320, (workAreaWidth / scale) - 16);
+            double usableHeight = Math.Max(240, (workAreaHeight / scale) - GenericOceanyaWindow.SharedHeaderHeight - 24);
+            return (usableWidth, usableHeight);
         }
 
         private static string BuildPopupStateKey(string id)
@@ -13381,14 +13406,19 @@ namespace OceanyaClient
             panelGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
             panelGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-            ScrollViewer contentScroll = new ScrollViewer
+            // Shrink-to-fit instead of scroll: a dialog smaller than its content used to force the user
+            // to scroll or resize to reach the rest of it. DownOnly keeps 1:1 at or above natural size.
+            Viewbox contentBox = new Viewbox
             {
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                Content = body,
+                Child = body,
+                Stretch = Stretch.Uniform,
+                StretchDirection = StretchDirection.DownOnly,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Top,
                 Margin = new Thickness(0, 0, 0, 2)
             };
-            Grid.SetRow(contentScroll, 0);
-            panelGrid.Children.Add(contentScroll);
+            Grid.SetRow(contentBox, 0);
+            panelGrid.Children.Add(contentBox);
 
             Grid.SetRow(buttons, 1);
             panelGrid.Children.Add(buttons);
