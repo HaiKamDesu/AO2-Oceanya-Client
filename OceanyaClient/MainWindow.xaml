@@ -13,6 +13,41 @@
       2) You can omit or customize these if you do not need them for MainWindow.
     -->
     <local:OceanyaWindowContentControl.Resources>
+        <!--
+            Face-art button: the template holds an Image so a theme's artwork can replace the face, with the
+            caption shown on top of it while there is no art. Every themeable extra button uses this, because
+            a default WPF Button template has nothing an image override can paint.
+        -->
+        <Style x:Key="ThemeableFaceButton" TargetType="{x:Type Button}">
+            <Setter Property="Foreground" Value="#FFE8E8E8"/>
+            <Setter Property="Background" Value="#FF2A2E33"/>
+            <Setter Property="BorderBrush" Value="#FF3E5362"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Button}">
+                        <Grid>
+                            <Border Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"/>
+                            <Image x:Name="ButtonImage" Stretch="Fill"/>
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonImage" Property="Opacity" Value="0.75"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="ButtonImage" Property="Opacity" Value="0.35"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- Button style with a dark overlay on hover and press -->
         <Style x:Key="ModernButton" TargetType="{x:Type Button}">
             <Setter Property="Background" Value="#FF262626"/>
@@ -180,6 +215,177 @@
                                 Visibility="Collapsed"
                                 ClipToBounds="True"/>
 
+                <!-- Hosts for the area and music lists when they render in the window instead of a popup.
+                     The popup content is REPARENTED into these, so every handler keeps working. -->
+                <ContentControl x:Name="AreaListPanelHost"
+                                AutomationProperties.AutomationId="Main.AreaNavigator.Panel"
+                                Visibility="Collapsed"
+                                ClipToBounds="True"/>
+
+                <ContentControl x:Name="MusicListPanelHost"
+                                AutomationProperties.AutomationId="Main.MusicList.Panel"
+                                Visibility="Collapsed"
+                                ClipToBounds="True"/>
+
+                <Button x:Name="btnAreaMusicSwitch"
+                        AutomationProperties.AutomationId="Main.AreaMusic.Switch"
+                        AutomationProperties.Name="Switch between area and music lists"
+                        Content="A/M"
+                        Style="{StaticResource ThemeableFaceButton}"
+                        ToolTip="Switch between the area list and the music list"
+                        Click="btnAreaMusicSwitch_Click"/>
+
+                <!--
+                    Optional AO2 counterparts. All are hidden by default (OceanyaPanelCatalog's
+                    hidden-by-default set) and appear when a theme places them or a user un-hides them.
+                -->
+                <Button x:Name="btnMute"
+                        AutomationProperties.AutomationId="Main.Mute"
+                        AutomationProperties.Name="Mute"
+                        Content="Mute"
+                        Style="{StaticResource ThemeableFaceButton}"
+                        ToolTip="Mute a player in this area"
+                        Click="btnMute_Click"/>
+
+                <Button x:Name="btnEvidence"
+                        AutomationProperties.AutomationId="Main.Evidence"
+                        AutomationProperties.Name="Evidence"
+                        Content="Evidence"
+                        Style="{StaticResource ThemeableFaceButton}"
+                        ToolTip="Evidence"
+                        Click="btnEvidence_Click"/>
+
+                <Button x:Name="btnReloadTheme"
+                        AutomationProperties.AutomationId="Main.ReloadTheme"
+                        AutomationProperties.Name="Reload theme"
+                        Content="Reload"
+                        Style="{StaticResource ThemeableFaceButton}"
+                        ToolTip="Reload the selected theme"
+                        Click="btnReloadTheme_Click"/>
+
+                <Button x:Name="btnChangeCharacter"
+                        AutomationProperties.AutomationId="Main.ChangeCharacter"
+                        AutomationProperties.Name="Change character"
+                        Content="Character"
+                        Style="{StaticResource ThemeableFaceButton}"
+                        ToolTip="Pick the INIPuppet for this client"
+                        Click="btnChangeCharacter_Click"/>
+
+                <Button x:Name="btnCallMod"
+                        AutomationProperties.AutomationId="Main.CallMod"
+                        AutomationProperties.Name="Call moderator"
+                        Content="Call Mod"
+                        Style="{StaticResource ThemeableFaceButton}"
+                        ToolTip="Call moderator support for this area"
+                        Click="btnCallMod_Click"/>
+
+                <CheckBox x:Name="chkSendShowname"
+                          AutomationProperties.AutomationId="Main.Ic.SendShowname"
+                          AutomationProperties.Name="Send showname"
+                          Content="Showname"
+                          Foreground="White"
+                          IsChecked="True"
+                          Checked="chkSendShowname_Changed"
+                          Unchecked="chkSendShowname_Changed"/>
+
+                <!--
+                    Judge controls. The bars are pure artwork driven by the server's HP packets, and the
+                    four buttons ask the server to play a courtroom animation for everyone.
+                -->
+                <Image x:Name="imgDefenceBar" Stretch="Fill"/>
+                <Image x:Name="imgProsecutionBar" Stretch="Fill"/>
+
+                <Button x:Name="btnDefenceMinus"
+                        AutomationProperties.AutomationId="Main.Judge.DefenceMinus"
+                        Content="-"
+                        Style="{StaticResource ThemeableFaceButton}"
+                        ToolTip="Lower the defence health bar"
+                        Click="btnDefenceMinus_Click"/>
+                <Button x:Name="btnDefencePlus"
+                        AutomationProperties.AutomationId="Main.Judge.DefencePlus"
+                        Content="+"
+                        Style="{StaticResource ThemeableFaceButton}"
+                        ToolTip="Raise the defence health bar"
+                        Click="btnDefencePlus_Click"/>
+                <Button x:Name="btnProsecutionMinus"
+                        AutomationProperties.AutomationId="Main.Judge.ProsecutionMinus"
+                        Content="-"
+                        Style="{StaticResource ThemeableFaceButton}"
+                        ToolTip="Lower the prosecution health bar"
+                        Click="btnProsecutionMinus_Click"/>
+                <Button x:Name="btnProsecutionPlus"
+                        AutomationProperties.AutomationId="Main.Judge.ProsecutionPlus"
+                        Content="+"
+                        Style="{StaticResource ThemeableFaceButton}"
+                        ToolTip="Raise the prosecution health bar"
+                        Click="btnProsecutionPlus_Click"/>
+
+                <Button x:Name="btnWitnessTestimony"
+                        AutomationProperties.AutomationId="Main.Judge.WitnessTestimony"
+                        Content="WT"
+                        Style="{StaticResource ThemeableFaceButton}"
+                        ToolTip="Play the Witness Testimony animation"
+                        Click="btnWitnessTestimony_Click"/>
+                <Button x:Name="btnCrossExamination"
+                        AutomationProperties.AutomationId="Main.Judge.CrossExamination"
+                        Content="CE"
+                        Style="{StaticResource ThemeableFaceButton}"
+                        ToolTip="Play the Cross Examination animation"
+                        Click="btnCrossExamination_Click"/>
+                <Button x:Name="btnNotGuilty"
+                        AutomationProperties.AutomationId="Main.Judge.NotGuilty"
+                        Content="Not Guilty"
+                        Style="{StaticResource ThemeableFaceButton}"
+                        ToolTip="Play the Not Guilty verdict"
+                        Click="btnNotGuilty_Click"/>
+                <Button x:Name="btnGuilty"
+                        AutomationProperties.AutomationId="Main.Judge.Guilty"
+                        Content="Guilty"
+                        Style="{StaticResource ThemeableFaceButton}"
+                        ToolTip="Play the Guilty verdict"
+                        Click="btnGuilty_Click"/>
+
+                <!-- Decorative label art beside the sliders; AO2 themes draw the words as one image. -->
+                <Image x:Name="imgMusicVolumeLabel" Stretch="Fill"/>
+                <Image x:Name="imgSfxVolumeLabel" Stretch="Fill"/>
+                <Image x:Name="imgBlipVolumeLabel" Stretch="Fill"/>
+
+                <Slider x:Name="sliderMusicVolume"
+                        AutomationProperties.AutomationId="Main.Volume.Music"
+                        AutomationProperties.Name="Music volume"
+                        Minimum="0"
+                        Maximum="100"
+                        ToolTip="Music volume"
+                        Foreground="#FFE8E8E8"
+                        Background="#FF2A2E33"
+                        ValueChanged="VolumeSlider_ValueChanged"
+                        Thumb.DragCompleted="VolumeSlider_DragCompleted"
+                        MouseLeftButtonUp="VolumeSlider_MouseLeftButtonUp"/>
+
+                <Slider x:Name="sliderSfxVolume"
+                        AutomationProperties.AutomationId="Main.Volume.Sfx"
+                        AutomationProperties.Name="SFX volume"
+                        Minimum="0"
+                        Maximum="100"
+                        ToolTip="Sound effect volume"
+                        Foreground="#FFE8E8E8"
+                        Background="#FF2A2E33"
+                        ValueChanged="VolumeSlider_ValueChanged"
+                        Thumb.DragCompleted="VolumeSlider_DragCompleted"
+                        MouseLeftButtonUp="VolumeSlider_MouseLeftButtonUp"/>
+
+                <Slider x:Name="sliderBlipVolume"
+                        AutomationProperties.AutomationId="Main.Volume.Blip"
+                        AutomationProperties.Name="Blip volume"
+                        Minimum="0"
+                        Maximum="100"
+                        ToolTip="Blip volume"
+                        Foreground="#FFE8E8E8"
+                        Background="#FF2A2E33"
+                        ValueChanged="VolumeSlider_ValueChanged"
+                        Thumb.DragCompleted="VolumeSlider_DragCompleted"
+                        MouseLeftButtonUp="VolumeSlider_MouseLeftButtonUp"/>
+
                 <panels:BottomStatusBarPanel x:Name="BottomBar"/>
 
                 <Popup x:Name="AreaNavigatorPopup"
@@ -213,6 +419,8 @@
                                        Margin="0,0,0,6"/>
                             <ListBox x:Name="lstAreas"
                                      Grid.Row="2"
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                      AutomationProperties.AutomationId="Main.AreaNavigator.List"
                                      Margin="0,0,0,6"
                                      Background="#FF11161A"
@@ -332,6 +540,8 @@
                                 <TreeView x:Name="treeMusic"
                                          PreviewMouseRightButtonDown="treeMusic_PreviewMouseRightButtonDown"
                                          Grid.Row="2"
+                                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                          AutomationProperties.AutomationId="Main.MusicList.List"
                                          Margin="0,0,0,8"
                                          Background="#FF11161A"

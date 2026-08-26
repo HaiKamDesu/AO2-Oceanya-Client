@@ -59,6 +59,12 @@ namespace OceanyaClient.Features.Theme
         private readonly Action onLayoutPersisted;
         private readonly Dictionary<string, Border> overlays = new Dictionary<string, Border>(StringComparer.Ordinal);
         private readonly HashSet<string> hiddenPanelIds = new HashSet<string>(StringComparer.Ordinal);
+
+        /// <summary>
+        /// Panels listed as hidden only because they are off the surface, so the listing can be undone when
+        /// they come back into view rather than being confused with a deliberate hide.
+        /// </summary>
+        private readonly HashSet<string> offSurfacePanelIds = new HashSet<string>(StringComparer.Ordinal);
         private readonly Dictionary<string, OceanyaPanelPlacementState> panelStyleStates =
             new Dictionary<string, OceanyaPanelPlacementState>(StringComparer.Ordinal);
 
@@ -142,6 +148,7 @@ namespace OceanyaClient.Features.Theme
                 }
             }
 
+            offSurfacePanelIds.Clear();
             foreach (string panelId in panels.Keys)
             {
                 if (IsHiddenByLayout(panelId))
@@ -149,6 +156,10 @@ namespace OceanyaClient.Features.Theme
                     hiddenPanelIds.Add(panelId);
                 }
             }
+
+            // Off-surface counts as hidden: a panel dragged (or imported) past the edge cannot be found or
+            // clicked, so it belongs in the same list users already know how to recover from.
+            RefreshUnreachablePanels();
 
             foreach (KeyValuePair<string, OceanyaPanelElements> pair in panels)
             {
@@ -158,7 +169,7 @@ namespace OceanyaClient.Features.Theme
                     continue;
                 }
 
-                if (pair.Value.Element.Visibility != Visibility.Visible)
+                if (pair.Value.Element.Visibility != Visibility.Visible || hiddenPanelIds.Contains(pair.Key))
                 {
                     // Hidden panels get no overlay at all: they are restored from the toolbar's
                     // "Hidden controls" list instead of being ghosted in place.
@@ -307,10 +318,17 @@ namespace OceanyaClient.Features.Theme
             }
 
             overlays.Clear();
+
+            // Visibility and placement can both have changed since the last rebuild (a panel host swapped
+            // for its button, a layout applied, the window resized), so what is unreachable is re-derived
+            // here rather than only when edit mode starts.
+            RefreshUnreachablePanels();
             foreach (KeyValuePair<string, OceanyaPanelElements> pair in panels)
             {
                 OceanyaPanelDescriptor? descriptor = OceanyaPanelCatalog.TryGet(pair.Key);
-                if (descriptor == null || pair.Value.Element.Visibility != Visibility.Visible)
+                if (descriptor == null
+                    || pair.Value.Element.Visibility != Visibility.Visible
+                    || hiddenPanelIds.Contains(pair.Key))
                 {
                     continue;
                 }
@@ -347,6 +365,8 @@ namespace OceanyaClient.Features.Theme
                     Width = placement.Width,
                     Height = placement.Height,
                     IsHidden = hiddenPanelIds.Contains(pair.Key),
+                    IsLocked = style?.IsLocked ?? false,
+                    IsClickThrough = style?.IsClickThrough ?? false,
                     FontSize = style?.FontSize ?? 0,
                     ImageScaling = style?.ImageScaling ?? string.Empty,
                     ItemSize = style?.ItemSize ?? 0,
@@ -379,6 +399,45 @@ namespace OceanyaClient.Features.Theme
         private void Surface_SizeChanged(object sender, SizeChangedEventArgs e)
         {
             PositionEditToolbar();
+
+            // A smaller surface can strand a panel that was on screen a moment ago.
+            if (RefreshUnreachablePanels())
+            {
+                RebuildOverlays();
+            }
+        }
+
+        /// <summary>
+        /// Re-derives which panels are unreachable because they lie outside the surface.
+        /// </summary>
+        /// <returns>True when the hidden list changed.</returns>
+        private bool RefreshUnreachablePanels()
+        {
+            bool changed = false;
+            foreach (string panelId in panels.Keys)
+            {
+                bool offSurface = IsFullyOffSurface(panelId);
+                if (offSurface && hiddenPanelIds.Add(panelId))
+                {
+                    offSurfacePanelIds.Add(panelId);
+                    changed = true;
+                    continue;
+                }
+
+                // Only un-list panels this check added: a deliberate hide stays hidden.
+                if (!offSurface && offSurfacePanelIds.Remove(panelId))
+                {
+                    hiddenPanelIds.Remove(panelId);
+                    changed = true;
+                }
+            }
+
+            if (changed)
+            {
+                RefreshHiddenControlsButton();
+            }
+
+            return changed;
         }
 
         private void Surface_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
@@ -440,6 +499,7 @@ namespace OceanyaClient.Features.Theme
             buttons.Children.Add(hiddenControlsButton);
             addPanelButton = CreateToolbarButton("Add panel", () => ShowAddPanelMenu(addPanelButton, null));
             buttons.Children.Add(addPanelButton);
+            buttons.Children.Add(CreateToolbarButton("Stylesheet...", ApplyStylesheetFromFile));
 
             editToolbar = new Border
             {
@@ -483,9 +543,14 @@ namespace OceanyaClient.Features.Theme
             {
                 foreach (string panelId in hidden)
                 {
-                    MenuItem restore = new MenuItem { Header = "Show " + OceanyaPanelCatalog.Get(panelId).DisplayName };
+                    bool offSurface = IsFullyOffSurface(panelId);
+                    MenuItem restore = new MenuItem
+                    {
+                        Header = "Show " + OceanyaPanelCatalog.Get(panelId).DisplayName
+                            + (offSurface ? " (off-screen)" : string.Empty)
+                    };
                     string capturedId = panelId;
-                    restore.Click += (_, _) => SetPanelHidden(capturedId, false);
+                    restore.Click += (_, _) => ShowHiddenPanel(capturedId);
                     menu.Items.Add(restore);
                 }
 
@@ -495,13 +560,29 @@ namespace OceanyaClient.Features.Theme
                 {
                     foreach (string panelId in hidden)
                     {
-                        SetPanelHidden(panelId, false);
+                        ShowHiddenPanel(panelId);
                     }
                 };
                 menu.Items.Add(restoreAll);
             }
 
             menu.IsOpen = true;
+        }
+
+        /// <summary>
+        /// Makes a panel from the hidden list reachable again.
+        /// </summary>
+        /// <param name="panelId">Panel to recover.</param>
+        private void ShowHiddenPanel(string panelId)
+        {
+            bool wasOffSurface = IsFullyOffSurface(panelId) || offSurfacePanelIds.Contains(panelId);
+            offSurfacePanelIds.Remove(panelId);
+            SetPanelHidden(panelId, false);
+            if (wasOffSurface)
+            {
+                BringPanelIntoView(panelId);
+                PersistLayout();
+            }
         }
 
         /// <summary>
@@ -556,11 +637,90 @@ namespace OceanyaClient.Features.Theme
         /// </summary>
         /// <param name="panelId">Panel to test.</param>
         /// <returns>True when the layout marks the panel hidden.</returns>
-        private static bool IsHiddenByLayout(string panelId)
+        /// <summary>
+        /// Gets a value indicating whether the saved layout locks a panel in place.
+        /// </summary>
+        /// <param name="panelId">Panel to test.</param>
+        /// <returns>True when the panel is locked.</returns>
+        private static bool IsPanelLocked(string panelId)
         {
             return SaveFile.Data.OceanyaThemeLayout?.Panels != null
                 && SaveFile.Data.OceanyaThemeLayout.Panels.TryGetValue(panelId, out OceanyaPanelPlacementState? state)
-                && state?.IsHidden == true;
+                && state?.IsLocked == true;
+        }
+
+        /// <summary>
+        /// Gets a value indicating whether a panel lies entirely outside the visible surface.
+        /// </summary>
+        /// <param name="panelId">Panel to test.</param>
+        /// <returns>True when no part of the panel is on screen.</returns>
+        private bool IsFullyOffSurface(string panelId)
+        {
+            if (!panels.TryGetValue(panelId, out OceanyaPanelElements elements)
+                || (elements.Element.Visibility != Visibility.Visible && !offSurfacePanelIds.Contains(panelId)))
+            {
+                // A panel we collapsed ourselves for being off-surface still has to be tested, or it could
+                // never leave the list.
+                return false;
+            }
+
+            OceanyaPanelPlacement placement = OceanyaPanelLayout.CapturePlacement(elements.Element);
+            double surfaceWidth = surface.ActualWidth > 0 ? surface.ActualWidth : surface.Width;
+            double surfaceHeight = surface.ActualHeight > 0 ? surface.ActualHeight : surface.Height;
+            if (double.IsNaN(surfaceWidth) || double.IsNaN(surfaceHeight) || surfaceWidth <= 0 || surfaceHeight <= 0)
+            {
+                return false;
+            }
+
+            return placement.Left + placement.Width <= 0
+                || placement.Top + placement.Height <= 0
+                || placement.Left >= surfaceWidth
+                || placement.Top >= surfaceHeight;
+        }
+
+        /// <summary>
+        /// Brings a panel back into view: centred on the surface and on top of everything else.
+        /// </summary>
+        /// <remarks>
+        /// Showing an off-surface panel where it was would put it straight back out of reach, so a restore
+        /// always lands it somewhere the user can see and grab.
+        /// </remarks>
+        /// <param name="panelId">Panel to recover.</param>
+        private void BringPanelIntoView(string panelId)
+        {
+            if (!panels.TryGetValue(panelId, out OceanyaPanelElements elements))
+            {
+                return;
+            }
+
+            OceanyaPanelPlacement current = OceanyaPanelLayout.CapturePlacement(elements.Element);
+            double surfaceWidth = surface.ActualWidth > 0 ? surface.ActualWidth : current.Width;
+            double surfaceHeight = surface.ActualHeight > 0 ? surface.ActualHeight : current.Height;
+            OceanyaPanelDescriptor descriptor = OceanyaPanelCatalog.Get(panelId);
+
+            OceanyaPanelPlacement centred = OceanyaPanelLayout.SanitizePlacement(
+                new OceanyaPanelPlacement(
+                    Math.Max(0, Math.Round((surfaceWidth - current.Width) / 2)),
+                    Math.Max(0, Math.Round((surfaceHeight - current.Height) / 2)),
+                    current.Width,
+                    current.Height),
+                descriptor);
+
+            OceanyaPanelLayout.ApplyPlacement(elements.Element, centred);
+            ChangePanelOrder(panelId, OceanyaPanelOrderChange.ToFront);
+        }
+
+        private static bool IsHiddenByLayout(string panelId)
+        {
+            if (SaveFile.Data.OceanyaThemeLayout?.Panels != null
+                && SaveFile.Data.OceanyaThemeLayout.Panels.TryGetValue(panelId, out OceanyaPanelPlacementState? state)
+                && state != null)
+            {
+                return state.IsHidden;
+            }
+
+            // No entry at all: hidden-by-default panels stay hidden, everything else is visible.
+            return OceanyaPanelCatalog.IsHiddenByDefault(panelId);
         }
 
         private Border CreateOverlay(string panelId, string displayName, bool isHidden)
@@ -579,11 +739,21 @@ namespace OceanyaClient.Features.Theme
 
             overlay.MouseEnter += (_, _) =>
             {
+                if (IsPanelLocked(panelId))
+                {
+                    return;
+                }
+
                 overlay.Background = new SolidColorBrush(Color.FromArgb(0x40, 0x00, 0x00, 0x00));
                 overlay.BorderThickness = new Thickness(2);
             };
             overlay.MouseLeave += (_, _) =>
             {
+                if (IsPanelLocked(panelId))
+                {
+                    return;
+                }
+
                 overlay.Background = Brushes.Transparent;
                 overlay.BorderThickness = new Thickness(1);
                 overlay.Cursor = Cursors.SizeAll;
@@ -606,6 +776,7 @@ namespace OceanyaClient.Features.Theme
             });
             overlay.Child = content;
 
+            ApplyOverlayLockedAppearance(overlay, IsPanelLocked(panelId));
             overlay.MouseLeftButtonDown += Overlay_MouseLeftButtonDown;
             overlay.MouseMove += Overlay_MouseMove;
             overlay.MouseLeftButtonUp += Overlay_MouseLeftButtonUp;
@@ -663,6 +834,22 @@ namespace OceanyaClient.Features.Theme
                 menu.Items.Add(delete);
             }
 
+            bool isLocked = ResolvePanelState(panelId).IsLocked;
+            MenuItem lockItem = new MenuItem { Header = "Lock in place", IsCheckable = true, IsChecked = isLocked };
+            lockItem.Click += (_, _) => SetPanelLocked(panelId, !isLocked);
+            menu.Items.Add(lockItem);
+
+            bool isClickThrough = ResolvePanelState(panelId).IsClickThrough;
+            MenuItem clickThroughItem = new MenuItem
+            {
+                Header = "Click-through",
+                IsCheckable = true,
+                IsChecked = isClickThrough,
+                ToolTip = "Let clicks pass through this panel to whatever is behind it."
+            };
+            clickThroughItem.Click += (_, _) => SetPanelClickThrough(panelId, !isClickThrough);
+            menu.Items.Add(clickThroughItem);
+
             bool isHidden = IsHiddenByLayout(panelId);
             MenuItem visibility = new MenuItem { Header = isHidden ? "Show panel" : "Hide panel" };
             visibility.Click += (_, _) => SetPanelHidden(panelId, !isHidden);
@@ -675,6 +862,35 @@ namespace OceanyaClient.Features.Theme
 
             return menu;
         }
+
+        /// <summary>
+        /// Lets the user apply a Qt stylesheet (AO2's <c>courtroom_stylesheets.css</c> form) to the panels.
+        /// </summary>
+        /// <remarks>
+        /// The translatable declarations land in the same per-panel colour and font fields the settings
+        /// popups expose, so this is a bulk edit rather than a separate styling engine.
+        /// </remarks>
+        public void ApplyStylesheetFromFile()
+        {
+            Microsoft.Win32.OpenFileDialog dialog = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Pick a stylesheet (AO2 courtroom_stylesheets.css)",
+                Filter = "Stylesheets|*.css|All files|*.*"
+            };
+
+            if (dialog.ShowDialog() != true)
+            {
+                return;
+            }
+
+            SaveFile.Data.OceanyaThemeLayout ??= new OceanyaThemeLayoutState();
+            int changed = Ao2StylesheetTranslator.ApplyStylesheetFile(dialog.FileName, SaveFile.Data.OceanyaThemeLayout);
+            SaveFile.Save();
+            StylesheetApplied?.Invoke(this, changed);
+        }
+
+        /// <summary>Raised after a stylesheet was applied, with how many panels it touched.</summary>
+        public event EventHandler<int>? StylesheetApplied;
 
         /// <summary>
         /// Opens the menu for adding a picture or colour panel.
@@ -698,6 +914,7 @@ namespace OceanyaClient.Features.Theme
             MenuItem addColor = new MenuItem { Header = "Solid colour panel..." };
             addColor.Click += (_, _) => AddColorPanel(dropPoint);
             menu.Items.Add(addColor);
+
 
             menu.IsOpen = true;
         }
@@ -821,7 +1038,8 @@ namespace OceanyaClient.Features.Theme
                         state => OceanyaPanelSettingsDialogs.ShowFontSettings(
                             Window.GetWindow(surface),
                             descriptor.DisplayName,
-                            state)));
+                            state,
+                            descriptor.Kind)));
                     break;
 
                 case OceanyaPanelKind.ImageButton:
@@ -837,6 +1055,27 @@ namespace OceanyaClient.Features.Theme
                     AddMenuItem(menu, "Image settings...", () => EditPanelSettings(
                         descriptor.Id,
                         state => OceanyaPanelSettingsDialogs.ShowImageSettings(
+                            Window.GetWindow(surface),
+                            descriptor.DisplayName,
+                            state)));
+                    break;
+
+                case OceanyaPanelKind.Static:
+                    // The logs are static panels that still show text and own scrollbars, so they need the
+                    // same font, surface and scrollbar fields an import can write.
+                    AddMenuItem(menu, "Font settings...", () => EditPanelSettings(
+                        descriptor.Id,
+                        state => OceanyaPanelSettingsDialogs.ShowFontSettings(
+                            Window.GetWindow(surface),
+                            descriptor.DisplayName,
+                            state,
+                            descriptor.Kind)));
+                    break;
+
+                case OceanyaPanelKind.Slider:
+                    AddMenuItem(menu, "Slider settings...", () => EditPanelSettings(
+                        descriptor.Id,
+                        state => OceanyaPanelSettingsDialogs.ShowSliderSettings(
                             Window.GetWindow(surface),
                             descriptor.DisplayName,
                             state)));
@@ -986,6 +1225,57 @@ namespace OceanyaClient.Features.Theme
         }
 
         /// <summary>
+        /// Locks or unlocks a panel. A locked panel cannot be moved or resized but is still
+        /// right-clickable, which is what makes a full-surface backdrop usable as a panel.
+        /// </summary>
+        /// <param name="panelId">Panel to lock or unlock.</param>
+        /// <param name="isLocked">True to lock it.</param>
+        public void SetPanelLocked(string panelId, bool isLocked)
+        {
+            OceanyaPanelPlacementState state = ResolvePanelState(panelId);
+            state.IsLocked = isLocked;
+            ApplyResolvedPanelState(panelId, state);
+            if (overlays.TryGetValue(panelId, out Border? overlay))
+            {
+                ApplyOverlayLockedAppearance(overlay, isLocked);
+            }
+        }
+
+        /// <summary>
+        /// Makes a panel transparent to the mouse, or opaque again.
+        /// </summary>
+        /// <param name="panelId">Panel to change.</param>
+        /// <param name="isClickThrough">True to let clicks pass through.</param>
+        public void SetPanelClickThrough(string panelId, bool isClickThrough)
+        {
+            OceanyaPanelPlacementState state = ResolvePanelState(panelId);
+            state.IsClickThrough = isClickThrough;
+            ApplyResolvedPanelState(panelId, state);
+        }
+
+        /// <summary>
+        /// Marks a locked overlay visually and stops it showing a move cursor.
+        /// </summary>
+        /// <param name="overlay">Overlay to restyle.</param>
+        /// <param name="isLocked">Whether the panel is locked.</param>
+        private static void ApplyOverlayLockedAppearance(Border overlay, bool isLocked)
+        {
+            // Locked means "I am done with this one": no edges, no grip, no hover highlight, so it stops
+            // adding visual noise. The overlay stays present but invisible so its menu is still reachable.
+            overlay.Cursor = isLocked ? Cursors.Arrow : Cursors.SizeAll;
+            overlay.BorderThickness = isLocked ? new Thickness(0) : new Thickness(1);
+            overlay.BorderBrush = Brushes.White;
+            overlay.Background = Brushes.Transparent;
+            if (overlay.Child is Grid content)
+            {
+                foreach (UIElement child in content.Children)
+                {
+                    child.Visibility = isLocked ? Visibility.Collapsed : Visibility.Visible;
+                }
+            }
+        }
+
+        /// <summary>
         /// Hides or shows a panel and remembers the choice in the theme layout.
         /// </summary>
         /// <param name="panelId">Panel to hide or show.</param>
@@ -1001,6 +1291,10 @@ namespace OceanyaClient.Features.Theme
             if (isHidden)
             {
                 hiddenPanelIds.Add(panelId);
+            }
+            else
+            {
+                offSurfacePanelIds.Remove(panelId);
             }
 
             elements.Element.Visibility = isHidden ? Visibility.Collapsed : Visibility.Visible;
@@ -1037,14 +1331,12 @@ namespace OceanyaClient.Features.Theme
             IReadOnlyDictionary<string, OceanyaPanelElements> panels,
             OceanyaThemeLayoutState? savedLayout)
         {
-            if (savedLayout?.Panels == null)
-            {
-                return;
-            }
-
             foreach (KeyValuePair<string, OceanyaPanelElements> pair in panels)
             {
-                if (!savedLayout.Panels.TryGetValue(pair.Key, out OceanyaPanelPlacementState? state) || state?.IsHidden != true)
+                bool hidden = savedLayout?.Panels == null
+                    ? OceanyaPanelCatalog.IsHiddenByDefault(pair.Key)
+                    : ResolveHiddenState(savedLayout, pair.Key);
+                if (!hidden)
                 {
                     continue;
                 }
@@ -1055,6 +1347,19 @@ namespace OceanyaClient.Features.Theme
                     pair.Value.Backdrop.Visibility = Visibility.Collapsed;
                 }
             }
+        }
+
+        /// <summary>
+        /// Resolves whether a panel is hidden, falling back to the catalog when a layout says nothing.
+        /// </summary>
+        /// <param name="savedLayout">Layout being applied.</param>
+        /// <param name="panelId">Panel id.</param>
+        /// <returns>True when the panel should be collapsed.</returns>
+        private static bool ResolveHiddenState(OceanyaThemeLayoutState savedLayout, string panelId)
+        {
+            return savedLayout.Panels.TryGetValue(panelId, out OceanyaPanelPlacementState? state) && state != null
+                ? state.IsHidden
+                : OceanyaPanelCatalog.IsHiddenByDefault(panelId);
         }
 
         /// <summary>
@@ -1117,6 +1422,14 @@ namespace OceanyaClient.Features.Theme
                 return;
             }
 
+            if (IsPanelLocked(panelId))
+            {
+                // Locked panels stay put; the click is swallowed so the drag never starts, but the
+                // context menu still opens on right-click.
+                e.Handled = true;
+                return;
+            }
+
             activePanelId = panelId;
             dragStartPoint = e.GetPosition(surface);
             dragStartPlacement = OceanyaPanelLayout.CapturePlacement(panels[panelId].Element);
@@ -1137,7 +1450,7 @@ namespace OceanyaClient.Features.Theme
 
         private void Overlay_MouseMove(object sender, MouseEventArgs e)
         {
-            if (sender is Border hovered && activePanelId == null)
+            if (sender is Border hovered && activePanelId == null && hovered.Tag is string hoveredId && !IsPanelLocked(hoveredId))
             {
                 // Show the resize cursor over the grip so it is discoverable without guessing.
                 Point local = e.GetPosition(hovered);
@@ -1205,9 +1518,24 @@ namespace OceanyaClient.Features.Theme
 
             if (activePanelId != null)
             {
+                string droppedId = activePanelId;
                 activePanelId = null;
                 isResizing = false;
                 PersistLayout();
+
+                // Dropping a panel past the surface edge makes it unreachable, so it joins the hidden list
+                // straight away rather than becoming something the user has to hunt for.
+                if (IsFullyOffSurface(droppedId) && hiddenPanelIds.Add(droppedId))
+                {
+                    offSurfacePanelIds.Add(droppedId);
+                    if (overlays.TryGetValue(droppedId, out Border? strandedOverlay))
+                    {
+                        surface.Children.Remove(strandedOverlay);
+                        overlays.Remove(droppedId);
+                    }
+
+                    RefreshHiddenControlsButton();
+                }
             }
 
             e.Handled = true;

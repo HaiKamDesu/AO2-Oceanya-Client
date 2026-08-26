@@ -23,8 +23,13 @@ namespace OceanyaClient.Features.Theme
         /// <param name="owner">Owner window.</param>
         /// <param name="panelName">Panel display name, shown in the title.</param>
         /// <param name="state">State mutated when the user accepts.</param>
+        /// <param name="kind">Panel kind, deciding which extra fields are offered.</param>
         /// <returns>True when the user accepted the dialog.</returns>
-        public static bool ShowFontSettings(Window? owner, string panelName, OceanyaPanelPlacementState state)
+        public static bool ShowFontSettings(
+            Window? owner,
+            string panelName,
+            OceanyaPanelPlacementState state,
+            OceanyaPanelKind kind = OceanyaPanelKind.TextInput)
         {
             ComboBox familyBox = StyledComboBox();
             familyBox.Items.Add(DefaultOption);
@@ -55,14 +60,59 @@ namespace OceanyaClient.Features.Theme
             styleRow.Children.Add(underlineBox);
 
             ColorPickerRow colorRow = CreateColorPickerRow(owner, state.TextColor, "Text colour");
+            ColorPickerRow backgroundRow = CreateColorPickerRow(owner, state.BackgroundColor, "Background");
+            (Grid borderRow, ColorPickerRow borderColourRow, TextBox borderWidthBox) = CreateBorderRow(owner, state);
+
+            bool hasIndicator = kind is OceanyaPanelKind.TextToggle or OceanyaPanelKind.Dropdown;
+            (Grid indicatorRow, TextBox indicatorPathBox) = CreateImagePickerRow(
+                state.IndicatorImagePath,
+                "Artwork for the tick box or the dropdown arrow. Empty keeps ours.");
+            (Grid checkedIndicatorRow, TextBox checkedIndicatorPathBox) = CreateImagePickerRow(
+                state.CheckedIndicatorImagePath,
+                "Artwork for a ticked box. Empty reuses the indicator image.");
+
+            bool hasArrowWidth = kind == OceanyaPanelKind.Dropdown;
+            TextBox arrowWidthBox = StyledTextBox(
+                FormatOptionalLength(state.IndicatorWidth),
+                "Width of the arrow button in pixels. Empty keeps the control's own width.");
+
+            bool hasLabelArt = kind == OceanyaPanelKind.TextToggle;
+            (Grid labelArtRow, TextBox labelArtPathBox) = CreateImagePickerRow(
+                state.ImagePath,
+                "Artwork drawn instead of the caption text. Empty keeps the text.");
+
+            bool hasScrollbars = kind is OceanyaPanelKind.Static or OceanyaPanelKind.Dropdown or OceanyaPanelKind.ItemGrid;
+            ScrollbarRows scrollbars = CreateScrollbarRows(owner, state);
 
             Grid body = CreateFieldGrid();
             AddField(body, "Font", familyBox);
             AddField(body, "Size (px)", sizeBox);
             AddField(body, "Style", styleRow);
             AddField(body, "Colour", colorRow.Content);
+            AddField(body, "Background", backgroundRow.Content);
+            AddField(body, "Border", borderRow);
+            if (hasIndicator)
+            {
+                AddField(body, "Indicator image", indicatorRow);
+                AddField(body, "Ticked image", checkedIndicatorRow);
+            }
 
-            if (!ShowDialog(owner, $"Font settings - {panelName}", body, 400))
+            if (hasArrowWidth)
+            {
+                AddField(body, "Arrow width (px)", arrowWidthBox);
+            }
+
+            if (hasLabelArt)
+            {
+                AddField(body, "Caption image", labelArtRow);
+            }
+
+            if (hasScrollbars)
+            {
+                AddScrollbarFields(body, scrollbars);
+            }
+
+            if (!ShowDialog(owner, $"Font settings - {panelName}", body, 470))
             {
                 return false;
             }
@@ -74,7 +124,103 @@ namespace OceanyaClient.Features.Theme
             state.IsItalic = italicBox.IsChecked == true;
             state.IsUnderlined = underlineBox.IsChecked == true;
             state.TextColor = colorRow.SelectedColor;
+            state.BackgroundColor = backgroundRow.SelectedColor;
+            ApplyBorderRow(state, borderColourRow, borderWidthBox);
+            if (hasIndicator)
+            {
+                state.IndicatorImagePath = indicatorPathBox.Text?.Trim() ?? string.Empty;
+                state.CheckedIndicatorImagePath = checkedIndicatorPathBox.Text?.Trim() ?? string.Empty;
+            }
+
+            if (hasArrowWidth)
+            {
+                state.IndicatorWidth = ParsePositiveDouble(arrowWidthBox.Text);
+            }
+
+            if (hasLabelArt)
+            {
+                state.ImagePath = labelArtPathBox.Text?.Trim() ?? string.Empty;
+            }
+
+            if (hasScrollbars)
+            {
+                ApplyScrollbarRows(state, scrollbars);
+            }
+
             return true;
+        }
+
+        /// <summary>
+        /// Builds the border colour and width pair.
+        /// </summary>
+        /// <param name="owner">Owner window, for the colour picker.</param>
+        /// <param name="state">Current state.</param>
+        /// <returns>The row plus the controls to read back.</returns>
+        private static (Grid Row, ColorPickerRow Colour, TextBox Width) CreateBorderRow(
+            Window? owner,
+            OceanyaPanelPlacementState state)
+        {
+            ColorPickerRow colour = CreateColorPickerRow(owner, state.BorderColor, "Border colour");
+            TextBox width = StyledTextBox(
+                state.BorderThickness >= 0 ? state.BorderThickness.ToString("0.##", CultureInfo.InvariantCulture) : string.Empty,
+                "Border width in pixels. 0 removes the border; empty leaves the control's own.");
+            width.MinWidth = 56;
+            width.Margin = new Thickness(6, 0, 0, 0);
+
+            Grid row = new Grid();
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            Grid.SetColumn(colour.Content, 0);
+            Grid.SetColumn(width, 1);
+            row.Children.Add(colour.Content);
+            row.Children.Add(width);
+            return (row, colour, width);
+        }
+
+        /// <summary>
+        /// Writes the border fields back into a panel's state.
+        /// </summary>
+        /// <param name="state">State to update.</param>
+        /// <param name="colour">Colour field.</param>
+        /// <param name="width">Width field.</param>
+        private static void ApplyBorderRow(OceanyaPanelPlacementState state, ColorPickerRow colour, TextBox width)
+        {
+            state.BorderColor = colour.SelectedColor;
+
+            // Negative means "leave it alone", which is not the same as a deliberate 0.
+            state.BorderThickness = double.TryParse(
+                width.Text?.Trim(),
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out double parsed) && parsed >= 0
+                    ? parsed
+                    : -1;
+        }
+
+        /// <summary>The three scrollbar colour fields.</summary>
+        private sealed record ScrollbarRows(ColorPickerRow Track, ColorPickerRow Handle, ColorPickerRow Border);
+
+        private static ScrollbarRows CreateScrollbarRows(Window? owner, OceanyaPanelPlacementState state)
+        {
+            return new ScrollbarRows(
+                CreateColorPickerRow(owner, state.ScrollbarTrackColor, "Scrollbar track"),
+                CreateColorPickerRow(owner, state.ScrollbarHandleColor, "Scrollbar handle"),
+                CreateColorPickerRow(owner, state.ScrollbarBorderColor, "Scrollbar border"));
+        }
+
+        private static void AddScrollbarFields(Grid body, ScrollbarRows rows)
+        {
+            AddField(body, "Scrollbar track", rows.Track.Content);
+            AddField(body, "Scrollbar handle", rows.Handle.Content);
+            AddField(body, "Scrollbar border", rows.Border.Content);
+            AddHint(body, "Leave the scrollbar colours empty to keep the stock scrollbar.");
+        }
+
+        private static void ApplyScrollbarRows(OceanyaPanelPlacementState state, ScrollbarRows rows)
+        {
+            state.ScrollbarTrackColor = rows.Track.SelectedColor;
+            state.ScrollbarHandleColor = rows.Handle.SelectedColor;
+            state.ScrollbarBorderColor = rows.Border.SelectedColor;
         }
 
         /// <summary>
@@ -86,8 +232,59 @@ namespace OceanyaClient.Features.Theme
         /// <returns>True when the user accepted the dialog.</returns>
         public static bool ShowImageSettings(Window? owner, string panelName, OceanyaPanelPlacementState state)
         {
-            TextBox pathBox = StyledTextBox(state.ImagePath, "Empty keeps the built-in artwork.");
+            (Grid imageRow, TextBox pathBox) = CreateImagePickerRow(state.ImagePath, "Empty keeps the built-in artwork.");
+
+
+            (Grid checkedRow, TextBox checkedPathBox) = CreateImagePickerRow(
+                state.CheckedImagePath,
+                "Shown while a toggle panel is selected. Empty reuses the main image.");
+
+            (Grid hoverRow, TextBox hoverPathBox) = CreateImagePickerRow(
+                state.HoverImagePath,
+                "Shown while the pointer is over the panel. Empty keeps the main image.");
+
+            ComboBox scalingBox = CreateScalingComboBox(state.ImageScaling);
+
+            (StackPanel opacityRow, Slider opacitySlider) = CreateOpacityRow(state.Opacity);
+            ColorPickerRow backgroundRow = CreateColorPickerRow(owner, state.BackgroundColor, "Background");
+            (Grid borderRow, ColorPickerRow borderColourRow, TextBox borderWidthBox) = CreateBorderRow(owner, state);
+
+            Grid body = CreateFieldGrid();
+            AddField(body, "Image", imageRow);
+            AddField(body, "Selected image", checkedRow);
+            AddField(body, "Hover image", hoverRow);
+            AddField(body, "Scaling", scalingBox);
+            AddField(body, "Opacity", opacityRow);
+            AddField(body, "Background", backgroundRow.Content);
+            AddField(body, "Border", borderRow);
+
+            if (!ShowDialog(owner, $"Image settings - {panelName}", body, 470))
+            {
+                return false;
+            }
+
+            state.ImagePath = pathBox.Text?.Trim() ?? string.Empty;
+            state.CheckedImagePath = checkedPathBox.Text?.Trim() ?? string.Empty;
+            state.HoverImagePath = hoverPathBox.Text?.Trim() ?? string.Empty;
+            string selectedScaling = scalingBox.SelectedItem as string ?? DefaultOption;
+            state.ImageScaling = string.Equals(selectedScaling, DefaultOption, StringComparison.Ordinal) ? string.Empty : selectedScaling;
+            state.Opacity = Math.Round(opacitySlider.Value / 100d, 2);
+            state.BackgroundColor = backgroundRow.SelectedColor;
+            ApplyBorderRow(state, borderColourRow, borderWidthBox);
+            return true;
+        }
+
+        /// <summary>
+        /// Builds a path box with a Browse button for picking an image.
+        /// </summary>
+        /// <param name="initialPath">Current path.</param>
+        /// <param name="toolTip">Tooltip explaining what empty means.</param>
+        /// <returns>The row and its text box.</returns>
+        private static (Grid Row, TextBox PathBox) CreateImagePickerRow(string initialPath, string toolTip)
+        {
+            TextBox pathBox = StyledTextBox(initialPath, toolTip);
             pathBox.Margin = new Thickness(0);
+
             Button browse = StyledButton("Browse...");
             browse.Margin = new Thickness(6, 0, 0, 0);
             browse.MinWidth = 86;
@@ -95,7 +292,7 @@ namespace OceanyaClient.Features.Theme
             {
                 Microsoft.Win32.OpenFileDialog dialog = new Microsoft.Win32.OpenFileDialog
                 {
-                    Title = "Pick the panel image",
+                    Title = "Pick an image",
                     Filter = "Images|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp|All files|*.*"
                 };
                 if (dialog.ShowDialog() == true)
@@ -104,41 +301,69 @@ namespace OceanyaClient.Features.Theme
                 }
             };
 
-            Grid imageRow = new Grid();
-            imageRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            imageRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            Grid row = new Grid();
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             Grid.SetColumn(pathBox, 0);
             Grid.SetColumn(browse, 1);
-            imageRow.Children.Add(pathBox);
-            imageRow.Children.Add(browse);
+            row.Children.Add(pathBox);
+            row.Children.Add(browse);
+            return (row, pathBox);
+        }
 
+        private static ComboBox CreateScalingComboBox(string selected)
+        {
             ComboBox scalingBox = StyledComboBox();
             foreach (string option in new[] { DefaultOption, "Fill", "Uniform", "UniformToFill", "None" })
             {
                 scalingBox.Items.Add(option);
             }
 
-            scalingBox.SelectedItem = string.IsNullOrWhiteSpace(state.ImageScaling) ? DefaultOption : state.ImageScaling;
+            scalingBox.SelectedItem = string.IsNullOrWhiteSpace(selected) ? DefaultOption : selected;
+            return scalingBox;
+        }
 
-            (StackPanel opacityRow, Slider opacitySlider) = CreateOpacityRow(state.Opacity);
-            ColorPickerRow backgroundRow = CreateColorPickerRow(owner, state.BackgroundColor, "Background");
+        /// <summary>
+        /// Shows the slider settings for a volume slider panel.
+        /// </summary>
+        /// <remarks>
+        /// Mirrors what AO2's stylesheet can say about a `QSlider`: the groove and handle artwork plus the
+        /// colours of the filled and empty halves of the track.
+        /// </remarks>
+        /// <param name="owner">Owner window.</param>
+        /// <param name="panelName">Panel display name, shown in the title.</param>
+        /// <param name="state">State mutated when the user accepts.</param>
+        /// <returns>True when the user accepted the dialog.</returns>
+        public static bool ShowSliderSettings(Window? owner, string panelName, OceanyaPanelPlacementState state)
+        {
+            (Grid grooveRow, TextBox groovePathBox) = CreateImagePickerRow(
+                state.ImagePath,
+                "Artwork behind the whole slider. Empty keeps the stock look.");
+            (Grid handleRow, TextBox handlePathBox) = CreateImagePickerRow(
+                state.IndicatorImagePath,
+                "Artwork for the draggable handle. Empty keeps the stock look.");
+            ColorPickerRow fillRow = CreateColorPickerRow(owner, state.FillColor, "Filled track");
+            ColorPickerRow emptyRow = CreateColorPickerRow(owner, state.BackgroundColor, "Empty track");
+            (Grid borderRow, ColorPickerRow borderColourRow, TextBox borderWidthBox) = CreateBorderRow(owner, state);
 
             Grid body = CreateFieldGrid();
-            AddField(body, "Image", imageRow);
-            AddField(body, "Scaling", scalingBox);
-            AddField(body, "Opacity", opacityRow);
-            AddField(body, "Background", backgroundRow.Content);
+            AddField(body, "Groove image", grooveRow);
+            AddField(body, "Handle image", handleRow);
+            AddField(body, "Filled track", fillRow.Content);
+            AddField(body, "Empty track", emptyRow.Content);
+            AddField(body, "Border", borderRow);
+            AddHint(body, "The filled half is drawn left of the handle, the empty half right of it.");
 
-            if (!ShowDialog(owner, $"Image settings - {panelName}", body, 470))
+            if (!ShowDialog(owner, $"Slider settings - {panelName}", body, 470))
             {
                 return false;
             }
 
-            state.ImagePath = pathBox.Text?.Trim() ?? string.Empty;
-            string selectedScaling = scalingBox.SelectedItem as string ?? DefaultOption;
-            state.ImageScaling = string.Equals(selectedScaling, DefaultOption, StringComparison.Ordinal) ? string.Empty : selectedScaling;
-            state.Opacity = Math.Round(opacitySlider.Value / 100d, 2);
-            state.BackgroundColor = backgroundRow.SelectedColor;
+            state.ImagePath = groovePathBox.Text?.Trim() ?? string.Empty;
+            state.IndicatorImagePath = handlePathBox.Text?.Trim() ?? string.Empty;
+            state.FillColor = fillRow.SelectedColor;
+            state.BackgroundColor = emptyRow.SelectedColor;
+            ApplyBorderRow(state, borderColourRow, borderWidthBox);
             return true;
         }
 
@@ -151,21 +376,56 @@ namespace OceanyaClient.Features.Theme
         /// <returns>True when the user accepted the dialog.</returns>
         public static bool ShowGridSettings(Window? owner, string panelName, OceanyaPanelPlacementState state)
         {
-            TextBox itemSizeBox = StyledTextBox(
-                state.ItemSize > 0 ? state.ItemSize.ToString("0.##", CultureInfo.InvariantCulture) : string.Empty,
-                "Size of one item including spacing. Empty restores the default.");
+            TextBox itemWidthBox = StyledTextBox(
+                FormatOptionalLength(state.ItemSize),
+                "Width of one item. Empty restores the default.");
+            TextBox itemHeightBox = StyledTextBox(
+                FormatOptionalLength(state.ItemHeight),
+                "Height of one item. Empty makes items square.");
+            TextBox spacingXBox = StyledTextBox(
+                FormatOptionalLength(state.ItemSpacingX),
+                "Horizontal gap between items. Empty means none.");
+            TextBox spacingYBox = StyledTextBox(
+                FormatOptionalLength(state.ItemSpacingY),
+                "Vertical gap between items. Empty means none.");
+            CheckBox reservePagingBox = StyledCheckBox("Reserve space for the paging arrows", state.ReservePagingSpace);
+            (Grid borderRow, ColorPickerRow borderColourRow, TextBox borderWidthBox) = CreateBorderRow(owner, state);
+            ScrollbarRows scrollbars = CreateScrollbarRows(owner, state);
 
             Grid body = CreateFieldGrid();
-            AddField(body, "Item size (px)", itemSizeBox);
-            AddHint(body, "How many items fit is derived from this size and the panel's size.");
+            AddField(body, "Item width (px)", itemWidthBox);
+            AddField(body, "Item height (px)", itemHeightBox);
+            AddField(body, "Spacing X (px)", spacingXBox);
+            AddField(body, "Spacing Y (px)", spacingYBox);
+            AddField(body, string.Empty, reservePagingBox);
+            AddField(body, "Border", borderRow);
+            AddScrollbarFields(body, scrollbars);
+            AddHint(body, "Items keep this exact size; how many fit comes from the panel's own size. Turn"
+                + " the reservation off when the paging arrows are placed as panels of their own.");
 
-            if (!ShowDialog(owner, $"Grid settings - {panelName}", body, 380))
+            if (!ShowDialog(owner, $"Grid settings - {panelName}", body, 420))
             {
                 return false;
             }
 
-            state.ItemSize = ParsePositiveDouble(itemSizeBox.Text);
+            state.ItemSize = ParsePositiveDouble(itemWidthBox.Text);
+            state.ItemHeight = ParsePositiveDouble(itemHeightBox.Text);
+            state.ItemSpacingX = ParsePositiveDouble(spacingXBox.Text);
+            state.ItemSpacingY = ParsePositiveDouble(spacingYBox.Text);
+            state.ReservePagingSpace = reservePagingBox.IsChecked == true;
+            ApplyBorderRow(state, borderColourRow, borderWidthBox);
+            ApplyScrollbarRows(state, scrollbars);
             return true;
+        }
+
+        /// <summary>
+        /// Formats a length for an optional numeric field, leaving it empty when unset.
+        /// </summary>
+        /// <param name="value">Length to format.</param>
+        /// <returns>The formatted value, or an empty string.</returns>
+        private static string FormatOptionalLength(double value)
+        {
+            return value > 0 ? value.ToString("0.##", CultureInfo.InvariantCulture) : string.Empty;
         }
 
         /// <summary>Option text meaning "leave the control's own value alone".</summary>

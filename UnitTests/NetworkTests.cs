@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -18,6 +18,26 @@ namespace UnitTests;
 [Category("NoNetworkCall")]
 public class NetworkTests
 {
+    [Test]
+    public async Task HandleMessage_HealthPacketUpdatesTheBarAndRaisesTheEvent()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+        List<(int Bar, int Value)> raised = new List<(int, int)>();
+        client.OnHealthChanged += (bar, value) => raised.Add((bar, value));
+
+        await client.HandleMessage("HP#1#7#%");
+        await client.HandleMessage("HP#2#0#%");
+
+        // AO2 reference Courtroom::set_hp_bar: bar 1 is the defence, bar 2 the prosecution, values 0-10.
+        Assert.That(client.DefenceHealth, Is.EqualTo(7));
+        Assert.That(client.ProsecutionHealth, Is.EqualTo(0));
+        Assert.That(raised, Is.EqualTo(new[] { (1, 7), (2, 0) }));
+
+        // Out-of-range values are ignored rather than clamped, exactly as AO2 does.
+        await client.HandleMessage("HP#1#11#%");
+        Assert.That(client.DefenceHealth, Is.EqualTo(7));
+    }
+
     [Test]
     public async Task HandleMessage_ParsesScDescriptionsIntoCharacterNames()
     {

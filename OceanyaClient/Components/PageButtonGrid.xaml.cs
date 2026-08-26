@@ -30,7 +30,12 @@ namespace OceanyaClient.Components
         private List<UIElement> elements = new();
         private List<object> virtualItems = new();
         private Func<object, UIElement>? virtualElementFactory;
-        private double automaticItemSize;
+        private double automaticItemWidth;
+        private double automaticItemHeight;
+        private double automaticSpacingX;
+        private double automaticSpacingY;
+        private bool pagingControlsExtracted;
+        private bool pagingReservation = true;
 
         public PageButtonGrid()
         {
@@ -40,33 +45,162 @@ namespace OceanyaClient.Components
 
         /// <summary>
         /// Sizes the page from the available space instead of a fixed row/column count, so a resized
-        /// panel shows as many items as physically fit.
+        /// panel shows as many fixed-size items as physically fit.
         /// </summary>
-        /// <param name="itemSize">Nominal size of one item, including its spacing.</param>
-        public void EnableAutomaticPageSize(double itemSize)
+        /// <remarks>
+        /// This is AO2's model (`AO2-Client/src/emotes.cpp`): the theme declares a button size and a
+        /// spacing, and the widget fits `((area - button) / (spacing + button)) + 1` of them per axis.
+        /// The items keep that exact size rather than being stretched, and the paging arrows stop
+        /// reserving space inside the area, because in AO2 they are separate widgets of their own.
+        /// </remarks>
+        /// <param name="itemWidth">Width of one item.</param>
+        /// <param name="itemHeight">Height of one item; zero means square.</param>
+        /// <param name="spacingX">Horizontal gap between items.</param>
+        /// <param name="spacingY">Vertical gap between items.</param>
+        public void EnableAutomaticPageSize(double itemWidth, double itemHeight = 0, double spacingX = 0, double spacingY = 0)
         {
-            automaticItemSize = itemSize > 0 ? itemSize : 0;
+            automaticItemWidth = itemWidth > 0 ? itemWidth : 0;
+            automaticItemHeight = itemHeight > 0 ? itemHeight : automaticItemWidth;
+            automaticSpacingX = Math.Max(0, spacingX);
+            automaticSpacingY = Math.Max(0, spacingY);
             RefreshAutomaticPageSize();
         }
+
+        /// <summary>
+        /// Hands the paging buttons over so they can be laid out as panels of their own.
+        /// </summary>
+        /// <remarks>
+        /// AO2 themes position and skin the emote arrows independently of the emote area, so they have to
+        /// be placeable panels here too. Reparenting keeps their click handlers and fields working; the
+        /// grid only stops reserving space for them.
+        /// </remarks>
+        /// <returns>The previous/next buttons, in that order.</returns>
+        public IReadOnlyList<Button> ExtractPagingControls()
+        {
+            List<Button> extracted = new List<Button> { LeftButton, RightButton, UpButton, DownButton };
+            if (pagingControlsExtracted)
+            {
+                return extracted;
+            }
+
+            pagingControlsExtracted = true;
+
+            // The buttons wear this control's implicit Button style, and an implicit style is looked up in
+            // the ancestor chain - which they leave when they are reparented. Pinning the style locally
+            // keeps their stock appearance exactly as it was inside the grid.
+            Style? buttonStyle = TryFindResource(typeof(Button)) as Style;
+            foreach (Button button in extracted)
+            {
+                if (buttonStyle != null && button.ReadLocalValue(StyleProperty) == DependencyProperty.UnsetValue)
+                {
+                    button.Style = buttonStyle;
+                }
+
+                LayoutGrid.Children.Remove(button);
+            }
+
+            return extracted;
+        }
+
+        /// <summary>
+        /// Sets whether the grid keeps the arrow-sized inset the paging buttons used to occupy.
+        /// </summary>
+        /// <remarks>
+        /// Kept by default so the stock layout is pixel-identical to 7.12, where the arrows sat inside the
+        /// grid. An AO2 theme places its arrows itself and its `emotes` rectangle is nothing but buttons,
+        /// so an import turns the reservation off.
+        /// </remarks>
+        /// <param name="reserve">True to keep the inset.</param>
+        public void SetPagingReservation(bool reserve)
+        {
+            if (pagingReservation == reserve)
+            {
+                return;
+            }
+
+            pagingReservation = reserve;
+            LayoutGrid.Margin = reserve ? new Thickness(5) : new Thickness(0);
+
+            // Spanning the whole grid, rather than resizing its definitions: UpdateButtonVisibility
+            // adds and removes rows and columns as the scroll mode changes, so index 1 is not reliably
+            // the content cell - zeroing the wrong one made the item area 0px tall and the grid vanished.
+            int lastColumn = Math.Max(0, LayoutGrid.ColumnDefinitions.Count - 1);
+            int lastRow = Math.Max(0, LayoutGrid.RowDefinitions.Count - 1);
+            Grid.SetColumn(GridArea, reserve ? Math.Min(1, lastColumn) : 0);
+            Grid.SetColumnSpan(GridArea, reserve ? 1 : LayoutGrid.ColumnDefinitions.Count);
+            Grid.SetRow(GridArea, reserve ? Math.Min(1, lastRow) : 0);
+            Grid.SetRowSpan(GridArea, reserve ? 1 : LayoutGrid.RowDefinitions.Count);
+
+            RefreshAutomaticPageSize();
+        }
+
+        /// <summary>
+        /// Captures the paging configuration so it can be restored when a theme is reset.
+        /// </summary>
+        /// <returns>An opaque snapshot for <see cref="RestorePagingConfiguration"/>.</returns>
+        public object CapturePagingConfiguration()
+        {
+            return new PagingConfiguration(
+                automaticItemWidth,
+                automaticItemHeight,
+                automaticSpacingX,
+                automaticSpacingY,
+                rows,
+                columns,
+                pagingReservation);
+        }
+
+        /// <summary>
+        /// Restores a configuration captured by <see cref="CapturePagingConfiguration"/>.
+        /// </summary>
+        /// <remarks>
+        /// Paging is plain state rather than dependency properties, so the styling baseline cannot put it
+        /// back on its own - without this, resetting a theme left the imported item size in place.
+        /// </remarks>
+        /// <param name="snapshot">Snapshot to restore.</param>
+        public void RestorePagingConfiguration(object snapshot)
+        {
+            if (snapshot is not PagingConfiguration configuration)
+            {
+                return;
+            }
+
+            automaticItemWidth = configuration.ItemWidth;
+            automaticItemHeight = configuration.ItemHeight;
+            automaticSpacingX = configuration.SpacingX;
+            automaticSpacingY = configuration.SpacingY;
+            SetPagingReservation(configuration.ReservePaging);
+            SetPageSize(configuration.Rows, configuration.Columns);
+        }
+
+        private sealed record PagingConfiguration(
+            double ItemWidth,
+            double ItemHeight,
+            double SpacingX,
+            double SpacingY,
+            int Rows,
+            int Columns,
+            bool ReservePaging);
 
         /// <summary>
         /// Recomputes rows and columns from the current size when automatic paging is enabled.
         /// </summary>
         private void RefreshAutomaticPageSize()
         {
-            if (automaticItemSize <= 0)
+            if (automaticItemWidth <= 0)
             {
                 return;
             }
 
-            // The grid area excludes the paging buttons (30px each) and the 5px control margin.
-            double availableWidth = Math.Max(0, ActualWidth - 10 - (currentScrollMode == ScrollMode.Horizontal ? 60 : 0));
-            double availableHeight = Math.Max(0, ActualHeight - 10 - (currentScrollMode == ScrollMode.Vertical ? 60 : 0));
+            // The grid area excludes the paging buttons (30px each) and the 5px control margin, unless
+            // those buttons have been handed over as panels of their own.
+            double chrome = pagingReservation ? 10 : 0;
+            double navigation = pagingReservation ? 60 : 0;
+            double availableWidth = Math.Max(0, ActualWidth - chrome - (currentScrollMode == ScrollMode.Horizontal ? navigation : 0));
+            double availableHeight = Math.Max(0, ActualHeight - chrome - (currentScrollMode == ScrollMode.Vertical ? navigation : 0));
 
-            int resolvedColumns = currentScrollMode == ScrollMode.Vertical
-                ? Math.Max(1, (int)(availableWidth / automaticItemSize))
-                : Math.Max(1, (int)(availableWidth / automaticItemSize));
-            int resolvedRows = Math.Max(1, (int)(availableHeight / automaticItemSize));
+            int resolvedColumns = ResolveFittingCount(availableWidth, automaticItemWidth, automaticSpacingX);
+            int resolvedRows = ResolveFittingCount(availableHeight, automaticItemHeight, automaticSpacingY);
 
             if (resolvedRows == rows && resolvedColumns == columns)
             {
@@ -74,6 +208,23 @@ namespace OceanyaClient.Components
             }
 
             SetPageSize(resolvedRows, resolvedColumns);
+        }
+
+        /// <summary>
+        /// Counts how many fixed-size items fit along one axis, the way AO2 does it.
+        /// </summary>
+        /// <param name="available">Space available along the axis.</param>
+        /// <param name="itemLength">Size of one item.</param>
+        /// <param name="spacing">Gap between items.</param>
+        /// <returns>At least one item.</returns>
+        private static int ResolveFittingCount(double available, double itemLength, double spacing)
+        {
+            if (itemLength <= 0 || available < itemLength)
+            {
+                return 1;
+            }
+
+            return Math.Max(1, (int)((available - itemLength) / (spacing + itemLength)) + 1);
         }
 
 
@@ -185,11 +336,22 @@ namespace OceanyaClient.Components
             TestingGrid.RowDefinitions.Clear();
             TestingGrid.ColumnDefinitions.Clear();
 
+            // Automatic sizing means the theme decided the item size, so the cells are that size and any
+            // leftover space stays empty; the default keeps star sizing, which is the 7.12 look.
+            bool fixedCells = automaticItemWidth > 0;
             for (int i = 0; i < rows; i++)
-                TestingGrid.RowDefinitions.Add(new RowDefinition());
+            {
+                TestingGrid.RowDefinitions.Add(fixedCells
+                    ? new RowDefinition { Height = new GridLength(automaticItemHeight + automaticSpacingY) }
+                    : new RowDefinition());
+            }
 
             for (int i = 0; i < columns; i++)
-                TestingGrid.ColumnDefinitions.Add(new ColumnDefinition());
+            {
+                TestingGrid.ColumnDefinitions.Add(fixedCells
+                    ? new ColumnDefinition { Width = new GridLength(automaticItemWidth + automaticSpacingX) }
+                    : new ColumnDefinition());
+            }
         }
 
 
@@ -218,6 +380,17 @@ namespace OceanyaClient.Components
 
                 Grid.SetRow(element, row);
                 Grid.SetColumn(element, col);
+                if (automaticItemWidth > 0 && element is FrameworkElement sized)
+                {
+                    // AO2 does not stretch its buttons: the item keeps the theme's exact size, the gap
+                    // lives in the cell, and any leftover space in the area simply stays empty.
+                    sized.Width = automaticItemWidth;
+                    sized.Height = automaticItemHeight;
+                    sized.Margin = new Thickness(0);
+                    sized.HorizontalAlignment = HorizontalAlignment.Left;
+                    sized.VerticalAlignment = VerticalAlignment.Top;
+                }
+
                 TestingGrid.Children.Add(element);
 
                 // Move to next column
@@ -315,7 +488,17 @@ namespace OceanyaClient.Components
         {
             int totalPages = (int)Math.Ceiling((double)GetItemCount() / Math.Max(1, rows * columns));
 
-            Grid grid = (Grid)UpButton.Parent; // Get the parent Grid
+            Grid grid = LayoutGrid;
+            if (pagingControlsExtracted)
+            {
+                // The buttons are panels now: their own placement owns their geometry, and the grid must
+                // not add or remove rows and columns for them any more.
+                LeftButton.IsEnabled = currentPage > 0;
+                RightButton.IsEnabled = currentPage + 1 < totalPages;
+                UpButton.IsEnabled = LeftButton.IsEnabled;
+                DownButton.IsEnabled = RightButton.IsEnabled;
+                return;
+            }
 
             if (currentScrollMode == ScrollMode.Horizontal)
             {

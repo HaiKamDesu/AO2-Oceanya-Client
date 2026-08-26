@@ -32,12 +32,23 @@ namespace UnitTests
                     "ic_log", "ooc_log", "clients_list", "clients_title", "clients_add", "clients_remove", "shout_backdrop",
                     "shout_holdit", "shout_objection",
                     "shout_takethat", "shout_custom", "ic_settings", "ic_showname", "ic_message",
-                    "ic_emote_grid", "ic_check_preanim", "ic_check_flip", "ic_check_additive",
+                    "ic_emote_grid", "ic_emote_prev", "ic_emote_next", "ic_check_preanim", "ic_check_flip", "ic_check_additive",
                     "ic_check_immediate", "ic_combo_character", "ic_combo_emote", "ic_combo_position",
                     "ic_combo_textcolor", "ic_combo_effect", "ic_combo_sfx", "ic_button_realization",
                     "ic_button_screenshake", "ic_button_offset", "ic_button_pairing", "bottom_bar",
                     "bar_check_sticky", "bar_check_switchpos", "bar_check_invertlog",
                     "bar_button_editlayout", "bar_button_refresh", "bar_button_viewport",
+                    "area_list", "music_list", "bar_button_areamusic",
+                    "bar_button_mute", "bar_button_evidence", "bar_button_reloadtheme",
+                    "bar_button_changecharacter", "bar_button_callmod",
+                    "slider_music_volume", "slider_sfx_volume", "slider_blip_volume",
+                    "slider_music_label", "slider_sfx_label", "slider_blip_label",
+                    "ic_check_showname",
+                    "judge_defence_bar", "judge_prosecution_bar",
+                    "judge_defence_minus", "judge_defence_plus",
+                    "judge_prosecution_minus", "judge_prosecution_plus",
+                    "judge_witness_testimony", "judge_cross_examination",
+                    "judge_not_guilty", "judge_guilty",
                     "bar_button_area", "bar_button_debug", "bar_button_music", "bar_button_settings", "viewport", "ooc_chat", "ooc_stream_backdrop", "ooc_stream_text", "ooc_message", "ooc_showname", "ooc_server_console", "ding_button", "ooc_divider", "ic_catchphrase",
                     "ic_settings_backdrop", "ic_loremaster",
                     "dredd_row"
@@ -73,6 +84,11 @@ namespace UnitTests
             // IC sub-panels are placed relative to the main canvas (IC settings sits at y=343).
             AssertPlacement("ic_message", 87, 343, 422, 17);
             AssertPlacement("ic_emote_grid", 4, 360, 505, 120);
+            // The paging arrows became panels of their own. These are the exact rectangles they occupied
+            // INSIDE the grid in 7.12 (5px control margin, 30px arrow columns, star-sized middle row), and
+            // the grid keeps that inset by default, so the stock window is unchanged.
+            AssertPlacement("ic_emote_prev", 9, 365, 30, 110);
+            AssertPlacement("ic_emote_next", 474, 365, 30, 110);
             AssertPlacement("ic_combo_sfx", 294, 511, 140, 21);
             AssertPlacement("bottom_bar", 0, 603, 509, 24);
             // The viewport panel replaces the viewport button, so it starts at the button spot.
@@ -303,6 +319,41 @@ namespace UnitTests
             // Viewport content always renders uniformly, so a free resize would only add dead space.
             Assert.That(OceanyaPanelCatalog.Get("viewport").MaintainsAspectRatio, Is.True);
             Assert.That(OceanyaPanelCatalog.Get("ic_log").MaintainsAspectRatio, Is.False);
+        }
+
+        [Test]
+        [Apartment(ApartmentState.STA)]
+        public void ScrollbarColours_ApplyToThePanelAndAreRemovedOnReset()
+        {
+            // A descriptor of its own, not a catalog one: baselines are keyed by panel id and other tests in
+            // this assembly build real windows on their own STA threads, whose elements cannot be touched
+            // from here.
+            OceanyaPanelDescriptor descriptor = new OceanyaPanelDescriptor(
+                "probe_scrollbars",
+                "Probe",
+                new OceanyaPanelPlacement(0, 0, 100, 100),
+                minimumWidth: 10,
+                minimumHeight: 10,
+                kind: OceanyaPanelKind.Static);
+            Grid panel = new Grid();
+            OceanyaPanelPlacementState state = new OceanyaPanelPlacementState
+            {
+                ScrollbarTrackColor = "#FFFFFFFF",
+                ScrollbarHandleColor = "#FFAEAFAE",
+                ScrollbarBorderColor = "#FF282728"
+            };
+
+            OceanyaPanelStyleApplier.Apply(descriptor, panel, state);
+
+            // The themed style and its brushes live in the panel's own resource scope, so the change is
+            // per-panel and undoing it is a matter of removing them again.
+            Assert.That(panel.Resources[typeof(System.Windows.Controls.Primitives.ScrollBar)], Is.InstanceOf<Style>());
+            Assert.That(panel.Resources["OceanyaScrollBarHandleBrush"], Is.Not.Null);
+
+            OceanyaPanelStyleApplier.RestoreBaseline(descriptor.Id, panel);
+
+            Assert.That(panel.Resources.Contains(typeof(System.Windows.Controls.Primitives.ScrollBar)), Is.False);
+            Assert.That(panel.Resources.Contains("OceanyaScrollBarHandleBrush"), Is.False);
         }
 
         [Test]

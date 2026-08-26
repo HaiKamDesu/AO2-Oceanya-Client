@@ -658,6 +658,31 @@ namespace OceanyaClient
                 [OceanyaPanelCatalog.ShoutCustomPanelId] = new OceanyaPanelElements(ShoutCustom),
                 [OceanyaPanelCatalog.BottomBarPanelId] = new OceanyaPanelElements(BottomBar),
                 [OceanyaPanelCatalog.ViewportPanelId] = new OceanyaPanelElements(ViewportPanelHost),
+                [OceanyaPanelCatalog.AreaListPanelId] = new OceanyaPanelElements(AreaListPanelHost),
+                [OceanyaPanelCatalog.MusicListPanelId] = new OceanyaPanelElements(MusicListPanelHost),
+                [OceanyaPanelCatalog.BarButtonAreaMusicSwitchPanelId] = new OceanyaPanelElements(btnAreaMusicSwitch),
+                [OceanyaPanelCatalog.BarButtonMutePanelId] = new OceanyaPanelElements(btnMute),
+                [OceanyaPanelCatalog.BarButtonEvidencePanelId] = new OceanyaPanelElements(btnEvidence),
+                [OceanyaPanelCatalog.BarButtonReloadThemePanelId] = new OceanyaPanelElements(btnReloadTheme),
+                [OceanyaPanelCatalog.BarButtonChangeCharacterPanelId] = new OceanyaPanelElements(btnChangeCharacter),
+                [OceanyaPanelCatalog.BarButtonCallModPanelId] = new OceanyaPanelElements(btnCallMod),
+                [OceanyaPanelCatalog.SliderMusicVolumePanelId] = new OceanyaPanelElements(sliderMusicVolume),
+                [OceanyaPanelCatalog.SliderSfxVolumePanelId] = new OceanyaPanelElements(sliderSfxVolume),
+                [OceanyaPanelCatalog.SliderBlipVolumePanelId] = new OceanyaPanelElements(sliderBlipVolume),
+                [OceanyaPanelCatalog.SliderMusicLabelPanelId] = new OceanyaPanelElements(imgMusicVolumeLabel),
+                [OceanyaPanelCatalog.SliderSfxLabelPanelId] = new OceanyaPanelElements(imgSfxVolumeLabel),
+                [OceanyaPanelCatalog.SliderBlipLabelPanelId] = new OceanyaPanelElements(imgBlipVolumeLabel),
+                [OceanyaPanelCatalog.IcCheckShownamePanelId] = new OceanyaPanelElements(chkSendShowname),
+                [OceanyaPanelCatalog.JudgeDefenceBarPanelId] = new OceanyaPanelElements(imgDefenceBar),
+                [OceanyaPanelCatalog.JudgeProsecutionBarPanelId] = new OceanyaPanelElements(imgProsecutionBar),
+                [OceanyaPanelCatalog.JudgeDefenceMinusPanelId] = new OceanyaPanelElements(btnDefenceMinus),
+                [OceanyaPanelCatalog.JudgeDefencePlusPanelId] = new OceanyaPanelElements(btnDefencePlus),
+                [OceanyaPanelCatalog.JudgeProsecutionMinusPanelId] = new OceanyaPanelElements(btnProsecutionMinus),
+                [OceanyaPanelCatalog.JudgeProsecutionPlusPanelId] = new OceanyaPanelElements(btnProsecutionPlus),
+                [OceanyaPanelCatalog.JudgeWitnessTestimonyPanelId] = new OceanyaPanelElements(btnWitnessTestimony),
+                [OceanyaPanelCatalog.JudgeCrossExaminationPanelId] = new OceanyaPanelElements(btnCrossExamination),
+                [OceanyaPanelCatalog.JudgeNotGuiltyPanelId] = new OceanyaPanelElements(btnNotGuilty),
+                [OceanyaPanelCatalog.JudgeGuiltyPanelId] = new OceanyaPanelElements(btnGuilty),
                 [OceanyaPanelCatalog.DingButtonPanelId] = new OceanyaPanelElements(THEDINGBUTTON),
                 [OceanyaPanelCatalog.OocDividerPanelId] = new OceanyaPanelElements(OocDivider),
                 [OceanyaPanelCatalog.DreddFeatureRowPanelId] = new OceanyaPanelElements(DreddFeatureRow)
@@ -721,8 +746,53 @@ namespace OceanyaClient
             OceanyaPanelLayout.ApplyLayout(panels, SaveFile.Data.OceanyaThemeLayout);
             OceanyaPanelEditModeController.ApplyHiddenPanels(panels, SaveFile.Data.OceanyaThemeLayout);
             ApplySurfaceSizeFromLayout();
-            // Applied after layout so the panel host and the button swap in the right order.
-            Dispatcher.BeginInvoke(new Action(ApplyViewportRenderInPanel));
+            // Applied after layout so the panel hosts and the buttons swap in the right order.
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                ApplyViewportRenderInPanel();
+                ApplyListRenderInPanel();
+            }));
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() => LogPanelLayoutDiagnostics(panels)));
+        }
+
+        /// <summary>
+        /// Reports the panels that ended up unusable after a layout was applied.
+        /// </summary>
+        /// <remarks>
+        /// A theme can leave a panel with no size, off the surface, hidden or buried under another panel,
+        /// and all four look the same from the outside: "that part of the window is gone". Only the
+        /// anomalies are logged, so the line stays readable, under the exportable Viewport category.
+        /// </remarks>
+        /// <param name="panels">Panels that were just laid out.</param>
+        private void LogPanelLayoutDiagnostics(IReadOnlyDictionary<string, OceanyaPanelElements> panels)
+        {
+            List<string> anomalies = new List<string>();
+            foreach (KeyValuePair<string, OceanyaPanelElements> pair in panels)
+            {
+                FrameworkElement element = pair.Value.Element;
+                OceanyaPanelPlacement placement = OceanyaPanelLayout.CapturePlacement(element);
+                bool hidden = element.Visibility != Visibility.Visible;
+                bool empty = element.ActualWidth < 1 || element.ActualHeight < 1;
+                bool offSurface = placement.Left + placement.Width < 0
+                    || placement.Top + placement.Height < 0
+                    || placement.Left > Width
+                    || placement.Top > Height;
+
+                if (!hidden && !empty && !offSurface)
+                {
+                    continue;
+                }
+
+                anomalies.Add($"{pair.Key}[{placement.Left:0},{placement.Top:0} {placement.Width:0}x{placement.Height:0}"
+                    + $" actual={element.ActualWidth:0}x{element.ActualHeight:0} z={Panel.GetZIndex(element)}"
+                    + $"{(hidden ? " hidden" : string.Empty)}{(empty ? " empty" : string.Empty)}"
+                    + $"{(offSurface ? " off-surface" : string.Empty)}]");
+            }
+
+            CustomConsole.Info(
+                $"[PANEL-LAYOUT] surface={Width:0}x{Height:0} panels={panels.Count} anomalies={anomalies.Count}"
+                    + (anomalies.Count > 0 ? " | " + string.Join(" ", anomalies) : string.Empty),
+                CustomConsole.LogCategory.Viewport);
         }
 
         /// <summary>
@@ -770,13 +840,50 @@ namespace OceanyaClient
         private void ReapplyPanelLayoutFromSavefile()
         {
             // Not persisting: the layout was just replaced, and saving the panels' current positions
-            // here would write the previous layout back over it.
+            // here would write the previous layout back over it. Clearing the surface-tracking flag
+            // first stops the deactivate path persisting the old window size over the new layout's.
+            surfaceSizeFollowsWindow = false;
             panelEditModeController?.Deactivate(persistLayout: false);
             BottomBar.SetEditLayoutModeActive(false);
             panelEditModeController = null;
             RestorePanelStyleBaselines();
             ApplyPanelCatalogPlacements();
             ApplyViewportRenderInPanel();
+            ApplyListRenderInPanel();
+            RestoreMainWindowForegroundIfOwned();
+        }
+
+        /// <summary>
+        /// Brings the main window back to the front after a layout change, without stealing focus from
+        /// another application.
+        /// </summary>
+        /// <remarks>
+        /// Applying a layout can hide the viewport window and re-run taskbar-preview mode. When the
+        /// window being hidden was holding the foreground, Windows hands activation to the next window in
+        /// the GLOBAL z-order - usually another process - and the whole app drops out of sight, which is
+        /// what "importing a theme minimizes everything" was. Guarded on the process already owning the
+        /// foreground so this can never pull the window over an app the user switched to deliberately.
+        /// </remarks>
+        private void RestoreMainWindowForegroundIfOwned()
+        {
+            if (!IsForegroundOwnedByCurrentProcess())
+            {
+                return;
+            }
+
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this);
+            if (hostWindow == null || !hostWindow.IsVisible)
+            {
+                return;
+            }
+
+            IntPtr hostHwnd = new WindowInteropHelper(hostWindow).Handle;
+            if (hostHwnd == IntPtr.Zero || GetForegroundWindow() == hostHwnd)
+            {
+                return;
+            }
+
+            RestoreAndActivateWindow(hostHwnd);
         }
 
         /// <summary>
@@ -810,16 +917,22 @@ namespace OceanyaClient
             surfaceSizeFollowsWindow = false;
             SaveFile.Data.OceanyaThemeLayout = new OceanyaThemeLayoutState();
             SaveFile.Data.GMViewportRenderInPanel = false;
+            SaveFile.Data.GMAreaListRenderInPanel = false;
+            SaveFile.Data.GMMusicListRenderInPanel = false;
             SaveFile.Save();
 
             // Hidden panels stay collapsed unless visibility is restored explicitly: an empty layout has
-            // no hidden entries to act on, so nothing would bring them back.
-            foreach (OceanyaPanelElements elements in BuildPanelElementMap().Values)
+            // no hidden entries to act on, so nothing would bring them back. Panels the catalog hides by
+            // default are the exception - the stock window does not show them.
+            foreach (KeyValuePair<string, OceanyaPanelElements> pair in BuildPanelElementMap())
             {
-                elements.Element.Visibility = Visibility.Visible;
-                if (elements.Backdrop != null)
+                Visibility restored = OceanyaPanelCatalog.IsHiddenByDefault(pair.Key)
+                    ? Visibility.Collapsed
+                    : Visibility.Visible;
+                pair.Value.Element.Visibility = restored;
+                if (pair.Value.Backdrop != null)
                 {
-                    elements.Backdrop.Visibility = Visibility.Visible;
+                    pair.Value.Backdrop.Visibility = restored;
                 }
             }
 
@@ -850,7 +963,537 @@ namespace OceanyaClient
                     renderInPanel));
             }
 
+            bool isAreaSlot = string.Equals(panelId, OceanyaPanelCatalog.AreaListPanelId, StringComparison.Ordinal)
+                || string.Equals(panelId, OceanyaPanelCatalog.BarButtonAreaPanelId, StringComparison.Ordinal);
+            if (isAreaSlot)
+            {
+                bool renderInPanel = SaveFile.Data.GMAreaListRenderInPanel;
+                items.Add(new OceanyaPanelMenuEntry(
+                    "Render area list in main window",
+                    () => SetListRenderInPanel(area: true, renderInPanel: !renderInPanel),
+                    renderInPanel));
+            }
+
+            bool isMusicSlot = string.Equals(panelId, OceanyaPanelCatalog.MusicListPanelId, StringComparison.Ordinal)
+                || string.Equals(panelId, OceanyaPanelCatalog.BarButtonMusicPanelId, StringComparison.Ordinal);
+            if (isMusicSlot)
+            {
+                bool renderInPanel = SaveFile.Data.GMMusicListRenderInPanel;
+                items.Add(new OceanyaPanelMenuEntry(
+                    "Render music list in main window",
+                    () => SetListRenderInPanel(area: false, renderInPanel: !renderInPanel),
+                    renderInPanel));
+            }
+
             return items;
+        }
+
+        /// <summary>
+        /// Switches the area or music list between its popup and a panel inside the main window.
+        /// </summary>
+        /// <param name="area">True for the area list, false for the music list.</param>
+        /// <param name="renderInPanel">True to host the list inside the main window.</param>
+        private void SetListRenderInPanel(bool area, bool renderInPanel)
+        {
+            if (area)
+            {
+                SaveFile.Data.GMAreaListRenderInPanel = renderInPanel;
+            }
+            else
+            {
+                SaveFile.Data.GMMusicListRenderInPanel = renderInPanel;
+            }
+
+            SaveFile.Save();
+            ApplyListRenderInPanel();
+        }
+
+        /// <summary>
+        /// Applies the current "render area/music list in main window" choices.
+        /// </summary>
+        /// <remarks>
+        /// Same shape as the viewport: a list rendered in the window REPLACES its bottom-bar button, and
+        /// the popup's content is REPARENTED into the panel host so every handler, binding and refresh path
+        /// keeps working untouched. When both lists render in the window they usually share one rectangle,
+        /// which is what AO2 themes do, so the A/M switch button decides which of the two is visible.
+        /// </remarks>
+        private void ApplyListRenderInPanel()
+        {
+            ApplyListRenderInPanel(
+                SaveFile.Data.GMAreaListRenderInPanel,
+                AreaNavigatorPopup,
+                AreaListPanelHost,
+                AreaNavigatorPopupSurface,
+                new Size(282, 296),
+                new Size(220, 220),
+                OceanyaPanelCatalog.BarButtonAreaPanelId);
+            ApplyListRenderInPanel(
+                SaveFile.Data.GMMusicListRenderInPanel,
+                MusicListPopup,
+                MusicListPanelHost,
+                MusicListPopupSurface,
+                new Size(320, 420),
+                new Size(260, 300),
+                OceanyaPanelCatalog.BarButtonMusicPanelId);
+
+            ApplyAreaMusicSlotSelection();
+            panelEditModeController?.RebuildOverlays();
+        }
+
+        private void ApplyListRenderInPanel(
+            bool renderInPanel,
+            System.Windows.Controls.Primitives.Popup popup,
+            ContentControl host,
+            FrameworkElement surface,
+            Size popupSize,
+            Size popupMinimum,
+            string buttonPanelId)
+        {
+            FrameworkElement? button = reparentedPanelControls.TryGetValue(buttonPanelId, out FrameworkElement? found)
+                ? found
+                : null;
+
+            if (renderInPanel)
+            {
+                popup.IsOpen = false;
+                if (popup.Child is UIElement content)
+                {
+                    popup.Child = null;
+                    host.Content = content;
+                }
+
+                // A popup sizes itself, so its surface carries fixed dimensions. Inside a panel those stop
+                // the content following the panel, which left the lists taller than their box with nothing
+                // to scroll. Stretching instead lets the inner list scroll like it does in the popup.
+                surface.Width = double.NaN;
+                surface.Height = double.NaN;
+
+                // The minimums matter just as much: a 300px-tall minimum inside a 209px panel simply
+                // overflowed and was clipped, so the list never had to scroll - which is what "there is no
+                // scrollbar" actually was.
+                surface.MinWidth = 0;
+                surface.MinHeight = 0;
+                surface.HorizontalAlignment = HorizontalAlignment.Stretch;
+                surface.VerticalAlignment = VerticalAlignment.Stretch;
+
+                host.Visibility = Visibility.Visible;
+                if (button != null)
+                {
+                    button.Visibility = Visibility.Collapsed;
+                }
+
+                return;
+            }
+
+            if (host.Content is UIElement hosted)
+            {
+                // Hand the content back, or the popup opens empty - and give it its own size again, since a
+                // popup has no parent to stretch inside.
+                host.Content = null;
+                popup.Child = hosted;
+                surface.Width = popupSize.Width;
+                surface.Height = popupSize.Height;
+                surface.MinWidth = popupMinimum.Width;
+                surface.MinHeight = popupMinimum.Height;
+            }
+
+            host.Visibility = Visibility.Collapsed;
+            if (button != null)
+            {
+                button.Visibility = Visibility.Visible;
+            }
+        }
+
+        /// <summary>
+        /// Shows whichever of the two in-window lists the A/M switch last selected.
+        /// </summary>
+        /// <remarks>
+        /// The switch only means anything while both lists render in the window; with one of them on its
+        /// button, the other simply stays visible.
+        /// </remarks>
+        private void ApplyAreaMusicSlotSelection()
+        {
+            bool areaInPanel = SaveFile.Data.GMAreaListRenderInPanel;
+            bool musicInPanel = SaveFile.Data.GMMusicListRenderInPanel;
+            if (!areaInPanel || !musicInPanel)
+            {
+                return;
+            }
+
+            bool showMusic = SaveFile.Data.GMAreaMusicSlotShowsMusic;
+            AreaListPanelHost.Visibility = showMusic ? Visibility.Collapsed : Visibility.Visible;
+            MusicListPanelHost.Visibility = showMusic ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+
+        /// <summary>
+        /// Runs the manual INIPuppet picker for a client: refresh the server roster, then choose.
+        /// </summary>
+        /// <remarks>
+        /// Shared by the client context menu's "Select INIPuppet (Manual)" entry and the optional
+        /// change-character button an AO2 theme can place, so both behave identically.
+        /// </remarks>
+        /// <param name="bot">Client whose puppet is being chosen.</param>
+        private async Task SelectIniPuppetManuallyAsync(AOClient bot)
+        {
+
+                    Window? owner = HostWindow ?? Application.Current?.MainWindow;
+                    bool waitFormShown = false;
+                    try
+                    {
+                        if (owner != null && !OceanyaTestMode.Current.DisableWaitForms)
+                        {
+                            await WaitForm.ShowFormAsync("Refreshing character list...", owner);
+                            waitFormShown = true;
+                        }
+
+                        AOClient? networkClient = GetTargetClientForNetwork(bot);
+                        if (networkClient != null)
+                        {
+                            WaitForm.SetSubtitle("Fetching from server...");
+                            try
+                            {
+                                await networkClient.RequestFreshCharacterListAsync();
+                            }
+                            catch (Exception ex)
+                            {
+                                CustomConsole.Warning("Failed to refresh character list from server.", ex);
+                            }
+                        }
+
+                        WaitForm.SetSubtitle("Building character list...");
+                        await Task.Yield();
+                        if (waitFormShown)
+                        {
+                            await WaitForm.CloseFormAsync();
+                            waitFormShown = false;
+                        }
+
+                        ClientCharacterSelectionResult result =
+                            await ShowCharacterSelectorForClientSelectionAsync(bot, skipWaitForm: true);
+                        if (result.Confirmed && !string.IsNullOrWhiteSpace(result.SelectedCharacterName))
+                        {
+                            _ = ApplyCharacterSelectionAsync(bot, result.SelectedCharacterName, preserveLocalCharacter: true);
+                        }
+                    }
+                    finally
+                    {
+                        if (waitFormShown)
+                        {
+                            await WaitForm.CloseFormAsync();
+                        }
+                    }
+        }
+
+        /// <summary>
+        /// Remembers whether IC messages carry the custom showname.
+        /// </summary>
+        /// <remarks>
+        /// AO2's counterpart is the `showname_enable` checkbox left of Additive: unticked, the message is
+        /// sent with no showname and everyone sees the character's own name instead.
+        /// </remarks>
+        private void chkSendShowname_Changed(object sender, RoutedEventArgs e)
+        {
+            SaveFile.Data.SendCustomShowname = chkSendShowname.IsChecked == true;
+            SaveFile.Save();
+
+            // Every profile and the shared connection all honour the same choice.
+            foreach (AOClient client in clients.Values)
+            {
+                client.SendCustomShowname = SaveFile.Data.SendCustomShowname;
+            }
+
+            if (singleInternalClient != null)
+            {
+                singleInternalClient.SendCustomShowname = SaveFile.Data.SendCustomShowname;
+            }
+        }
+
+        /// <summary>
+        /// Nudges a health bar, the way AO2's plus and minus buttons do.
+        /// </summary>
+        /// <param name="bar">1 for defence, 2 for prosecution.</param>
+        /// <param name="delta">Step to apply.</param>
+        private async void AdjustHealthBar(int bar, int delta)
+        {
+            AOClient? networkClient = currentClient == null ? null : GetTargetClientForNetwork(currentClient);
+            if (networkClient == null)
+            {
+                return;
+            }
+
+            int current = bar == 1 ? networkClient.DefenceHealth : networkClient.ProsecutionHealth;
+            int target = current + delta;
+            if (target < 0 || target > AOClient.MaximumHealthValue)
+            {
+                return;
+            }
+
+            try
+            {
+                // AO2 only asks; the bar moves when the server echoes the change back.
+                await networkClient.SetHealth(bar, target);
+            }
+            catch (Exception exception)
+            {
+                CustomConsole.Warning("Failed to change a health bar.", exception);
+            }
+        }
+
+        private void btnDefenceMinus_Click(object sender, RoutedEventArgs e) => AdjustHealthBar(1, -1);
+
+        private void btnDefencePlus_Click(object sender, RoutedEventArgs e) => AdjustHealthBar(1, 1);
+
+        private void btnProsecutionMinus_Click(object sender, RoutedEventArgs e) => AdjustHealthBar(2, -1);
+
+        private void btnProsecutionPlus_Click(object sender, RoutedEventArgs e) => AdjustHealthBar(2, 1);
+
+        private void btnWitnessTestimony_Click(object sender, RoutedEventArgs e) => PlayCourtroomAnimation("testimony1");
+
+        private void btnCrossExamination_Click(object sender, RoutedEventArgs e) => PlayCourtroomAnimation("testimony2");
+
+        private void btnNotGuilty_Click(object sender, RoutedEventArgs e) => PlayCourtroomAnimation("judgeruling", 0);
+
+        private void btnGuilty_Click(object sender, RoutedEventArgs e) => PlayCourtroomAnimation("judgeruling", 1);
+
+        /// <summary>
+        /// Asks the server to play a courtroom animation for the whole area.
+        /// </summary>
+        /// <param name="animationName">AO2 animation name.</param>
+        /// <param name="variant">Variant index, or -1 to omit it.</param>
+        private async void PlayCourtroomAnimation(string animationName, int variant = -1)
+        {
+            AOClient? networkClient = currentClient == null ? null : GetTargetClientForNetwork(currentClient);
+            if (networkClient == null)
+            {
+                return;
+            }
+
+            try
+            {
+                await networkClient.SendCourtroomAnimation(animationName, variant);
+            }
+            catch (Exception exception)
+            {
+                CustomConsole.Warning($"Failed to play the {animationName} animation.", exception);
+            }
+        }
+
+        /// <summary>
+        /// Paints the health bars with the current theme's artwork for their values.
+        /// </summary>
+        /// <remarks>
+        /// AO2 does the same in <c>Courtroom::set_hp_bar</c>: the bar is a plain image widget and the value
+        /// picks the asset (<c>defensebar0</c>..<c>defensebar10</c>), so the artwork is looked up per change
+        /// rather than imported once.
+        /// </remarks>
+        private void RefreshHealthBars()
+        {
+            AOClient? networkClient = currentClient == null ? null : GetTargetClientForNetwork(currentClient);
+            int defence = networkClient?.DefenceHealth ?? AOClient.MaximumHealthValue;
+            int prosecution = networkClient?.ProsecutionHealth ?? AOClient.MaximumHealthValue;
+            ApplyHealthBarArt(imgDefenceBar, "defensebar" + defence);
+            ApplyHealthBarArt(imgProsecutionBar, "prosecutionbar" + prosecution);
+        }
+
+        private void ApplyHealthBarArt(Image target, string imageName)
+        {
+            if (target.Visibility != Visibility.Visible)
+            {
+                return;
+            }
+
+            string themeName = Features.Viewport.AO2ThemeCatalog.GetConfiguredThemeName();
+            string? path = Ao2ThemeLayoutImporter.ResolveThemeImage(themeName, imageName);
+            if (path == null)
+            {
+                return;
+            }
+
+            try
+            {
+                target.Source = Utilities.BitmapFileLoader.LoadFrozen(path);
+            }
+            catch (Exception exception)
+            {
+                CustomConsole.Warning($"Could not load the health bar image {imageName}.", exception);
+            }
+        }
+
+        /// <summary>
+        /// Opens the mute list for the current client.
+        /// </summary>
+        /// <remarks>
+        /// AO2 keeps a client-side mute list; Oceanya has no equivalent yet (parity gap #8), so the button
+        /// exists for themes that place it and says so rather than doing nothing.
+        /// </remarks>
+        private void btnMute_Click(object sender, RoutedEventArgs e)
+        {
+            OceanyaMessageBox.Show(
+                "Muting players is not implemented yet.",
+                "Mute",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+
+        /// <summary>
+        /// Reports that evidence is unsupported, which is what this button is for.
+        /// </summary>
+        private void btnEvidence_Click(object sender, RoutedEventArgs e)
+        {
+            OceanyaMessageBox.Show(
+                "Oceanya Client is not compatible with evidence!",
+                "Evidence",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+
+        /// <summary>
+        /// Re-reads the selected AO2 theme, the way AO2's own reload button does.
+        /// </summary>
+        private void btnReloadTheme_Click(object sender, RoutedEventArgs e)
+        {
+            Features.ChatPreview.AO2ChatPreviewResolver.ClearCache();
+            viewportContent?.ReloadThemeLayout();
+            pictureInPictureViewportContent?.ReloadThemeLayout();
+        }
+
+        /// <summary>
+        /// Picks the INIPuppet for the current client, the same flow as the client menu's manual entry.
+        /// </summary>
+        private void btnChangeCharacter_Click(object sender, RoutedEventArgs e)
+        {
+            if (currentClient != null)
+            {
+                _ = SelectIniPuppetManuallyAsync(currentClient);
+            }
+        }
+
+        /// <summary>
+        /// Calls moderator support for the current client's area.
+        /// </summary>
+        /// <remarks>
+        /// AO2 asks for a reason first when the server advertises `modcall_reason`
+        /// (`Courtroom::on_call_mod_clicked`), and sends a bare `ZZ#%` otherwise. Servers rate limit the
+        /// call and answer over OOC, so there is nothing to report here beyond a failed send.
+        /// </remarks>
+        private async void btnCallMod_Click(object sender, RoutedEventArgs e)
+        {
+            AOClient? networkClient = currentClient == null ? null : GetTargetClientForNetwork(currentClient);
+            if (networkClient == null || !networkClient.IsTransportConnected)
+            {
+                return;
+            }
+
+            string? reason = null;
+            if (networkClient.SupportsModCallReason)
+            {
+                reason = InputDialog.Show(
+                    HostWindow,
+                    "Why are you calling a moderator?",
+                    "Call moderator");
+                if (string.IsNullOrWhiteSpace(reason))
+                {
+                    return;
+                }
+            }
+
+            try
+            {
+                await networkClient.CallModerator(reason);
+            }
+            catch (Exception exception)
+            {
+                CustomConsole.Warning("Failed to call a moderator.", exception);
+            }
+        }
+
+        /// <summary>
+        /// Applies a volume slider while it is being dragged, without persisting it yet.
+        /// </summary>
+        private void VolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (suppressVolumeSliderEvents)
+            {
+                return;
+            }
+
+            // Live preview only: writing config.ini on every tick of a drag would hammer the file.
+            AudioSettings.SetLivePreviewVolumes(
+                AudioSettings.PercentToScalar(sliderMusicVolume.Value),
+                AudioSettings.PercentToScalar(sliderSfxVolume.Value),
+                AudioSettings.PercentToScalar(sliderBlipVolume.Value));
+            viewportContent?.RefreshVolumes();
+            mainMusicAudioManager.RefreshVolumes();
+        }
+
+        private void VolumeSlider_DragCompleted(object sender, System.Windows.Controls.Primitives.DragCompletedEventArgs e)
+        {
+            CommitVolumeSliders();
+        }
+
+        private void VolumeSlider_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            // A click on the track moves the slider without a drag gesture.
+            CommitVolumeSliders();
+        }
+
+        /// <summary>
+        /// Persists the slider volumes once the user lets go.
+        /// </summary>
+        private void CommitVolumeSliders()
+        {
+            if (suppressVolumeSliderEvents)
+            {
+                return;
+            }
+
+            AudioSettings.ClearLivePreviewVolumes();
+            AudioSettings.PersistVolume("default_music", AudioSettings.PercentToScalar(sliderMusicVolume.Value));
+            AudioSettings.PersistVolume("default_sfx", AudioSettings.PercentToScalar(sliderSfxVolume.Value));
+            AudioSettings.PersistVolume("default_blip", AudioSettings.PercentToScalar(sliderBlipVolume.Value));
+            viewportContent?.RefreshVolumes();
+            mainMusicAudioManager.RefreshVolumes();
+        }
+
+        /// <summary>
+        /// Shows the persisted volumes on the in-window sliders.
+        /// </summary>
+        private void RefreshVolumeSliders()
+        {
+            suppressVolumeSliderEvents = true;
+            try
+            {
+                sliderMusicVolume.Value = AudioSettings.ScalarToPercent(AudioSettings.MusicVolume);
+                sliderSfxVolume.Value = AudioSettings.ScalarToPercent(AudioSettings.SfxVolume);
+                sliderBlipVolume.Value = AudioSettings.ScalarToPercent(AudioSettings.BlipVolume);
+            }
+            finally
+            {
+                suppressVolumeSliderEvents = false;
+            }
+        }
+
+        /// <summary>Guards the volume sliders while their values are being written from code.</summary>
+        private bool suppressVolumeSliderEvents;
+
+        /// <summary>
+        /// Swaps the in-window slot between the area list and the music list.
+        /// </summary>
+        private void btnAreaMusicSwitch_Click(object sender, RoutedEventArgs e)
+        {
+            SaveFile.Data.GMAreaMusicSlotShowsMusic = !SaveFile.Data.GMAreaMusicSlotShowsMusic;
+            SaveFile.Save();
+            ApplyAreaMusicSlotSelection();
+
+            if (SaveFile.Data.GMAreaMusicSlotShowsMusic)
+            {
+                _ = Dispatcher.BeginInvoke(new Action(RefreshMusicListForCurrentClient), DispatcherPriority.Background);
+            }
+            else
+            {
+                RefreshAreaNavigatorForCurrentClient();
+            }
         }
 
         /// <summary>
@@ -1058,6 +1701,13 @@ namespace OceanyaClient
                 FrameworkElement element = OceanyaCustomPanelFactory.CreateElement(definition);
                 MainCanvas.Children.Add(element);
                 customThemePanelElements[definition.Id] = element;
+
+                // Seed the panel state from the definition so the normal layout pass applies its
+                // placement, stacking and locked flag like any other panel.
+                if (!SaveFile.Data.OceanyaThemeLayout.Panels.ContainsKey(definition.Id))
+                {
+                    SaveFile.Data.OceanyaThemeLayout.Panels[definition.Id] = definition.Placement;
+                }
             }
         }
 
@@ -1216,6 +1866,17 @@ namespace OceanyaClient
                     onLayoutPersisted: ApplySurfaceSizeFromLayout);
                 panelEditModeController.ExtraPanelMenuItemsProvider = BuildExtraPanelMenuItems;
                 panelEditModeController.FullResetHandler = ResetThemeLayoutToDefaults;
+                panelEditModeController.StylesheetApplied += (_, changed) =>
+                {
+                    ReapplyPanelLayoutFromSavefile();
+                    OceanyaMessageBox.Show(
+                        changed == 0
+                            ? "Nothing in that stylesheet could be translated into panel settings."
+                            : $"Applied stylesheet settings to {changed} panels.",
+                        "Stylesheet",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                };
                 // Leaving edit mode from the floating toolbar or Escape has to unpress the toggle,
                 // otherwise the next click just unchecks it and appears to do nothing.
                 panelEditModeController.ActiveChanged += (_, isEditing) => OnPanelEditModeActiveChanged(isEditing);
@@ -1747,6 +2408,9 @@ namespace OceanyaClient
         {
             HookHostWindowClosing();
             ApplySavedMainWindowState();
+            RefreshVolumeSliders();
+            chkSendShowname.IsChecked = SaveFile.Data.SendCustomShowname;
+            RefreshHealthBars();
             if (hasRaisedFinishedLoading)
             {
                 return;
@@ -4552,6 +5216,9 @@ namespace OceanyaClient
 
         private void HookClientForDreddOverlay(AOClient client)
         {
+            // The health bars are area state, so they follow whichever client the window is showing.
+            client.OnHealthChanged += (_, _) => Dispatcher.BeginInvoke(new Action(RefreshHealthBars));
+
             client.OnBGChange += (_) =>
             {
                 Dispatcher.Invoke(() =>
@@ -6489,6 +7156,7 @@ namespace OceanyaClient
 
                 bot.OOCShowname = bot.clientName;
                 bot.switchPosWhenChangingINI = BottomBar.IsSwitchPositionOnIniSwapChecked;
+                bot.SendCustomShowname = SaveFile.Data.SendCustomShowname;
                 bot.FrequencyHintsProvider = () => SaveFile.Data.FrequentlyUsedIniPuppets;
                 if (restoredState != null)
                 {
@@ -6548,57 +7216,8 @@ namespace OceanyaClient
                 contextMenu.Items.Add(iniPuppetChange);
 
                 MenuItem manualIniPuppetChange = new MenuItem { Header = "Select INIPuppet (Manual)" };
-                manualIniPuppetChange.Click += async (sender, args) =>
-                {
-                    Window? owner = HostWindow ?? Application.Current?.MainWindow;
-                    bool waitFormShown = false;
-                    try
-                    {
-                        if (owner != null && !OceanyaTestMode.Current.DisableWaitForms)
-                        {
-                            await WaitForm.ShowFormAsync("Refreshing character list...", owner);
-                            waitFormShown = true;
-                        }
-
-                        AOClient? networkClient = GetTargetClientForNetwork(bot);
-                        if (networkClient != null)
-                        {
-                            WaitForm.SetSubtitle("Fetching from server...");
-                            try
-                            {
-                                await networkClient.RequestFreshCharacterListAsync();
-                            }
-                            catch (Exception ex)
-                            {
-                                CustomConsole.Warning("Failed to refresh character list from server.", ex);
-                            }
-                        }
-
-                        WaitForm.SetSubtitle("Building character list...");
-                        await Task.Yield();
-                        if (waitFormShown)
-                        {
-                            await WaitForm.CloseFormAsync();
-                            waitFormShown = false;
-                        }
-
-                        ClientCharacterSelectionResult result =
-                            await ShowCharacterSelectorForClientSelectionAsync(bot, skipWaitForm: true);
-                        if (result.Confirmed && !string.IsNullOrWhiteSpace(result.SelectedCharacterName))
-                        {
-                            _ = ApplyCharacterSelectionAsync(bot, result.SelectedCharacterName, preserveLocalCharacter: true);
-                        }
-                    }
-                    finally
-                    {
-                        if (waitFormShown)
-                        {
-                            await WaitForm.CloseFormAsync();
-                        }
-                    }
-                };
+                manualIniPuppetChange.Click += async (sender, args) => await SelectIniPuppetManuallyAsync(bot);
                 contextMenu.Items.Add(manualIniPuppetChange);
-
                 MenuItem setCharacterToIniPuppet = new MenuItem();
                 setCharacterToIniPuppet.Click += (sender, args) =>
                 {
@@ -7289,6 +7908,7 @@ namespace OceanyaClient
             }
 
             IcLog.LogControl.SetInvertOnClientLogs(SaveFile.Data.InvertICLog);
+            RefreshVolumeSliders();
             viewportContent?.RefreshVolumes();
             if (viewportContent != null)
             {
@@ -10576,7 +11196,10 @@ namespace OceanyaClient
         private async void OpenAreaNavigatorFromPanelRequest()
         {
             RefreshAreaNavigatorForCurrentClient();
-            AreaNavigatorPopup.IsOpen = true;
+
+            // While the list renders in the window its content is not in the popup any more, so opening it
+            // would show an empty box.
+            AreaNavigatorPopup.IsOpen = !SaveFile.Data.GMAreaListRenderInPanel;
             AOClient? networkClient = currentClient == null ? null : GetTargetClientForNetwork(currentClient);
             if (networkClient != null && networkClient.IsTransportConnected)
             {
@@ -10598,7 +11221,7 @@ namespace OceanyaClient
 
         private void OpenMusicListFromPanelRequest()
         {
-            MusicListPopup.IsOpen = true;
+            MusicListPopup.IsOpen = !SaveFile.Data.GMMusicListRenderInPanel;
             _ = Dispatcher.BeginInvoke(new Action(RefreshMusicListForCurrentClient), DispatcherPriority.Background);
             _ = RefreshMusicListFromServerAndRefreshAsync();
         }

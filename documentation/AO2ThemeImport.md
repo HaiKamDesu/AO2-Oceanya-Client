@@ -97,30 +97,49 @@ and `Documentation/ViewportParityGaps.md`; when they arrive they simply gain a m
   `AO2ThemeCatalog.GetAo2ThemeScanFolders()` yields the *base* folders, so the `themes` segment has to
   be added (matching `AO2ThemeCatalog.ResolveThemeRoot`); without it no theme is ever found.
 
-Policy decisions baked in:
-- **Unmentioned panels are hidden**, mirroring AO2's own behaviour, and written as real hidden entries
-  (a missing entry would otherwise leave the panel at its Oceanya default, visible and misplaced).
-- **The clients strip stays.** GM multi-client has no AO2 equivalent, so every imported rectangle is
-  shifted right by `ClientsStripWidth` (54) and the clients title/add/remove/list plus the remaining
-  Oceanya-only buttons are packed into that left strip, with the client list taking the free height.
-  The surface is widened by the same amount. Users can move it afterwards like any other panel.
-- **Cosmetic Oceanya-only panels are hidden** (`ic_settings*`, `ic_loremaster`, `ic_catchphrase`,
-  `shout_backdrop`, `ooc_divider`, `ding_button`, `bottom_bar`) so the theme's own look comes through.
-- Importing turns on **render viewport in main window**, since every AO2 theme places `viewport`.
-- Identifiers that are not placeable widgets, or that Oceanya already honours through its
-  viewport/chatbox theming (`courtroom`, `chatbox`, `chat_arrow`, `showname`, `message`,
-  `music_display`, `music_name`, spacings), are not reported as unmapped.
+**Appearance is imported too, not just geometry** (`ApplyThemeAppearance`):
+- **Artwork** per panel from the theme's own files, using AO2's `setImage` names - which are *not* the
+  design.ini identifiers: `holdit`, `takethat`, `custom`, `realization`, `screenshake`, `pair_button`,
+  `courtroom_settings` (legacy `settings`) - with the `*_selected` / `*_pressed` variant as the panel's
+  checked image, probing extensions in AO2's order (`.webp`, `.apng`, `.gif`, `.png`) and falling back
+  from the theme to the default theme.
+- **Typography** from `courtroom_fonts.ini`: size, family, bold and colour (converted from AO2's
+  `r, g, b` form) onto the log, OOC and IC text panels.
+- **The backdrop** (`courtroombackground`) as a **locked image panel** at the theme's own rectangle, with
+  the lowest stacking order. It deliberately is *not* a surface-wide fill: the Oceanya surface is wider
+  than the theme (the clients strip), so a stretched fill stopped lining up with the widgets drawn on it.
+  Being a panel also means the user can move, resize, restyle or delete it like anything else.
+- **The viewport theme is switched to match** (`config.ini` `theme`), because the chatbox, in-viewport
+  art, chat colours and court sounds already come from that setting - leaving it pointed at the old theme
+  imported half a look.
 
-UI: Settings → **Interface** → *Panel Layout*: pick any AO2 theme and **Import layout from AO2 theme**
-(confirms first), or **Reset layout to Oceanya default**. `SettingsWindow.PanelLayoutChanged` tells
-`MainWindow` to re-place everything.
+**Rule: the importer may only write settings the layout editor can also set by hand.** Panel image and
+selected image, font family/size/bold/colour, opacity, background colour, scaling, item size, stacking,
+lock state and added image/colour panels all have editor UI. If a future import needs something new, add
+the editor control first - an imported theme must never contain something a user could not build
+themselves.
 
-**Reset is a full theme reset**, owned by `MainWindow.ResetThemeLayoutToDefaults` (the editor's *Reset
-all* delegates to it through `OceanyaPanelEditModeController.FullResetHandler`, and so does the
-settings button). It clears placement, stacking, visibility and styling (restoring the live controls
-from `OceanyaPanelStyleApplier` baselines), deletes user-added panels, and turns off
-`GMViewportRenderInPanel`. The AO2 *viewport* theme is deliberately untouched - that is a separate
-setting, not part of the Oceanya theme.
+### How each control is positioned
+Every imported rectangle is shifted right by `ClientsStripWidth` (54) so the strip of Oceanya-only
+controls fits on the left. The backdrop panel is shifted by the same amount and keeps the theme's own
+size, so relative alignment is preserved exactly.
+
+1. **Direct** - one AO2 rectangle, one Oceanya panel: the rectangle is used as-is (clamped to the panel's
+   minimum size). See the mapping table above.
+2. **Composite** - one AO2 rectangle, several Oceanya panels (`ApplyCompositeRegions`). AO2 has a single
+   `server_chatlog` rectangle while we split the OOC block into background, header bar, header text and
+   chat text, so the children are laid out *inside* the imported rectangle: header across the top,
+   chat filling the rest, background covering the whole thing. Leaving them at their Oceanya defaults
+   tore the block apart, which is why this exists.
+3. **Stranded essentials** - a mapped panel the theme does not describe, but that Oceanya cannot lose
+   (IC message/showname, emote grid, the six dropdowns, OOC message/showname). AO2 hiding its own
+   position dropdown is harmless there; here it would remove the only way to change position, so these
+   are parked in the left strip instead of hidden (`EssentialMappedPanelIds`).
+4. **Oceanya-only** - no AO2 counterpart at all (clients strip, edit-layout/refresh/debug buttons, the
+   option checkboxes): packed into the left strip (`FunctionalOnlyPanelIds`), with the clients list
+   taking the free height.
+5. **Cosmetic Oceanya-only** - hidden, so the theme's own look comes through (`CosmeticOnlyPanelIds`).
+6. **Everything else the theme mentions but we have no panel for** - reported as unmapped and ignored.
 
 ### Measured against the 61 installed themes
 Every theme with a design file imports 20-30 panels. GrayGarden (the most heavily customised example)
@@ -153,3 +172,280 @@ mute, sliders and other features Oceanya does not have.
   fit clamp already handles that by scaling down.
 - Any theme relying on `courtroom_stylesheets.css` will not translate: Oceanya has no Qt stylesheet
   engine, so colours/borders coming from CSS are lost.
+
+## Sizing the imported window
+AO2's `courtroom = 0,0,W,H` is the whole window. In Oceanya that rectangle is the **canvas**, because the
+connection-info bar sits above it, so the imported surface is `H + Ao2ThemeLayoutImporter.TopBarHeight`
+(24) tall and `W + ClientsStripWidth` (54) wide. Without the extra 24 the theme's bottom row of widgets
+(settings, music, area) landed outside the window and was clipped.
+
+## Fonts: only the widgets AO2 means
+`courtroom_fonts.ini`'s `showname` and `message` are the **viewport chatbox** fonts, not the IC input
+line - Oceanya already themes those through `AO2ChatPreviewResolver`. They are deliberately *not*
+mapped onto `ic_showname`/`ic_message`; doing so made the input boxes render at chatbox size. AO2 itself
+gives the input line the application font, and its colours come from the stylesheet's `QLineEdit` rule.
+
+## Emote buttons
+AO2 does not stretch emote buttons to fill the emote area. `AO2-Client/src/emotes.cpp` reads
+`emote_button_size` and `emote_button_spacing` from `courtroom_design.ini` (falling back through the
+theme chain to the default theme's `40,40` / `9,9`) and fits `((area - button) / (spacing + button)) + 1`
+buttons per axis. The importer translates that into the emote grid's **item size** - the field the grid
+settings popup already exposes - and `PageButtonGrid` derives rows and columns from it. GrayGarden ships
+no `emote_button_size`, so it inherits 40x40 and its `400x120` area holds exactly 10x3.
+
+Two related fixes made that visible: the emote button face was hard-coded to 40x40 inside its control
+template (so buttons overlapped once a cell was smaller), and `PageButtonGrid`'s grid area was inside a
+vertically scrollable `ScrollViewer`, which handed the grid infinite height and collapsed its star-sized
+rows to content size. The face now fills the button and the area no longer scrolls.
+
+## State artwork: the trick most CSS-heavy themes use
+Several themes ship a **1x1 transparent PNG** as a widget's base image, paint the button's resting
+appearance into `courtroombackground`, and supply the real artwork only for the hover and pressed states
+through the stylesheet. GrayGarden does exactly this for `realization`, `screenshake`, `pair_button`,
+`holdit`, `objection` and `takethat` (81-byte 1x1 PNGs) - which is why those buttons "invert while
+pressed" in AO2: that is `hover/topleft.png`, not a colour effect.
+
+So a panel carries three images, all three editable by hand in the Image settings popup:
+`ImagePath` (resting), `CheckedImagePath` (AO2's `*_selected`, `:pressed`, `:checked`, `:on`) and
+`HoverImagePath` (`:hover`). WPF template triggers cannot be rewritten from data, so
+`OceanyaPanelStyleApplier.ApplyStateArt` swaps the face with `MouseEnter`/`MouseLeave`/`Checked`
+handlers and registers an undo, because handlers are not dependency properties and the visual baseline
+cannot restore them on its own.
+
+`ResolveThemeImage` probes **every extension inside one theme before falling back to the default
+theme**, matching AO2's `get_image_suffix(get_theme_path(...))`. Probing extension-first instead handed
+GrayGarden's `holdit.png` over to `default/holdit.gif`.
+
+## Hover versus selected
+AO2 leaves a checked button alone on hover - its selected art stays put - so hover art is only painted
+while the panel is not checked. Painting it regardless looked like the button un-pressing itself under
+the pointer.
+
+## Emote paging arrows
+AO2 places `emote_left` and `emote_right` itself and skins them from its stylesheet, so they are panels
+here too (`ic_emote_prev`, `ic_emote_next`), handed over by `PageButtonGrid.ExtractPagingControls()`.
+Their default placements are the exact rectangles they occupied inside the grid in 7.12, and the grid
+keeps that inset unless a theme turns it off - `OceanyaPanelPlacementState.ReservePagingSpace`, a
+checkbox in the grid settings popup, which an import clears because AO2's `emotes` rectangle is nothing
+but buttons.
+
+Two traps came out of that split:
+- The arrows wear `PageButtonGrid`'s **implicit** `Button` style, and an implicit style is resolved
+  through the ancestor chain - which they leave when they are reparented onto the main canvas.
+  `ExtractPagingControls` pins the style locally so their stock look survives the move.
+- The reservation is applied by **spanning** the item area across the grid, never by resizing row and
+  column definitions. `UpdateButtonVisibility` adds and removes definitions as the scroll mode changes,
+  so index 1 is not reliably the content cell; zeroing the wrong one left the item area 0px tall and the
+  emote grid disappeared entirely. Pinned by `UnitTests/PageButtonGridLayoutTests.cs`.
+
+An imported arrow gets the theme's own art through the normal panel image field, and a themed face clears
+a glyph label like `<` so the art is not covered by text (tracked in the baseline, so a reset brings the
+label back).
+
+## What the stylesheet can reach
+`Ao2StylesheetTranslator` now understands the three things GrayGarden-style themes actually rely on:
+
+| Selector form | Meaning here |
+|---|---|
+| `QComboBox { ... }` | every panel of the matching kind |
+| `QPushButton[x="176"][y="657"]` | the single panel whose AO2 rectangle matches |
+| `:hover`, `:pressed` / `:checked` / `:on` | that panel's hover / selected image |
+| `image: url(base/themes/.../x.png)` | the panel's image, resolved against the install root |
+
+Geometry matching needs the theme's own rectangles, which `Translate` collects into
+`Ao2ThemeImportResult.Widgets`; a stylesheet picked by hand from the editor has none, so coordinate
+selectors are skipped rather than applied to every button of that class. Note AO2 matches Qt's *runtime*
+widget properties, so a theme with `theme_scaling_factor > 1` breaks its own coordinate selectors there
+too.
+
+`QListWidget`/`QListView` are deliberately **not** mapped: AO2's list widgets are its music, area, pair
+and mute lists, none of which is a panel here, and mapping them onto our `ItemGrid` kind painted the
+emote grid and clients list with the pair list's background.
+
+## Dropdowns
+AO2 colours the closed box with `QComboBox` and the popup list with `QComboBox QAbstractItemView`. Our
+popup surface is opaque white by default while its rows inherit the control's foreground, so a theme
+asking for white dropdown text produced white-on-white and an unusable list. The popup now follows the
+panel's own background whenever one is set (`ApplyDropdownPopupColours`), which keeps one setting for the
+whole control and leaves the stock look untouched.
+
+## Stylesheet quirks worth knowing
+Qt sizes a `QCheckBox`'s indicator from its font, so a theme that hides the label (`color: transparent`)
+uses a huge `font-size` purely to grow the indicator image - GrayGarden asks for `50px`. Read literally
+that is enormous text on a panel whose indicator is not glyph-sized, so `Ao2StylesheetTranslator` drops
+font declarations from any rule that hides its own text, and from checkbox-kind panels entirely.
+
+## Fonts are points, not pixels
+`courtroom_fonts.ini` sizes go through `QFont::setPointSize`, so they are Qt **point** sizes, while WPF
+font sizes are device independent pixels (1/96 inch). The importer multiplies by 96/72; copying the number
+straight across rendered text a quarter too small, which is what clipped the OOC header - its panel height
+hugs the font size, so the glyphs no longer fit.
+
+## Surfaces, borders and scrollbars
+A Qt widget draws no frame unless the stylesheet asks for one, while several of our stock controls do (the
+emote grid's grey outline, the dropdown borders). So an import sets `BorderThickness = 0` on every mapped
+panel and lets the stylesheet put back exactly the borders the theme asks for. That is why the field is
+tri-state: **negative** means "leave the control's own border alone", **zero** genuinely removes it.
+
+| Theme asks for | Panel field | Where it lands |
+|---|---|---|
+| `background-color` / `background` | `BackgroundColor` | the panel *and* the control inside it |
+| `border` / `border-<side>` | `BorderColor`, `BorderThickness` | every control and border in the panel |
+| `QScrollBar` background | `ScrollbarTrackColor` | themed scrollbar style, per panel |
+| `QScrollBar::handle` background | `ScrollbarHandleColor` | same |
+| `QScrollBar` border colour | `ScrollbarBorderColor` | same |
+| `QCheckBox::indicator` (`:checked`) | `IndicatorImagePath`, `CheckedIndicatorImagePath` | generated checkbox template |
+| `QCheckBox { image: url(...) }` | `ImagePath` | the checkbox's caption, drawn as artwork |
+| `QComboBox::down-arrow` | `IndicatorImagePath` | the dropdown's arrow button |
+
+Text panels are a container plus the real control, each with its own background, so a background colour is
+pushed onto the `TextBox`/`ComboBox`/`CheckBox` inside as well - painting only the container left the
+theme's colour hidden behind the control's own.
+
+Scrollbars are themed by putting `Styles/OceanyaThemedScrollBar.xaml`'s style and three colour brushes
+into the **panel's own resource scope**, so the change is per-panel and the undo is removing them again
+(registered through `PanelStateOverrides`, since resources are not dependency properties).
+
+**Sub-controls only mean what their widget class says.** `::down-arrow` is a dropdown's arrow on a
+`QComboBox` and a scrollbar's arrow on a `QScrollBar`; treating them alike put scroll arrows on the logs.
+`IsSubControlOfClass` gates that pairing.
+
+## Glyph button faces
+A button's face can be an `Image`, a masked `Rectangle`, or an **icon-font glyph** (the settings and
+refresh buttons). `SetFaceArt` tries all three in that order; the glyph case paints the artwork as the
+face's background and hides the glyph, which is why the settings button ignored its theme artwork before.
+
+## Baseline trap: Background is one shared property
+`Control.Background`, `Border.Background` and `Panel.Background` are the **same** `DependencyProperty`
+(WPF shares it through `AddOwner`). Excluding "Panel.Background" from a control's baseline therefore drops
+that control's background from the baseline entirely, and a reset stops restoring it.
+
+## The OOC header, and when the music display is one
+In AO2's **default** theme `music_display = 490, 0, 224, 26` sits directly on top of
+`server_chatlog = 490, 1, 224, 277` - same x, same width - and `music_name` is the label drawn inside it
+(its coordinates are **relative to the display**, as AO2's own design file comments). That is exactly the
+shape of our OOC header: a backdrop bar with one line of text on it, and its artwork
+(`music_display.webp`) is the black bar itself.
+
+But a theme can also repurpose the same widget as a plain decoration: GrayGarden's is `0, 0, 1262, 700`
+with a window-sized overlay image. Importing that as "the OOC header backdrop" produced a window-sized
+black bar, which is nonsense. So the header mapping is guarded by `IsHeaderShaped`: the rectangle must be
+short (at most a third of the OOC log's height, or 32px) and overlap the log's column.
+
+| Theme's music display | `ooc_stream_backdrop` | `ooc_stream_text` | `ooc_chat` |
+|---|---|---|---|
+| header-shaped (default theme) | the display's rect + its artwork | `music_name`, offset by the display | the whole `server_chatlog` rect |
+| anything else (GrayGarden) | **hidden** - nothing describes it | strip along the log's top edge | the rect minus that strip |
+
+When it is not a header, the artwork is still used - as a decoration (below).
+
+## Area and music lists live in the window
+AO2's `area_list` and `music_list` are the **lists themselves**, not buttons that open them: a theme draws
+both, usually in the same rectangle, and switches between them with `switch_area_music` (the "A/M"
+button). Oceanya now matches that shape:
+
+**Both lists share ONE rectangle - AO2's `music_list`.** `courtroom.cpp` calls
+`set_size_and_pos(ui_area_list, "music_list")` and then the same for `ui_music_list`, so the area list is
+drawn exactly on top of the music list and `switch_area_music` decides which is visible. The `area_list`
+identifier is only a **font** key (`set_font(ui_area_list, "", "area_list", ...)`); a rectangle under that
+name in a design file describes nothing AO2 draws, and importing it as the area list put the list in the
+wrong place entirely. Both our list panels therefore take the `music_list` rectangle.
+
+- `area_list` and `music_list` are panels (`AreaListPanelHost`, `MusicListPanelHost`), each with a
+  **Render area/music list in main window** toggle in its right-click menu - same pattern as the viewport.
+  Turning one on REPARENTS the popup's content into the panel, so every handler, binding and refresh path
+  keeps working, and hides the bottom-bar button that used to open it.
+- `bar_button_areamusic` is the A/M switch. It is **hidden by default** (`IsHiddenByDefault` in the
+  catalog) because the stock layout uses two popups and has nothing to switch; a theme that describes
+  `switch_area_music`, or a user editing the layout, simply un-hides it. This is the general pattern for
+  "Oceanya ships more controls than it shows".
+- An import turns on in-window rendering for whichever lists the theme placed, and the two bottom-bar
+  buttons go to the left strip.
+
+The switch only means something while **both** lists render in the window; with one of them still on its
+button, the other simply stays visible.
+
+## Optional controls a theme can summon
+The A/M switch is one of a set of panels that exist but start hidden, listed in
+`OceanyaPanelCatalog.IsHiddenByDefault`: `bar_button_areamusic`, `bar_button_mute`,
+`bar_button_evidence`, `bar_button_reloadtheme`, `bar_button_changecharacter`, `bar_button_callmod` and the
+three `slider_*_volume` panels. Each maps to an AO2 identifier, so importing a theme that places one makes
+it appear, and a user editing the stock layout can un-hide it from the toolbar's *Hidden controls* list.
+
+Two notes on behaviour: the evidence button deliberately just reports that Oceanya does not support
+evidence (that is its whole job), and `call_mod` mirrors `Courtroom::on_call_mod_clicked` - a bare `ZZ#%`,
+or `ZZ#<reason>#-1#%` when the server advertises `modcall_reason`, which is the only case where AO2 asks
+for a reason first. Servers rate limit mod calls and answer over OOC.
+
+Every one of these needs a control template containing an `Image` (`ThemeableFaceButton` in
+`MainWindow.xaml`): a default WPF `Button` template has no `Image`, no `Shape` and no `Panel`, so an image
+override has nothing to paint and the theme's artwork silently did not apply.
+
+## Themed art replaces the control's own chrome
+An AO2 button has no fill or frame of its own - the theme's artwork *is* the button, and it is often a
+transparent 1x1 with the real look painted into `courtroombackground`. So when an image override lands on a
+panel, `ClearThemedButtonChrome` drops the control's background and border (unless the theme asked for a
+background explicitly). Without it, our own default fill drew a coloured square behind - or instead of -
+the theme's art, which is what the mute and evidence buttons looked like.
+
+## Sliders
+AO2 skins `QSlider` through its stylesheet, not through named images: `::groove` is widget-wide background
+art (GrayGarden's `sliders/meter.png`, 168x30) and `::handle` is a small overlay (`handle.png`, 15x15).
+Those land in the slider panel's `ImagePath` and `IndicatorImagePath`, and `ApplySliderArt` puts
+`Styles/OceanyaThemedSlider.xaml` plus the two brushes into the panel's own resource scope - same mechanism
+as the scrollbars, so the undo is removing them again.
+
+The slider *text* is artwork too: GrayGarden draws all three captions as one 370x12 `sliders/labels.png`
+placed on `blip_label`. `slider_music_label`, `slider_sfx_label` and `slider_blip_label` are therefore
+image panels of their own (hidden by default), mapped from `music_label`/`sfx_label`/`blip_label`. That is
+also why `QLabel` maps to both text-toggle *and* image-button kinds: a Qt label is used for text and as a
+plain image display, and our two kinds split exactly along that line.
+
+## Judge controls and the showname toggle
+The health bars are plain image panels: AO2's `Courtroom::set_hp_bar` picks the asset from the value
+(`defensebar0`..`defensebar10`), so the artwork is resolved per change through the theme chain rather than
+imported once, driven by `HP#<bar>#<value>#%` packets (`AOClient.OnHealthChanged`). Their plus and minus
+buttons only *ask* - `AOClient.SetHealth` sends the packet and the bar moves when the server echoes it,
+because the server may refuse. The four testimony and verdict buttons send `RT#` the way AO2 does:
+`testimony1`, `testimony2`, `judgeruling#0`, `judgeruling#1`.
+
+`showname_enable` maps to `ic_check_showname`. Like AO2 it does not clear the showname box - it stops the
+field being sent (`AOClient.SendCustomShowname`), so everyone sees the character's own name instead.
+
+## Decorations
+`DecorationImages` lists AO2 `AOImageDisplay` widgets that have no Oceanya control behind them. Each is
+imported as a **locked, click-through image panel** at its own rectangle, stacked just above the theme
+backdrop - the same machinery as the courtroom background, so nothing here is import-only. Themes lean on
+these for the artwork that ties the window together (GrayGarden paints characters and framing into a
+window-sized `music_display.png`), so dropping them loses a visible chunk of the theme. `music_display` is
+skipped when the header mapping already claimed it, or its artwork would appear twice.
+
+## Checkboxes are layered, not side by side
+Qt draws a checkbox's two graphics on top of each other: the widget's own `image` covers the whole widget
+(caption art that already includes an empty tick box) and `::indicator` paints the interactive box over it
+at its own pixel size, aligned left. GrayGarden's `checkboxes/pre.png` is 65x15 - the full widget - and
+`checkboxes/indicator.png` is 15x15. Laying them out side by side showed the symbol twice.
+
+## Label padding clips text
+A WPF `Label` defaults to 5px padding on every side; a Qt label has none. On a panel the theme sized, that
+padding eats 10px of height, and with a smaller theme font the bottom half of the glyphs was clipped - the
+OOC header being the visible case. Setting a font on a panel therefore drops the padding of any `Label`
+inside it (baseline-tracked through `Control.PaddingProperty`, so a reset brings it back).
+
+## Fonts never resize a themed panel
+In AO2 a widget's geometry comes from the design file and owes nothing to its font. Our text panels hug
+their font size so hand-editing cannot clip them, but that must only ever **grow** a panel: shrinking one
+clipped the text of every panel a theme had sized deliberately (the OOC header, for one).
+
+## Dropdown internals
+The dropdown's icon cell had a fixed 14x14 size and 3px padding, which boxed a themed icon inside dead
+space; it now fills the row height. The arrow button's width is themeable through
+`OceanyaPanelPlacementState.IndicatorWidth` (an editor field - Qt has no theme value for it), applied to
+the template's `columnDropdown`. Neither a `ColumnDefinition`'s width nor a hidden glyph's visibility is
+part of the element walk the visual baseline does, so both register their own undo.
+
+## Not baseline-tracked on purpose
+`Visibility` and `Content` are managed at runtime - placeholder captions appear and disappear, hosts are
+filled in code - so restoring a value captured at some earlier moment fights that code. It put the
+"OOCName" placeholder caption back on top of a real showname. Styling that touches either registers an
+explicit undo instead (`PanelStateOverrides`), and that is the rule for any future runtime-owned property.

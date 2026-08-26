@@ -45,19 +45,20 @@
                     BorderThickness="1">
                             <Grid x:Name="grdBorder">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition x:Name="columnIcon" Width="Auto" MinWidth="20"/>
+                                    <ColumnDefinition x:Name="columnIcon" Width="Auto"/>
                                     <!-- Icon Column -->
                                     <ColumnDefinition Width="*" />
                                     <!-- Editable Text Column -->
-                                    <ColumnDefinition Width="30"/>
-                                    <!-- Fixed width for Dropdown Button -->
+                                    <ColumnDefinition x:Name="columnDropdown" Width="30"/>
+                                    <!-- Dropdown button; width is themeable through ArrowWidth -->
                                 </Grid.ColumnDefinitions>
 
                                 <!-- Selected Item Image -->
+                                <!-- No fixed size or padding: the icon fills the row height so a themed
+                                     dropdown's artwork is not boxed inside dead space. -->
                                 <Image x:Name="imgSelected" Source="{Binding SelectedItem.ImagePath, RelativeSource={RelativeSource AncestorType=ComboBox}}"
-                           Width="14" Height="14" Margin="3"
                            Visibility="{Binding SelectedItem.ImagePath, Converter={StaticResource NullToVisibilityConverter}}"
-                           Stretch="UniformToFill"
+                           Stretch="Uniform"
                            Grid.Column="0"/>
 
                                 <!-- Editable TextBox inside ComboBox -->

@@ -423,13 +423,31 @@ namespace OceanyaClient
             }
 
             SaveFile.Data.OceanyaThemeLayout = result.Value.Layout;
-            // Every AO2 theme places the viewport inside the window, so that mode comes along with it.
+            // Every AO2 theme places the viewport inside the window, so that mode comes along with it, and
+            // the same is true of the area and music lists whenever the theme gives them a rectangle.
             SaveFile.Data.GMViewportRenderInPanel = true;
+            SaveFile.Data.GMAreaListRenderInPanel = result.Value.ImportedPanelIds.Contains(OceanyaPanelCatalog.AreaListPanelId);
+            SaveFile.Data.GMMusicListRenderInPanel = result.Value.ImportedPanelIds.Contains(OceanyaPanelCatalog.MusicListPanelId);
             SaveFile.Save();
+
+            // The chatbox, in-viewport art, colours and sounds already come from the AO2 theme selected
+            // in config.ini, so point that at the same theme or half the look stays on the old one.
+            configValues["theme"] = themeName;
+            Ao2ConfigIniSettings.Save(configValues);
+            suppressControlEvents = true;
+            try
+            {
+                RefreshViewportThemeControls();
+            }
+            finally
+            {
+                suppressControlEvents = false;
+            }
 
             Ao2LayoutResultTextBlock.Text =
                 $"Imported {result.Value.ImportedPanelIds.Count} panels from \"{themeName}\" "
-                + $"({result.Value.SurfaceWidth:0}x{result.Value.SurfaceHeight:0}). "
+                + $"({result.Value.SurfaceWidth:0}x{result.Value.SurfaceHeight:0}), plus its artwork, fonts and "
+                + "backdrop. Viewport theme switched to match. "
                 + $"{result.Value.HiddenPanelIds.Count} panels hidden; "
                 + $"{result.Value.UnmappedIdentifiers.Count} AO2 widgets have no Oceanya equivalent.";
             PanelLayoutChanged?.Invoke();

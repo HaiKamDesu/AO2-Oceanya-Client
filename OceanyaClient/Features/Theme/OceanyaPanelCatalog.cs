@@ -35,7 +35,12 @@ namespace OceanyaClient.Features.Theme
         ItemGrid = 4,
 
         /// <summary>A checkbox or label: height follows the font.</summary>
-        TextToggle = 5
+        TextToggle = 5,
+
+        /// <summary>
+        /// A volume slider: carries groove and handle art plus filled/empty track colours.
+        /// </summary>
+        Slider = 6
     }
 
     /// <summary>
@@ -167,6 +172,12 @@ namespace OceanyaClient.Features.Theme
         /// <summary>Panel id for the emote grid.</summary>
         public const string IcEmoteGridPanelId = "ic_emote_grid";
 
+        /// <summary>Panel id for the emote grid's previous-page arrow.</summary>
+        public const string IcEmotePreviousPanelId = "ic_emote_prev";
+
+        /// <summary>Panel id for the emote grid's next-page arrow.</summary>
+        public const string IcEmoteNextPanelId = "ic_emote_next";
+
         /// <summary>Panel id for the preanim checkbox.</summary>
         public const string IcCheckPreanimPanelId = "ic_check_preanim";
 
@@ -240,6 +251,88 @@ namespace OceanyaClient.Features.Theme
         public const string IcLoremasterPanelId = "ic_loremaster";
         /// <summary>Panel id for the viewport rendered inside the main window.</summary>
         public const string ViewportPanelId = "viewport";
+
+        /// <summary>Panel id for the area list rendered inside the main window.</summary>
+        public const string AreaListPanelId = "area_list";
+
+        /// <summary>Panel id for the music list rendered inside the main window.</summary>
+        public const string MusicListPanelId = "music_list";
+
+        /// <summary>
+        /// Panel id for the button that swaps between the area and music lists.
+        /// </summary>
+        /// <remarks>
+        /// AO2 themes usually stack both lists in one place and switch between them with an "A/M" button,
+        /// so Oceanya has the same button. It is hidden by default - the stock layout uses two popups and
+        /// has nothing to switch - and a layout that wants it simply un-hides it.
+        /// </remarks>
+        public const string BarButtonAreaMusicSwitchPanelId = "bar_button_areamusic";
+
+        /// <summary>Panel id for the mute button.</summary>
+        public const string BarButtonMutePanelId = "bar_button_mute";
+
+        /// <summary>Panel id for the evidence button.</summary>
+        public const string BarButtonEvidencePanelId = "bar_button_evidence";
+
+        /// <summary>Panel id for the reload-theme button.</summary>
+        public const string BarButtonReloadThemePanelId = "bar_button_reloadtheme";
+
+        /// <summary>Panel id for the change-character button.</summary>
+        public const string BarButtonChangeCharacterPanelId = "bar_button_changecharacter";
+
+        /// <summary>Panel id for the call-moderator button.</summary>
+        public const string BarButtonCallModPanelId = "bar_button_callmod";
+
+        /// <summary>Panel id for the music volume slider.</summary>
+        public const string SliderMusicVolumePanelId = "slider_music_volume";
+
+        /// <summary>Panel id for the sound effect volume slider.</summary>
+        public const string SliderSfxVolumePanelId = "slider_sfx_volume";
+
+        /// <summary>Panel id for the blip volume slider.</summary>
+        public const string SliderBlipVolumePanelId = "slider_blip_volume";
+
+        /// <summary>Panel id for the music volume slider's label art.</summary>
+        public const string SliderMusicLabelPanelId = "slider_music_label";
+
+        /// <summary>Panel id for the sound effect volume slider's label art.</summary>
+        public const string SliderSfxLabelPanelId = "slider_sfx_label";
+
+        /// <summary>Panel id for the blip volume slider's label art.</summary>
+        public const string SliderBlipLabelPanelId = "slider_blip_label";
+
+        /// <summary>Panel id for the "send showname" checkbox.</summary>
+        public const string IcCheckShownamePanelId = "ic_check_showname";
+
+        /// <summary>Panel id for the defence health bar.</summary>
+        public const string JudgeDefenceBarPanelId = "judge_defence_bar";
+
+        /// <summary>Panel id for the prosecution health bar.</summary>
+        public const string JudgeProsecutionBarPanelId = "judge_prosecution_bar";
+
+        /// <summary>Panel id for the defence health minus button.</summary>
+        public const string JudgeDefenceMinusPanelId = "judge_defence_minus";
+
+        /// <summary>Panel id for the defence health plus button.</summary>
+        public const string JudgeDefencePlusPanelId = "judge_defence_plus";
+
+        /// <summary>Panel id for the prosecution health minus button.</summary>
+        public const string JudgeProsecutionMinusPanelId = "judge_prosecution_minus";
+
+        /// <summary>Panel id for the prosecution health plus button.</summary>
+        public const string JudgeProsecutionPlusPanelId = "judge_prosecution_plus";
+
+        /// <summary>Panel id for the Witness Testimony button.</summary>
+        public const string JudgeWitnessTestimonyPanelId = "judge_witness_testimony";
+
+        /// <summary>Panel id for the Cross Examination button.</summary>
+        public const string JudgeCrossExaminationPanelId = "judge_cross_examination";
+
+        /// <summary>Panel id for the Not Guilty verdict button.</summary>
+        public const string JudgeNotGuiltyPanelId = "judge_not_guilty";
+
+        /// <summary>Panel id for the Guilty verdict button.</summary>
+        public const string JudgeGuiltyPanelId = "judge_guilty";
 
         /// <summary>Panel id for the bottom status bar.</summary>
         public const string BottomBarPanelId = "bottom_bar";
@@ -367,6 +460,20 @@ namespace OceanyaClient.Features.Theme
                 minimumWidth: 60,
                 minimumHeight: 40,
                 kind: OceanyaPanelKind.ItemGrid),
+            new OceanyaPanelDescriptor(
+                IcEmotePreviousPanelId,
+                "Emote Previous Page",
+                new OceanyaPanelPlacement(9, 365, 30, 110),
+                minimumWidth: 8,
+                minimumHeight: 8,
+                kind: OceanyaPanelKind.ImageButton),
+            new OceanyaPanelDescriptor(
+                IcEmoteNextPanelId,
+                "Emote Next Page",
+                new OceanyaPanelPlacement(474, 365, 30, 110),
+                minimumWidth: 8,
+                minimumHeight: 8,
+                kind: OceanyaPanelKind.ImageButton),
             new OceanyaPanelDescriptor(
                 IcCheckPreanimPanelId,
                 "Preanim Checkbox",
@@ -550,6 +657,179 @@ namespace OceanyaClient.Features.Theme
                 minimumHeight: 72,
                 maintainsAspectRatio: true),
             new OceanyaPanelDescriptor(
+                AreaListPanelId,
+                "Area List",
+                new OceanyaPanelPlacement(431, 603, 282, 296),
+                minimumWidth: 120,
+                minimumHeight: 100),
+            new OceanyaPanelDescriptor(
+                MusicListPanelId,
+                "Music List",
+                new OceanyaPanelPlacement(458, 603, 320, 420),
+                minimumWidth: 140,
+                minimumHeight: 120),
+            new OceanyaPanelDescriptor(
+                BarButtonAreaMusicSwitchPanelId,
+                "Area/Music Switch Button",
+                new OceanyaPanelPlacement(431, 603, 56, 24),
+                minimumWidth: 16,
+                minimumHeight: 12,
+                kind: OceanyaPanelKind.ImageButton),
+            new OceanyaPanelDescriptor(
+                BarButtonMutePanelId,
+                "Mute Button",
+                new OceanyaPanelPlacement(431, 603, 52, 24),
+                minimumWidth: 16,
+                minimumHeight: 12,
+                kind: OceanyaPanelKind.ImageButton),
+            new OceanyaPanelDescriptor(
+                BarButtonEvidencePanelId,
+                "Evidence Button",
+                new OceanyaPanelPlacement(431, 603, 71, 24),
+                minimumWidth: 16,
+                minimumHeight: 12,
+                kind: OceanyaPanelKind.ImageButton),
+            new OceanyaPanelDescriptor(
+                BarButtonReloadThemePanelId,
+                "Reload Theme Button",
+                new OceanyaPanelPlacement(431, 603, 94, 20),
+                minimumWidth: 16,
+                minimumHeight: 12,
+                kind: OceanyaPanelKind.ImageButton),
+            new OceanyaPanelDescriptor(
+                BarButtonChangeCharacterPanelId,
+                "Change Character Button",
+                new OceanyaPanelPlacement(431, 603, 117, 20),
+                minimumWidth: 16,
+                minimumHeight: 12,
+                kind: OceanyaPanelKind.ImageButton),
+            new OceanyaPanelDescriptor(
+                BarButtonCallModPanelId,
+                "Call Mod Button",
+                new OceanyaPanelPlacement(431, 603, 65, 20),
+                minimumWidth: 16,
+                minimumHeight: 12,
+                kind: OceanyaPanelKind.ImageButton),
+            new OceanyaPanelDescriptor(
+                SliderMusicVolumePanelId,
+                "Music Volume Slider",
+                new OceanyaPanelPlacement(431, 603, 168, 30),
+                minimumWidth: 40,
+                minimumHeight: 16,
+                kind: OceanyaPanelKind.Slider),
+            new OceanyaPanelDescriptor(
+                SliderSfxVolumePanelId,
+                "SFX Volume Slider",
+                new OceanyaPanelPlacement(431, 603, 168, 30),
+                minimumWidth: 40,
+                minimumHeight: 16,
+                kind: OceanyaPanelKind.Slider),
+            new OceanyaPanelDescriptor(
+                SliderBlipVolumePanelId,
+                "Blip Volume Slider",
+                new OceanyaPanelPlacement(431, 603, 168, 30),
+                minimumWidth: 40,
+                minimumHeight: 16,
+                kind: OceanyaPanelKind.Slider),
+            new OceanyaPanelDescriptor(
+                SliderMusicLabelPanelId,
+                "Music Slider Label",
+                new OceanyaPanelPlacement(431, 603, 10, 12),
+                minimumWidth: 8,
+                minimumHeight: 8,
+                kind: OceanyaPanelKind.ImageButton),
+            new OceanyaPanelDescriptor(
+                SliderSfxLabelPanelId,
+                "SFX Slider Label",
+                new OceanyaPanelPlacement(431, 603, 10, 12),
+                minimumWidth: 8,
+                minimumHeight: 8,
+                kind: OceanyaPanelKind.ImageButton),
+            new OceanyaPanelDescriptor(
+                SliderBlipLabelPanelId,
+                "Blip Slider Label",
+                new OceanyaPanelPlacement(431, 603, 370, 12),
+                minimumWidth: 8,
+                minimumHeight: 8,
+                kind: OceanyaPanelKind.ImageButton),
+            new OceanyaPanelDescriptor(
+                IcCheckShownamePanelId,
+                "Send Showname Checkbox",
+                new OceanyaPanelPlacement(431, 603, 83, 15),
+                minimumWidth: 40,
+                minimumHeight: 12,
+                kind: OceanyaPanelKind.TextToggle),
+            new OceanyaPanelDescriptor(
+                JudgeDefenceBarPanelId,
+                "Defence Health Bar",
+                new OceanyaPanelPlacement(431, 603, 141, 15),
+                minimumWidth: 20,
+                minimumHeight: 6,
+                kind: OceanyaPanelKind.ImageButton),
+            new OceanyaPanelDescriptor(
+                JudgeProsecutionBarPanelId,
+                "Prosecution Health Bar",
+                new OceanyaPanelPlacement(431, 603, 141, 15),
+                minimumWidth: 20,
+                minimumHeight: 6,
+                kind: OceanyaPanelKind.ImageButton),
+            new OceanyaPanelDescriptor(
+                JudgeDefenceMinusPanelId,
+                "Defence Health Minus",
+                new OceanyaPanelPlacement(431, 603, 15, 15),
+                minimumWidth: 10,
+                minimumHeight: 10,
+                kind: OceanyaPanelKind.ImageButton),
+            new OceanyaPanelDescriptor(
+                JudgeDefencePlusPanelId,
+                "Defence Health Plus",
+                new OceanyaPanelPlacement(431, 603, 15, 15),
+                minimumWidth: 10,
+                minimumHeight: 10,
+                kind: OceanyaPanelKind.ImageButton),
+            new OceanyaPanelDescriptor(
+                JudgeProsecutionMinusPanelId,
+                "Prosecution Health Minus",
+                new OceanyaPanelPlacement(431, 603, 15, 15),
+                minimumWidth: 10,
+                minimumHeight: 10,
+                kind: OceanyaPanelKind.ImageButton),
+            new OceanyaPanelDescriptor(
+                JudgeProsecutionPlusPanelId,
+                "Prosecution Health Plus",
+                new OceanyaPanelPlacement(431, 603, 15, 15),
+                minimumWidth: 10,
+                minimumHeight: 10,
+                kind: OceanyaPanelKind.ImageButton),
+            new OceanyaPanelDescriptor(
+                JudgeWitnessTestimonyPanelId,
+                "Witness Testimony Button",
+                new OceanyaPanelPlacement(431, 603, 42, 25),
+                minimumWidth: 16,
+                minimumHeight: 12,
+                kind: OceanyaPanelKind.ImageButton),
+            new OceanyaPanelDescriptor(
+                JudgeCrossExaminationPanelId,
+                "Cross Examination Button",
+                new OceanyaPanelPlacement(431, 603, 42, 25),
+                minimumWidth: 16,
+                minimumHeight: 12,
+                kind: OceanyaPanelKind.ImageButton),
+            new OceanyaPanelDescriptor(
+                JudgeNotGuiltyPanelId,
+                "Not Guilty Button",
+                new OceanyaPanelPlacement(431, 603, 42, 25),
+                minimumWidth: 16,
+                minimumHeight: 12,
+                kind: OceanyaPanelKind.ImageButton),
+            new OceanyaPanelDescriptor(
+                JudgeGuiltyPanelId,
+                "Guilty Button",
+                new OceanyaPanelPlacement(431, 603, 42, 25),
+                minimumWidth: 16,
+                minimumHeight: 12,
+                kind: OceanyaPanelKind.ImageButton),
+            new OceanyaPanelDescriptor(
                 BottomBarPanelId,
                 "Bottom Bar",
                 new OceanyaPanelPlacement(0, 603, 509, 24),
@@ -659,6 +939,11 @@ namespace OceanyaClient.Features.Theme
         /// </summary>
         private static readonly Dictionary<string, int> DefaultZOrders = new Dictionary<string, int>(StringComparer.Ordinal)
         {
+            ["viewport"] = 5,
+
+            // Like the viewport, the in-window lists sit behind the widgets a theme draws over them.
+            ["area_list"] = 6,
+            ["music_list"] = 6,
             ["ooc_log"] = 10,
             ["ooc_chat"] = 12,
             ["ooc_stream_backdrop"] = 14,
@@ -684,6 +969,8 @@ namespace OceanyaClient.Features.Theme
             ["ic_showname"] = 200,
             ["ic_message"] = 210,
             ["ic_emote_grid"] = 220,
+            ["ic_emote_prev"] = 221,
+            ["ic_emote_next"] = 221,
             ["ic_check_preanim"] = 230,
             ["ic_check_flip"] = 240,
             ["ic_check_additive"] = 250,
@@ -708,9 +995,31 @@ namespace OceanyaClient.Features.Theme
             ["bar_check_invertlog"] = 440,
             ["bar_button_area"] = 450,
             ["bar_button_music"] = 460,
+            ["bar_button_areamusic"] = 461,
+            ["bar_button_mute"] = 462,
+            ["bar_button_evidence"] = 463,
+            ["bar_button_reloadtheme"] = 464,
+            ["bar_button_changecharacter"] = 465,
+            ["bar_button_callmod"] = 466,
+            ["slider_music_volume"] = 467,
+            ["slider_sfx_volume"] = 468,
+            ["slider_blip_volume"] = 469,
+            ["slider_music_label"] = 470,
+            ["slider_sfx_label"] = 471,
+            ["slider_blip_label"] = 472,
+            ["ic_check_showname"] = 473,
+            ["judge_defence_bar"] = 474,
+            ["judge_prosecution_bar"] = 475,
+            ["judge_defence_minus"] = 476,
+            ["judge_defence_plus"] = 477,
+            ["judge_prosecution_minus"] = 478,
+            ["judge_prosecution_plus"] = 479,
+            ["judge_witness_testimony"] = 480,
+            ["judge_cross_examination"] = 481,
+            ["judge_not_guilty"] = 482,
+            ["judge_guilty"] = 483,
             ["bar_button_viewport"] = 470,
             ["bar_button_editlayout"] = 480,
-            ["viewport"] = 490,
             ["ding_button"] = 500
         };
 
@@ -737,6 +1046,53 @@ namespace OceanyaClient.Features.Theme
         /// Gets the built-in panels only, ignoring user-added ones.
         /// </summary>
         public static IReadOnlyList<OceanyaPanelDescriptor> BuiltInPanels => PanelList;
+
+        /// <summary>
+        /// Panels that exist but start hidden, because the stock layout has no use for them.
+        /// </summary>
+        /// <remarks>
+        /// Oceanya deliberately ships more controls than it shows: an AO2 theme can call for a widget the
+        /// default layout does not need (the A/M list switch, which only means something once both lists
+        /// render in the window). Hiding them by default keeps the stock window unchanged while letting a
+        /// theme - or a user editing the layout - simply un-hide one.
+        /// </remarks>
+        private static readonly HashSet<string> HiddenByDefaultPanelIds =
+            new HashSet<string>(StringComparer.Ordinal)
+            {
+                BarButtonAreaMusicSwitchPanelId,
+                BarButtonMutePanelId,
+                BarButtonEvidencePanelId,
+                BarButtonReloadThemePanelId,
+                BarButtonChangeCharacterPanelId,
+                BarButtonCallModPanelId,
+                SliderMusicVolumePanelId,
+                SliderSfxVolumePanelId,
+                SliderBlipVolumePanelId,
+                SliderMusicLabelPanelId,
+                SliderSfxLabelPanelId,
+                SliderBlipLabelPanelId,
+                IcCheckShownamePanelId,
+                JudgeDefenceBarPanelId,
+                JudgeProsecutionBarPanelId,
+                JudgeDefenceMinusPanelId,
+                JudgeDefencePlusPanelId,
+                JudgeProsecutionMinusPanelId,
+                JudgeProsecutionPlusPanelId,
+                JudgeWitnessTestimonyPanelId,
+                JudgeCrossExaminationPanelId,
+                JudgeNotGuiltyPanelId,
+                JudgeGuiltyPanelId
+            };
+
+        /// <summary>
+        /// Gets a value indicating whether a panel starts hidden when no layout says otherwise.
+        /// </summary>
+        /// <param name="id">Panel id.</param>
+        /// <returns>True when the panel is hidden by default.</returns>
+        public static bool IsHiddenByDefault(string id)
+        {
+            return HiddenByDefaultPanelIds.Contains(id);
+        }
 
         /// <summary>
         /// Registers a user-added panel so the layout editor and layout persistence recognise it.

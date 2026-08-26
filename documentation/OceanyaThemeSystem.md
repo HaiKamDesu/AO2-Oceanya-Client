@@ -17,6 +17,68 @@ mapping exists. So the main window carries **two** theme concepts:
 | Viewport | Dockable **inside** the main window *and* still available as a separate window / PiP. |
 | Per-panel settings | Schema-driven and broad: declarative typed settings (color, image, font, int-range, enum) with auto-generated editor UI, including behavioral options such as emote-grid paging. |
 
+## Design philosophy (read this before changing anything)
+Why the system looks the way it does, so later changes do not undo the reasoning:
+
+1. **The stock layout is the contract.** Default placements, stacking and sizes reproduce the pre-theme
+   (7.12) window *exactly*. Any refactor that moves a control by a pixel is a regression, however
+   reasonable it looks. The numbers live in `OceanyaPanelCatalog` and are pinned by
+   `Catalog_DefaultPlacementsMatchTheHistoricFixedLayout` and `DefaultZOrder_ReproducesThe712DrawOrder`;
+   the historic values come from tag `1b7051c`, which is the source of truth when in doubt.
+2. **Panel ids are a public contract.** They are written into saved layouts and shared theme files.
+   Renaming or removing one breaks existing themes and requires a theme-compatibility bump. Adding is
+   safe.
+3. **Placement is data, never XAML.** Nothing positions a panel from XAML any more. The catalog holds the
+   defaults, the savefile holds user overrides, and `OceanyaPanelLayout` is the only thing that writes
+   `Canvas.Left/Top/Width/Height`.
+4. **Reparent, do not rewrite.** Regions were split by handing their existing controls to the main canvas
+   (`ExtractPlaceableControls`), leaving each control's code-behind untouched. That is why 11k lines of
+   `MainWindow.xaml.cs` and 1.7k of `ICMessageSettings.xaml.cs` still work. Prefer this over rebuilding a
+   control, and remember the two consequences: the emptied host control must collapse itself, and **panel
+   XAML must carry its own resources**, because a reparented control no longer sees its old parent's
+   `ResourceDictionary`.
+5. **Group only what must never separate.** Logs keep their background art; everything else is its own
+   panel, down to individual shouts, checkboxes and buttons. When in doubt, split - merging later is
+   easier than splitting.
+6. **The editor never destroys anything silently.** Every panel has *set default position/size*, hidden
+   panels are recoverable from the toolbar, and *Reset all* restores placement, stacking, visibility,
+   styling and added panels. Any new styling knob must be resettable the same way (see rule 8).
+7. **The user owns the surface.** The window does not resize or reposition itself in response to a drag.
+   Edit mode lets the user resize the window, and left/top edge drags trim empty space rather than moving
+   the layout.
+8. **Styling is applied to live controls, so it must be undoable.** `OceanyaPanelStyleApplier` records a
+   baseline of *local dependency-property values* before its first mutation and restores with
+   `SetValue`/`ClearValue`. Capturing effective values, or storing null for "unset", both caused visible
+   bugs (buttons losing their background, transparent logs turning white). Never write a style value
+   without extending the baseline to cover it.
+9. **Settings live in reusable popups, not in menus.** One dialog per family (font, image, grid), built
+   from `Styles/OceanyaDialogStyles.xaml`. No lists of literal values in a context menu, and every field
+   offers a way back to "default".
+10. **AO2 compatibility is a translation layer, not a foundation.** Our model is deliberately richer than
+    AO2's. The importer maps AO2 identifiers onto our panel ids and hides what a theme does not mention
+    (as AO2 does), but nothing in the core system depends on AO2 concepts.
+11. **The importer may only use features the editor exposes.** Every setting an import writes has to be
+    reachable by hand: panel image *and* selected image, fonts (family/size/bold/italic/underline/colour),
+    opacity, background colour, scaling, item size, stacking, lock state, and added image/colour panels.
+    When AO2 turns out to theme something we cannot yet edit, **add the editor control first**, then teach
+    the importer to fill it. An imported theme must never contain something a user could not have built
+    themselves. This is also why a themed backdrop is a locked image panel rather than a bespoke
+    "surface background" setting - it reuses machinery the user already has.
+
+### Safe-change checklist
+- Changing a default placement or z-order? Update the pinning tests and check against tag `1b7051c`.
+- Adding a panel? Give it a catalog entry (id, name, minimums, placement, kind), a `DefaultZOrder`, a map
+  entry in `MainWindow.BuildPanelElementMap`, and add its id to the catalog test's expected list.
+- Splitting a control? Use `ExtractPlaceableControls` + reparenting, collapse the emptied host, move any
+  `StaticResource` styles into the panel, and update tests that resolve controls by name.
+- Adding a styling option? Add the field to `OceanyaPanelPlacementState`, apply it in
+  `OceanyaPanelStyleApplier`, extend the baseline's tracked properties, persist it in `PersistLayout`, and
+  surface it in the matching settings dialog.
+- Touching edit mode? Check the four traps that have bitten before: overlays are built from visibility at
+  activation (call `RebuildOverlays` when visibility changes), the toolbar must outrank overlay z-index,
+  `Deactivate` persists by default (pass `persistLayout: false` when replacing a layout), and
+  `ApplySurfaceSizeFromLayout` must not fight the user's window size while editing.
+
 ## Phases
 1. **UI scaling** — done, see `Documentation/UiScaling.md`.
 2. **Panel extraction** — in progress. Two halves:
@@ -74,6 +136,59 @@ un-hides every panel and re-applies the default placements. User-added panels su
 
 Right-clicking a panel in edit mode offers **Set default position**, **Set default size**, **Set
 default position and size**, and **Set all panels to default**.
+
+### Nothing stays out of reach
+A panel dragged or imported past the surface edge is invisible *and* unclickable, which used to mean
+hunting for it or resetting the whole layout. Edit mode therefore treats **fully off-surface as hidden**:
+such a panel joins the toolbar's *Hidden controls* list (labelled "(off-screen)"), gets no overlay, and
+restoring one re-centres it on the surface and brings it to the front, because putting it back where it was
+would hide it again.
+
+That list is re-derived (`RefreshUnreachablePanels`) whenever anything could have moved a panel out of
+view - edit mode starting, a drop, an overlay rebuild after a layout or visibility change, and a surface
+resize - not only when edit mode starts. A panel listed *only* because it is off-surface
+(`offSurfacePanelIds`) leaves the list again by itself when it comes back into view, so this can never
+swallow a deliberate hide.
+
+That is the general rule behind rule 6: every way a control can disappear needs a way back that does not
+require knowing where it went.
+
+### Locking and click-through
+- **Lock in place** (`IsLocked`) means "I am finished with this panel": in edit mode it renders **no
+  edges, no grip and no hover highlight**, so it stops adding visual noise, and it cannot be dragged or
+  resized. Its right-click menu still opens, which is how it gets unlocked again. This is what makes a
+  full-surface backdrop workable *as a panel* instead of needing a bespoke "surface background".
+- **Click-through** (`IsClickThrough`) sets `IsHitTestVisible = false`, so the panel never intercepts
+  clicks meant for whatever is behind it. Backdrops want this; the imported theme backdrop arrives locked
+  *and* click-through.
+- Imported theme backdrops also arrive at the lowest stacking order, and the `viewport` panel's default
+  order is low (5) because AO2 draws the viewport behind its widgets - with a high order it covered the IC
+  message and showname and swallowed their clicks.
+
+### Stylesheets
+`Ao2StylesheetTranslator` reads a Qt stylesheet (AO2's `courtroom_stylesheets.css` form) and writes the
+declarations it can represent - `background-color`, `color`, `font-family`, `font-size`, `font-weight` -
+into the **same per-panel fields the settings popups expose**, mapping Qt classes onto panel kinds
+(`QLineEdit` -> text inputs, `QComboBox` -> dropdowns, `QCheckBox`/`QLabel` -> text toggles,
+`QTextEdit`/`QPlainTextEdit` -> the logs, `QListWidget`/`QListView` -> item grids, `QWidget` -> all).
+It is a bulk edit, not a second styling engine, which is why importing one cannot produce a look the user
+could not build by hand. Reachable as **Stylesheet...** on the edit toolbar, and used by the AO2 import.
+
+It also understands `image: url(...)`, the `:hover` and `:pressed`/`:checked`/`:on` states (which write
+the panel's hover and selected images), and coordinate selectors like `[x="176"][y="657"]`, matched
+against the theme's own widget rectangles. Every one of those writes a field the Image settings popup
+also exposes.
+
+Deliberately ignored, because no panel field represents them yet: sub-controls (`::drop-down`,
+`::indicator`), the remaining pseudo-states, borders and padding. Add the field first, then extend the
+translator.
+
+### Three-state artwork
+Image-button panels carry a resting, a hover and a selected image. WPF template triggers cannot be
+rewritten from data, so the hover/checked swap is done with event handlers
+(`OceanyaPanelStyleApplier.ApplyStateArt`). Handlers are not dependency properties, so they register an
+undo through `PanelStateOverrides` - the same mechanism grid paging uses. **Any new setting that is not a
+dependency property must do the same, or a theme reset cannot undo it** (rule 8's second half).
 
 ### Surface size
 The surface does **not** chase the panels. Auto-growing meant one drag moved every other panel on

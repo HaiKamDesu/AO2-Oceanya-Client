@@ -25,11 +25,10 @@
             <!-- Actual TextBox -->
             <TextBox x:Name="txtICShowname"
                     AutomationProperties.AutomationId="Main.Ic.Showname"
-                    Width="78" Height="17"
                     BorderBrush="DimGray" Background="#FF494949"
                     Foreground="White"
                     VerticalContentAlignment="Center"
-                    HorizontalAlignment="Left" VerticalAlignment="Top"
+                    HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
                     TextChanged="txtICShowname_TextChanged"/>
             <!-- Placeholder TextBlock -->
             <TextBlock x:Name="txtICShowname_Placeholder" 
@@ -45,7 +44,6 @@
             <!-- Actual TextBox -->
             <TextBox x:Name="txtICMessage"
                     AutomationProperties.AutomationId="Main.Ic.Message"
-                    Width="422" Height="17"
                     BorderBrush="DimGray" Background="#FF494949"
                     Foreground="White"
                     VerticalContentAlignment="Center"

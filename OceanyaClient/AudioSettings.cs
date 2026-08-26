@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using AOBot_Testing.Structures;
@@ -76,6 +76,48 @@ namespace OceanyaClient
 
         /// <summary>Drops the live preview so persisted values apply again.</summary>
         public static void ClearLivePreviewVolumes() => livePreviewVolumes = null;
+
+        /// <summary>
+        /// Persists one volume to both places that own it, the way the Settings window does on Save.
+        /// </summary>
+        /// <remarks>
+        /// Both stores have to be written or they diverge: the selected <c>config.ini</c> wins on read, so
+        /// updating only the savefile would leave the change inaudible. Used by the volume sliders that a
+        /// theme can place in the main window.
+        /// </remarks>
+        /// <param name="configKey">Config key: <c>default_music</c>, <c>default_sfx</c> or <c>default_blip</c>.</param>
+        /// <param name="scalar">Volume as a 0-1 scalar.</param>
+        public static void PersistVolume(string configKey, double scalar)
+        {
+            double clamped = Math.Clamp(scalar, 0.0, 1.0);
+            switch (configKey)
+            {
+                case "default_music":
+                    SaveFile.Data.AudioMusicVolume = clamped;
+                    break;
+                case "default_sfx":
+                    SaveFile.Data.AudioSfxVolume = clamped;
+                    break;
+                case "default_blip":
+                    SaveFile.Data.AudioBlipVolume = clamped;
+                    break;
+                default:
+                    return;
+            }
+
+            SaveFile.Save();
+
+            try
+            {
+                Dictionary<string, string> configValues = Ao2ConfigIniSettings.Load();
+                Ao2ConfigIniSettings.SetPercent(configValues, configKey, ScalarToPercent(clamped));
+                Ao2ConfigIniSettings.Save(configValues);
+            }
+            catch (Exception exception)
+            {
+                CustomConsole.Warning($"Could not persist {configKey} to config.ini.", exception);
+            }
+        }
 
         /// <summary>
         /// Gets a blip volume after applying saved extra audio rules.

@@ -237,14 +237,45 @@ namespace OceanyaClient
         /// <summary>True when the user hid this panel from the main window.</summary>
         public bool IsHidden { get; set; }
 
+        /// <summary>
+        /// True when the panel is locked: no edges, handles or dragging in edit mode, only its
+        /// right-click menu. Used to take a finished panel out of the way visually.
+        /// </summary>
+        public bool IsLocked { get; set; }
+
+        /// <summary>
+        /// True when the panel lets mouse input pass through to whatever is behind it. Set for backdrops
+        /// and other panels that should never intercept clicks meant for the controls on top of them.
+        /// </summary>
+        public bool IsClickThrough { get; set; }
+
         /// <summary>Font size override for text-like panels; zero means the control's own default.</summary>
         public double FontSize { get; set; }
 
         /// <summary>Image scaling mode for image-button panels (Fill, Uniform, UniformToFill, None).</summary>
         public string ImageScaling { get; set; } = string.Empty;
 
-        /// <summary>Item size override for grid panels, deciding how many items fit; zero means default.</summary>
+        /// <summary>Item width override for grid panels, deciding how many items fit; zero means default.</summary>
         public double ItemSize { get; set; }
+
+        /// <summary>Item height override for grid panels; zero falls back to <see cref="ItemSize"/>.</summary>
+        /// <remarks>AO2 button metrics are a `w, h` pair, so grid items are not necessarily square.</remarks>
+        public double ItemHeight { get; set; }
+
+        /// <summary>
+        /// True while a grid panel keeps the inset its paging arrows used to occupy.
+        /// </summary>
+        /// <remarks>
+        /// The stock layout draws the arrows inside the grid, so this defaults to true. A theme that
+        /// places the arrows itself turns it off, making the panel's rectangle purely item area.
+        /// </remarks>
+        public bool ReservePagingSpace { get; set; } = true;
+
+        /// <summary>Horizontal gap between grid items; zero means no gap.</summary>
+        public double ItemSpacingX { get; set; }
+
+        /// <summary>Vertical gap between grid items; zero means no gap.</summary>
+        public double ItemSpacingY { get; set; }
 
         /// <summary>Font family override for text-like panels; empty means the control's own default.</summary>
         public string FontFamily { get; set; } = string.Empty;
@@ -254,6 +285,59 @@ namespace OceanyaClient
 
         /// <summary>Replacement image for image-button panels; empty keeps the built-in art.</summary>
         public string ImagePath { get; set; } = string.Empty;
+
+        /// <summary>Replacement image used while a toggle panel is checked (AO2's *_selected art).</summary>
+        public string CheckedImagePath { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Replacement image used while the pointer is over the panel; empty keeps the base image.
+        /// </summary>
+        /// <remarks>
+        /// AO2 themes lean on this heavily: several ship a transparent base image, paint the button's
+        /// normal appearance into the courtroom background, and supply only the hover art in their
+        /// stylesheet, which reads as the button inverting while pressed.
+        /// </remarks>
+        public string HoverImagePath { get; set; } = string.Empty;
+
+        /// <summary>Border colour in #AARRGGBB form; empty keeps the control's own border.</summary>
+        public string BorderColor { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Border width in pixels. Negative means "leave the control's own border alone"; zero removes it.
+        /// </summary>
+        /// <remarks>
+        /// AO2 widgets have no frame of their own unless the theme's stylesheet asks for one, so an import
+        /// clears the borders our stock controls draw and lets the stylesheet put them back.
+        /// </remarks>
+        public double BorderThickness { get; set; } = -1;
+
+        /// <summary>
+        /// Artwork for a panel's indicator: a checkbox's box, or a dropdown's arrow. Empty keeps ours.
+        /// </summary>
+        public string IndicatorImagePath { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Width of a dropdown's arrow button in pixels; zero keeps the control's own width.
+        /// </summary>
+        public double IndicatorWidth { get; set; }
+
+        /// <summary>Artwork for a checkbox indicator while it is ticked; empty reuses the indicator.</summary>
+        public string CheckedIndicatorImagePath { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Colour of the filled part of a slider, in #AARRGGBB form; empty keeps the stock look.
+        /// </summary>
+        /// <remarks>AO2's `QSlider::sub-page`. The empty part uses <see cref="BackgroundColor"/>.</remarks>
+        public string FillColor { get; set; } = string.Empty;
+
+        /// <summary>Scrollbar track colour in #AARRGGBB form; empty keeps the stock scrollbar.</summary>
+        public string ScrollbarTrackColor { get; set; } = string.Empty;
+
+        /// <summary>Scrollbar handle colour in #AARRGGBB form; empty keeps the stock scrollbar.</summary>
+        public string ScrollbarHandleColor { get; set; } = string.Empty;
+
+        /// <summary>Scrollbar border colour in #AARRGGBB form; empty means no border.</summary>
+        public string ScrollbarBorderColor { get; set; } = string.Empty;
 
         /// <summary>Stacking order on the surface; higher values draw on top. Zero means default.</summary>
         public int ZOrder { get; set; }
@@ -315,6 +399,7 @@ namespace OceanyaClient
 
         /// <summary>Surface height the user resized the window to; zero means the stock height.</summary>
         public double SurfaceHeight { get; set; }
+
     }
 
     public class ViewportWindowState
@@ -701,6 +786,26 @@ namespace OceanyaClient
 
         /// <summary>When true, the viewport renders inside a main-window panel instead of its own window.</summary>
         public bool GMViewportRenderInPanel { get; set; }
+
+        /// <summary>
+        /// When true, IC messages carry the custom showname; AO2's `showname_enable` checkbox.
+        /// </summary>
+        public bool SendCustomShowname { get; set; } = true;
+
+        /// <summary>When true, the area list renders inside a main-window panel instead of a popup.</summary>
+        public bool GMAreaListRenderInPanel { get; set; }
+
+        /// <summary>When true, the music list renders inside a main-window panel instead of a popup.</summary>
+        public bool GMMusicListRenderInPanel { get; set; }
+
+        /// <summary>
+        /// True when the in-window area/music slot is showing the music list rather than the area list.
+        /// </summary>
+        /// <remarks>
+        /// AO2 stacks both lists in one place and switches with an "A/M" button; this is which of the two
+        /// that button last selected.
+        /// </remarks>
+        public bool GMAreaMusicSlotShowsMusic { get; set; }
 
         /// <summary>When true, a separate topmost passive viewport mirror remains visible until closed or toggled off.</summary>
         public bool GMPictureInPictureViewport { get; set; }

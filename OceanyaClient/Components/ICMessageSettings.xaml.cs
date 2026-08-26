@@ -103,6 +103,13 @@ namespace OceanyaClient.Components
                 ["ic_settings"] = imgOceanyaLogo
             };
 
+            // The emote arrows are AO2-placeable widgets of their own, so they leave the grid and become
+            // panels; the grid keeps its arrow inset unless a theme says otherwise, so the stock layout is
+            // unchanged.
+            IReadOnlyList<System.Windows.Controls.Button> pagingControls = EmoteGrid.ExtractPagingControls();
+            placeable["ic_emote_prev"] = pagingControls[0];
+            placeable["ic_emote_next"] = pagingControls[1];
+
             if (Content is Panel rootPanel)
             {
                 foreach (FrameworkElement element in placeable.Values)
@@ -1128,8 +1135,12 @@ namespace OceanyaClient.Components
                 characterName, emote, on: true, bakedPath: emote.PathToImage_on);
             ToggleButton toggleBtn = new ToggleButton
             {
+                // AO2's default button size, which the grid overrides with the theme's own metrics when
+                // one is imported (PageButtonGrid.EnableAutomaticPageSize).
                 Width = 40,
                 Height = 40,
+                MinWidth = 8,
+                MinHeight = 8,
                 ToolTip = emote.DisplayID,
                 Focusable = false,
                 IsTabStop = false,
@@ -1151,8 +1162,10 @@ namespace OceanyaClient.Components
                 FrameworkElementFactory gridFactory = new FrameworkElementFactory(typeof(Grid));
                 FrameworkElementFactory imageFactory = new FrameworkElementFactory(typeof(Image));
                 imageFactory.Name = "ButtonImage";
-                imageFactory.SetValue(Image.WidthProperty, 40.0);
-                imageFactory.SetValue(Image.HeightProperty, 40.0);
+
+                // The face follows the button, which follows its grid cell. A hard-coded 40x40 face was
+                // why the buttons overlapped once a theme gave the emote area less room per button.
+                imageFactory.SetValue(Image.StretchProperty, Stretch.Fill);
 
                 BitmapImage offImage;
                 BitmapImage onImage;

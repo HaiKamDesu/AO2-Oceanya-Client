@@ -158,6 +158,11 @@ namespace AOBot_Testing.Agents
         /// </summary>
         public Action<string, int>? OnRtReceived;
 
+        /// <summary>
+        /// Raised when the server reports a health bar value: bar 1 is defence, bar 2 prosecution, 0-10.
+        /// </summary>
+        public Action<int, int>? OnHealthChanged;
+
         public Action<IReadOnlyList<AreaInfo>>? OnAvailableAreaInfosUpdated;
 
         /// <summary>
@@ -538,6 +543,88 @@ namespace AOBot_Testing.Agents
             }
         }
 
+
+        /// <summary>
+        /// Calls moderator support for the current area.
+        /// </summary>
+        /// <remarks>
+        /// AO2 reference is <c>Courtroom::on_call_mod_clicked</c>: a bare <c>ZZ#%</c> unless the server
+        /// advertises <c>modcall_reason</c>, in which case the reason and <c>-1</c> follow. Servers rate
+        /// limit this (KFO allows one every 30 seconds) and answer over OOC, so there is nothing to await
+        /// beyond the send.
+        /// </remarks>
+        /// <param name="reason">Reason for the call; ignored by servers without <c>modcall_reason</c>.</param>
+        public async Task CallModerator(string? reason = null)
+        {
+            if (!IsTransportConnected)
+            {
+                CustomConsole.Error("Server connection is not active. Cannot call a moderator.");
+                return;
+            }
+
+            bool supportsReason = SupportsServerFeature("modcall_reason");
+            string packet = supportsReason && !string.IsNullOrWhiteSpace(reason)
+                ? $"ZZ#{Globals.ReplaceSymbolsForText(reason.Trim())}#-1#%"
+                : "ZZ#%";
+            await SendPacket(packet);
+        }
+
+        /// <summary>
+        /// Gets a value indicating whether the server accepts a reason with a mod call.
+        /// </summary>
+        public bool SupportsModCallReason => SupportsServerFeature("modcall_reason");
+
+        /// <summary>Highest health bar value AO2 uses.</summary>
+        public const int MaximumHealthValue = 10;
+
+        /// <summary>Gets the last known defence health bar value (0-10).</summary>
+        public int DefenceHealth { get; private set; } = MaximumHealthValue;
+
+        /// <summary>Gets the last known prosecution health bar value (0-10).</summary>
+        public int ProsecutionHealth { get; private set; } = MaximumHealthValue;
+
+        /// <summary>
+        /// Asks the server to set a health bar.
+        /// </summary>
+        /// <remarks>
+        /// AO2 reference: <c>Courtroom::on_defense_plus_clicked</c> and friends send
+        /// <c>HP#&lt;bar&gt;#&lt;value&gt;#%</c> and wait for the server to echo it back, so the local value
+        /// is not changed here - only the server decides (it may refuse when the client is not the CM).
+        /// </remarks>
+        /// <param name="bar">1 for defence, 2 for prosecution.</param>
+        /// <param name="value">New value, 0-10.</param>
+        public async Task SetHealth(int bar, int value)
+        {
+            if (!IsTransportConnected || (bar != 1 && bar != 2) || value < 0 || value > MaximumHealthValue)
+            {
+                return;
+            }
+
+            await SendPacket($"HP#{bar}#{value}#%");
+        }
+
+        /// <summary>
+        /// Plays a courtroom animation for everyone in the area (testimony banners and verdicts).
+        /// </summary>
+        /// <remarks>
+        /// AO2 reference: <c>Courtroom::on_wt_clicked</c> sends <c>RT#&lt;name&gt;#%</c>, with the optional
+        /// variant field used by cross examination. Names are AO2's own asset names, e.g.
+        /// <c>testimony1</c>, <c>testimony2</c>, <c>judgeruling</c>.
+        /// </remarks>
+        /// <param name="animationName">Animation name.</param>
+        /// <param name="variant">Variant index, or -1 to omit it.</param>
+        public async Task SendCourtroomAnimation(string animationName, int variant = -1)
+        {
+            if (!IsTransportConnected || string.IsNullOrWhiteSpace(animationName))
+            {
+                return;
+            }
+
+            string packet = variant >= 0
+                ? $"RT#{Globals.ReplaceSymbolsForText(animationName)}#{variant}#%"
+                : $"RT#{Globals.ReplaceSymbolsForText(animationName)}#%";
+            await SendPacket(packet);
+        }
 
         public async Task SendOOCMessage(string message)
         {
@@ -1030,6 +1117,29 @@ namespace AOBot_Testing.Agents
                     SetCurrentArea(pendingArea);
                 }
             }
+            else if (message.StartsWith("HP#"))
+            {
+                // AO2 reference: Courtroom::set_hp_bar. Bar 1 is the defence, bar 2 the prosecution, and the
+                // value is 0-10; anything else is ignored rather than clamped.
+                string[] healthFields = message.Split('#');
+                if (healthFields.Length >= 3
+                    && int.TryParse(healthFields[1], out int bar)
+                    && int.TryParse(healthFields[2].TrimEnd('%'), out int value)
+                    && value >= 0
+                    && value <= MaximumHealthValue)
+                {
+                    if (bar == 1)
+                    {
+                        DefenceHealth = value;
+                    }
+                    else if (bar == 2)
+                    {
+                        ProsecutionHealth = value;
+                    }
+
+                    OnHealthChanged?.Invoke(bar, value);
+                }
+            }
             else if (message.StartsWith("RT#"))
             {
                 string[] fields = message.Split('#');
@@ -1133,8 +1243,22 @@ namespace AOBot_Testing.Agents
             return curSFX;
         }
 
+        /// <summary>
+        /// When false, IC messages carry no showname at all, so everyone sees the character's own name.
+        /// </summary>
+        /// <remarks>
+        /// AO2's `showname_enable` checkbox does exactly this - it does not clear the showname box, it stops
+        /// the field being sent.
+        /// </remarks>
+        public bool SendCustomShowname { get; set; } = true;
+
         private string ResolveShowNameForPacket()
         {
+            if (!SendCustomShowname)
+            {
+                return string.Empty;
+            }
+
             string explicitShowName = ICShowname?.Trim() ?? string.Empty;
             if (!string.IsNullOrWhiteSpace(explicitShowName))
             {

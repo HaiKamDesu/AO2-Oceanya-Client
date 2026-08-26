@@ -33,7 +33,7 @@
         </Style>
     </UserControl.Resources>
 
-    <Grid Margin="5">
+    <Grid x:Name="LayoutGrid" Margin="5">
         <Grid.RowDefinitions>
             <RowDefinition Height="30"/>
             <!-- Up Button Row -->
@@ -59,7 +59,10 @@
         <Button Content="←" Click="LeftPage_Click" Grid.Row="1" Grid.Column="0" Visibility="Collapsed" Name="LeftButton" Focusable="False" IsTabStop="False"/>
 
         <!-- Main Grid (Holds Items) inside a ScrollViewer to prevent overflow -->
-        <ScrollViewer Grid.Row="1" Grid.Column="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" IsTabStop="False">
+        <!-- The grid is paged, so it must never scroll: a scrollable area hands the grid infinite
+             height, which collapses its star-sized rows to their content size and stops the cells
+             (and the buttons in them) shrinking with the panel. -->
+        <ScrollViewer x:Name="GridArea" Grid.Row="1" Grid.Column="1" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled" Focusable="False" IsTabStop="False">
             <Grid Name="TestingGrid" />
         </ScrollViewer>
 
