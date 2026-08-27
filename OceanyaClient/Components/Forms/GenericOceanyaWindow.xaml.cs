@@ -137,7 +137,19 @@ namespace OceanyaClient
             ContentScale = UiScaleMath.ClampScale(UiScaleManager.GlobalScale);
             UiScaleManager.ScaleChanged += OnGlobalUiScaleChanged;
             Closed += (_, _) => UiScaleManager.ScaleChanged -= OnGlobalUiScaleChanged;
-            LocationChanged += (_, _) => RefreshContentScaleFromSettings();
+            LocationChanged += (_, _) =>
+            {
+                // Not while the user is drag-resizing this window: dragging the LEFT or TOP edge moves the
+                // origin, so LocationChanged fires mid-gesture and this would throw away the scale the drag
+                // just computed and re-resolve the old one from settings - leaving the window at the dragged
+                // size with the content still at the previous scale, which is the empty band that appeared
+                // when resizing from the left. A bottom-right drag never moves the origin, which is why it
+                // looked fine there and "fixed" the window afterwards.
+                if (!IsInteractiveResizeScaling)
+                {
+                    RefreshContentScaleFromSettings();
+                }
+            };
         }
 
         /// <inheritdoc/>

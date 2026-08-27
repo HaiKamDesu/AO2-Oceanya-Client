@@ -1,6 +1,7 @@
 ﻿using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media.Imaging;
 using System.IO;
 using System.Windows.Documents;
 using System.Windows.Media;
@@ -195,6 +196,102 @@ namespace UnitTests
             {
                 Directory.Delete(folder, recursive: true);
             }
+        }
+
+        [Test]
+        public void StylingQueuedByAReplacedLayoutIsDropped()
+        {
+            string folder = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+            Directory.CreateDirectory(folder);
+            string art = Path.Combine(folder, "face.png");
+            File.WriteAllBytes(art, System.Convert.FromBase64String(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="));
+
+            try
+            {
+                Image face = new Image();
+                Button panel = new Button { Content = face, Width = 40, Height = 20 };
+                Window host = new Window { Width = 200, Height = 100, Content = panel, ShowActivated = false };
+                host.Show();
+
+                OceanyaPanelDescriptor descriptor = new OceanyaPanelDescriptor(
+                    "probe_stale",
+                    "Probe Button",
+                    new OceanyaPanelPlacement(0, 0, 40, 20),
+                    minimumWidth: 10,
+                    minimumHeight: 10,
+                    kind: OceanyaPanelKind.ImageButton);
+
+                OceanyaPanelStyleApplier.Apply(descriptor, panel, new OceanyaPanelPlacementState { ImagePath = art });
+
+                // Resetting a theme and importing again in the same session left the old layout's artwork
+                // queued; it landed after the new layout had been applied, and the fresh baseline then
+                // recorded the themed value as the original.
+                OceanyaPanelStyleApplier.InvalidatePendingWork();
+                FlushDispatcher();
+
+                Assert.That(face.Source, Is.Null, "Work queued by a layout that has been replaced must not run.");
+
+                host.Close();
+            }
+            finally
+            {
+                Directory.Delete(folder, recursive: true);
+            }
+        }
+
+        [Test]
+        public void ScrollingSongNameFadesAtTheWidgetEdgesNotWithTheText()
+        {
+            OOCLog log = new OOCLog();
+            Window host = new Window { Width = 320, Height = 200, Content = log, ShowActivated = false };
+            host.Show();
+            log.UpdateLayout();
+
+            log.SetNowPlaying("[MISSING] 113 Confrontation ~ Presto 2004 extended edition");
+            log.UpdateLayout();
+
+            Canvas viewport = (Canvas)FindByName(log, "StreamTextViewport")!;
+            Assert.That(viewport.ActualWidth, Is.GreaterThan(0), "The viewport has to stretch, or nothing scrolls.");
+            Assert.That(viewport.OpacityMask, Is.InstanceOf<LinearGradientBrush>());
+
+            LinearGradientBrush mask = (LinearGradientBrush)viewport.OpacityMask;
+
+            // Absolute, and spanning the widget: a relative gradient is mapped onto the bounding box of what
+            // is rendered - which includes the scrolling text - so the fade slid along with it instead of
+            // staying at the edges. Measuring before the viewport had settled pinned it partway across.
+            Assert.That(mask.MappingMode, Is.EqualTo(BrushMappingMode.Absolute));
+            Assert.That(mask.EndPoint.X, Is.EqualTo(viewport.ActualWidth).Within(0.5));
+            Assert.That(mask.GradientStops[1].Offset, Is.LessThan(0.1), "The fade may only eat a sliver of the widget.");
+
+            // The whole name has to be laid out, not just the part that fits: a Grid measured the text
+            // against the widget's width, so everything past it was never rendered and the name looked cut
+            // off mid-word however far it scrolled.
+            TextBlock text = (TextBlock)FindByName(log, "txtStreamText")!;
+            Assert.That(text.Text, Does.StartWith("[MISSING] 113 Confrontation"));
+            Assert.That(text.ActualWidth, Is.GreaterThan(viewport.ActualWidth));
+
+            host.Close();
+        }
+
+        private static FrameworkElement? FindByName(DependencyObject element, string name)
+        {
+            for (int i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(element); i++)
+            {
+                DependencyObject child = System.Windows.Media.VisualTreeHelper.GetChild(element, i);
+                if (child is FrameworkElement typed && typed.Name == name)
+                {
+                    return typed;
+                }
+
+                FrameworkElement? nested = FindByName(child, name);
+                if (nested != null)
+                {
+                    return nested;
+                }
+            }
+
+            return null;
         }
 
         private static void FlushDispatcher()

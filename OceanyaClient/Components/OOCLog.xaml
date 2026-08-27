@@ -81,12 +81,39 @@
                            Height="24"
                            VerticalAlignment="Top"
                            HorizontalAlignment="Stretch"/>
-                <Label x:Name="lblStream" Content="[STREAM]" 
+                <Label x:Name="lblStream" 
            AutomationProperties.AutomationId="Main.Ooc.StreamLabel"
            Background="Transparent" Foreground="White" 
-           FontFamily="Arial" VerticalContentAlignment="Center" 
+           FontFamily="Arial" VerticalContentAlignment="Stretch" HorizontalContentAlignment="Stretch" 
            Height="24" VerticalAlignment="Top"
-           HorizontalAlignment="Stretch"/>
+           HorizontalAlignment="Stretch"
+           ClipToBounds="True">
+                    <!--
+                        AO2's ScrollText: the song name, and when it does not fit, one continuously looping
+                        marquee with a dashed separator and a fade at both edges. Two copies of the same
+                        text sit side by side so the wrap is seamless.
+                    -->
+                    <!--
+                        A Canvas, not a Grid: a Grid measures its child against its own width, so the text
+                        was laid out only as wide as the widget and everything past that was never rendered
+                        - the name appeared to end mid-word however far it scrolled. A Canvas measures its
+                        children unconstrained, and ClipToBounds still hides what is outside.
+                    -->
+                    <!-- Stretch explicitly: a Canvas has no desired size, and a Label aligns its content
+                         left by default, which left the viewport 0px wide. -->
+                    <Canvas x:Name="StreamTextViewport"
+                            ClipToBounds="True"
+                            HorizontalAlignment="Stretch"
+                            VerticalAlignment="Stretch">
+                        <StackPanel x:Name="StreamTextTrack" Orientation="Horizontal">
+                            <StackPanel.RenderTransform>
+                                <TranslateTransform x:Name="StreamTextOffset"/>
+                            </StackPanel.RenderTransform>
+                            <TextBlock x:Name="txtStreamText" TextWrapping="NoWrap" TextTrimming="None"/>
+                            <TextBlock x:Name="txtStreamTextRepeat" TextWrapping="NoWrap" TextTrimming="None"/>
+                        </StackPanel>
+                    </Canvas>
+                </Label>
             </Grid>
         </DockPanel>
     </Grid>

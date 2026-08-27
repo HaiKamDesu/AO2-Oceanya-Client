@@ -279,6 +279,58 @@
                         ToolTip="Call moderator support for this area"
                         Click="btnCallMod_Click"/>
 
+                <!--
+                    AO2's `*_remove` buttons: a small X beside a dropdown, shown only while that dropdown is
+                    off its default, which resets it when clicked.
+                -->
+                <Button x:Name="btnResetPosition"
+                        AutomationProperties.AutomationId="Main.Ic.ResetPosition"
+                        AutomationProperties.Name="Reset position"
+                        Content="X"
+                        Style="{StaticResource ThemeableFaceButton}"
+                        ToolTip="Reset the position to this character's default"
+                        Click="btnResetPosition_Click"/>
+                <Button x:Name="btnResetCharacter"
+                        AutomationProperties.AutomationId="Main.Ic.ResetCharacter"
+                        AutomationProperties.Name="Reset character"
+                        Content="X"
+                        Style="{StaticResource ThemeableFaceButton}"
+                        ToolTip="Go back to this client's own character"
+                        Click="btnResetCharacter_Click"/>
+                <Button x:Name="btnResetSfx"
+                        AutomationProperties.AutomationId="Main.Ic.ResetSfx"
+                        AutomationProperties.Name="Reset sound effect"
+                        Content="X"
+                        Style="{StaticResource ThemeableFaceButton}"
+                        ToolTip="Reset the sound effect to Default"
+                        Click="btnResetSfx_Click"/>
+
+                <!--
+                    AO2's `music_search`: one search box beside the A/M switch that filters whichever list is
+                    showing. When it is on screen and the music list renders in the window, the list's own
+                    search box steps aside so the rows get that space back.
+                -->
+                <Grid x:Name="AreaMusicSearchPanel">
+                    <TextBox x:Name="txtAreaMusicSearch"
+                             AutomationProperties.AutomationId="Main.AreaMusic.Search"
+                             AutomationProperties.Name="Search areas and music"
+                             Background="#FF1C2227"
+                             BorderBrush="#FF3E5362"
+                             Foreground="#FFE8E8E8"
+                             Padding="4,1"
+                             VerticalContentAlignment="Center"
+                             ToolTip="Search the list"
+                             TextChanged="txtAreaMusicSearch_TextChanged"/>
+                    <!-- Placeholder, same pattern as the IC and OOC boxes. -->
+                    <TextBlock x:Name="txtAreaMusicSearch_Placeholder"
+                               Text="Search"
+                               Foreground="Gray"
+                               VerticalAlignment="Center"
+                               HorizontalAlignment="Left"
+                               Margin="6,0,0,0"
+                               IsHitTestVisible="False"/>
+                </Grid>
+
                 <CheckBox x:Name="chkSendShowname"
                           AutomationProperties.AutomationId="Main.Ic.SendShowname"
                           AutomationProperties.Name="Send showname"
@@ -393,7 +445,8 @@
                        Placement="Top"
                        StaysOpen="False"
                        AllowsTransparency="True">
-                    <Border Background="#FF202020"
+                    <Border x:Name="AreaNavigatorPopupFrame"
+                            Background="#FF202020"
                             BorderBrush="#FF3E5362"
                             BorderThickness="1"
                             CornerRadius="4"
@@ -410,7 +463,7 @@
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
                             <Grid Grid.RowSpan="4" Background="#E6111418"/>
-                            <TextBlock Text="Area Navigator" Foreground="White" FontWeight="Bold" Margin="0,0,0,4"/>
+                            <TextBlock x:Name="txtAreaNavigatorTitle" Text="Area Navigator" Foreground="White" FontWeight="Bold" Margin="0,0,0,4"/>
                             <TextBlock x:Name="txtCurrentArea"
                                        Grid.Row="1"
                                        AutomationProperties.AutomationId="Main.AreaNavigator.CurrentArea"
@@ -454,7 +507,7 @@
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
                             </ListBox>
-                            <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
+                            <StackPanel x:Name="AreaNavigatorCommandRow" Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
                                 <Button x:Name="btnGoToArea"
                                         AutomationProperties.AutomationId="Main.AreaNavigator.Go"
                                         Content="Go"
@@ -499,7 +552,8 @@
                        Placement="Top"
                        StaysOpen="False"
                        AllowsTransparency="True">
-                    <Border Background="#FF202020"
+                    <Border x:Name="MusicListPopupFrame"
+                            Background="#FF202020"
                             BorderBrush="#FF3E5362"
                             BorderThickness="1"
                             CornerRadius="4"
@@ -517,7 +571,7 @@
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
                             <Grid Grid.RowSpan="5" Background="#E6111418"/>
-                                <DockPanel Margin="0,0,0,6">
+                                <DockPanel x:Name="MusicListTitleRow" Margin="0,0,0,6">
                                     <TextBlock Text="Music List" Foreground="White" FontWeight="Bold" VerticalAlignment="Center"/>
                                     <Button x:Name="btnRefreshMusicList"
                                             AutomationProperties.AutomationId="Main.MusicList.Refresh"
@@ -600,7 +654,7 @@
                                         </HierarchicalDataTemplate>
                                     </TreeView.ItemTemplate>
                                 </TreeView>
-                                <Border Grid.Row="3" Background="#FF0F1418" BorderBrush="#FF2D3C44" BorderThickness="1" CornerRadius="4" Padding="8">
+                                <Border x:Name="MusicListNowPlayingBlock" Grid.Row="3" Background="#FF0F1418" BorderBrush="#FF2D3C44" BorderThickness="1" CornerRadius="4" Padding="8">
                                     <StackPanel>
                                         <TextBlock Text="Currently Playing" Foreground="#FF9BC7DF" FontSize="10" FontWeight="Bold"/>
                                         <TextBlock x:Name="txtCurrentMusicTitle"

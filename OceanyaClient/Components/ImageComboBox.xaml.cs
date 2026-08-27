@@ -16,6 +16,116 @@ namespace OceanyaClient.Components
 {
     public partial class ImageComboBox : UserControl
     {
+        /// <summary>
+        /// Row icon size, in device independent pixels.
+        /// </summary>
+        /// <remarks>
+        /// A theme can make a dropdown much smaller than the stock 21px, and a fixed 20px icon with 5px of
+        /// margin then filled the row with everything except the text. These three follow the control's own
+        /// height, and stay at their stock values at or above it.
+        /// </remarks>
+        public static readonly DependencyProperty RowIconSizeProperty = DependencyProperty.Register(
+            nameof(RowIconSize),
+            typeof(double),
+            typeof(ImageComboBox),
+            new PropertyMetadata(20d));
+
+        /// <summary>Row icon margin.</summary>
+        public static readonly DependencyProperty RowIconMarginProperty = DependencyProperty.Register(
+            nameof(RowIconMargin),
+            typeof(Thickness),
+            typeof(ImageComboBox),
+            new PropertyMetadata(new Thickness(5)));
+
+        /// <summary>Row text size.</summary>
+        public static readonly DependencyProperty RowFontSizeProperty = DependencyProperty.Register(
+            nameof(RowFontSize),
+            typeof(double),
+            typeof(ImageComboBox),
+            new PropertyMetadata(12d));
+
+        /// <summary>Gets or sets the row icon size.</summary>
+        public double RowIconSize
+        {
+            get => (double)GetValue(RowIconSizeProperty);
+            set => SetValue(RowIconSizeProperty, value);
+        }
+
+        /// <summary>Gets or sets the row icon margin.</summary>
+        public Thickness RowIconMargin
+        {
+            get => (Thickness)GetValue(RowIconMarginProperty);
+            set => SetValue(RowIconMarginProperty, value);
+        }
+
+        /// <summary>Gets or sets the row text size.</summary>
+        public double RowFontSize
+        {
+            get => (double)GetValue(RowFontSizeProperty);
+            set => SetValue(RowFontSizeProperty, value);
+        }
+
+        /// <summary>Stock height this control was designed at.</summary>
+        private const double DesignHeight = 21;
+
+        /// <summary>Stock width of the arrow button.</summary>
+        private const double DesignArrowWidth = 30;
+
+        /// <summary>Width a theme asked for, or NaN to use the stock width.</summary>
+        private double arrowWidthOverride = double.NaN;
+
+        /// <summary>
+        /// Sets the width a theme wants for the arrow button.
+        /// </summary>
+        /// <remarks>
+        /// Goes through here rather than being written onto the template's column directly, so the compact
+        /// pass and the theme do not fight over the same value - the theme sets the base width, and the
+        /// compact pass may still shrink it on a narrow dropdown.
+        /// </remarks>
+        /// <param name="width">Requested width, or NaN for the stock width.</param>
+        public void SetArrowWidthOverride(double width)
+        {
+            arrowWidthOverride = width;
+            RefreshCompactMetrics();
+        }
+
+        /// <summary>
+        /// Rescales the arrow button and the row metrics for the control's current size.
+        /// </summary>
+        /// <remarks>
+        /// Everything is clamped to its stock value, so a normal-sized dropdown is untouched; only a
+        /// dropdown a theme shrank gets the smaller arrow, icon and text.
+        /// </remarks>
+        private void RefreshCompactMetrics()
+        {
+            double height = ActualHeight > 0 ? ActualHeight : Height;
+            double width = ActualWidth > 0 ? ActualWidth : Width;
+            if (double.IsNaN(height) || height <= 0)
+            {
+                return;
+            }
+
+            double scale = Math.Min(1d, height / DesignHeight);
+            RowIconSize = Math.Max(8d, Math.Round(20d * scale));
+            RowIconMargin = new Thickness(Math.Max(1d, Math.Round(5d * scale)));
+            RowFontSize = Math.Max(8d, Math.Round(12d * scale));
+
+            // The arrow may not take more than a third of a narrow dropdown, or the text has nowhere to go.
+            if (cboINISelect?.Template?.FindName("columnDropdown", cboINISelect) is ColumnDefinition arrowColumn
+                && !double.IsNaN(width)
+                && width > 0)
+            {
+                double baseWidth = double.IsNaN(arrowWidthOverride) || arrowWidthOverride <= 0
+                    ? DesignArrowWidth
+                    : arrowWidthOverride;
+                double arrowWidth = Math.Max(8d, Math.Min(baseWidth * scale, Math.Round(width / 3)));
+                if (Math.Abs(arrowColumn.Width.Value - arrowWidth) > 0.5)
+                {
+                    arrowColumn.Width = new GridLength(arrowWidth);
+                }
+            }
+        }
+
         #region Nested Types
         public class DropdownItem : System.ComponentModel.INotifyPropertyChanged
         {
@@ -121,9 +231,11 @@ namespace OceanyaClient.Components
         {
             InitializeComponent();
             cboINISelect.ItemsSource = allItems;
+            SizeChanged += (_, _) => RefreshCompactMetrics();
 
             cboINISelect.Loaded += (s, e) =>
             {
+                RefreshCompactMetrics();
                 editableTextBox = cboINISelect.Template.FindName("PART_EditableTextBox", cboINISelect) as TextBox;
                 if (editableTextBox != null)
                 {

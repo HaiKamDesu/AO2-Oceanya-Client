@@ -301,6 +301,18 @@ namespace OceanyaClient.Features.Theme
         /// <summary>Panel id for the blip volume slider's label art.</summary>
         public const string SliderBlipLabelPanelId = "slider_blip_label";
 
+        /// <summary>Panel id for the shared area/music search box.</summary>
+        public const string AreaMusicSearchPanelId = "area_music_search";
+
+        /// <summary>Panel id for the position dropdown's reset button.</summary>
+        public const string IcComboPositionResetPanelId = "ic_combo_position_reset";
+
+        /// <summary>Panel id for the character dropdown's reset button.</summary>
+        public const string IcComboCharacterResetPanelId = "ic_combo_character_reset";
+
+        /// <summary>Panel id for the sound effect dropdown's reset button.</summary>
+        public const string IcComboSfxResetPanelId = "ic_combo_sfx_reset";
+
         /// <summary>Panel id for the "send showname" checkbox.</summary>
         public const string IcCheckShownamePanelId = "ic_check_showname";
 
@@ -753,6 +765,34 @@ namespace OceanyaClient.Features.Theme
                 minimumHeight: 8,
                 kind: OceanyaPanelKind.ImageButton),
             new OceanyaPanelDescriptor(
+                AreaMusicSearchPanelId,
+                "Area/Music Search",
+                new OceanyaPanelPlacement(431, 603, 128, 23),
+                minimumWidth: 40,
+                minimumHeight: 14,
+                kind: OceanyaPanelKind.TextInput),
+            new OceanyaPanelDescriptor(
+                IcComboPositionResetPanelId,
+                "Position Reset Button",
+                new OceanyaPanelPlacement(431, 603, 20, 20),
+                minimumWidth: 10,
+                minimumHeight: 10,
+                kind: OceanyaPanelKind.ImageButton),
+            new OceanyaPanelDescriptor(
+                IcComboCharacterResetPanelId,
+                "Character Reset Button",
+                new OceanyaPanelPlacement(431, 603, 20, 20),
+                minimumWidth: 10,
+                minimumHeight: 10,
+                kind: OceanyaPanelKind.ImageButton),
+            new OceanyaPanelDescriptor(
+                IcComboSfxResetPanelId,
+                "Sound Reset Button",
+                new OceanyaPanelPlacement(431, 603, 20, 20),
+                minimumWidth: 10,
+                minimumHeight: 10,
+                kind: OceanyaPanelKind.ImageButton),
+            new OceanyaPanelDescriptor(
                 IcCheckShownamePanelId,
                 "Send Showname Checkbox",
                 new OceanyaPanelPlacement(431, 603, 83, 15),
@@ -1008,6 +1048,10 @@ namespace OceanyaClient.Features.Theme
             ["slider_sfx_label"] = 471,
             ["slider_blip_label"] = 472,
             ["ic_check_showname"] = 473,
+            ["area_music_search"] = 487,
+            ["ic_combo_position_reset"] = 484,
+            ["ic_combo_character_reset"] = 485,
+            ["ic_combo_sfx_reset"] = 486,
             ["judge_defence_bar"] = 474,
             ["judge_prosecution_bar"] = 475,
             ["judge_defence_minus"] = 476,
@@ -1072,6 +1116,10 @@ namespace OceanyaClient.Features.Theme
                 SliderSfxLabelPanelId,
                 SliderBlipLabelPanelId,
                 IcCheckShownamePanelId,
+                AreaMusicSearchPanelId,
+                IcComboPositionResetPanelId,
+                IcComboCharacterResetPanelId,
+                IcComboSfxResetPanelId,
                 JudgeDefenceBarPanelId,
                 JudgeProsecutionBarPanelId,
                 JudgeDefenceMinusPanelId,
@@ -1083,6 +1131,53 @@ namespace OceanyaClient.Features.Theme
                 JudgeNotGuiltyPanelId,
                 JudgeGuiltyPanelId
             };
+
+        /// <summary>
+        /// Panels whose visibility is decided by something other than the layout.
+        /// </summary>
+        /// <remarks>
+        /// A layout may still HIDE one of these - a theme that does not want the viewport is entitled to say
+        /// so - but it must never SHOW one, because whether it belongs on screen at all depends on state the
+        /// theme knows nothing about: a debug build, test mode, the Dredd feature being on, a list rendering
+        /// in the window rather than a popup, standing at a judge position, a dropdown being off its
+        /// default. Each of those has its own pass that runs after the layout is applied.
+        /// </remarks>
+        private static readonly HashSet<string> RuntimeVisibilityPanelIds =
+            new HashSet<string>(StringComparer.Ordinal)
+            {
+                DreddFeatureRowPanelId,
+                BarButtonDebugPanelId,
+                BarCheckStickyPanelId,
+                BarCheckSwitchPosPanelId,
+                BarCheckInvertLogPanelId,
+                ViewportPanelId,
+                AreaListPanelId,
+                MusicListPanelId,
+                BarButtonViewportPanelId,
+                BarButtonAreaPanelId,
+                BarButtonMusicPanelId,
+                IcComboPositionResetPanelId,
+                IcComboCharacterResetPanelId,
+                IcComboSfxResetPanelId,
+                JudgeWitnessTestimonyPanelId,
+                JudgeCrossExaminationPanelId,
+                JudgeNotGuiltyPanelId,
+                JudgeGuiltyPanelId,
+                JudgeDefenceMinusPanelId,
+                JudgeDefencePlusPanelId,
+                JudgeProsecutionMinusPanelId,
+                JudgeProsecutionPlusPanelId
+            };
+
+        /// <summary>
+        /// Gets a value indicating whether something other than the layout decides a panel's visibility.
+        /// </summary>
+        /// <param name="id">Panel id.</param>
+        /// <returns>True when the layout may hide the panel but never show it.</returns>
+        public static bool HasRuntimeControlledVisibility(string id)
+        {
+            return RuntimeVisibilityPanelIds.Contains(id);
+        }
 
         /// <summary>
         /// Gets a value indicating whether a panel starts hidden when no layout says otherwise.

@@ -50,24 +50,50 @@
                               Canvas.Left="10" Focusable="False" IsTabStop="False" VerticalContentAlignment="Center"
                               Visibility="Collapsed"/>
             
+                    <!--
+                        Vector faces rather than an icon font: these two sit at 20-24px in the bottom bar,
+                        where a glyph is a blurry smudge, and a Path stays crisp at any UI scale.
+                    -->
                     <ToggleButton x:Name="btnEditLayout"
                           AutomationProperties.AutomationId="Main.EditLayout"
                           AutomationProperties.Name="Edit Layout"
-                          Content="&#x270E;"
                           ToolTip="Edit panel layout: drag panels to move them, drag the bottom-right corner to resize."
                           Canvas.Left="356"
                           Canvas.Top="2"
                           Width="20"
                           Height="20"
-                          FontSize="11"
-                          Foreground="White"
-                          Background="#FF2B2F36"
-                          BorderBrush="#FF4A4A4A"
-                          BorderThickness="1"
                           Focusable="False"
                           IsTabStop="False"
                           Checked="EditLayoutToggle_Changed"
-                          Unchecked="EditLayoutToggle_Changed"/>
+                          Unchecked="EditLayoutToggle_Changed">
+                        <ToggleButton.Template>
+                            <ControlTemplate TargetType="ToggleButton">
+                                <Grid>
+                                    <Border x:Name="EditLayoutFace"
+                                            CornerRadius="3"
+                                            Background="#FF2B2F36"
+                                            BorderBrush="#FF4A4A4A"
+                                            BorderThickness="1"/>
+                                    <!-- Panels being rearranged: two blocks and a pencil across them. -->
+                                    <Canvas x:Name="EditLayoutGlyph" Width="14" Height="14" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <Rectangle Canvas.Left="0" Canvas.Top="1" Width="6" Height="5" RadiusX="1" RadiusY="1" Fill="#FFBFD4E4"/>
+                                        <Rectangle Canvas.Left="0" Canvas.Top="8" Width="6" Height="5" RadiusX="1" RadiusY="1" Fill="#FF7E93A5"/>
+                                        <Path Fill="#FFF2C14E" Data="M 13.6 1.2 L 12.3 -0.1 L 11.2 1 L 12.5 2.3 Z"/>
+                                        <Path Fill="#FFE8E8E8" Data="M 11 1.2 L 5.6 6.6 L 5 9 L 7.4 8.4 L 12.8 3 Z"/>
+                                    </Canvas>
+                                </Grid>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsChecked" Value="True">
+                                        <Setter TargetName="EditLayoutFace" Property="Background" Value="#FF3E6C93"/>
+                                        <Setter TargetName="EditLayoutFace" Property="BorderBrush" Value="#FF8FC2E8"/>
+                                    </Trigger>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="EditLayoutFace" Property="BorderBrush" Value="#FF9BC7DF"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </ToggleButton.Template>
+                    </ToggleButton>
 
             <Button x:Name="btnRefreshCharacters" Height="24" Width="24" 
                             AutomationProperties.AutomationId="Main.OpenCharacterFolderVisualizer"
@@ -81,12 +107,24 @@
                                 <Setter Property="Template">
                                     <Setter.Value>
                                         <ControlTemplate TargetType="{x:Type Button}">
-                                            <Grid>
-                                                <Image x:Name="ButtonImage" Source="pack://application:,,,/OceanyaClient;component/Resources/Buttons/smallFolder.png" Stretch="Fill"/>
+                                            <Grid x:Name="ButtonImage">
+                                                <Border x:Name="CharacterDbFace"
+                                                        CornerRadius="3"
+                                                        Background="#FF2B2F36"
+                                                        BorderBrush="#FF4A4A4A"
+                                                        BorderThickness="1"
+                                                        Margin="0,2"/>
+                                                <!-- A character card grid: what the visualizer actually shows. -->
+                                                <Canvas Width="16" Height="14" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                    <Rectangle Canvas.Left="1" Canvas.Top="1" Width="6" Height="5" RadiusX="1" RadiusY="1" Fill="#FFBFD4E4"/>
+                                                    <Rectangle Canvas.Left="9" Canvas.Top="1" Width="6" Height="5" RadiusX="1" RadiusY="1" Fill="#FF7E93A5"/>
+                                                    <Rectangle Canvas.Left="1" Canvas.Top="8" Width="6" Height="5" RadiusX="1" RadiusY="1" Fill="#FF7E93A5"/>
+                                                    <Ellipse Canvas.Left="10" Canvas.Top="8" Width="4" Height="4" Fill="#FFF2C14E"/>
+                                                </Canvas>
                                             </Grid>
                                             <ControlTemplate.Triggers>
                                                 <Trigger Property="IsMouseOver" Value="True">
-                                                    <Setter TargetName="ButtonImage" Property="Opacity" Value="0.7"/>
+                                                    <Setter TargetName="CharacterDbFace" Property="BorderBrush" Value="#FF9BC7DF"/>
                                                 </Trigger>
                                                 <Trigger Property="IsEnabled" Value="False">
                                                     <Setter TargetName="ButtonImage" Property="Opacity" Value="0.3"/>

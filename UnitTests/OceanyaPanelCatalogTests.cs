@@ -44,6 +44,8 @@ namespace UnitTests
                     "slider_music_volume", "slider_sfx_volume", "slider_blip_volume",
                     "slider_music_label", "slider_sfx_label", "slider_blip_label",
                     "ic_check_showname",
+                    "ic_combo_position_reset", "ic_combo_character_reset", "ic_combo_sfx_reset",
+                    "area_music_search",
                     "judge_defence_bar", "judge_prosecution_bar",
                     "judge_defence_minus", "judge_defence_plus",
                     "judge_prosecution_minus", "judge_prosecution_plus",
@@ -319,6 +321,87 @@ namespace UnitTests
             // Viewport content always renders uniformly, so a free resize would only add dead space.
             Assert.That(OceanyaPanelCatalog.Get("viewport").MaintainsAspectRatio, Is.True);
             Assert.That(OceanyaPanelCatalog.Get("ic_log").MaintainsAspectRatio, Is.False);
+        }
+
+        [Test]
+        [Apartment(ApartmentState.STA)]
+        public void CancellingEditModeRollsTheLayoutBack()
+        {
+            OceanyaThemeLayoutState? original = SaveFile.Data.OceanyaThemeLayout;
+            try
+            {
+                SaveFile.Data.OceanyaThemeLayout = new OceanyaThemeLayoutState();
+                SaveFile.Data.OceanyaThemeLayout.Panels["ic_log"] = new OceanyaPanelPlacementState
+                {
+                    Left = 10,
+                    Top = 20,
+                    Width = 100,
+                    Height = 50
+                };
+
+                Canvas surface = new Canvas { Width = 500, Height = 400 };
+                Grid element = new Grid();
+                surface.Children.Add(element);
+                Dictionary<string, OceanyaPanelElements> panels = new Dictionary<string, OceanyaPanelElements>(StringComparer.Ordinal)
+                {
+                    ["ic_log"] = new OceanyaPanelElements(element)
+                };
+
+                Window host = new Window { Content = surface, ShowActivated = false, Width = 520, Height = 420 };
+                host.Show();
+
+                OceanyaPanelEditModeController controller = new OceanyaPanelEditModeController(surface, panels, () => { });
+                controller.Activate();
+
+                // Edits persist as they happen, so cancelling has to restore the copy taken at activation
+                // rather than undo steps.
+                OceanyaPanelLayout.ApplyPlacement(element, new OceanyaPanelPlacement(400, 300, 120, 60));
+                controller.PersistLayout();
+                Assert.That(SaveFile.Data.OceanyaThemeLayout.Panels["ic_log"].Left, Is.EqualTo(400));
+
+                controller.CancelEditing();
+
+                Assert.That(SaveFile.Data.OceanyaThemeLayout.Panels["ic_log"].Left, Is.EqualTo(10));
+                Assert.That(SaveFile.Data.OceanyaThemeLayout.Panels["ic_log"].Width, Is.EqualTo(100));
+                Assert.That(controller.IsActive, Is.False);
+
+                host.Close();
+            }
+            finally
+            {
+                SaveFile.Data.OceanyaThemeLayout = original;
+            }
+        }
+
+        [Test]
+        [Apartment(ApartmentState.STA)]
+        public void ApplyHiddenPanels_ShowsPanelsALaterLayoutNoLongerHides()
+        {
+            Grid element = new Grid { Visibility = Visibility.Collapsed };
+            Dictionary<string, OceanyaPanelElements> panels = new Dictionary<string, OceanyaPanelElements>(StringComparer.Ordinal)
+            {
+                ["bar_button_areamusic"] = new OceanyaPanelElements(element)
+            };
+
+            OceanyaThemeLayoutState layout = new OceanyaThemeLayoutState();
+            layout.Panels["bar_button_areamusic"] = new OceanyaPanelPlacementState { IsHidden = false };
+
+            OceanyaPanelEditModeController.ApplyHiddenPanels(panels, layout);
+
+            // Only collapsing meant a panel hidden by an earlier layout stayed hidden when the next one
+            // wanted it - which is why resetting and importing in one session lost the optional widgets.
+            Assert.That(element.Visibility, Is.EqualTo(Visibility.Visible));
+
+            layout.Panels["bar_button_areamusic"].IsHidden = true;
+            OceanyaPanelEditModeController.ApplyHiddenPanels(panels, layout);
+
+            Assert.That(element.Visibility, Is.EqualTo(Visibility.Collapsed));
+
+            // With no layout at all, the catalog decides: this one is hidden by default.
+            element.Visibility = Visibility.Visible;
+            OceanyaPanelEditModeController.ApplyHiddenPanels(panels, new OceanyaThemeLayoutState());
+
+            Assert.That(element.Visibility, Is.EqualTo(Visibility.Collapsed));
         }
 
         [Test]

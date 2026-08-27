@@ -479,3 +479,86 @@ part of the element walk the visual baseline does, so both register their own un
 filled in code - so restoring a value captured at some earlier moment fights that code. It put the
 "OOCName" placeholder caption back on top of a real showname. Styling that touches either registers an
 explicit undo instead (`PanelStateOverrides`), and that is the rule for any future runtime-owned property.
+
+## The OOC header shows the song
+Our header bar is AO2's music display, so it carries what AO2 puts there: the **currently playing song**,
+not the client. AO2's label is a `ScrollText` (`AO2-Client/src/scrolltext.cpp`), and `OOCLog.SetNowPlaying`
+reproduces it:
+
+- The text is AO2's, from `AOMusicPlayer::playStream`: `"None"` for the stop token, `[MISSING] name` when
+  the file cannot be opened, `[STREAM] name` for an http song, the bare name otherwise - where the name is
+  the file name without its extension. (AO2 also flashes `[LOADING] name` while BASS opens the file; we
+  resolve the path before showing anything, so there is no loading window to report.)
+- Scrolls only when the name is wider than the widget minus a margin of **height/3** on each side.
+- One **continuous loop** - the name plus a `"   ---   "` separator, drawn twice so the wrap is seamless -
+  at 2px every 50ms, after holding still for the first 64 steps. Not a bounce, and never trimmed.
+- The text sits in a **Canvas**, not a Grid: a Grid measures its child against its own width, so the name
+  was only laid out as wide as the widget and everything past that was never rendered - it appeared to end
+  mid-word however far it scrolled. A Canvas measures unconstrained and `ClipToBounds` still hides the
+  overflow. The Canvas has to be told to stretch **on both axes**, since it has no desired size of its own
+  and a `Label` aligns its content - horizontally left and vertically centred - so the viewport measured
+  0px wide, and then 0px tall, and the header showed nothing at all. The rebuild also needs a re-entrancy
+  guard - it rewrites the text, which resizes
+  the track, which can raise the very size change that called it (the label flickered between "None" and
+  its scrolling form).
+- Faded at both edges while scrolling. Two traps here: AO2's alpha channel is painted over fixed strips at
+  each side with the text moving *under* it, so the mask uses **absolute** mapping - a relative gradient is
+  mapped onto the bounding box of what is rendered, which includes the translated text, and the fade slid
+  along with the scroll. And it is measured from the **viewport**, whose size settles a layout pass after
+  the label's; measuring too early pinned the fade partway across the widget. AO2 fades a fixed 15px, which
+  it can afford on a 224px music display, so on a narrower label the fade is capped to a fraction of the
+  width.
+
+## The shared search box
+AO2 has one search box (`music_search`) that filters whichever list is on screen. That is the
+`area_music_search` panel, hidden by default like the other optional widgets. Only our music list filters,
+so the box filters both: the music tree through its existing filter, and the area rows through
+`ApplyAreaNavigatorFilter` (which keeps the unfiltered rows, so clearing the box costs nothing). While the
+box is on screen with the music list rendered in the window, the list's **own** search box steps aside so
+the rows get that space back. This is the general shape for "the theme provides the control we already have inside a popup".
+
+## Who owns a panel's visibility
+`ApplyHiddenPanels` writes `Visible` as well as `Collapsed`, because only collapsing meant a panel hidden by
+one layout stayed hidden when the next layout wanted it - which is why resetting to defaults and importing a
+theme **in the same session** lost the optional widgets (the A/M switch, mute, evidence...) until the client
+was restarted, where the XAML's own visibility applied instead.
+
+But a set of panels are only on screen in certain states - a debug build, test mode, the Dredd feature being
+on, a list rendering in the window rather than a popup, standing at a judge position, a dropdown being off
+its default - and showing those from a layout revealed everything the app deliberately keeps hidden. So they
+are listed in `OceanyaPanelCatalog.HasRuntimeControlledVisibility`, where **a layout may hide but never
+show**, and `MainWindow.ApplyConditionalPanelVisibility` re-applies their real rules after every layout
+apply. That is the general rule: one owner per panel's visibility, and the layout is not always it.
+
+Pinned by `ApplyHiddenPanels_ShowsPanelsALaterLayoutNoLongerHides`.
+
+## Replacing a layout drops its queued work
+Artwork and colours are applied on **deferred** callbacks, because a panel's control template does not
+exist before it renders. Resetting a theme and importing again inside one session left those callbacks
+queued from the old layout, and they landed *after* the new one had been applied - and worse, the fresh
+baseline then recorded the themed value as the original, so the damage survived. Each callback now captures
+a generation stamp (`OceanyaPanelStyleApplier.InvalidatePendingWork`, called from
+`RestorePanelStyleBaselines`) and does nothing if it is no longer current. Pinned by
+`StylingQueuedByAReplacedLayoutIsDropped`.
+
+## Small panels
+An AO2 theme can give a control a fraction of the space Oceanya designed it at - GrayGarden's music list is
+182x209 against a 320x420 popup - so three things now shrink rather than break:
+
+- **The lists** shed chrome in order of how little it is worth at that size (`ApplyHostedListCompactMode`):
+  decoration first (title, current area, now-playing block), then the command row, and the music search box
+  is the *last* thing to go because it is how a big list stays navigable. Padding tightens at the same time.
+  This beats scaling everything down equally, which just makes every row unreadable at once.
+- **Dropdowns** scale their row icon, row text and arrow button with the control
+  (`ImageComboBox.RefreshCompactMetrics`), clamped to their stock values so a normal-sized dropdown is
+  untouched, and the arrow may never take more than a third of the width. A theme's own arrow width goes
+  through `SetArrowWidthOverride` so the two do not fight.
+- The dropdown's arrow button has its own template, because the stock `ToggleButton` chrome painted a solid
+  square over the arrow while the popup was open - something AO2 never does.
+
+## Dropdown reset buttons
+AO2 puts a small X to the left of the iniswap, sfx and pos dropdowns (`iniswap_remove`, `sfx_remove`,
+`pos_remove`, all drawn with the `evidencex` art) and shows it **only while that dropdown is off its
+default** (`Courtroom::on_pos_dropdown_changed`); clicking it resets the dropdown. Those are
+`ic_combo_*_reset`, hidden by default like the rest of the optional widgets, and their visibility follows
+`ICMessageSettings.DropdownDefaultStateChanged`.

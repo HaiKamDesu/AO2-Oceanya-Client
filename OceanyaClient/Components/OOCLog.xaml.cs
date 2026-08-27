@@ -9,6 +9,7 @@ using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Navigation;
 using System.Windows.Threading;
 using OceanyaClient.Components.Forms;
@@ -106,6 +107,13 @@ namespace OceanyaClient.Components
             LogBox.Document = new FlowDocument();
             SizeChanged += OOCLog_SizeChanged;
 
+            // Watch the VIEWPORT, not the label: whether the name fits, how far it scrolls and where the
+            // edge fade sits are all measured from the clipped area, and its size settles a layout pass
+            // after the label's. Measuring too early pinned the fade partway across the widget.
+            StreamTextViewport.SizeChanged += (_, _) => RestartStreamTextScroll();
+            nowPlayingText = NothingPlayingText;
+            txtStreamText.Text = NothingPlayingText;
+
             Loaded += OOCLog_Loaded;
             txtOOCShowname.MaxLength = OOCShownameLengthLimit;
         }
@@ -193,7 +201,6 @@ namespace OceanyaClient.Components
             if (logClient == null)
             {
                 LogBox.Document = new FlowDocument();
-                UpdateStreamLabel(client);
                 return;
             }
 
@@ -201,24 +208,165 @@ namespace OceanyaClient.Components
 
             LogBox.Document = state.Document;
             RefreshBottomAnchor(state);
-            UpdateStreamLabel(client);
             ScrollToBottom();
         }
 
-        public void UpdateStreamLabel(AOClient? client)
+        /// <summary>
+        /// Shows the currently playing song, the way AO2's music display does.
+        /// </summary>
+        /// <remarks>
+        /// AO2's counterpart of this bar is `music_display` with `music_name` on it, and that label is a
+        /// <c>ScrollText</c> (`AO2-Client/src/scrolltext.cpp`): it shows "None" until something plays, and
+        /// when the name is wider than the widget it loops continuously - text plus a `"   ---   "`
+        /// separator, 2px every 50ms, faded at both edges - rather than trimming or bouncing.
+        /// </remarks>
+        /// <param name="songName">Song to show, or empty for nothing playing.</param>
+        public void SetNowPlaying(string? songName)
         {
-            if (client == null)
+            string text = (songName ?? string.Empty).Trim();
+            if (text.Length == 0)
             {
-                lblStream.Content = "[STREAM]";
+                text = NothingPlayingText;
+            }
+
+            if (string.Equals(text, nowPlayingText, StringComparison.Ordinal))
+            {
                 return;
             }
 
-            string characterName = string.IsNullOrWhiteSpace(client.iniPuppetName)
-                ? client.currentINI?.Name ?? "Unknown"
-                : client.iniPuppetName;
-
-            lblStream.Content = $"[{client.playerID}] {characterName} (\"{client.clientName}\")";
+            nowPlayingText = text;
+            RestartStreamTextScroll();
         }
+
+        /// <summary>
+        /// Starts, restarts or stops the marquee depending on whether the text fits.
+        /// </summary>
+        private void RestartStreamTextScroll()
+        {
+            // Re-entrancy guard: this rewrites the text, which resizes the track, which can raise the very
+            // size change that called it - the label flickered between "None" and its scrolling form.
+            if (isRestartingStreamScroll)
+            {
+                return;
+            }
+
+            isRestartingStreamScroll = true;
+            try
+            {
+                RestartStreamTextScrollCore();
+            }
+            finally
+            {
+                isRestartingStreamScroll = false;
+            }
+        }
+
+        private void RestartStreamTextScrollCore()
+        {
+            StreamTextOffset.BeginAnimation(TranslateTransform.XProperty, null);
+
+            // AO2's ScrollText insets the text by a third of the widget height on both sides, and only
+            // scrolls when the name does not fit inside what is left.
+            double height = lblStream.ActualHeight > 0 ? lblStream.ActualHeight : lblStream.Height;
+            double margin = double.IsNaN(height) || height <= 0 ? 8 : Math.Round(height / 3);
+            double available = StreamTextViewport.ActualWidth - (margin * 2);
+
+            // Measured from the raw name: the separator is only added once we know it scrolls.
+            txtStreamText.Text = nowPlayingText;
+            txtStreamText.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            double textWidth = txtStreamText.DesiredSize.Width;
+            bool scrolls = available > 0 && textWidth > available;
+
+            txtStreamText.Text = scrolls ? nowPlayingText + ScrollSeparator : nowPlayingText;
+            txtStreamTextRepeat.Text = scrolls ? nowPlayingText + ScrollSeparator : string.Empty;
+            StreamTextOffset.X = margin;
+
+            // The canvas does not lay its children out, so the track is centred by hand.
+            StreamTextTrack.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            double trackHeight = StreamTextTrack.DesiredSize.Height;
+            Canvas.SetTop(StreamTextTrack, Math.Max(0, (StreamTextViewport.ActualHeight - trackHeight) / 2));
+            StreamTextViewport.OpacityMask = scrolls ? BuildEdgeFadeMask(StreamTextViewport.ActualWidth) : null;
+
+            if (!scrolls)
+            {
+                return;
+            }
+
+            txtStreamText.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            double loopWidth = txtStreamText.DesiredSize.Width;
+
+            // AO2 holds the start still for its first 64 steps, then loops one full copy width forever.
+            DoubleAnimationUsingKeyFrames marquee = new DoubleAnimationUsingKeyFrames
+            {
+                RepeatBehavior = RepeatBehavior.Forever
+            };
+            TimeSpan hold = TimeSpan.FromMilliseconds(64 / ScrollPixelsPerStep * ScrollIntervalMilliseconds);
+            TimeSpan loop = TimeSpan.FromMilliseconds(loopWidth / ScrollPixelsPerStep * ScrollIntervalMilliseconds);
+            marquee.KeyFrames.Add(new LinearDoubleKeyFrame(margin, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+            marquee.KeyFrames.Add(new LinearDoubleKeyFrame(margin, KeyTime.FromTimeSpan(hold)));
+            marquee.KeyFrames.Add(new LinearDoubleKeyFrame(margin - loopWidth, KeyTime.FromTimeSpan(hold + loop)));
+            StreamTextOffset.BeginAnimation(TranslateTransform.XProperty, marquee);
+        }
+
+        /// <summary>
+        /// Builds the soft edge AO2 fades its scrolling text against.
+        /// </summary>
+        /// <param name="width">Width of the visible area.</param>
+        /// <returns>The mask, or null when the area is too narrow to fade.</returns>
+        private static Brush? BuildEdgeFadeMask(double width)
+        {
+            // AO2 fades a fixed 15px, which it can afford on a 224px-wide music display. A theme can make
+            // this label half that, where 30px of fade is most of the text - so the fade is capped to a
+            // fraction of the width and only ever eats a sliver of a narrow label.
+            double fadeWidth = Math.Min(EdgeFadeWidth, width * MaximumEdgeFadeFraction);
+            if (width <= fadeWidth * 2 || fadeWidth < 1)
+            {
+                return null;
+            }
+
+            // ABSOLUTE mapping, measured from the element's own origin. A relative gradient is mapped onto
+            // the bounding box of what is rendered, which includes the translated text - so the fade slid
+            // along with the scroll instead of staying at the edges of the widget, the way AO2's alpha
+            // channel does (it is painted over fixed 15px strips at each side, with the text moving under).
+            LinearGradientBrush mask = new LinearGradientBrush
+            {
+                MappingMode = BrushMappingMode.Absolute,
+                StartPoint = new Point(0, 0),
+                EndPoint = new Point(width, 0)
+            };
+
+            double fade = fadeWidth / width;
+            mask.GradientStops.Add(new GradientStop(Colors.Transparent, 0));
+            mask.GradientStops.Add(new GradientStop(Colors.Black, fade));
+            mask.GradientStops.Add(new GradientStop(Colors.Black, 1 - fade));
+            mask.GradientStops.Add(new GradientStop(Colors.Transparent, 1));
+            mask.Freeze();
+            return mask;
+        }
+
+        /// <summary>The song name as given, without the marquee separator appended to it.</summary>
+        private string nowPlayingText = NothingPlayingText;
+
+        /// <summary>Guards the marquee rebuild against the size change it causes itself.</summary>
+        private bool isRestartingStreamScroll;
+
+        /// <summary>Text AO2 shows while nothing is playing.</summary>
+        private const string NothingPlayingText = "None";
+
+        /// <summary>Separator AO2 puts between the repeats of a scrolling name.</summary>
+        private const string ScrollSeparator = "   ---   ";
+
+        /// <summary>Pixels AO2 advances the marquee per tick.</summary>
+        private const double ScrollPixelsPerStep = 2;
+
+        /// <summary>Milliseconds between AO2's marquee ticks.</summary>
+        private const double ScrollIntervalMilliseconds = 50;
+
+        /// <summary>Width of the fade AO2 draws at each edge of a scrolling name.</summary>
+        private const double EdgeFadeWidth = 15;
+
+        /// <summary>Most of the width one edge fade may take on a narrow label.</summary>
+        private const double MaximumEdgeFadeFraction = 0.06;
 
         public void AddMessage(
             AOClient? client,

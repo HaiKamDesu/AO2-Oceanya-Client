@@ -25,6 +25,26 @@ namespace OceanyaClient.Features.Theme
         /// <summary>Override key for the hover/checked artwork handlers.</summary>
         private const string StateArtOverrideKey = "stateArt";
 
+        /// <summary>
+        /// Bumped whenever the styling in force changes, so work queued by an earlier layout is dropped.
+        /// </summary>
+        /// <remarks>
+        /// Artwork and colours are applied on a deferred callback (the control template does not exist
+        /// before the panel renders). Resetting the layout and importing again inside one session left those
+        /// callbacks queued from the OLD layout, and they landed after the new one had been applied - which
+        /// is how a re-import of the same theme came out looking broken. Each callback captures the
+        /// generation it was queued in and does nothing if it is no longer current.
+        /// </remarks>
+        private static int styleGeneration;
+
+        /// <summary>
+        /// Invalidates any styling work still queued from a previous layout.
+        /// </summary>
+        public static void InvalidatePendingWork()
+        {
+            styleGeneration++;
+        }
+
         private static readonly Dictionary<string, List<PanelVisualBaseline>> Baselines =
             new Dictionary<string, List<PanelVisualBaseline>>(StringComparer.Ordinal);
 
@@ -598,8 +618,14 @@ namespace OceanyaClient.Features.Theme
                 return;
             }
 
+            int generation = styleGeneration;
             element.Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
-                ApplyBorderRecursive(element, brush, setsWidth ? state.BorderThickness : null)));
+            {
+                if (generation == styleGeneration)
+                {
+                    ApplyBorderRecursive(element, brush, setsWidth ? state.BorderThickness : null);
+                }
+            }));
         }
 
         private static void ApplyBorderRecursive(DependencyObject element, Brush? brush, double? thickness)
@@ -657,8 +683,14 @@ namespace OceanyaClient.Features.Theme
                 return;
             }
 
+            int generation = styleGeneration;
             element.Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
-                ApplyInnerSurfaceRecursive(element, background)));
+            {
+                if (generation == styleGeneration)
+                {
+                    ApplyInnerSurfaceRecursive(element, background);
+                }
+            }));
         }
 
         private static void ApplyInnerSurfaceRecursive(DependencyObject element, Brush background)
@@ -696,8 +728,14 @@ namespace OceanyaClient.Features.Theme
 
             ImageSource? checkedIndicator = TryLoadImage(state.CheckedIndicatorImagePath) ?? indicator;
 
+            int generation = styleGeneration;
             element.Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
             {
+                if (generation != styleGeneration)
+                {
+                    return;
+                }
+
                 AppendBaseline(descriptorId, element);
                 CheckBox? checkBox = element as CheckBox ?? FindDescendant<CheckBox>(element);
                 if (checkBox != null)
@@ -812,16 +850,15 @@ namespace OceanyaClient.Features.Theme
                     }
                 }
 
-                if (arrowWidth > 0 && comboBox.Template.FindName("columnDropdown", comboBox) is ColumnDefinition column)
+                if (arrowWidth > 0 && panelRoot is Components.ImageComboBox themedDropdown)
                 {
-                    // A ColumnDefinition is not part of the element walk the visual baseline does, so its
-                    // width needs an undo of its own.
-                    GridLength previousWidth = column.Width;
-                    column.Width = new GridLength(arrowWidth);
+                    // The control owns the width, because it also shrinks the arrow on a narrow dropdown;
+                    // writing the template's column here would fight that.
+                    themedDropdown.SetArrowWidthOverride(arrowWidth);
                     PanelStateOverrides.Register(
                         panelRoot,
                         "arrowWidth",
-                        () => column.Width = previousWidth);
+                        () => themedDropdown.SetArrowWidthOverride(double.NaN));
                 }
             }
             catch (InvalidOperationException)
@@ -966,8 +1003,14 @@ namespace OceanyaClient.Features.Theme
                 return;
             }
 
+            int generation = styleGeneration;
             element.Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
             {
+                if (generation != styleGeneration)
+                {
+                    return;
+                }
+
                 AppendBaseline(descriptorId, element);
                 ApplyPopupBackgroundRecursive(element, background);
             }));
@@ -1118,8 +1161,14 @@ namespace OceanyaClient.Features.Theme
             // The face lives in the control template, which does not exist until the panel has been
             // measured and rendered - hence Loaded priority. At normal priority the callback ran BEFORE
             // the template existed, found no face and silently left the original artwork in place.
+            int generation = styleGeneration;
             element.Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
             {
+                if (generation != styleGeneration)
+                {
+                    return;
+                }
+
                 try
                 {
                     // Re-capture first: the template's face did not exist at the original capture.
@@ -1675,9 +1724,14 @@ namespace OceanyaClient.Features.Theme
 
             // The face of an image button lives inside its control template, so it is found by walking
             // the rendered tree rather than by name.
-            element.Dispatcher.BeginInvoke(
-                DispatcherPriority.Loaded,
-                new Action(() => SetImageStretchRecursive(element, stretch)));
+            int generation = styleGeneration;
+            element.Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+            {
+                if (generation == styleGeneration)
+                {
+                    SetImageStretchRecursive(element, stretch);
+                }
+            }));
         }
 
         private static void SetImageStretchRecursive(DependencyObject element, Stretch stretch)

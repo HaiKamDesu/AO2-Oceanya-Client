@@ -137,6 +137,12 @@ un-hides every panel and re-applies the default placements. User-added panels su
 Right-clicking a panel in edit mode offers **Set default position**, **Set default size**, **Set
 default position and size**, and **Set all panels to default**.
 
+### Cancelling an edit
+Panel edits persist as they happen - a drop writes the layout immediately - so the toolbar's **Cancel**
+restores a copy of the layout taken when edit mode started, rather than journalling individual steps. That
+is what lets someone experiment without having to remember what the layout looked like beforehand. *Done*
+keeps the edits, *Cancel* throws them away, *Reset all* goes back to the stock layout.
+
 ### Nothing stays out of reach
 A panel dragged or imported past the surface edge is invisible *and* unclickable, which used to mean
 hunting for it or resetting the whole layout. Edit mode therefore treats **fully off-surface as hidden**:

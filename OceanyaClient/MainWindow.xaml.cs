@@ -673,6 +673,10 @@ namespace OceanyaClient
                 [OceanyaPanelCatalog.SliderSfxLabelPanelId] = new OceanyaPanelElements(imgSfxVolumeLabel),
                 [OceanyaPanelCatalog.SliderBlipLabelPanelId] = new OceanyaPanelElements(imgBlipVolumeLabel),
                 [OceanyaPanelCatalog.IcCheckShownamePanelId] = new OceanyaPanelElements(chkSendShowname),
+                [OceanyaPanelCatalog.AreaMusicSearchPanelId] = new OceanyaPanelElements(AreaMusicSearchPanel),
+                [OceanyaPanelCatalog.IcComboPositionResetPanelId] = new OceanyaPanelElements(btnResetPosition),
+                [OceanyaPanelCatalog.IcComboCharacterResetPanelId] = new OceanyaPanelElements(btnResetCharacter),
+                [OceanyaPanelCatalog.IcComboSfxResetPanelId] = new OceanyaPanelElements(btnResetSfx),
                 [OceanyaPanelCatalog.JudgeDefenceBarPanelId] = new OceanyaPanelElements(imgDefenceBar),
                 [OceanyaPanelCatalog.JudgeProsecutionBarPanelId] = new OceanyaPanelElements(imgProsecutionBar),
                 [OceanyaPanelCatalog.JudgeDefenceMinusPanelId] = new OceanyaPanelElements(btnDefenceMinus),
@@ -850,9 +854,28 @@ namespace OceanyaClient
             ApplyPanelCatalogPlacements();
             ApplyViewportRenderInPanel();
             ApplyListRenderInPanel();
-            UpdateJudgeControlVisibility();
+            ApplyConditionalPanelVisibility();
             RefreshHealthBars();
+            ApplyHostedListCompactMode(MusicListPopupSurface);
             RestoreMainWindowForegroundIfOwned();
+        }
+
+        /// <summary>
+        /// Re-applies every visibility rule the layout does not own.
+        /// </summary>
+        /// <remarks>
+        /// These panels exist but only belong on screen in some states - a debug build, test mode, the Dredd
+        /// feature being on, a judge position, a dropdown being off its default - so a layout may hide them
+        /// and never show them (`OceanyaPanelCatalog.HasRuntimeControlledVisibility`). This runs after every
+        /// layout apply so those rules have the last word.
+        /// </remarks>
+        private void ApplyConditionalPanelVisibility()
+        {
+            BottomBar.SetDebugButtonVisible(debug);
+            BottomBar.SetOptionCheckBoxesVisible(OceanyaTestMode.Current.IsEnabled);
+            UpdateDreddFeatureVisibility();
+            UpdateJudgeControlVisibility();
+            UpdateDropdownResetButtons();
         }
 
         /// <summary>
@@ -893,6 +916,10 @@ namespace OceanyaClient
         /// </summary>
         private void RestorePanelStyleBaselines()
         {
+            // Styling is applied on deferred callbacks, so anything still queued from the layout being
+            // replaced has to be dropped - otherwise it lands on top of the new one.
+            OceanyaPanelStyleApplier.InvalidatePendingWork();
+
             foreach (KeyValuePair<string, OceanyaPanelElements> pair in BuildPanelElementMap())
             {
                 OceanyaPanelStyleApplier.RestoreBaseline(pair.Key, pair.Value.Element);
@@ -939,11 +966,6 @@ namespace OceanyaClient
             }
 
             ReapplyPanelLayoutFromSavefile();
-
-            // Re-apply the conditional hiding that is not part of the theme.
-            BottomBar.SetDebugButtonVisible(debug);
-            BottomBar.SetOptionCheckBoxesVisible(OceanyaTestMode.Current.IsEnabled);
-            UpdateDreddFeatureVisibility();
         }
 
         /// <summary>
@@ -1081,6 +1103,9 @@ namespace OceanyaClient
                 // The popup's own resize grips belong to the popup: inside a panel they hand the surface a
                 // fixed size again, which undid the stretch and left the list clipped and unscrollable.
                 SetPopupResizeGripsVisible(surface, visible: false);
+                surface.SizeChanged -= HostedListSurface_SizeChanged;
+                surface.SizeChanged += HostedListSurface_SizeChanged;
+                ApplyHostedListCompactMode(surface);
 
                 host.Visibility = Visibility.Visible;
                 if (button != null)
@@ -1102,12 +1127,72 @@ namespace OceanyaClient
                 surface.MinWidth = popupMinimum.Width;
                 surface.MinHeight = popupMinimum.Height;
                 SetPopupResizeGripsVisible(surface, visible: true);
+                surface.SizeChanged -= HostedListSurface_SizeChanged;
+                ApplyHostedListCompactMode(surface, forceFullLayout: true);
             }
 
             host.Visibility = Visibility.Collapsed;
             if (button != null)
             {
                 button.Visibility = Visibility.Visible;
+            }
+        }
+
+        private void HostedListSurface_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            if (sender is FrameworkElement surface)
+            {
+                ApplyHostedListCompactMode(surface);
+            }
+        }
+
+        /// <summary>
+        /// Sheds the parts of a list that stop being usable once its panel is small.
+        /// </summary>
+        /// <remarks>
+        /// These lists were built as popups, which are always big enough for a title, a search box and a
+        /// now-playing block. A theme can give them a fraction of that (GrayGarden's is 182x209), where the
+        /// chrome leaves almost nothing for the rows themselves. So the chrome drops away in order of how
+        /// little it is worth at that size - decoration first, then the command row - and what remains
+        /// tightens up, which keeps the actual list usable instead of shrinking everything equally.
+        /// </remarks>
+        /// <param name="surface">Hosted popup surface.</param>
+        /// <param name="forceFullLayout">True to restore the full popup layout regardless of size.</param>
+        private void ApplyHostedListCompactMode(FrameworkElement surface, bool forceFullLayout = false)
+        {
+            double height = surface.ActualHeight > 0 ? surface.ActualHeight : surface.Height;
+            double width = surface.ActualWidth > 0 ? surface.ActualWidth : surface.Width;
+            if (double.IsNaN(height) || height <= 0)
+            {
+                return;
+            }
+
+            bool hideDecoration = !forceFullLayout && (height < 260 || width < 220);
+            bool hideCommands = !forceFullLayout && (height < 180 || width < 170);
+            Thickness framePadding = new Thickness(hideDecoration ? 2 : 10);
+
+            if (ReferenceEquals(surface, AreaNavigatorPopupSurface))
+            {
+                AreaNavigatorPopupFrame.Padding = framePadding;
+                txtAreaNavigatorTitle.Visibility = hideDecoration ? Visibility.Collapsed : Visibility.Visible;
+                txtCurrentArea.Visibility = hideDecoration ? Visibility.Collapsed : Visibility.Visible;
+                AreaNavigatorCommandRow.Visibility = hideCommands ? Visibility.Collapsed : Visibility.Visible;
+                lstAreas.Margin = new Thickness(0, 0, 0, hideCommands ? 0 : 6);
+                return;
+            }
+
+            if (ReferenceEquals(surface, MusicListPopupSurface))
+            {
+                MusicListPopupFrame.Padding = framePadding;
+                MusicListTitleRow.Visibility = hideDecoration ? Visibility.Collapsed : Visibility.Visible;
+                MusicListNowPlayingBlock.Visibility = hideDecoration ? Visibility.Collapsed : Visibility.Visible;
+
+                // The search box is the last thing to go: it is how a big music list stays navigable at all -
+                // unless the theme placed its own search box, which is already doing that job.
+                bool hideSearch = hideCommands || IsSharedSearchActive;
+                txtMusicSearch.Visibility = hideSearch ? Visibility.Collapsed : Visibility.Visible;
+                txtMusicSearch.Margin = new Thickness(0, 0, 0, hideSearch ? 0 : 6);
+                treeMusic.Margin = new Thickness(0, 0, 0, hideDecoration ? 0 : 8);
             }
         }
 
@@ -1305,6 +1390,81 @@ namespace OceanyaClient
             {
                 CustomConsole.Warning($"Failed to play the {animationName} animation.", exception);
             }
+        }
+
+        /// <summary>
+        /// Feeds the shared search box into the list it is searching.
+        /// </summary>
+        /// <remarks>
+        /// AO2 has one search box for both lists and searches whichever is on screen. Only our music list
+        /// filters, so this drives that one; the area list has no search of its own to feed.
+        /// </remarks>
+        private void txtAreaMusicSearch_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            txtAreaMusicSearch_Placeholder.Visibility = string.IsNullOrEmpty(txtAreaMusicSearch.Text)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+
+            if (!string.Equals(txtMusicSearch.Text, txtAreaMusicSearch.Text, StringComparison.Ordinal))
+            {
+                txtMusicSearch.Text = txtAreaMusicSearch.Text;
+            }
+
+            ApplyAreaNavigatorFilter();
+        }
+
+        /// <summary>
+        /// Gets a value indicating whether the shared search box is doing the music list's searching.
+        /// </summary>
+        private bool IsSharedSearchActive =>
+            AreaMusicSearchPanel.Visibility == Visibility.Visible
+            && SaveFile.Data.GMMusicListRenderInPanel;
+
+        private void btnResetPosition_Click(object sender, RoutedEventArgs e)
+        {
+            ICMessageSettingsControl.ResetPositionToDefault();
+            UpdateDropdownResetButtons();
+        }
+
+        private void btnResetCharacter_Click(object sender, RoutedEventArgs e)
+        {
+            ICMessageSettingsControl.ResetCharacterToDefault();
+            UpdateDropdownResetButtons();
+        }
+
+        private void btnResetSfx_Click(object sender, RoutedEventArgs e)
+        {
+            ICMessageSettingsControl.ResetSfxToDefault();
+            UpdateDropdownResetButtons();
+        }
+
+        /// <summary>
+        /// Shows each dropdown's reset button only while that dropdown is off its default.
+        /// </summary>
+        /// <remarks>
+        /// AO2 reference: <c>Courtroom::on_pos_dropdown_changed</c> hides `pos_remove` at the default side
+        /// and shows it otherwise. A panel the layout hides stays hidden either way.
+        /// </remarks>
+        private void UpdateDropdownResetButtons()
+        {
+            ApplyResetButtonVisibility(
+                OceanyaPanelCatalog.IcComboPositionResetPanelId,
+                btnResetPosition,
+                ICMessageSettingsControl.IsPositionAtDefault);
+            ApplyResetButtonVisibility(
+                OceanyaPanelCatalog.IcComboCharacterResetPanelId,
+                btnResetCharacter,
+                ICMessageSettingsControl.IsCharacterAtDefault);
+            ApplyResetButtonVisibility(
+                OceanyaPanelCatalog.IcComboSfxResetPanelId,
+                btnResetSfx,
+                ICMessageSettingsControl.IsSfxAtDefault);
+        }
+
+        private static void ApplyResetButtonVisibility(string panelId, FrameworkElement button, bool isAtDefault)
+        {
+            bool hiddenByLayout = OceanyaPanelEditModeController.IsHiddenByLayout(panelId);
+            button.Visibility = !isAtDefault && !hiddenByLayout ? Visibility.Visible : Visibility.Collapsed;
         }
 
         /// <summary>
@@ -1947,6 +2107,7 @@ namespace OceanyaClient
                     onLayoutPersisted: ApplySurfaceSizeFromLayout);
                 panelEditModeController.ExtraPanelMenuItemsProvider = BuildExtraPanelMenuItems;
                 panelEditModeController.FullResetHandler = ResetThemeLayoutToDefaults;
+                panelEditModeController.LayoutRestoredHandler = ReapplyPanelLayoutFromSavefile;
                 panelEditModeController.StylesheetApplied += (_, changed) =>
                 {
                     ReapplyPanelLayoutFromSavefile();
@@ -2493,6 +2654,8 @@ namespace OceanyaClient
             chkSendShowname.IsChecked = SaveFile.Data.SendCustomShowname;
             RefreshHealthBars();
             UpdateJudgeControlVisibility();
+            ICMessageSettingsControl.DropdownDefaultStateChanged += UpdateDropdownResetButtons;
+            UpdateDropdownResetButtons();
             if (hasRaisedFinishedLoading)
             {
                 return;
@@ -2797,11 +2960,6 @@ namespace OceanyaClient
             {
                 bot.clientName = newClientName;
                 UpdateClientTooltip(bot);
-
-                if (bot == currentClient)
-                {
-                    OocLog.LogControl.UpdateStreamLabel(bot);
-                }
 
                 CaptureGmMultiClientSnapshot();
             }
@@ -4082,12 +4240,38 @@ namespace OceanyaClient
                     }
 
                     totalSw.Stop();
-                    lstAreas.ItemsSource = task.Result.Items;
+                    areaNavigatorItems = task.Result.Items;
+                    ApplyAreaNavigatorFilter();
                     CustomConsole.Debug(
                         $"Area navigator rebuilt {task.Result.Items.Count} rows off-thread in {task.Result.BuildMs}ms; total={totalSw.ElapsedMilliseconds}ms",
                         CustomConsole.LogCategory.AreaVisualizer);
                 }, DispatcherPriority.Background);
             }, TaskScheduler.Default);
+        }
+
+        /// <summary>Rows the area navigator last built, before the search box narrowed them.</summary>
+        private IReadOnlyList<AreaNavigatorListItem>? areaNavigatorItems;
+
+        /// <summary>
+        /// Shows the area rows that match the shared search box.
+        /// </summary>
+        /// <remarks>
+        /// AO2's one search box filters whichever list is on screen, so it has to reach the areas too, not
+        /// only the music. The unfiltered rows are kept so clearing the box is free.
+        /// </remarks>
+        private void ApplyAreaNavigatorFilter()
+        {
+            if (areaNavigatorItems == null)
+            {
+                return;
+            }
+
+            string filter = txtAreaMusicSearch.Text?.Trim() ?? string.Empty;
+            lstAreas.ItemsSource = filter.Length == 0
+                ? areaNavigatorItems
+                : areaNavigatorItems
+                    .Where(item => item.Name?.Contains(filter, StringComparison.OrdinalIgnoreCase) == true)
+                    .ToList();
         }
 
         private void RefreshMusicListForCurrentClient()
@@ -4664,6 +4848,7 @@ namespace OceanyaClient
             if (networkClient == null || string.IsNullOrWhiteSpace(currentMusicToken))
             {
                 txtCurrentMusicTitle.Text = "None";
+                OocLog.LogControl.SetNowPlaying(string.Empty);
                 txtCurrentMusicPath.Text = "No active music packet.";
                 txtCurrentMusicPath.Visibility = SaveFile.Data.MusicListShowAssetPaths ? Visibility.Visible : Visibility.Collapsed;
                 txtCurrentMusicPlaylist.Text = "Playlist: Not provided by server";
@@ -4673,6 +4858,9 @@ namespace OceanyaClient
 
             txtCurrentMusicTitle.Text = GetMusicDisplayName(currentMusicToken);
             txtCurrentMusicPath.Text = ResolveFastMusicDisplayPath(currentMusicToken);
+
+            // The OOC header is AO2's music display, so it carries AO2's own label, not ours.
+            OocLog.LogControl.SetNowPlaying(BuildAo2MusicLabel(currentMusicToken, txtCurrentMusicPath.Text));
             txtCurrentMusicPath.Visibility = SaveFile.Data.MusicListShowAssetPaths ? Visibility.Visible : Visibility.Collapsed;
             string playlist = string.IsNullOrWhiteSpace(currentMusicPlaylist)
                 ? ResolveMusicPlaylist(networkClient.GetAvailableMusicSnapshot(), currentMusicToken)
@@ -4708,6 +4896,44 @@ namespace OceanyaClient
             }
 
             return string.Empty;
+        }
+
+        /// <summary>
+        /// Builds the label AO2's music display shows for a song.
+        /// </summary>
+        /// <remarks>
+        /// AO2 reference: <c>AOMusicPlayer::playStream</c> returns the text the music name widget shows -
+        /// "None" for the stop token, `[MISSING] name` when the file cannot be opened, `[STREAM] name` for
+        /// an http song, and the bare name otherwise, where the name is the file name without its
+        /// extension. AO2 also flashes `[LOADING] name` while BASS opens the file; we resolve the path
+        /// before showing anything, so there is no loading window to report.
+        /// </remarks>
+        /// <param name="token">Music token from the MC packet.</param>
+        /// <param name="resolvedPath">Path or URL the token resolved to, empty when nothing was found.</param>
+        /// <returns>The label to display.</returns>
+        private static string BuildAo2MusicLabel(string token, string resolvedPath)
+        {
+            string cleanToken = (token ?? string.Empty).Trim();
+            if (cleanToken.Length == 0 || cleanToken.Equals("~stop.mp3", StringComparison.OrdinalIgnoreCase))
+            {
+                return "None";
+            }
+
+            string name = GetMusicDisplayName(cleanToken);
+            string path = (resolvedPath ?? string.Empty).Trim();
+            if (path.Length == 0)
+            {
+                return $"[MISSING] {name}";
+            }
+
+            bool isStream = path.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+                || cleanToken.StartsWith("http", StringComparison.OrdinalIgnoreCase);
+            if (isStream)
+            {
+                return $"[STREAM] {name}";
+            }
+
+            return File.Exists(path) ? name : $"[MISSING] {name}";
         }
 
         private static string GetMusicDisplayName(string token)
@@ -5683,7 +5909,7 @@ namespace OceanyaClient
                     SyncSingleClientStatusToProfile(targetClient);
                     if (targetClient == currentClient)
                     {
-                        OocLog.LogControl.UpdateStreamLabel(targetClient);
+                        
                     }
                     UpdateClientTooltip(targetClient);
                 });
@@ -7598,7 +7824,7 @@ namespace OceanyaClient
                             OocLog.LogControl.IsEnabled = false;
                             IcLog.LogControl.IsEnabled = false;
                             ICMessageSettingsControl.IsEnabled = false;
-            OocLog.LogControl.UpdateStreamLabel(null);
+            OocLog.LogControl.SetNowPlaying(string.Empty);
                             currentClient = null;
                             RefreshAreaNavigatorForCurrentClient();
                         RefreshDreddOverlayForCurrentContext(promptForUnknownOverlay: false);
@@ -10653,7 +10879,7 @@ namespace OceanyaClient
                 OocLog.LogControl.IsEnabled = false;
                 IcLog.LogControl.IsEnabled = false;
                 ICMessageSettingsControl.IsEnabled = false;
-                OocLog.LogControl.UpdateStreamLabel(null);
+                OocLog.LogControl.SetNowPlaying(string.Empty);
                 currentClient = null;
                 RefreshAreaNavigatorForCurrentClient();
                 RefreshMusicListForCurrentClient();

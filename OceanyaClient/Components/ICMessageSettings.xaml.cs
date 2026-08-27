@@ -205,6 +205,7 @@ namespace OceanyaClient.Components
             if (curClient == null) return;
             curClient.curSFX = sfx;
             OnClientStateChanged?.Invoke();
+            DropdownDefaultStateChanged?.Invoke();
         }
 
         private static IEnumerable<CharacterFolder> GetAlphabeticalCharacterFolders()
@@ -606,6 +607,90 @@ namespace OceanyaClient.Components
             }
         }
 
+        /// <summary>
+        /// Raised when a dropdown's "is this the default value" state may have changed.
+        /// </summary>
+        /// <remarks>
+        /// AO2 shows a small X beside a dropdown only while it is off its default
+        /// (<c>Courtroom::on_pos_dropdown_changed</c>), and clicking it resets the dropdown. The host owns
+        /// those buttons because they are panels, so it needs telling when to show them.
+        /// </remarks>
+        public event Action? DropdownDefaultStateChanged;
+
+        /// <summary>
+        /// Gets a value indicating whether the position dropdown is on its default entry.
+        /// </summary>
+        public bool IsPositionAtDefault => string.IsNullOrWhiteSpace(curClient?.curPos);
+
+        /// <summary>
+        /// Gets a value indicating whether the character dropdown shows the client's own character.
+        /// </summary>
+        public bool IsCharacterAtDefault
+        {
+            get
+            {
+                string selected = CharacterDropdown.SelectedText?.Trim() ?? string.Empty;
+                string own = curClient?.currentINI?.Name?.Trim() ?? string.Empty;
+                return selected.Length == 0
+                    || own.Length == 0
+                    || string.Equals(selected, own, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        /// <summary>
+        /// Gets a value indicating whether the sfx dropdown is on its default entry.
+        /// </summary>
+        public bool IsSfxAtDefault
+        {
+            get
+            {
+                string selected = sfxDropdown.SelectedText?.Trim() ?? string.Empty;
+                return selected.Length == 0 || string.Equals(selected, "Default", StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        /// <summary>
+        /// Puts the position dropdown back on the character's own default side.
+        /// </summary>
+        public void ResetPositionToDefault()
+        {
+            if (curClient == null)
+            {
+                return;
+            }
+
+            PositionDropdown.SelectedText = BuildDefaultPositionDisplay(
+                curClient.currentINI?.configINI.Side?.Trim() ?? string.Empty);
+            PositionDropdown_OnConfirm(this, string.Empty);
+            DropdownDefaultStateChanged?.Invoke();
+        }
+
+        /// <summary>
+        /// Puts the character dropdown back on the client's own character.
+        /// </summary>
+        public void ResetCharacterToDefault()
+        {
+            string own = curClient?.currentINI?.Name?.Trim() ?? string.Empty;
+            if (own.Length == 0)
+            {
+                return;
+            }
+
+            CharacterDropdown.SelectedText = own;
+            CharacterDropdown_OnConfirm(this, own);
+            DropdownDefaultStateChanged?.Invoke();
+        }
+
+        /// <summary>
+        /// Puts the sound effect dropdown back on its default entry.
+        /// </summary>
+        public void ResetSfxToDefault()
+        {
+            sfxDropdown.SelectedText = "Default";
+            SfxDropdown_OnConfirm(this, "Default");
+            DropdownDefaultStateChanged?.Invoke();
+        }
+
         private void PositionDropdown_OnConfirm(object? sender, string newPos)
         {
             if (curClient == null) return;
@@ -614,6 +699,7 @@ namespace OceanyaClient.Components
             curClient.SetPos(newPos, true);
             OnPositionConfirmed?.Invoke(curClient, newPos);
             OnClientStateChanged?.Invoke();
+            DropdownDefaultStateChanged?.Invoke();
         }
 
         private void EmoteDropdown_OnConfirm(object? sender, string emoteDisplayID)
@@ -628,6 +714,7 @@ namespace OceanyaClient.Components
 
         private void CharacterDropdown_OnConfirm(object? sender, string iniName)
         {
+            DropdownDefaultStateChanged?.Invoke();
             if (curClient == null) return;
 
             var ini = CharacterFolder.FullList.FirstOrDefault(x => x.Name == iniName);

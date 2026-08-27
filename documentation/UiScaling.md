@@ -115,6 +115,13 @@ scale to the largest one that still fits the monitor work area, using
 `GenericOceanyaWindow.GetChromeParts()`. `WaitForm.ResolveContentScale` applies the same clamp.
 
 ## Drag to rescale (opt-in per window)
+**`LocationChanged` must not re-resolve the scale mid-gesture.** Dragging the LEFT or TOP edge moves the
+window's origin, so `LocationChanged` fires during the drag; re-resolving there threw away the scale the
+drag had just computed and restored the old one from settings, leaving the window at the dragged size with
+the content still at the previous scale - a band of empty space. A bottom-right drag never moves the
+origin, which is why it looked fine and appeared to "fix" the window afterwards. The handler is skipped
+while `IsInteractiveResizeScaling`.
+
 `OceanyaWindowContentControl.IsResizeScalingEnabled` (virtual, default `false`; also on
 `OceanyaWindowPresentationOptions`) makes a window resize like the AO2 viewport: dragging an edge
 rescales the content instead of stretching the layout. **`MainWindow` opts in** — its layout is

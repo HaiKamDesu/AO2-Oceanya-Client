@@ -103,6 +103,14 @@ namespace OceanyaClient.Features.Theme
         /// </summary>
         public Action? FullResetHandler { get; set; }
 
+        /// <summary>
+        /// Called when the user cancels: the layout has been rolled back and needs re-applying.
+        /// </summary>
+        public Action? LayoutRestoredHandler { get; set; }
+
+        /// <summary>The layout as it was when edit mode started, for cancelling back to.</summary>
+        private string? layoutSnapshot;
+
         /// <summary>Gets a value indicating whether edit mode is currently active.</summary>
         public bool IsActive { get; private set; }
 
@@ -138,6 +146,10 @@ namespace OceanyaClient.Features.Theme
             }
 
             IsActive = true;
+
+            // Everything below is written to the savefile as it happens (a drop persists immediately), so
+            // "cancel" means putting this copy back rather than trying to journal individual edits.
+            layoutSnapshot = CaptureLayoutSnapshot();
             hiddenPanelIds.Clear();
             panelStyleStates.Clear();
             if (SaveFile.Data.OceanyaThemeLayout?.Panels != null)
@@ -494,6 +506,7 @@ namespace OceanyaClient.Features.Theme
         {
             StackPanel buttons = new StackPanel { Orientation = Orientation.Horizontal };
             buttons.Children.Add(CreateToolbarButton("Done", () => Deactivate()));
+            buttons.Children.Add(CreateToolbarButton("Cancel", CancelEditing));
             buttons.Children.Add(CreateToolbarButton("Reset all", ResetLayout));
             hiddenControlsButton = CreateToolbarButton("Hidden controls", ShowHiddenControlsMenu);
             buttons.Children.Add(hiddenControlsButton);
@@ -515,6 +528,57 @@ namespace OceanyaClient.Features.Theme
             Panel.SetZIndex(editToolbar, EditToolbarZIndex);
             RefreshHiddenControlsButton();
             PositionEditToolbar();
+        }
+
+        /// <summary>
+        /// Throws away everything done since edit mode started.
+        /// </summary>
+        /// <remarks>
+        /// Edits persist as they happen, so this restores the copy taken at Activate rather than undoing
+        /// steps. That gives the editor the one thing it was missing: a way to experiment without having to
+        /// remember what the layout looked like before.
+        /// </remarks>
+        public void CancelEditing()
+        {
+            string? snapshot = layoutSnapshot;
+            Deactivate(persistLayout: false);
+            if (snapshot == null)
+            {
+                return;
+            }
+
+            try
+            {
+                SaveFile.Data.OceanyaThemeLayout =
+                    System.Text.Json.JsonSerializer.Deserialize<OceanyaThemeLayoutState>(snapshot)
+                    ?? new OceanyaThemeLayoutState();
+                SaveFile.Save();
+            }
+            catch (Exception exception)
+            {
+                Common.CustomConsole.Warning("Could not roll the panel layout back.", exception);
+                return;
+            }
+
+            LayoutRestoredHandler?.Invoke();
+        }
+
+        /// <summary>
+        /// Copies the current layout so it can be restored if the user cancels.
+        /// </summary>
+        /// <returns>The serialised layout, or null when it cannot be copied.</returns>
+        private static string? CaptureLayoutSnapshot()
+        {
+            try
+            {
+                return System.Text.Json.JsonSerializer.Serialize(
+                    SaveFile.Data.OceanyaThemeLayout ?? new OceanyaThemeLayoutState());
+            }
+            catch (Exception exception)
+            {
+                Common.CustomConsole.Warning("Could not copy the panel layout for cancelling.", exception);
+                return null;
+            }
         }
 
         /// <summary>
@@ -1345,15 +1409,25 @@ namespace OceanyaClient.Features.Theme
                 bool hidden = savedLayout?.Panels == null
                     ? OceanyaPanelCatalog.IsHiddenByDefault(pair.Key)
                     : ResolveHiddenState(savedLayout, pair.Key);
-                if (!hidden)
+
+                // Set both ways, not just collapse: a panel hidden by an earlier layout stayed collapsed when
+                // the next one wanted it visible, which is why resetting to defaults and importing a theme in
+                // the same session left the optional widgets (A/M switch, mute, evidence, ...) missing until
+                // the client was restarted.
+                //
+                // Except where the layout is not the one deciding. Showing those too revealed everything the
+                // rest of the app deliberately keeps hidden - the Dredd row, the debug button, the test-mode
+                // checkboxes - so for them a layout may hide, never show.
+                if (!hidden && OceanyaPanelCatalog.HasRuntimeControlledVisibility(pair.Key))
                 {
                     continue;
                 }
 
-                pair.Value.Element.Visibility = Visibility.Collapsed;
+                Visibility resolved = hidden ? Visibility.Collapsed : Visibility.Visible;
+                pair.Value.Element.Visibility = resolved;
                 if (pair.Value.Backdrop != null)
                 {
-                    pair.Value.Backdrop.Visibility = Visibility.Collapsed;
+                    pair.Value.Backdrop.Visibility = resolved;
                 }
             }
         }
