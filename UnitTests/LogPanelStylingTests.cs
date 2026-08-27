@@ -1,7 +1,9 @@
 ﻿using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
+using System.IO;
 using System.Windows.Documents;
+using System.Windows.Media;
 using NUnit.Framework;
 using OceanyaClient;
 using OceanyaClient.Components;
@@ -137,6 +139,89 @@ namespace UnitTests
         private static DependencyObject VisualTreeHelperFirstChild(DependencyObject element)
         {
             return System.Windows.Media.VisualTreeHelper.GetChild(element, 0);
+        }
+
+        [Test]
+        public void ThemedSliderKeepsItsTrackFrame()
+        {
+            string folder = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+            Directory.CreateDirectory(folder);
+            string art = Path.Combine(folder, "meter.png");
+            File.WriteAllBytes(art, System.Convert.FromBase64String(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="));
+
+            try
+            {
+                Slider slider = new Slider { Width = 168, Height = 30, Minimum = 0, Maximum = 100, Value = 50 };
+                Window host = new Window { Width = 300, Height = 100, Content = slider, ShowActivated = false };
+                host.Show();
+
+                OceanyaPanelDescriptor descriptor = new OceanyaPanelDescriptor(
+                    "probe_slider",
+                    "Probe Slider",
+                    new OceanyaPanelPlacement(0, 0, 168, 30),
+                    minimumWidth: 10,
+                    minimumHeight: 10,
+                    kind: OceanyaPanelKind.Slider);
+
+                // Exactly what an import produces: the border colour from `QSlider::sub-page`, and the
+                // zero border width every mapped panel gets.
+                OceanyaPanelStyleApplier.Apply(descriptor, slider, new OceanyaPanelPlacementState
+                {
+                    ImagePath = art,
+                    IndicatorImagePath = art,
+                    FillColor = "#FFFFFFFF",
+                    BackgroundColor = "#00000000",
+                    BorderColor = "#FF282728",
+                    BorderThickness = 0
+                });
+
+                slider.UpdateLayout();
+                FlushDispatcher();
+                slider.UpdateLayout();
+
+                Border? track = FindTrackFrame(slider);
+                Assert.That(track, Is.Not.Null, "The slider draws one bordered track across its whole width.");
+
+                // The generic border pass runs deferred and used to clear this frame right after the slider
+                // template drew it, which left the track with no outline at all.
+                Assert.That(track!.BorderThickness.Left, Is.EqualTo(1));
+                Assert.That(((SolidColorBrush)track.BorderBrush).Color, Is.EqualTo(Color.FromRgb(0x28, 0x27, 0x28)));
+                Assert.That(track.ActualWidth, Is.EqualTo(168).Within(1));
+
+                host.Close();
+            }
+            finally
+            {
+                Directory.Delete(folder, recursive: true);
+            }
+        }
+
+        private static void FlushDispatcher()
+        {
+            System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(
+                () => { },
+                System.Windows.Threading.DispatcherPriority.Loaded);
+        }
+
+        private static Border? FindTrackFrame(DependencyObject element)
+        {
+            for (int i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(element); i++)
+            {
+                DependencyObject child = System.Windows.Media.VisualTreeHelper.GetChild(element, i);
+                if (child is Border border && border.BorderThickness.Left > 0)
+                {
+                    return border;
+                }
+
+                Border? nested = FindTrackFrame(child);
+                if (nested != null)
+                {
+                    return nested;
+                }
+            }
+
+            return null;
         }
 
         private static string Text(RichTextBox box)

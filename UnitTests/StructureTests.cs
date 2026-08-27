@@ -656,6 +656,30 @@ namespace UnitTests
         }
 
         [Test]
+        public void Test_Background_IsJudgePositionUsesTheDesignFilesJudgeList()
+        {
+            string backgroundRoot = Path.Combine(_tempDir, "judge_bg", "background", "courtroom");
+            Directory.CreateDirectory(backgroundRoot);
+            File.WriteAllText(Path.Combine(backgroundRoot, "design.ini"), "judges = jud, sea\n");
+
+            Background listed = new Background { PathToFile = backgroundRoot };
+
+            // AO2 reference AOApplication::get_pos_is_judge: the background's `judges=` list decides, and the
+            // hard-coded "jud" is only a fallback for backgrounds that do not declare one.
+            Assert.That(listed.IsJudgePosition("jud"), Is.True);
+            Assert.That(listed.IsJudgePosition("sea"), Is.True);
+            Assert.That(listed.IsJudgePosition("def"), Is.False);
+            Assert.That(listed.IsJudgePosition(string.Empty), Is.False);
+
+            string bareRoot = Path.Combine(_tempDir, "bare_bg", "background", "courtroom");
+            Directory.CreateDirectory(bareRoot);
+            Background bare = new Background { PathToFile = bareRoot };
+
+            Assert.That(bare.IsJudgePosition("jud"), Is.True);
+            Assert.That(bare.IsJudgePosition("sea"), Is.False);
+        }
+
+        [Test]
         public void Test_AO2ViewportAssetResolver_ShoutSearchesAllMountsBeforeThemeFallback()
         {
             string highMount = Path.Combine(_tempDir, "high_mount");

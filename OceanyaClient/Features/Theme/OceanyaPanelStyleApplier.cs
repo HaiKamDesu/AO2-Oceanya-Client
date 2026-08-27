@@ -48,8 +48,15 @@ namespace OceanyaClient.Features.Theme
             ApplyZOrder(element, state.ZOrder);
             element.IsHitTestVisible = !state.IsClickThrough;
             ApplyOpacity(element, state.Opacity);
-            ApplyBackgroundColor(element, state.BackgroundColor);
-            ApplyBorder(element, state);
+            if (descriptor.Kind != OceanyaPanelKind.Slider)
+            {
+                // A slider expresses both of these through its own template - the background is the EMPTY
+                // half of its track and the border frames that track. Running the generic passes as well
+                // painted over the whole widget and then cleared the frame the template had just drawn.
+                ApplyBackgroundColor(element, state.BackgroundColor);
+                ApplyBorder(element, state);
+            }
+
             ApplyScrollbarColours(descriptor.Id, element, state);
 
             switch (descriptor.Kind)
@@ -1228,6 +1235,8 @@ namespace OceanyaClient.Features.Theme
                     SliderEmptyBrushKey,
                     SliderPageBorderBrushKey,
                     SliderPageHeightKey,
+                    SliderFillHeightKey,
+                    SliderFillMarginKey,
                     SliderHandleWidthKey
                 })
                 {
@@ -1249,8 +1258,15 @@ namespace OceanyaClient.Features.Theme
 
             // Qt shapes the two pages with margins around a thin bar; a fraction of the widget height is the
             // same idea without needing a margin field per side.
-            slider.Resources[SliderPageHeightKey] = Math.Max(3d, Math.Round(slider.Height / 6));
-            slider.Resources[SliderHandleWidthKey] = handle is BitmapSource sized ? (double)sized.PixelWidth : 15d;
+            double pageHeight = Math.Max(3d, Math.Round(ResolveSliderHeight(slider) / 6));
+            double handleWidth = handle is BitmapSource sized ? sized.PixelWidth : 15d;
+            slider.Resources[SliderPageHeightKey] = pageHeight;
+
+            // The fill sits INSIDE the track's border, and runs half a handle past the thumb so it reaches
+            // the middle of the handle art rather than stopping at its left edge.
+            slider.Resources[SliderFillHeightKey] = Math.Max(1d, pageHeight - 2);
+            slider.Resources[SliderFillMarginKey] = new Thickness(1, 0, -Math.Round(handleWidth / 2), 0);
+            slider.Resources[SliderHandleWidthKey] = handleWidth;
             slider.Style = themedStyle;
         }
 
@@ -1274,6 +1290,27 @@ namespace OceanyaClient.Features.Theme
 
         /// <summary>Resource key of the width of a themed slider's handle.</summary>
         private const string SliderHandleWidthKey = "OceanyaSliderHandleWidth";
+
+        /// <summary>Resource key of the height of the filled bar inside a themed slider's track.</summary>
+        private const string SliderFillHeightKey = "OceanyaSliderFillHeight";
+
+        /// <summary>Resource key of the margin that runs the fill under the handle.</summary>
+        private const string SliderFillMarginKey = "OceanyaSliderFillMargin";
+
+        /// <summary>
+        /// Resolves the height to shape a slider's track from, tolerating an unmeasured control.
+        /// </summary>
+        /// <param name="slider">Slider being styled.</param>
+        /// <returns>A usable height in device independent pixels.</returns>
+        private static double ResolveSliderHeight(Slider slider)
+        {
+            if (!double.IsNaN(slider.Height) && slider.Height > 0)
+            {
+                return slider.Height;
+            }
+
+            return slider.ActualHeight > 0 ? slider.ActualHeight : 30d;
+        }
 
         /// <summary>Cached themed slider style, per thread (a WPF style is thread-affine).</summary>
         [ThreadStatic]

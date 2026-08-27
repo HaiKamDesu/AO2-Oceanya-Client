@@ -710,7 +710,16 @@ namespace OceanyaClient.Features.Theme
             ChangePanelOrder(panelId, OceanyaPanelOrderChange.ToFront);
         }
 
-        private static bool IsHiddenByLayout(string panelId)
+        /// <summary>
+        /// Gets a value indicating whether the saved layout hides a panel.
+        /// </summary>
+        /// <remarks>
+        /// Public because conditional visibility outside the theme (the judge controls following the
+        /// position, the debug button, the test-mode checkboxes) has to respect a deliberate hide.
+        /// </remarks>
+        /// <param name="panelId">Panel to test.</param>
+        /// <returns>True when the panel should stay hidden.</returns>
+        public static bool IsHiddenByLayout(string panelId)
         {
             if (SaveFile.Data.OceanyaThemeLayout?.Panels != null
                 && SaveFile.Data.OceanyaThemeLayout.Panels.TryGetValue(panelId, out OceanyaPanelPlacementState? state)

@@ -354,7 +354,10 @@ wrong place entirely. Both our list panels therefore take the `music_list` recta
 - `area_list` and `music_list` are panels (`AreaListPanelHost`, `MusicListPanelHost`), each with a
   **Render area/music list in main window** toggle in its right-click menu - same pattern as the viewport.
   Turning one on REPARENTS the popup's content into the panel, so every handler, binding and refresh path
-  keeps working, and hides the bottom-bar button that used to open it.
+  keeps working, and hides the bottom-bar button that used to open it. Three things have to be undone for
+  the content to fit a panel instead of sizing itself: its fixed `Width`/`Height`, its **minimums** (a
+  300px-tall minimum inside a 209px panel simply overflowed and was clipped, so the list never scrolled),
+  and the popup's own **resize grips** - dragging one handed the surface a fixed size again.
 - `bar_button_areamusic` is the A/M switch. It is **hidden by default** (`IsHiddenByDefault` in the
   catalog) because the stock layout uses two popups and has nothing to switch; a theme that describes
   `switch_area_music`, or a user editing the layout, simply un-hides it. This is the general pattern for
@@ -389,11 +392,28 @@ background explicitly). Without it, our own default fill drew a coloured square 
 the theme's art, which is what the mute and evidence buttons looked like.
 
 ## Sliders
-AO2 skins `QSlider` through its stylesheet, not through named images: `::groove` is widget-wide background
-art (GrayGarden's `sliders/meter.png`, 168x30) and `::handle` is a small overlay (`handle.png`, 15x15).
-Those land in the slider panel's `ImagePath` and `IndicatorImagePath`, and `ApplySliderArt` puts
-`Styles/OceanyaThemedSlider.xaml` plus the two brushes into the panel's own resource scope - same mechanism
-as the scrollbars, so the undo is removing them again.
+AO2 skins `QSlider` through its stylesheet, not through named images, in four parts:
+
+| Qt sub-control | GrayGarden | Panel field |
+|---|---|---|
+| `::groove` | `sliders/meter.png` (168x30 - the tick marks) | `ImagePath` |
+| `::handle` | `sliders/handle.png` (15x15) | `IndicatorImagePath` |
+| `::sub-page` | solid white, 5px tall, centred | `FillColor` |
+| `::add-page` | transparent with a 1px border | `BackgroundColor` + `BorderColor` |
+
+The groove art is only the tick marks, so without the two pages the slider looked empty - the fill *is*
+`sub-page`. Qt draws the pages as two halves of one bar, which reads as a single bordered rectangle with a
+filled left side, so the track is drawn **once** at full width with the fill inside it; bordering each half
+separately left a seam at the handle. The fill also runs half a handle past the thumb, so it reaches the
+middle of the handle art instead of stopping at its edge.
+
+`ApplySliderArt` puts `Styles/OceanyaThemedSlider.xaml` plus its brushes into the panel's own resource
+scope - same mechanism as the scrollbars, so the undo is removing them again.
+
+**A slider skips the generic background and border passes**, because it expresses both through its own
+template: the background is the *empty half* of its track and the border frames that track. Running the
+generic passes as well painted over the whole widget and then cleared the frame the template had just drawn,
+which is why the track had no outline. Pinned by `ThemedSliderKeepsItsTrackFrame`.
 
 The slider *text* is artwork too: GrayGarden draws all three captions as one 370x12 `sliders/labels.png`
 placed on `blip_label`. `slider_music_label`, `slider_sfx_label` and `slider_blip_label` are therefore
@@ -404,10 +424,20 @@ plain image display, and our two kinds split exactly along that line.
 ## Judge controls and the showname toggle
 The health bars are plain image panels: AO2's `Courtroom::set_hp_bar` picks the asset from the value
 (`defensebar0`..`defensebar10`), so the artwork is resolved per change through the theme chain rather than
-imported once, driven by `HP#<bar>#<value>#%` packets (`AOClient.OnHealthChanged`). Their plus and minus
+imported once, driven by `HP#<bar>#<value>#%` packets (`AOClient.OnHealthChanged`). **Those packets arrive
+on the CONNECTED client**, which in single-internal-client mode is never a profile - so the handler is
+attached where that client is created, and separately per profile in multi-client mode, or the bars simply
+never repaint. Their plus and minus
 buttons only *ask* - `AOClient.SetHealth` sends the packet and the bar moves when the server echoes it,
 because the server may refuse. The four testimony and verdict buttons send `RT#` the way AO2 does:
 `testimony1`, `testimony2`, `judgeruling#0`, `judgeruling#1`.
+
+**Judge controls follow the position, the bars do not.** `Courtroom::show_judge_controls` toggles exactly
+the four verdict buttons and the four health steppers; the bars stay visible everywhere. Whether a position
+counts as a judge position comes from the background's `design.ini` `judges=` list
+(`AOApplication::get_pos_is_judge`), with the hard-coded `jud` only as a fallback - that is
+`Background.IsJudgePosition`. A panel the layout hides stays hidden either way. AO2 also lets a server
+override the whole thing (`judge_state`); we always follow the position.
 
 `showname_enable` maps to `ic_check_showname`. Like AO2 it does not clear the showname box - it stops the
 field being sent (`AOClient.SendCustomShowname`), so everyone sees the character's own name instead.

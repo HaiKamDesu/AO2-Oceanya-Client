@@ -850,6 +850,8 @@ namespace OceanyaClient
             ApplyPanelCatalogPlacements();
             ApplyViewportRenderInPanel();
             ApplyListRenderInPanel();
+            UpdateJudgeControlVisibility();
+            RefreshHealthBars();
             RestoreMainWindowForegroundIfOwned();
         }
 
@@ -1076,6 +1078,10 @@ namespace OceanyaClient
                 surface.HorizontalAlignment = HorizontalAlignment.Stretch;
                 surface.VerticalAlignment = VerticalAlignment.Stretch;
 
+                // The popup's own resize grips belong to the popup: inside a panel they hand the surface a
+                // fixed size again, which undid the stretch and left the list clipped and unscrollable.
+                SetPopupResizeGripsVisible(surface, visible: false);
+
                 host.Visibility = Visibility.Visible;
                 if (button != null)
                 {
@@ -1095,12 +1101,34 @@ namespace OceanyaClient
                 surface.Height = popupSize.Height;
                 surface.MinWidth = popupMinimum.Width;
                 surface.MinHeight = popupMinimum.Height;
+                SetPopupResizeGripsVisible(surface, visible: true);
             }
 
             host.Visibility = Visibility.Collapsed;
             if (button != null)
             {
                 button.Visibility = Visibility.Visible;
+            }
+        }
+
+        /// <summary>
+        /// Shows or hides the resize grips a popup surface carries.
+        /// </summary>
+        /// <param name="surface">Popup surface to walk.</param>
+        /// <param name="visible">True to show the grips.</param>
+        private static void SetPopupResizeGripsVisible(DependencyObject surface, bool visible)
+        {
+            int childCount = VisualTreeHelper.GetChildrenCount(surface);
+            for (int i = 0; i < childCount; i++)
+            {
+                DependencyObject child = VisualTreeHelper.GetChild(surface, i);
+                if (child is System.Windows.Controls.Primitives.Thumb grip)
+                {
+                    grip.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+                    continue;
+                }
+
+                SetPopupResizeGripsVisible(child, visible);
             }
         }
 
@@ -1278,6 +1306,59 @@ namespace OceanyaClient
                 CustomConsole.Warning($"Failed to play the {animationName} animation.", exception);
             }
         }
+
+        /// <summary>
+        /// Shows or hides the judge buttons for the client's current position.
+        /// </summary>
+        /// <remarks>
+        /// AO2 reference: <c>Courtroom::show_judge_controls</c> toggles exactly the four verdict buttons and
+        /// the four health steppers - the BARS stay visible at every position - and
+        /// <c>AOApplication::get_pos_is_judge</c> decides from the background's `design.ini` `judges=` list,
+        /// falling back to the hard-coded `jud`. A panel the layout hides stays hidden either way.
+        /// </remarks>
+        private void UpdateJudgeControlVisibility()
+        {
+            AOClient? profileClient = currentClient;
+            string position = profileClient?.curPos ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(position))
+            {
+                position = GetTargetClientForNetwork(profileClient)?.curPos ?? string.Empty;
+            }
+
+            AOBot_Testing.Structures.Background? background = string.IsNullOrWhiteSpace(profileClient?.curBG)
+                ? null
+                : AOBot_Testing.Structures.Background.FromBGPath(profileClient!.curBG);
+            bool isJudge = background?.IsJudgePosition(position) ?? string.Equals(
+                position.Trim(),
+                "jud",
+                StringComparison.OrdinalIgnoreCase);
+
+            foreach (string panelId in JudgeButtonPanelIds)
+            {
+                if (!BuildPanelElementMap().TryGetValue(panelId, out OceanyaPanelElements elements))
+                {
+                    continue;
+                }
+
+                bool hiddenByLayout = OceanyaPanelEditModeController.IsHiddenByLayout(panelId);
+                elements.Element.Visibility = isJudge && !hiddenByLayout
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+            }
+        }
+
+        /// <summary>The judge controls AO2 shows only at a judge position.</summary>
+        private static readonly string[] JudgeButtonPanelIds =
+        {
+            OceanyaPanelCatalog.JudgeWitnessTestimonyPanelId,
+            OceanyaPanelCatalog.JudgeCrossExaminationPanelId,
+            OceanyaPanelCatalog.JudgeNotGuiltyPanelId,
+            OceanyaPanelCatalog.JudgeGuiltyPanelId,
+            OceanyaPanelCatalog.JudgeDefenceMinusPanelId,
+            OceanyaPanelCatalog.JudgeDefencePlusPanelId,
+            OceanyaPanelCatalog.JudgeProsecutionMinusPanelId,
+            OceanyaPanelCatalog.JudgeProsecutionPlusPanelId
+        };
 
         /// <summary>
         /// Paints the health bars with the current theme's artwork for their values.
@@ -2411,6 +2492,7 @@ namespace OceanyaClient
             RefreshVolumeSliders();
             chkSendShowname.IsChecked = SaveFile.Data.SendCustomShowname;
             RefreshHealthBars();
+            UpdateJudgeControlVisibility();
             if (hasRaisedFinishedLoading)
             {
                 return;
@@ -5219,6 +5301,10 @@ namespace OceanyaClient
             // The health bars are area state, so they follow whichever client the window is showing.
             client.OnHealthChanged += (_, _) => Dispatcher.BeginInvoke(new Action(RefreshHealthBars));
 
+            // The judge BUTTONS follow the position, the bars do not - same split as AO2.
+            client.OnSideChange += (_) => Dispatcher.BeginInvoke(new Action(UpdateJudgeControlVisibility));
+            client.OnBGChange += (_) => Dispatcher.BeginInvoke(new Action(UpdateJudgeControlVisibility));
+
             client.OnBGChange += (_) =>
             {
                 Dispatcher.Invoke(() =>
@@ -5680,6 +5766,11 @@ namespace OceanyaClient
             singleInternalClient = new AOClient(Globals.GetSelectedServerEndpoint());
             singleInternalClient.clientName = "InternalClient";
             AttachWebAssetFallback(singleInternalClient);
+
+            // Area state arrives on the CONNECTED client, which in single-client mode is this one and never
+            // a profile - so the health bars have to listen here or they never repaint.
+            singleInternalClient.OnHealthChanged += (_, _) => Dispatcher.BeginInvoke(new Action(RefreshHealthBars));
+            singleInternalClient.OnSideChange += (_) => Dispatcher.BeginInvoke(new Action(UpdateJudgeControlVisibility));
 
             singleInternalClient.OnICMessageReceived += (ICMessage icMessage) =>
             {
@@ -7031,6 +7122,9 @@ namespace OceanyaClient
             }
 
             AttachWebAssetFallback(bot);
+
+            // Multi-client mode: each profile owns its own connection, so the area state arrives here.
+            bot.OnHealthChanged += (_, _) => Dispatcher.BeginInvoke(new Action(RefreshHealthBars));
 
             bot.OnICMessageReceived += (ICMessage icMessage) =>
             {

@@ -469,6 +469,35 @@ namespace AOBot_Testing.Structures
             return true;
         }
 
+        /// <summary>
+        /// Gets a value indicating whether a position counts as a judge position for this background.
+        /// </summary>
+        /// <remarks>
+        /// AO2 reference: <c>AOApplication::get_pos_is_judge</c> reads the background's `design.ini`
+        /// <c>judges=</c> list and only falls back to the hard-coded `jud` when the list is absent.
+        /// </remarks>
+        /// <param name="position">Position token, e.g. `jud`.</param>
+        /// <returns>True when the position shows the judge controls.</returns>
+        public bool IsJudgePosition(string position)
+        {
+            string trimmed = (position ?? string.Empty).Trim();
+            if (trimmed.Length == 0)
+            {
+                return false;
+            }
+
+            string judges = ReadDesignIniValue(Path.Combine(PathToFile, "design.ini"), "judges");
+            if (string.IsNullOrWhiteSpace(judges))
+            {
+                return string.Equals(trimmed, "jud", StringComparison.OrdinalIgnoreCase);
+            }
+
+            return judges
+                .Split(',')
+                .Select(entry => entry.Trim())
+                .Any(entry => string.Equals(entry, trimmed, StringComparison.OrdinalIgnoreCase));
+        }
+
         private static string ReadDesignIniValue(string designIniPath, string key)
         {
             if (!File.Exists(designIniPath))
