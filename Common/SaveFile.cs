@@ -325,6 +325,27 @@ namespace OceanyaClient
         public string CheckedIndicatorImagePath { get; set; } = string.Empty;
 
         /// <summary>
+        /// Colour of other people's names in a log, in #AARRGGBB form; empty keeps the control's own.
+        /// </summary>
+        /// <remarks>AO2's `*_sender_color` / `ic_chatlog_showname_color`.</remarks>
+        public string SenderColor { get; set; } = string.Empty;
+
+        /// <summary>Colour of a server message's name in a log; empty keeps the control's own.</summary>
+        /// <remarks>
+        /// AO2 colours an OOC name by where the message came from: a normal player message uses
+        /// `ms_chatlog_sender_color` and a server one `server_chatlog_sender_color`.
+        /// </remarks>
+        public string ServerNameColor { get; set; } = string.Empty;
+
+        /// <summary>Colour of your own name in a log; empty keeps the control's own.</summary>
+        /// <remarks>AO2's `ic_chatlog_selfname_color`.</remarks>
+        public string SelfNameColor { get; set; } = string.Empty;
+
+        /// <summary>Colour of timestamps in a log; empty keeps the control's own.</summary>
+        /// <remarks>AO2's `ic_chatlog_timestamp_color`.</remarks>
+        public string TimestampColor { get; set; } = string.Empty;
+
+        /// <summary>
         /// Colour of the filled part of a slider, in #AARRGGBB form; empty keeps the stock look.
         /// </summary>
         /// <remarks>AO2's `QSlider::sub-page`. The empty part uses <see cref="BackgroundColor"/>.</remarks>

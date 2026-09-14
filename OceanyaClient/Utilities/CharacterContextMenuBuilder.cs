@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -373,8 +373,7 @@ namespace OceanyaClient.Utilities
         private static CharacterFolder? ResolveCharacter(CharacterContextMenuOptions options)
         {
             string directory = options.DirectoryPath?.Trim() ?? string.Empty;
-            CharacterFolder? existing = CharacterFolder.FullList.FirstOrDefault(character =>
-                string.Equals(character.DirectoryPath, directory, StringComparison.OrdinalIgnoreCase));
+            CharacterFolder? existing = CharacterFolder.GetByDirectory(directory);
             if (existing != null)
             {
                 return existing;

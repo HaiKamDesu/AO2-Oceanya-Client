@@ -81,6 +81,18 @@ namespace OceanyaClient.Features.Theme
                 state.ImagePath,
                 "Artwork drawn instead of the caption text. Empty keeps the text.");
 
+            // A static panel is a log or a backdrop: it needs the per-log colours AO2 splits out, plus a
+            // background image, since that is the only settings dialog it gets.
+            bool hasLogFields = kind == OceanyaPanelKind.Static;
+            ColorPickerRow senderRow = CreateColorPickerRow(owner, state.SenderColor, "Sender colour");
+            ColorPickerRow serverNameRow = CreateColorPickerRow(owner, state.ServerNameColor, "Server name colour");
+            ColorPickerRow selfNameRow = CreateColorPickerRow(owner, state.SelfNameColor, "Own name colour");
+            ColorPickerRow timestampRow = CreateColorPickerRow(owner, state.TimestampColor, "Timestamp colour");
+            (Grid backgroundImageRow, TextBox backgroundImageBox) = CreateImagePickerRow(
+                state.ImagePath,
+                "Background artwork for this panel. Empty keeps its own.");
+            ComboBox backgroundScalingBox = CreateScalingComboBox(state.ImageScaling);
+
             bool hasScrollbars = kind is OceanyaPanelKind.Static or OceanyaPanelKind.Dropdown or OceanyaPanelKind.ItemGrid;
             ScrollbarRows scrollbars = CreateScrollbarRows(owner, state);
 
@@ -105,6 +117,16 @@ namespace OceanyaClient.Features.Theme
             if (hasLabelArt)
             {
                 AddField(body, "Caption image", labelArtRow);
+            }
+
+            if (hasLogFields)
+            {
+                AddField(body, "Sender colour", senderRow.Content);
+                AddField(body, "Server name colour", serverNameRow.Content);
+                AddField(body, "Own name colour", selfNameRow.Content);
+                AddField(body, "Timestamp colour", timestampRow.Content);
+                AddField(body, "Background image", backgroundImageRow);
+                AddField(body, "Image scaling", backgroundScalingBox);
             }
 
             if (hasScrollbars)
@@ -140,6 +162,19 @@ namespace OceanyaClient.Features.Theme
             if (hasLabelArt)
             {
                 state.ImagePath = labelArtPathBox.Text?.Trim() ?? string.Empty;
+            }
+
+            if (hasLogFields)
+            {
+                state.SenderColor = senderRow.SelectedColor;
+                state.ServerNameColor = serverNameRow.SelectedColor;
+                state.SelfNameColor = selfNameRow.SelectedColor;
+                state.TimestampColor = timestampRow.SelectedColor;
+                state.ImagePath = backgroundImageBox.Text?.Trim() ?? string.Empty;
+                string selectedBackgroundScaling = backgroundScalingBox.SelectedItem as string ?? DefaultOption;
+                state.ImageScaling = string.Equals(selectedBackgroundScaling, DefaultOption, StringComparison.Ordinal)
+                    ? string.Empty
+                    : selectedBackgroundScaling;
             }
 
             if (hasScrollbars)

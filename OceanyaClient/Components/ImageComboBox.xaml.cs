@@ -674,10 +674,13 @@ namespace OceanyaClient.Components
             if (isInternalUpdate)
                 return;
 
-            var filteredItems = allItems
-                .Where(item => item.Name.StartsWith(input, StringComparison.OrdinalIgnoreCase))
-                .Take(MaxVisibleItems)
-                .ToList();
+            // Prefix hits first, then substring hits: a roster full of "(pb)saber pendragon" style names
+            // is unreachable by prefix alone. See DropdownSearchMatcher for the cost characteristics.
+            List<DropdownItem> filteredItems = DropdownSearchMatcher.Filter(
+                allItems,
+                input,
+                static item => item.Name,
+                MaxVisibleItems);
 
             isInternalUpdate = true;
             string currentText = cboINISelect.Text;
@@ -776,10 +779,10 @@ namespace OceanyaClient.Components
                 string.Equals(item.Name, text, StringComparison.OrdinalIgnoreCase));
         }
 
+        /// <summary>Resolves typed text to an item: exact, then prefix, then substring.</summary>
         private DropdownItem? FindItemByPrefixText(string text)
         {
-            return allItems.FirstOrDefault(item =>
-                item.Name.StartsWith(text ?? string.Empty, StringComparison.OrdinalIgnoreCase));
+            return DropdownSearchMatcher.FindBestMatch(allItems, text, static item => item.Name);
         }
 
         private void ConfirmSelection(DropdownItem? selectedItem, string text)

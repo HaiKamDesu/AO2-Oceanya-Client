@@ -1,6 +1,7 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using Common;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -41,6 +42,34 @@ namespace OceanyaClient
         private const int MaxAnimatedPreviewFrames = 180;
         private const int AnimationFrameCacheEntryLimit = 96;
 
+        /// <summary>
+        /// Byte budget for decoded animation frames.
+        /// </summary>
+        /// <remarks>
+        /// The entry limit alone is meaningless here: a measured session held 305 MB in TWO entries
+        /// (326 frames), so the 96-entry limit permits several gigabytes of decoded pixels. Decoded
+        /// <see cref="BitmapSource"/> pixel buffers are unmanaged, so they do not show up as managed heap
+        /// and the GC will not reclaim them under pressure - the process just grows. Evict by bytes.
+        /// </remarks>
+        private const long AnimationFrameCacheByteLimit = 64L * 1024 * 1024;
+
+        /// <summary>
+        /// Largest single animation that is allowed into the cache.
+        /// </summary>
+        /// <remarks>
+        /// Viewport character sprites are decoded at VIEWPORT HEIGHT, not at
+        /// <see cref="MaxAnimatedPreviewDimension"/>, because AO2 scales sprites by viewport height and
+        /// reducing that would visibly soften them. A "heavy" character is therefore genuinely large:
+        /// measured at 70 MB for one 75-frame animation (~933 KB per frame). Letting one animation that
+        /// size into a shared cache means it evicts everything else and then sits there - which is exactly
+        /// the "send one message, RAM jumps 300 MB and stays" behaviour. Anything over this still plays at
+        /// full fidelity; it is just re-decoded next time instead of being held.
+        /// </remarks>
+        private const long MaxCachedAnimationBytes = 24L * 1024 * 1024;
+
+        /// <summary>Animations bigger than this are logged so heavy characters are identifiable.</summary>
+        private const long HeavyAnimationLogThresholdBytes = 8L * 1024 * 1024;
+
         private static readonly ImageSource FallbackImage = LoadEmbeddedFallback();
         private static readonly object StaticPreviewCacheLock = new object();
         private static readonly Dictionary<(string path, int width, int maxDim), WeakReference<ImageSource>> StaticPreviewCache =
@@ -48,8 +77,94 @@ namespace OceanyaClient
         private static readonly object AnimationFrameCacheLock = new object();
         private static readonly Dictionary<(string path, DateTime lastWriteUtc, int maxDim), CachedDecodedAnimation> AnimationFrameCache =
             new Dictionary<(string path, DateTime lastWriteUtc, int maxDim), CachedDecodedAnimation>();
+
+        /// <summary>Insertion order of <see cref="AnimationFrameCache"/> keys, oldest first, for eviction.</summary>
+        private static readonly LinkedList<(string path, DateTime lastWriteUtc, int maxDim)> AnimationFrameCacheOrder =
+            new LinkedList<(string path, DateTime lastWriteUtc, int maxDim)>();
+
+        /// <summary>Running total of the decoded bytes held in <see cref="AnimationFrameCache"/>.</summary>
+        private static long animationFrameCacheBytes;
         private static readonly ConcurrentDictionary<string, bool> ApngDetectionCache =
             new ConcurrentDictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Reports what the decoded-image caches are currently holding, for the periodic memory sample.
+        /// </summary>
+        /// <remarks>
+        /// These caches are bounded by ENTRY COUNT, not by bytes: <see cref="AnimationFrameCacheEntryLimit"/>
+        /// entries of up to <see cref="MaxAnimatedPreviewFrames"/> frames each, at up to
+        /// <see cref="MaxAnimatedPreviewDimension"/> px. A handful of large animations is worth far more
+        /// memory than a hundred small ones, so the count alone says nothing - this reports real bytes.
+        /// </remarks>
+        public static string GetCacheDiagnostics()
+        {
+            int animationEntries;
+            long animationFrames = 0;
+            long animationBytes;
+            lock (AnimationFrameCacheLock)
+            {
+                animationEntries = AnimationFrameCache.Count;
+                animationBytes = animationFrameCacheBytes;
+                foreach (CachedDecodedAnimation cached in AnimationFrameCache.Values)
+                {
+                    animationFrames += cached.Frames.Count;
+                }
+            }
+
+            int staticEntries;
+            int staticAlive = 0;
+            lock (StaticPreviewCacheLock)
+            {
+                staticEntries = StaticPreviewCache.Count;
+                foreach (WeakReference<ImageSource> reference in StaticPreviewCache.Values)
+                {
+                    if (reference.TryGetTarget(out _))
+                    {
+                        staticAlive++;
+                    }
+                }
+            }
+
+            return $"animCacheEntries={animationEntries} animCacheFrames={animationFrames}"
+                + $" animCacheMB={animationBytes / (1024 * 1024)}/{AnimationFrameCacheByteLimit / (1024 * 1024)}"
+                + $" staticPreviewEntries={staticEntries} staticPreviewAlive={staticAlive}"
+                + $" apngProbeEntries={ApngDetectionCache.Count}";
+        }
+
+        /// <summary>Approximate decoded size of a bitmap in bytes.</summary>
+        internal static long EstimateBitmapBytes(BitmapSource? bitmap)
+        {
+            if (bitmap == null)
+            {
+                return 0;
+            }
+
+            try
+            {
+                int bitsPerPixel = bitmap.Format.BitsPerPixel <= 0 ? 32 : bitmap.Format.BitsPerPixel;
+                return (long)bitmap.PixelWidth * bitmap.PixelHeight * bitsPerPixel / 8;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        /// <summary>Drops every decoded frame and preview currently cached.</summary>
+        public static void ClearCaches()
+        {
+            lock (AnimationFrameCacheLock)
+            {
+                AnimationFrameCache.Clear();
+                AnimationFrameCacheOrder.Clear();
+                animationFrameCacheBytes = 0;
+            }
+
+            lock (StaticPreviewCacheLock)
+            {
+                StaticPreviewCache.Clear();
+            }
+        }
 
         public static bool IsPotentialAnimatedPath(string? path)
         {
@@ -711,27 +826,96 @@ namespace OceanyaClient
                 return;
             }
 
+            long entryBytes = 0;
+            foreach (BitmapSource frame in frames)
+            {
+                entryBytes += EstimateBitmapBytes(frame);
+            }
+
+            if (entryBytes >= HeavyAnimationLogThresholdBytes)
+            {
+                CustomConsole.Info(
+                    $"[ANIM-DECODE] {Path.GetFileName(key.path)} frames={frames.Count}"
+                    + $" decodedMB={entryBytes / (1024 * 1024)}"
+                    + $" cached={(entryBytes <= MaxCachedAnimationBytes ? "yes" : "no (too large)")}"
+                    + $" path={key.path}",
+                    CustomConsole.LogCategory.Viewport);
+            }
+
             lock (AnimationFrameCacheLock)
             {
-                if (AnimationFrameCache.Count >= AnimationFrameCacheEntryLimit)
+                RemoveAnimationCacheEntryLocked(key);
+
+                // One animation must never be allowed to monopolise the shared cache. Over the per-entry
+                // cap it still plays at full fidelity - it is simply not retained afterwards.
+                if (entryBytes > MaxCachedAnimationBytes)
                 {
-                    AnimationFrameCache.Remove(AnimationFrameCache.Keys.First());
+                    return;
                 }
 
-                AnimationFrameCache[key] = new CachedDecodedAnimation(frames.ToList(), frameDurations.ToList());
+                AnimationFrameCache[key] = new CachedDecodedAnimation(
+                    frames.ToList(),
+                    frameDurations.ToList(),
+                    entryBytes);
+                AnimationFrameCacheOrder.AddLast(key);
+                animationFrameCacheBytes += entryBytes;
+
+                while (AnimationFrameCacheOrder.Count > 0
+                    && (animationFrameCacheBytes > AnimationFrameCacheByteLimit
+                        || AnimationFrameCache.Count > AnimationFrameCacheEntryLimit))
+                {
+                    (string path, DateTime lastWriteUtc, int maxDim) oldestKey = AnimationFrameCacheOrder.First!.Value;
+                    if (oldestKey.Equals(key))
+                    {
+                        break;
+                    }
+
+                    RemoveAnimationCacheEntryLocked(oldestKey);
+                }
+            }
+        }
+
+        /// <summary>Removes one cached animation and its byte/order bookkeeping. Caller holds the lock.</summary>
+        private static void RemoveAnimationCacheEntryLocked((string path, DateTime lastWriteUtc, int maxDim) key)
+        {
+            if (!AnimationFrameCache.TryGetValue(key, out CachedDecodedAnimation? existing))
+            {
+                return;
+            }
+
+            AnimationFrameCache.Remove(key);
+            animationFrameCacheBytes -= existing.ApproximateBytes;
+            if (animationFrameCacheBytes < 0)
+            {
+                animationFrameCacheBytes = 0;
+            }
+
+            for (LinkedListNode<(string path, DateTime lastWriteUtc, int maxDim)>? node = AnimationFrameCacheOrder.First;
+                node != null;
+                node = node.Next)
+            {
+                if (node.Value.Equals(key))
+                {
+                    AnimationFrameCacheOrder.Remove(node);
+                    break;
+                }
             }
         }
 
         private sealed class CachedDecodedAnimation
         {
-            public CachedDecodedAnimation(List<BitmapSource> frames, List<TimeSpan> frameDurations)
+            public CachedDecodedAnimation(List<BitmapSource> frames, List<TimeSpan> frameDurations, long approximateBytes)
             {
                 Frames = frames;
                 FrameDurations = frameDurations;
+                ApproximateBytes = approximateBytes;
             }
 
             public List<BitmapSource> Frames { get; }
             public List<TimeSpan> FrameDurations { get; }
+
+            /// <summary>Decoded size of <see cref="Frames"/>, used for the cache's byte budget.</summary>
+            public long ApproximateBytes { get; }
         }
 
         /// <summary>Returns true when the path is an APNG file (by extension or content).</summary>
@@ -1592,14 +1776,72 @@ namespace OceanyaClient
         private static extern bool DeleteObject(IntPtr hObject);
     }
 
+    /// <summary>
+    /// Tracks decoded bytes held by live animation players.
+    /// </summary>
+    /// <remarks>
+    /// A looping animation needs all of its frames, so a player holds them for as long as it is on screen.
+    /// That is invisible to the cache counters and is where the bulk of the process's unaccounted memory
+    /// lives - a 251-frame background measured 235 MB on its own, and backgrounds stay on screen for the
+    /// whole session. Both player implementations report here so the periodic memory sample can see it.
+    /// </remarks>
+    internal static class AnimationMemoryTracker
+    {
+        private static long liveBytes;
+
+        /// <summary>Bytes currently held by live players.</summary>
+        public static long LiveBytes => Interlocked.Read(ref liveBytes);
+
+        /// <summary>Adds one frame to a player's held total and to the global total.</summary>
+        public static void TrackHeld(ref long playerHeldBytes, BitmapSource frame)
+        {
+            long frameBytes = Ao2AnimationPreview.EstimateBitmapBytes(frame);
+            playerHeldBytes += frameBytes;
+            Interlocked.Add(ref liveBytes, frameBytes);
+        }
+
+        /// <summary>Removes a player's held total from the global total.</summary>
+        public static void ReleaseHeld(ref long playerHeldBytes)
+        {
+            if (playerHeldBytes <= 0)
+            {
+                return;
+            }
+
+            Interlocked.Add(ref liveBytes, -playerHeldBytes);
+            playerHeldBytes = 0;
+        }
+    }
+
     public sealed class BitmapFrameAnimationPlayer : IAnimationPlayer
     {
         private static readonly object SharedTimerLock = new object();
         private static readonly List<BitmapFrameAnimationPlayer> ActivePlayers = new List<BitmapFrameAnimationPlayer>();
         private static DispatcherTimer? sharedTimer;
 
+        /// <summary>
+        /// Decoded bytes currently held by every live player.
+        /// </summary>
+        /// <remarks>
+        /// A looping animation needs all of its frames, so a player holds them for as long as it is on
+        /// screen. That is invisible to the cache counters and turned out to be where the bulk of the
+        /// process's unaccounted memory lives - a 251-frame background measured 235 MB on its own.
+        /// </remarks>
+        /// <summary>Decoded bytes held by live animation players, for the periodic memory sample.</summary>
+        public static string GetLivePlayerDiagnostics()
+        {
+            int playerCount;
+            lock (SharedTimerLock)
+            {
+                playerCount = ActivePlayers.Count;
+            }
+
+            return $"livePlayers={playerCount} livePlayerMB={AnimationMemoryTracker.LiveBytes / (1024 * 1024)}";
+        }
+
         private readonly List<BitmapSource> frames = new List<BitmapSource>();
         private readonly List<TimeSpan> frameDurations = new List<TimeSpan>();
+        private long heldBytes;
         private int frameIndex;
         private bool loop;
         private bool endedWithoutLoop;
@@ -1643,6 +1885,7 @@ namespace OceanyaClient
                 for (int i = 0; i < decodedFrames.Count; i++)
                 {
                     candidate.frames.Add(decodedFrames[i]);
+                    candidate.TrackHeldFrame(decodedFrames[i]);
                     candidate.frameDurations.Add(decodedDurations[i]);
                 }
 
@@ -1671,6 +1914,7 @@ namespace OceanyaClient
             for (int i = 0; i < decodedFrames.Count; i++)
             {
                 candidate.frames.Add(decodedFrames[i]);
+                candidate.TrackHeldFrame(decodedFrames[i]);
                 candidate.frameDurations.Add(decodedDurations[i]);
             }
 
@@ -1731,6 +1975,7 @@ namespace OceanyaClient
             {
                 frames.Add(item.Frame);
                 frameDurations.Add(item.Duration);
+                TrackHeldFrame(item.Frame);
             }
         }
 
@@ -1767,9 +2012,22 @@ namespace OceanyaClient
             PlaybackFinished = null;
             frames.Clear();
             frameDurations.Clear();
+            ReleaseHeldFrames();
             frameIndex = 0;
             // Prevent the background decoder from stalling if it's still running.
             streamingComplete = true;
+        }
+
+        /// <summary>Adds one frame's decoded size to the live-player total.</summary>
+        private void TrackHeldFrame(BitmapSource frame)
+        {
+            AnimationMemoryTracker.TrackHeld(ref heldBytes, frame);
+        }
+
+        /// <summary>Removes this player's frames from the live-player total.</summary>
+        private void ReleaseHeldFrames()
+        {
+            AnimationMemoryTracker.ReleaseHeld(ref heldBytes);
         }
 
         private void StartPlayback()
@@ -1937,6 +2195,9 @@ namespace OceanyaClient
 
     public sealed class GifAnimationPlayer : IAnimationPlayer
     {
+        /// <summary>Decoded bytes this player is holding; reported through <see cref="AnimationMemoryTracker"/>.</summary>
+        private long heldBytes;
+
         private static readonly object SharedTimerLock = new object();
         private static readonly List<GifAnimationPlayer> ActivePlayers = new List<GifAnimationPlayer>();
         private static DispatcherTimer? sharedTimer;
@@ -2045,6 +2306,7 @@ namespace OceanyaClient
             PlaybackFinished = null;
             frames.Clear();
             frameDurations.Clear();
+            AnimationMemoryTracker.ReleaseHeld(ref heldBytes);
             frameIndex = 0;
         }
 
@@ -2127,6 +2389,7 @@ namespace OceanyaClient
                         BitmapSizeOptions.FromEmptyOptions());
                     source.Freeze();
                     frames.Add(source);
+                    AnimationMemoryTracker.TrackHeld(ref heldBytes, source);
                 }
                 finally
                 {

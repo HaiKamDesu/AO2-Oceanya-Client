@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -11,6 +11,7 @@ using System.Windows;
 using AOBot_Testing.Structures;
 using Common;
 using OceanyaClient.Features.GoogleDriveSync;
+using OceanyaClient.Features.WebAssets;
 
 namespace OceanyaClient
 {
@@ -21,13 +22,67 @@ namespace OceanyaClient
     {
         private const int RefreshMarkerSchemaVersion = 1;
 
+        /// <summary>
+        /// Raised on a background thread after any asset refresh completes, naming what changed.
+        /// </summary>
+        /// <remarks>
+        /// Refreshes happen from several places that the UI cannot see - the deferred startup scan, the
+        /// live asset watcher, Drive sync - and before this event existed the newly parsed assets simply
+        /// sat in the cache until something happened to rebuild a dropdown. That is why a character added
+        /// mid-session "showed up way later" rather than when it was refreshed. Subscribers must marshal
+        /// to their own thread.
+        /// </remarks>
+        public static event Action<AssetRefreshCompletedEventArgs>? AssetsRefreshed;
+
+        /// <summary>Raises <see cref="AssetsRefreshed"/>, never letting a subscriber break the refresh.</summary>
+        private static void RaiseAssetsRefreshed(AssetRefreshCompletedEventArgs args)
+        {
+            try
+            {
+                // A refresh can add characters that the on-demand probe previously recorded as missing,
+                // and can change which button art a character has, so both negative caches are dropped.
+                CharacterFolder.ClearOnDemandMissCache();
+                WebCharacterIconResolver.ResetPrefetchedCharacters();
+                AssetsRefreshed?.Invoke(args);
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Error("An asset refresh subscriber threw.", ex, CustomConsole.LogCategory.System);
+            }
+        }
+
         // The startup background asset scan (GetTrackedChangePlanForCurrentEnvironment → CaptureCurrentAssetStateSnapshot)
         // does heavy single-threaded disk I/O over every character folder. If it runs concurrently with the GM
         // snapshot restore's server connect, it starves that connect's own disk reads and the connect balloons from
         // ~1s to ~15s on a local server (measured), leaving the window built-but-disabled. This gate lets the launch
         // path defer the scan until the critical connect/restore has finished so they do not fight for the disk.
-        private static readonly TaskCompletionSource<bool> StartupCriticalPathGate =
+        private static readonly object startupGateLock = new object();
+        private static TaskCompletionSource<bool> startupCriticalPathGate =
             new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>
+        /// Re-arms the launch-critical gate for a new launch.
+        /// </summary>
+        /// <remarks>
+        /// Closing the GM window reopens the configuration window IN THE SAME PROCESS, so a session can
+        /// launch several times. The gate used to be a single one-shot completion source, which meant every
+        /// launch after the first saw it already completed and started its deferred asset work immediately -
+        /// straight back into contention with that launch's window creation and server connect (measured:
+        /// the full refresh began 635 ms BEFORE the connect finished). Each launch must arm its own gate.
+        /// </remarks>
+        public static void BeginStartupCriticalPath()
+        {
+            lock (startupGateLock)
+            {
+                if (!startupCriticalPathGate.Task.IsCompleted)
+                {
+                    return;
+                }
+
+                startupCriticalPathGate =
+                    new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+        }
 
         /// <summary>
         /// Signals that the launch-critical work (e.g. GM snapshot restore + server connect) has finished, so the
@@ -35,7 +90,10 @@ namespace OceanyaClient
         /// </summary>
         public static void SignalStartupCriticalPathComplete()
         {
-            StartupCriticalPathGate.TrySetResult(true);
+            lock (startupGateLock)
+            {
+                startupCriticalPathGate.TrySetResult(true);
+            }
         }
 
         /// <summary>
@@ -44,24 +102,78 @@ namespace OceanyaClient
         /// </summary>
         public static async Task WaitForStartupCriticalPathAsync(int timeoutMs)
         {
-            await Task.WhenAny(StartupCriticalPathGate.Task, Task.Delay(timeoutMs));
+            Task gateTask;
+            lock (startupGateLock)
+            {
+                gateTask = startupCriticalPathGate.Task;
+            }
+
+            await Task.WhenAny(gateTask, Task.Delay(timeoutMs));
         }
 
         /// <summary>
-        /// Refreshes all supported client-side asset caches while showing progress in <see cref="WaitForm"/>.
+        /// Refreshes all supported client-side asset caches without blocking the UI.
         /// </summary>
-        public static async Task RefreshCharactersAndBackgroundsAsync(Window owner)
+        /// <remarks>
+        /// This deliberately does NOT show <see cref="WaitForm"/> any more. A full refresh can take tens of
+        /// seconds on a large install, and locking the whole client behind a modal "Refreshing all assets"
+        /// form for that long was the single most disruptive thing about adding assets. The work still runs
+        /// off the UI thread, callers can still await completion, and <see cref="AssetsRefreshed"/> lets the
+        /// live UI fold the result in whenever it lands. Progress is reported to the debug console.
+        /// </remarks>
+        /// <param name="owner">Unused; kept so every call site keeps its owner-window contract.</param>
+        public static Task RefreshCharactersAndBackgroundsAsync(Window owner)
         {
-            await WaitForm.ShowFormAsync("Refreshing character and background info...", owner);
+            _ = owner;
+            return Task.Run(() => RefreshAllAssets(ReportRefreshProgress));
+        }
 
-            try
+        /// <summary>Minimum gap between progress lines written to the debug console.</summary>
+        private const int RefreshProgressLogIntervalMs = 1000;
+
+        private static readonly object refreshProgressLock = new object();
+        private static long lastRefreshProgressTicks;
+
+        /// <summary>
+        /// Routes refresh progress to the debug console instead of a blocking wait form, throttled.
+        /// </summary>
+        /// <remarks>
+        /// Progress fires once per character (twice, plus an integrity line, on a full refresh), and a
+        /// large install has thousands of characters. Logging each one measured at 15,932 of 16,488 lines
+        /// in a two-minute session - 96% of the log - and every one of those costs a string format, a
+        /// Console.WriteLine, a Debug.WriteLine, an event dispatch and a file write, on top of the refresh
+        /// it is supposed to be reporting. One line per second is enough to see that it is progressing.
+        /// </remarks>
+        private static void ReportRefreshProgress(string subtitle)
+        {
+            if (string.IsNullOrWhiteSpace(subtitle))
             {
-                await Task.Run(() => RefreshAllAssets(subtitle => WaitForm.SetSubtitle(subtitle)));
+                return;
             }
-            finally
+
+            long nowTicks = DateTime.UtcNow.Ticks;
+            lock (refreshProgressLock)
             {
-                await WaitForm.CloseFormAsync();
+                if (nowTicks - lastRefreshProgressTicks < RefreshProgressLogIntervalMs * TimeSpan.TicksPerMillisecond)
+                {
+                    return;
+                }
+
+                lastRefreshProgressTicks = nowTicks;
             }
+
+            CustomConsole.Info("[ASSET-REFRESH] " + subtitle, CustomConsole.LogCategory.System);
+        }
+
+        /// <summary>Logs a refresh milestone unconditionally, bypassing the progress throttle.</summary>
+        private static void ReportRefreshMilestone(string message)
+        {
+            lock (refreshProgressLock)
+            {
+                lastRefreshProgressTicks = DateTime.UtcNow.Ticks;
+            }
+
+            CustomConsole.Info("[ASSET-REFRESH] " + message, CustomConsole.LogCategory.System);
         }
 
         /// <summary>
@@ -92,25 +204,19 @@ namespace OceanyaClient
         }
 
         /// <summary>
-        /// Refreshes only the supplied asset scope while showing progress in <see cref="WaitForm"/>.
+        /// Refreshes only the supplied asset scope without blocking the UI.
         /// </summary>
-        internal static async Task RefreshTargetedAssetsAsync(Window owner, TargetedAssetRefreshPlan plan)
+        /// <param name="owner">Unused; kept so every call site keeps its owner-window contract.</param>
+        /// <param name="plan">Scope to refresh.</param>
+        internal static Task RefreshTargetedAssetsAsync(Window owner, TargetedAssetRefreshPlan plan)
         {
+            _ = owner;
             if (plan == null || !plan.HasAnyWork)
             {
-                return;
+                return Task.CompletedTask;
             }
 
-            await WaitForm.ShowFormAsync("Refreshing changed asset info...", owner);
-
-            try
-            {
-                await Task.Run(() => RefreshAssets(plan, subtitle => WaitForm.SetSubtitle(subtitle)));
-            }
-            finally
-            {
-                await WaitForm.CloseFormAsync();
-            }
+            return Task.Run(() => RefreshAssets(plan, ReportRefreshProgress));
         }
 
         /// <summary>
@@ -431,18 +537,28 @@ namespace OceanyaClient
 
         private static void RefreshAllAssets(Action<string>? progress)
         {
+            System.Diagnostics.Stopwatch refreshStopwatch = System.Diagnostics.Stopwatch.StartNew();
+            ReportRefreshMilestone("Full asset refresh started.");
             Globals.UpdateConfigINI(Globals.PathToConfigINI);
             RefreshAllCharacters(progress);
             RefreshAllBackgrounds(progress);
 
+            List<string> failures = new List<string>();
             progress?.Invoke("Indexing blip files...");
-            _ = BlipCatalog.Refresh();
+            RunCatalogRefresh("blips", () => BlipCatalog.Refresh(), failures);
             progress?.Invoke("Indexing chat profiles...");
-            _ = ChatCatalog.Refresh();
+            RunCatalogRefresh("chat profiles", () => ChatCatalog.Refresh(), failures);
             progress?.Invoke("Indexing effects folders...");
-            _ = EffectsFolderCatalog.Refresh();
+            RunCatalogRefresh("effects folders", () => EffectsFolderCatalog.Refresh(), failures);
 
+            long beforeMarkerMs = refreshStopwatch.ElapsedMilliseconds;
             PersistRefreshMarker(forceFullStateCapture: true);
+            ReportRefreshMilestone(
+                $"Full asset refresh finished in {refreshStopwatch.ElapsedMilliseconds}ms"
+                + $" (marker capture {refreshStopwatch.ElapsedMilliseconds - beforeMarkerMs}ms,"
+                + $" characters={CharacterFolder.CachedCharacterCount}, failures={failures.Count}).");
+            RaiseAssetsRefreshed(AssetRefreshCompletedEventArgs.ForFullRefresh());
+            ThrowIfAnyRefreshFailed(failures);
         }
 
         private static void RefreshAssets(TargetedAssetRefreshPlan plan, Action<string>? progress)
@@ -453,6 +569,9 @@ namespace OceanyaClient
             }
 
             bool performedWork = false;
+            // One unreadable character/background must not abort the rest of the batch, and must not
+            // escape as an unhandled exception. Failures are collected and reported once at the end.
+            List<string> failures = new List<string>();
 
             if (plan.RequiresFullCharacterRefresh)
             {
@@ -463,7 +582,16 @@ namespace OceanyaClient
             {
                 foreach (string characterName in plan.CharacterNames.OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
                 {
-                    RefreshCharacter(characterName, progress);
+                    try
+                    {
+                        RefreshCharacter(characterName, progress);
+                    }
+                    catch (Exception ex)
+                    {
+                        CustomConsole.Error($"Character refresh failed for '{characterName}'.", ex, CustomConsole.LogCategory.System);
+                        failures.Add($"character '{characterName}': {ex.Message}");
+                    }
+
                     performedWork = true;
                 }
             }
@@ -477,7 +605,16 @@ namespace OceanyaClient
             {
                 foreach (string backgroundName in plan.BackgroundNames.OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
                 {
-                    RefreshBackground(backgroundName, progress);
+                    try
+                    {
+                        RefreshBackground(backgroundName, progress);
+                    }
+                    catch (Exception ex)
+                    {
+                        CustomConsole.Error($"Background refresh failed for '{backgroundName}'.", ex, CustomConsole.LogCategory.System);
+                        failures.Add($"background '{backgroundName}': {ex.Message}");
+                    }
+
                     performedWork = true;
                 }
             }
@@ -485,37 +622,92 @@ namespace OceanyaClient
             if (plan.RefreshBlips)
             {
                 progress?.Invoke("Indexing blip files...");
-                _ = BlipCatalog.Refresh();
+                RunCatalogRefresh("blips", () => BlipCatalog.Refresh(), failures);
                 performedWork = true;
             }
 
             if (plan.RefreshChats)
             {
                 progress?.Invoke("Indexing chat profiles...");
-                _ = ChatCatalog.Refresh();
+                RunCatalogRefresh("chat profiles", () => ChatCatalog.Refresh(), failures);
                 performedWork = true;
             }
 
             if (plan.RefreshEffects)
             {
                 progress?.Invoke("Indexing effects folders...");
-                _ = EffectsFolderCatalog.Refresh();
+                RunCatalogRefresh("effects folders", () => EffectsFolderCatalog.Refresh(), failures);
                 performedWork = true;
             }
 
             if (performedWork)
             {
+                System.Diagnostics.Stopwatch markerStopwatch = System.Diagnostics.Stopwatch.StartNew();
                 PersistRefreshMarker(plan);
+                ReportRefreshMilestone(
+                    $"Targeted refresh applied (characters={plan.CharacterNames.Count}"
+                    + $"{(plan.RequiresFullCharacterRefresh ? "+all" : string.Empty)},"
+                    + $" backgrounds={plan.BackgroundNames.Count}"
+                    + $"{(plan.RequiresFullBackgroundRefresh ? "+all" : string.Empty)},"
+                    + $" failures={failures.Count}); marker capture {markerStopwatch.ElapsedMilliseconds}ms.");
+                RaiseAssetsRefreshed(AssetRefreshCompletedEventArgs.ForPlan(plan));
+            }
+
+            ThrowIfAnyRefreshFailed(failures);
+        }
+
+        /// <summary>Runs one catalog refresh, recording (not rethrowing) a failure.</summary>
+        private static void RunCatalogRefresh(string catalogName, Action refresh, List<string> failures)
+        {
+            try
+            {
+                refresh();
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Error($"Failed to index {catalogName}.", ex, CustomConsole.LogCategory.System);
+                failures.Add($"{catalogName}: {ex.Message}");
             }
         }
 
+        /// <summary>
+        /// Reports collected refresh failures as a single exception so the caller can show them, after
+        /// every other asset in the batch has already been refreshed.
+        /// </summary>
+        private static void ThrowIfAnyRefreshFailed(List<string> failures)
+        {
+            if (failures.Count == 0)
+            {
+                return;
+            }
+
+            const int maxReportedFailures = 5;
+            string reported = string.Join(
+                Environment.NewLine,
+                failures.Take(maxReportedFailures));
+            if (failures.Count > maxReportedFailures)
+            {
+                reported += Environment.NewLine + $"(+{failures.Count - maxReportedFailures} more; see the debug console)";
+            }
+
+            throw new InvalidOperationException(
+                "Some assets could not be refreshed:" + Environment.NewLine + reported);
+        }
+
+        /// <summary>
+        /// Rebuilds the character index.
+        /// </summary>
+        /// <remarks>
+        /// This deliberately does NOT run <see cref="CharacterIntegrityVerifier"/>. The verifier walks every
+        /// file of every character folder and writes a report; measured at ~17 s of a 18.2 s full refresh on
+        /// a 2627-character install, i.e. 94% of the work, for a diagnostic that only the Character Database
+        /// Viewer displays. It now runs there, in the background, on the characters actually being shown.
+        /// </remarks>
         private static void RefreshAllCharacters(Action<string>? progress)
         {
+            // Only the indexed callback is wired: onParsedCharacter reports the same event and doubled the
+            // progress volume for nothing.
             CharacterFolder.RefreshCharacterList(
-                onParsedCharacter: character =>
-                {
-                    progress?.Invoke("Parsed character: " + character.Name);
-                },
                 onParsedCharacterProgress: (character, currentIndex, totalCharacters) =>
                 {
                     progress?.Invoke($"Parsed character ({currentIndex}/{totalCharacters}): {character.Name}");
@@ -525,25 +717,6 @@ namespace OceanyaClient
                     progress?.Invoke("Changed mount path: " + path);
                 });
 
-            List<CharacterFolder> characters = CharacterFolder.FullList.ToList();
-            int totalCharacters = characters.Count;
-            if (totalCharacters == 0)
-            {
-                return;
-            }
-
-            int completedCharacters = 0;
-            ParallelOptions options = new ParallelOptions
-            {
-                MaxDegreeOfParallelism = AssetRefreshParallelism.GetDegreeOfParallelism(totalCharacters)
-            };
-
-            Parallel.ForEach(characters, options, character =>
-            {
-                CharacterIntegrityVerifier.RunAndPersist(character);
-                int verifiedCount = Interlocked.Increment(ref completedCharacters);
-                progress?.Invoke($"Integrity verified {verifiedCount}/{totalCharacters}: {character.Name}");
-            });
         }
 
         private static void RefreshAllBackgrounds(Action<string>? progress)
@@ -557,9 +730,7 @@ namespace OceanyaClient
 
         private static void RefreshCharacter(string characterName, Action<string>? progress)
         {
-            string? existingDirectory = CharacterFolder.FullList
-                .FirstOrDefault(character => string.Equals(character.Name, characterName, StringComparison.OrdinalIgnoreCase))
-                ?.DirectoryPath;
+            string? existingDirectory = CharacterFolder.FindIndexEntryByName(characterName)?.DirectoryPath;
 
             string resolvedDirectory = ResolveEffectiveMountedDirectory("characters", characterName);
             if (!string.IsNullOrWhiteSpace(resolvedDirectory))
@@ -573,12 +744,6 @@ namespace OceanyaClient
                 {
                     throw new InvalidOperationException(
                         "Failed to refresh character '" + characterName + "': " + errorMessage);
-                }
-
-                if (character != null)
-                {
-                    progress?.Invoke("Integrity verify: " + character.Name);
-                    _ = CharacterIntegrityVerifier.RunAndPersist(character);
                 }
 
                 return;
@@ -744,6 +909,21 @@ namespace OceanyaClient
 
         private static AssetRefreshStateSnapshot CaptureCurrentAssetStateSnapshot()
         {
+            System.Diagnostics.Stopwatch captureStopwatch = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                return CaptureCurrentAssetStateSnapshotCore();
+            }
+            finally
+            {
+                CustomConsole.Info(
+                    $"[ASSET-REFRESH] Asset state snapshot captured in {captureStopwatch.ElapsedMilliseconds}ms.",
+                    CustomConsole.LogCategory.System);
+            }
+        }
+
+        private static AssetRefreshStateSnapshot CaptureCurrentAssetStateSnapshotCore()
+        {
             return NormalizeAssetState(new AssetRefreshStateSnapshot
             {
                 Characters = CaptureTrackedFolderStates("characters", requirePrimaryCharacterIni: true),
@@ -850,6 +1030,11 @@ namespace OceanyaClient
                     continue;
                 }
 
+                // Signature computation is per-folder disk work with no shared state, so it runs across
+                // cores instead of one folder at a time. Mount order still decides which duplicate name
+                // wins, so candidates are filtered in order first and only the hashing is parallel.
+                List<(string EntryName, string DirectoryPath)> candidates =
+                    new List<(string EntryName, string DirectoryPath)>();
                 foreach (string directoryPath in directories)
                 {
                     string entryName = Path.GetFileName(directoryPath);
@@ -867,10 +1052,26 @@ namespace OceanyaClient
                     states[entryName] = new AssetTrackedFolderState
                     {
                         Name = entryName,
-                        DirectoryPath = NormalizePathForComparison(directoryPath),
-                        Signature = ComputeDirectorySignature(directoryPath)
+                        DirectoryPath = NormalizePathForComparison(directoryPath)
                     };
+                    candidates.Add((entryName, directoryPath));
                 }
+
+                ParallelOptions signatureOptions = new ParallelOptions
+                {
+                    MaxDegreeOfParallelism = AssetRefreshParallelism.GetDegreeOfParallelism(candidates.Count)
+                };
+                Parallel.ForEach(candidates, signatureOptions, candidate =>
+                {
+                    string signature = ComputeDirectorySignature(candidate.DirectoryPath);
+                    lock (states)
+                    {
+                        if (states.TryGetValue(candidate.EntryName, out AssetTrackedFolderState? state))
+                        {
+                            state.Signature = signature;
+                        }
+                    }
+                });
             }
 
             return states;
@@ -1056,34 +1257,52 @@ namespace OceanyaClient
 
             try
             {
-                foreach (string childDirectory in Directory.EnumerateDirectories(normalizedDirectory, "*", SearchOption.AllDirectories)
-                    .Select(path => NormalizeRelativePath(Path.GetRelativePath(normalizedDirectory, path)))
-                    .Where(path => !string.IsNullOrWhiteSpace(path))
-                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+                // One enumeration, and the size/timestamp come from the enumeration's own directory data.
+                //
+                // This used to be two full recursive walks (directories, then files) plus a `new FileInfo`
+                // and a `File.GetLastWriteTimeUtc` per file - two extra syscalls each, on every file of
+                // every character, on every launch. Measured at 16.3 seconds of solid disk churn for 2627
+                // characters before the client was usable. EnumerateFileSystemInfos carries Length and
+                // LastWriteTimeUtc in the entry it already read, so the same signature costs one walk and
+                // no per-file stat.
+                List<string> signatureLines = new List<string>();
+                foreach (FileSystemInfo entry in new DirectoryInfo(normalizedDirectory)
+                    .EnumerateFileSystemInfos("*", SearchOption.AllDirectories))
                 {
-                    AppendHashLine(hash, "D|" + childDirectory);
-                }
-
-                foreach (string filePath in Directory.EnumerateFiles(normalizedDirectory, "*", SearchOption.AllDirectories)
-                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
-                {
-                    string relativePath = NormalizeRelativePath(Path.GetRelativePath(normalizedDirectory, filePath));
-                    if (GoogleDriveLocalSnapshotBuilder.IsReservedSupportFile(relativePath))
+                    string relativePath = NormalizeRelativePath(
+                        Path.GetRelativePath(normalizedDirectory, entry.FullName));
+                    if (string.IsNullOrWhiteSpace(relativePath))
                     {
                         continue;
                     }
 
                     try
                     {
-                        FileInfo info = new FileInfo(filePath);
-                        AppendHashLine(
-                            hash,
-                            "F|" + relativePath + "|" + info.Length + "|" + File.GetLastWriteTimeUtc(filePath).Ticks);
+                        if (entry is FileInfo fileEntry)
+                        {
+                            if (GoogleDriveLocalSnapshotBuilder.IsReservedSupportFile(relativePath))
+                            {
+                                continue;
+                            }
+
+                            signatureLines.Add(
+                                "F|" + relativePath + "|" + fileEntry.Length + "|" + fileEntry.LastWriteTimeUtc.Ticks);
+                        }
+                        else
+                        {
+                            signatureLines.Add("D|" + relativePath);
+                        }
                     }
                     catch (Exception ex)
                     {
-                        AppendHashLine(hash, "E|" + relativePath + "|" + ex.GetType().Name);
+                        signatureLines.Add("E|" + relativePath + "|" + ex.GetType().Name);
                     }
+                }
+
+                signatureLines.Sort(StringComparer.OrdinalIgnoreCase);
+                foreach (string signatureLine in signatureLines)
+                {
+                    AppendHashLine(hash, signatureLine);
                 }
             }
             catch (Exception ex)
@@ -1340,6 +1559,52 @@ namespace OceanyaClient
                 return trimmedPath
                     .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             }
+        }
+    }
+
+    /// <summary>Describes what an asset refresh changed.</summary>
+    public sealed class AssetRefreshCompletedEventArgs : EventArgs
+    {
+        private AssetRefreshCompletedEventArgs(
+            bool refreshedAllCharacters,
+            bool refreshedAllBackgrounds,
+            IReadOnlyCollection<string> characterNames,
+            IReadOnlyCollection<string> backgroundNames)
+        {
+            RefreshedAllCharacters = refreshedAllCharacters;
+            RefreshedAllBackgrounds = refreshedAllBackgrounds;
+            CharacterNames = characterNames;
+            BackgroundNames = backgroundNames;
+        }
+
+        /// <summary>Every character was reparsed, so no individual names are listed.</summary>
+        public bool RefreshedAllCharacters { get; }
+
+        /// <summary>Every background was reindexed, so no individual names are listed.</summary>
+        public bool RefreshedAllBackgrounds { get; }
+
+        /// <summary>Characters that were refreshed when <see cref="RefreshedAllCharacters"/> is false.</summary>
+        public IReadOnlyCollection<string> CharacterNames { get; }
+
+        /// <summary>Backgrounds that were refreshed when <see cref="RefreshedAllBackgrounds"/> is false.</summary>
+        public IReadOnlyCollection<string> BackgroundNames { get; }
+
+        internal static AssetRefreshCompletedEventArgs ForFullRefresh()
+        {
+            return new AssetRefreshCompletedEventArgs(
+                refreshedAllCharacters: true,
+                refreshedAllBackgrounds: true,
+                Array.Empty<string>(),
+                Array.Empty<string>());
+        }
+
+        internal static AssetRefreshCompletedEventArgs ForPlan(TargetedAssetRefreshPlan plan)
+        {
+            return new AssetRefreshCompletedEventArgs(
+                plan.RequiresFullCharacterRefresh,
+                plan.RequiresFullBackgroundRefresh,
+                plan.CharacterNames.ToList(),
+                plan.BackgroundNames.ToList());
         }
     }
 

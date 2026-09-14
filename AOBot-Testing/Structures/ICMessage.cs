@@ -524,9 +524,7 @@ namespace AOBot_Testing.Structures
             }
 
             string characterName = DecodePacketField(GetField(fields, CharacterIndex));
-            return CharacterFolder.FullList.FirstOrDefault(ini =>
-                    string.Equals(ini.Name, characterName, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(ini.configINI?.Name, characterName, StringComparison.OrdinalIgnoreCase))
+            return CharacterFolder.GetByNameOrShowName(characterName)
                 ?.configINI?.ResolveShowNameForEmote(-1)
                 ?? characterName;
         }

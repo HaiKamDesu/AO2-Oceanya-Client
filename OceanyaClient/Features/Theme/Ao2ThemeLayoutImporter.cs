@@ -491,11 +491,13 @@ namespace OceanyaClient.Features.Theme
                 state.ImageScaling = "Fill";
             }
 
-            Dictionary<string, string> fonts = ParseDesignFile(ResolveThemeFilePath(themeName, "courtroom_fonts.ini") ?? string.Empty);
+            Dictionary<string, string> fonts = ParseMergedThemeFile(themeName, "courtroom_fonts.ini");
             foreach ((string panelId, string fontWidget) in PanelFonts)
             {
                 ApplyFontWidget(layout, panelId, fonts, fontWidget);
             }
+
+            ApplyLogColours(layout, fonts);
 
             ApplyThemeDecorations(themeName, layout);
 
@@ -577,6 +579,76 @@ namespace OceanyaClient.Features.Theme
                 order++;
             }
         }
+
+        /// <summary>
+        /// Reads a theme file with the default theme merged in **per key**, the way AO2 resolves them.
+        /// </summary>
+        /// <remarks>
+        /// AO2 looks each key up through the theme chain (`get_design_element`), so a theme that sets only
+        /// some of them inherits the rest from the default theme. Reading one file instead meant the log
+        /// colours a theme leaves out - and most leave out all of the name and timestamp ones, which only
+        /// the default theme defines - fell back to ours rather than to AO2's.
+        /// </remarks>
+        /// <param name="themeName">Theme being imported.</param>
+        /// <param name="fileName">File to read, e.g. `courtroom_fonts.ini`.</param>
+        /// <returns>The merged entries.</returns>
+        private static Dictionary<string, string> ParseMergedThemeFile(string themeName, string fileName)
+        {
+            Dictionary<string, string> merged = ParseDesignFile(ResolveInTheme("default", fileName) ?? string.Empty);
+            foreach (KeyValuePair<string, string> entry in ParseDesignFile(ResolveInTheme(themeName, fileName) ?? string.Empty))
+            {
+                merged[entry.Key] = entry.Value;
+            }
+
+            return merged;
+        }
+
+        /// <summary>
+        /// Imports the per-log colours AO2 keeps beside the fonts.
+        /// </summary>
+        /// <remarks>
+        /// A log is more than one colour in AO2: `ic_chatlog_color` is the body, with separate colours for
+        /// other people's shownames, your own, and the timestamp; the OOC log has a body colour and a sender
+        /// colour. The logs also have no background of their own there - the courtroom art shows through -
+        /// so the backgrounds our log panels paint are cleared to transparent, which the panel settings can
+        /// put back by hand.
+        /// </remarks>
+        /// <param name="layout">Layout to fill in.</param>
+        /// <param name="fonts">Parsed `courtroom_fonts.ini`.</param>
+        private static void ApplyLogColours(OceanyaThemeLayoutState layout, IReadOnlyDictionary<string, string> fonts)
+        {
+            if (fonts.Count == 0)
+            {
+                return;
+            }
+
+            OceanyaPanelPlacementState icLog = ResolveState(layout, OceanyaPanelCatalog.IcLogPanelId);
+            icLog.SenderColor = ReadColour(fonts, "ic_chatlog_showname_color") ?? icLog.SenderColor;
+            icLog.SelfNameColor = ReadColour(fonts, "ic_chatlog_selfname_color") ?? icLog.SelfNameColor;
+            // Our only timestamp-ish detail is the marker on your own lines, so it takes AO2's SELF
+            // timestamp colour, falling back to the general one.
+            icLog.TimestampColor = ReadColour(fonts, "ic_chatlog_selftimestamp_color")
+                ?? ReadColour(fonts, "ic_chatlog_timestamp_color")
+                ?? icLog.TimestampColor;
+
+            // A plain OOC message is coloured with the MASTER-server key and a server one with the server
+            // key - AO2 picks by the colour flag on the CT packet, not by which log it lands in.
+            OceanyaPanelPlacementState oocChat = ResolveState(layout, OceanyaPanelCatalog.OocChatPanelId);
+            oocChat.SenderColor = ReadColour(fonts, "ms_chatlog_sender_color") ?? oocChat.SenderColor;
+            oocChat.ServerNameColor = ReadColour(fonts, "server_chatlog_sender_color") ?? oocChat.ServerNameColor;
+
+            // AO2's logs are transparent widgets over the courtroom art.
+            icLog.BackgroundColor = TransparentColour;
+            ResolveState(layout, OceanyaPanelCatalog.OocLogPanelId).BackgroundColor = TransparentColour;
+        }
+
+        private static string? ReadColour(IReadOnlyDictionary<string, string> fonts, string key)
+        {
+            return fonts.TryGetValue(key, out string? value) ? ConvertRgbTripletToHex(value) : null;
+        }
+
+        /// <summary>Fully transparent colour, for panels a theme wants to see through.</summary>
+        private const string TransparentColour = "#00000000";
 
         private static void ApplyFontWidget(
             OceanyaThemeLayoutState layout,
@@ -750,7 +822,14 @@ namespace OceanyaClient.Features.Theme
             // to the display - AO2's design file says so in a comment). When the theme describes those, the
             // header goes where the theme puts it and the OOC chat gets the whole `server_chatlog` rect.
             bool headerPlacedByTheme = TryPlaceMusicDisplayHeader(entries, scale, horizontalShift, layout, hidden, oocRect);
-            double headerHeight = headerPlacedByTheme
+            OceanyaPanelPlacement? musicNameRect = headerPlacedByTheme
+                ? null
+                : ResolveMusicNamePlacement(entries, scale, horizontalShift);
+
+            // The chat only gives up a strip when the header text actually sits on top of it. When the theme
+            // puts that text somewhere else - GrayGarden draws it beside the realization button - the chat
+            // takes the whole rectangle, the way AO2's server chatlog does.
+            double headerHeight = headerPlacedByTheme || musicNameRect != null
                 ? 0
                 : Math.Min(24 * scale, Math.Max(12, oocRect.Height / 4));
 
@@ -769,8 +848,7 @@ namespace OceanyaClient.Features.Theme
                     layout,
                     hidden,
                     OceanyaPanelCatalog.OocStreamTextPanelId,
-                    ResolveMusicNamePlacement(entries, scale, horizontalShift)
-                        ?? new OceanyaPanelPlacement(left, oocRect.Top, oocRect.Width, headerHeight));
+                    musicNameRect ?? new OceanyaPanelPlacement(left, oocRect.Top, oocRect.Width, headerHeight));
             }
 
             PlaceComposite(layout, hidden, OceanyaPanelCatalog.OocChatPanelId,

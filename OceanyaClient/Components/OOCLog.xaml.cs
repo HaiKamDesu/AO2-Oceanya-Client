@@ -1,6 +1,7 @@
 ﻿using AOBot_Testing.Agents;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -221,6 +222,29 @@ namespace OceanyaClient.Components
         /// separator, 2px every 50ms, faded at both edges - rather than trimming or bouncing.
         /// </remarks>
         /// <param name="songName">Song to show, or empty for nothing playing.</param>
+        /// <summary>
+        /// Applies the colours a theme set for this log, or clears them.
+        /// </summary>
+        /// <param name="colors">Colours to use, or null to go back to the built-in ones.</param>
+        public void SetThemeColors(LogThemeColors? colors)
+        {
+            themeColors = colors != null && !colors.IsEmpty ? colors : null;
+            LogRunRecolorer.Apply(
+                clientLogs.Values.Select(state => state.Document),
+                themeColors,
+                OocFallbackColors);
+        }
+
+        /// <summary>The colours a run goes back to when the theme does not set one.</summary>
+        private static readonly Dictionary<LogRunRole, Brush> OocFallbackColors = new Dictionary<LogRunRole, Brush>
+        {
+            [LogRunRole.SenderName] = Brushes.DarkBlue,
+            [LogRunRole.ServerName] = new SolidColorBrush(Color.FromArgb(0xFF, 0x5F, 0x5F, 0x00))
+        };
+
+        /// <summary>Colours a theme set for this log, or null for the built-in ones.</summary>
+        private LogThemeColors? themeColors;
+
         public void SetNowPlaying(string? songName)
         {
             string text = (songName ?? string.Empty).Trim();
@@ -522,20 +546,30 @@ namespace OceanyaClient.Components
         {
             paragraph.Inlines.Clear();
 
+            // AO2 colours an OOC name by where the message came from (`Courtroom::append_server_chatmessage`):
+            // a plain player message carries colour "0" and uses `ms_chatlog_sender_color`, a server one
+            // carries "1" and uses `server_chatlog_sender_color`. The body is left to the log's own font
+            // colour. All of it arrives here because our runs carry explicit brushes.
             Brush nameBrush = isSentFromServer
-                ? new SolidColorBrush(Color.FromArgb(0xFF, 0x5F, 0x5F, 0x00))
-                : Brushes.DarkBlue;
+                ? themeColors?.ServerName ?? new SolidColorBrush(Color.FromArgb(0xFF, 0x5F, 0x5F, 0x00))
+                : themeColors?.SenderName ?? Brushes.DarkBlue;
+            LogRunRole nameRole = isSentFromServer ? LogRunRole.ServerName : LogRunRole.SenderName;
             Run nameRun = new Run(showName ?? string.Empty)
             {
                 FontWeight = FontWeights.Bold,
-                Foreground = nameBrush
+                Foreground = nameBrush,
+
+                // Tagged so a theme applied later repaints this line too, instead of leaving the log in two
+                // colour schemes at once.
+                Tag = nameRole
             };
             paragraph.Inlines.Add(nameRun);
             AppendActionLinks(paragraph, nameLinks);
             paragraph.Inlines.Add(new Run(": ")
             {
                 FontWeight = FontWeights.Bold,
-                Foreground = nameBrush
+                Foreground = nameBrush,
+                Tag = nameRole
             });
             AddTextWithHyperlinks(paragraph, message ?? string.Empty);
             AppendActionLinks(paragraph, messageLinks);

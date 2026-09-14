@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Common;
 using ManagedBass;
@@ -30,14 +30,47 @@ namespace OceanyaClient.Features.Viewport
         private string currentBlipCharacterName = string.Empty;
         private string currentBlipShowname = string.Empty;
         private int fadingMusicStream;
+        private bool musicAudible = true;
         private bool disposed;
+
+        /// <summary>
+        /// Whether this viewport's music and ambient channels are currently audible.
+        /// </summary>
+        /// <remarks>
+        /// Music is a room-level stream, not a per-pane one. In multi-internal-client mode every profile
+        /// owns its own viewport pane and its own audio manager, so hiding a pane used to stop its music
+        /// outright and the pane being switched to had no music state at all - the song died on every
+        /// profile switch and replayed from zero on the next MC# packet. Muting instead of stopping keeps
+        /// the stream running at its real position, so switching profiles is silent-but-continuous and
+        /// switching back resumes mid-song.
+        /// </remarks>
+        public bool IsMusicAudible
+        {
+            get => musicAudible;
+            set
+            {
+                if (musicAudible == value)
+                {
+                    return;
+                }
+
+                musicAudible = value;
+                RefreshVolumes();
+            }
+        }
+
+        /// <summary>Scales a resolved music volume by the current audible state.</summary>
+        private float ScaleMusicVolume(double volume)
+        {
+            return musicAudible ? (float)volume : 0f;
+        }
 
         /// <summary>
         /// Applies the current saved volume settings to the active players.
         /// </summary>
         public void RefreshVolumes()
         {
-            musicPlayer.Volume = (float)AudioSettings.MusicVolume;
+            musicPlayer.Volume = ScaleMusicVolume(AudioSettings.MusicVolume);
             sfxPlayer.Volume = (float)AudioSettings.SfxVolume;
             effectSfxPlayer.Volume = (float)AudioSettings.SfxVolume;
             shoutSfxPlayer.Volume = (float)AudioSettings.SfxVolume;
@@ -45,7 +78,7 @@ namespace OceanyaClient.Features.Viewport
             foreach (KeyValuePair<int, AO2BlipPreviewPlayer> entry in ambientPlayers)
             {
                 string? token = ambientCurrentTokens.TryGetValue(entry.Key, out string? t) ? t : null;
-                entry.Value.Volume = (float)AudioSettings.ResolveMusicVolume(token);
+                entry.Value.Volume = ScaleMusicVolume(AudioSettings.ResolveMusicVolume(token));
             }
         }
 
@@ -288,7 +321,7 @@ namespace OceanyaClient.Features.Viewport
 
             currentMusicPath = path;
 
-            float targetVolume = (float)AudioSettings.ResolveMusicVolume(token);
+            float targetVolume = ScaleMusicVolume(AudioSettings.ResolveMusicVolume(token));
             if (fadeIn)
             {
                 musicPlayer.FadeInPlay(targetVolume, FadeInDurationMs);
@@ -376,7 +409,7 @@ namespace OceanyaClient.Features.Viewport
             }
 
             ambientCurrentTokens[channel] = songPath;
-            player.Volume = (float)AudioSettings.ResolveMusicVolume(songPath);
+            player.Volume = ScaleMusicVolume(AudioSettings.ResolveMusicVolume(songPath));
             _ = player.PlayBlip();
         }
 

@@ -1,4 +1,4 @@
-using AOBot_Testing.Agents;
+﻿using AOBot_Testing.Agents;
 using AOBot_Testing.Structures;
 using Common;
 using OceanyaClient.Features.Viewport;
@@ -1897,9 +1897,7 @@ namespace OceanyaClient.Components
 
         private static CharacterFolder? ResolveLocalCharacter(string name)
         {
-            return CharacterFolder.FullList.FirstOrDefault(character =>
-                string.Equals(character.Name, name, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(character.configINI?.Name, name, StringComparison.OrdinalIgnoreCase));
+            return CharacterFolder.GetByNameOrShowName(name);
         }
 
         private string ResolvePreviewCharacterName(PairCandidate candidate)

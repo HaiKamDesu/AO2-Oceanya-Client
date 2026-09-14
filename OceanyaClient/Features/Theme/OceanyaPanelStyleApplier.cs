@@ -568,6 +568,80 @@ namespace OceanyaClient.Features.Theme
                     shape.Fill = brush;
                     break;
             }
+
+            // A panel that paints its own artwork does it on the root element INSIDE the control - the log
+            // panels put their background image on a Grid - so setting the control's own brush left that
+            // image untouched, and a theme asking for a transparent log got its picture anyway.
+            element.Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+                ApplyRootChildBackground(element, brush)));
+        }
+
+        /// <summary>
+        /// Paints whatever inside a panel is actually drawing a background.
+        /// </summary>
+        /// <remarks>
+        /// A panel's artwork is rarely on the control itself: the log panels put theirs on a Grid several
+        /// levels down, behind the UserControl's own template border. Walking to the first child stopped at
+        /// that border - which paints nothing - and left the picture untouched. So every element that IS
+        /// painting gets the new brush, and if nothing is, the outermost container takes it.
+        /// </remarks>
+        /// <param name="element">Panel element.</param>
+        /// <param name="brush">Brush to paint with.</param>
+        private static void ApplyRootChildBackground(DependencyObject element, Brush brush)
+        {
+            if (!PaintExistingBackgrounds(element, brush))
+            {
+                PaintFirstContainer(element, brush);
+            }
+        }
+
+        private static bool PaintExistingBackgrounds(DependencyObject element, Brush brush)
+        {
+            bool painted = false;
+            switch (element)
+            {
+                case Panel panel when panel.Background != null:
+                    panel.Background = brush;
+                    painted = true;
+                    break;
+                case Border border when border.Background != null:
+                    border.Background = brush;
+                    painted = true;
+                    break;
+            }
+
+            int childCount = VisualTreeHelper.GetChildrenCount(element);
+            for (int i = 0; i < childCount; i++)
+            {
+                painted |= PaintExistingBackgrounds(VisualTreeHelper.GetChild(element, i), brush);
+            }
+
+            return painted;
+        }
+
+        private static bool PaintFirstContainer(DependencyObject element, Brush brush)
+        {
+            int childCount = VisualTreeHelper.GetChildrenCount(element);
+            for (int i = 0; i < childCount; i++)
+            {
+                DependencyObject child = VisualTreeHelper.GetChild(element, i);
+                switch (child)
+                {
+                    case Panel panel:
+                        panel.Background = brush;
+                        return true;
+                    case Border border:
+                        border.Background = brush;
+                        return true;
+                }
+
+                if (PaintFirstContainer(child, brush))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>

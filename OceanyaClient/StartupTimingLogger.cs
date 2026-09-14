@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -26,10 +26,19 @@ namespace OceanyaClient
         public static void Log(string phase, string? details = null)
         {
             long ms = _wall.ElapsedMilliseconds;
+            long previousMs;
             lock (_lock)
             {
+                previousMs = _events.Count > 0 ? _events[^1].Ms : 0;
                 _events.Add((ms, phase, details));
             }
+
+            // Mirrored into the debug console so startup phases land in DEBUG.txt alongside everything
+            // else; startup_timing.log stays as the standalone table.
+            CustomConsole.Info(
+                details == null
+                    ? $"[STARTUP] {phase} abs={ms}ms delta={ms - previousMs}ms"
+                    : $"[STARTUP] {phase} ({details}) abs={ms}ms delta={ms - previousMs}ms");
         }
 
         /// <summary>

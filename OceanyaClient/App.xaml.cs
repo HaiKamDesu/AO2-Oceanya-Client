@@ -73,6 +73,18 @@ public partial class App : Application
 
         OceanyaTestModeOptions testModeOptions = OceanyaTestMode.ParseArgs(e.Args);
         OceanyaTestMode.SetCurrent(testModeOptions);
+
+        // Mirror the debug console to DEBUG.txt (previous sessions under DebugHistory/) from the very
+        // first line, so startup timing and asset work are in the file without the console window open.
+        if (!testModeOptions.IsEnabled)
+        {
+            DebugFileLogger.Start(sessionHeaderLines: new[]
+            {
+                $"App version: {AppVersionInfo.AssemblyVersion}",
+                $"Command line: {Environment.CommandLine}"
+            });
+            RegisterDebugMemorySampleProviders();
+        }
         if (testModeOptions.IsEnabled)
         {
             if (!string.IsNullOrWhiteSpace(testModeOptions.SaveFilePath))
@@ -228,11 +240,30 @@ public partial class App : Application
         e.SetObserved();
     }
 
+    /// <summary>
+    /// Adds the app-level counters that the periodic <c>[MEM]</c> sample cannot see from Common.
+    /// </summary>
+    private static void RegisterDebugMemorySampleProviders()
+    {
+        DebugFileLogger.MemorySampleProviders.Add(() =>
+            $"indexedCharacters={AOBot_Testing.Structures.CharacterFolder.CachedCharacterCount}"
+            + $" parsedCharacters={AOBot_Testing.Structures.CharacterFolder.ParsedCharacterCount}");
+        DebugFileLogger.MemorySampleProviders.Add(() =>
+            $"openWindows={Current?.Windows.Count ?? 0}");
+        DebugFileLogger.MemorySampleProviders.Add(Ao2AnimationPreview.GetCacheDiagnostics);
+        DebugFileLogger.MemorySampleProviders.Add(BitmapFrameAnimationPlayer.GetLivePlayerDiagnostics);
+        DebugFileLogger.MemorySampleProviders.Add(Components.ICMessageSettings.GetEmoteButtonImageCacheDiagnostics);
+        DebugFileLogger.MemorySampleProviders.Add(CharacterSelectorWindow.GetIconCacheDiagnostics);
+        DebugFileLogger.MemorySampleProviders.Add(Features.Viewport.AO2ViewportAssetResolver.GetCacheDiagnostics);
+    }
+
     protected override void OnExit(ExitEventArgs e)
     {
         TaskScheduler.UnobservedTaskException -= TaskScheduler_UnobservedTaskException;
         AppDomain.CurrentDomain.UnhandledException -= CurrentDomain_UnhandledException;
         this.DispatcherUnhandledException -= App_DispatcherUnhandledException;
+        OceanyaClient.Features.Assets.LiveAssetWatcher.Stop();
+        DebugFileLogger.Stop();
         hivemindAgentCancellationTokenSource?.Cancel();
         hivemindTrayIconController?.Dispose();
         hivemindTrayIconController = null;

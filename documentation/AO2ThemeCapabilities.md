@@ -126,9 +126,16 @@ A theme cannot change gameplay behaviour - only geometry, typography, colours, a
 | Qt stylesheet (`.css`) | Partly | Translated field-by-field, not interpreted - see the gap list below |
 | Widgets for features Oceanya lacks | N/A | Evidence, judge/HP, mute, char select, sliders |
 
+## Scope: the main window only
+A theme is expected to make the **main window** look like itself. Popups and secondary windows - the
+settings window, the character selector, the file creator, the character database, the find dialogs - keep
+Oceanya's own look and are not themed, deliberately: they have no AO2 counterpart to match, and half of
+them have no equivalent in AO2 at all. The area and music lists are the exception, because AO2 draws those
+inside the courtroom, and they are themed while they render in the window.
+
 ## What we still cannot reproduce
-The state of the import as of 2026-08-19, after the geometry, artwork, typography, stylesheet and
-in-window list work. Everything here is a **known** gap: nothing on this list is silently wrong, and each
+The state of the import as of 2026-08-27, after the geometry, artwork, typography, stylesheet, in-window
+list, optional-widget and log-colour work. Everything here is a **known** gap: nothing on this list is silently wrong, and each
 entry says what it would take. Ordered by how visible the difference is.
 
 ### Widgets for features Oceanya does not have
@@ -144,7 +151,6 @@ artwork for them are read and ignored.
 | Pair list and order | `pair_list`, `pair_order_dropdown`, `pair_vert_offset_spinbox` | Pairing lives in the Pairing Studio dialog |
 | Clocks | `clock_0`..`clock_4` | Timer (parity gap #4) |
 | Area password | `area_password` | Not implemented |
-| Music search / iniswap and sfx remove buttons | `music_search`, `iniswap_remove`, `sfx_remove`, `pos_remove` | Search is inside our music panel; the remove buttons have no equivalent |
 
 ### Optional widgets that now exist
 These are real panels, **hidden by default** (`OceanyaPanelCatalog.IsHiddenByDefault`) and un-hidden by a
@@ -153,6 +159,8 @@ theme that places them or by a user editing the layout.
 | AO2 identifier | Panel | Behaviour |
 |---|---|---|
 | `switch_area_music` | `bar_button_areamusic` | Swaps which of the two in-window lists is shown |
+| `music_search` | `area_music_search` | Filters both lists; the music list then drops its own search box |
+| `pos_remove`, `iniswap_remove`, `sfx_remove` | `ic_combo_*_reset` | An X beside a dropdown, shown only while it is off its default, which resets it |
 | `mute_button` | `bar_button_mute` | Reports that muting is not implemented |
 | `evidence_button` | `bar_button_evidence` | Reports that Oceanya is not compatible with evidence |
 | `reload_theme` | `bar_button_reloadtheme` | Re-reads the selected AO2 theme |
@@ -191,14 +199,41 @@ field is skipped rather than approximated. Adding one means adding the editor co
 |---|---|---|
 | Slide toggle, guard, casing | `slide_enable`, `guard`, `casing` | Same shape: no Oceanya behaviour behind them yet. |
 
+### Behaviour we do not mimic
+Not widgets - things AO2 *does* that we do not, which a theme cannot fix.
+
+| AO2 behaviour | Ours |
+|---|---|
+| A server can force the judge controls visible or hidden (`judge_state`) | We always follow the position |
+| The music name flashes `[LOADING] name` while BASS opens the file | We resolve the path before showing anything, so there is no loading window |
+| `courtroom_sounds.ini` plays a sound for UI actions (see below) | Only the WT/CE/verdict sounds the viewport already plays |
+| Character select is a themed screen inside the courtroom window | Ours is a separate window with its own look |
+
 ### Structural differences that cannot be represented
 | AO2 behaviour | Ours |
 |---|---|
 | A missing `courtroom_design.ini` entry **hides** the widget | Same, deliberately - but our extra panels have no AO2 name, so they are packed into a left strip that AO2 has no concept of, which shifts every imported rectangle right by 54px |
 | `theme_scaling_factor` multiplies every dimension **and** the Qt widget properties its own stylesheet matches on | We scale dimensions; a theme whose stylesheet uses coordinate selectors *and* asks for a scaling factor cannot match both (AO2 has the same problem) |
-| Subtheme inheritance per INI **key** | We resolve whole files through the chain, not individual keys, everywhere except the chatbox resolver |
+| Subtheme inheritance per INI **key** | We resolve whole files through the chain, except `courtroom_fonts.ini` (merged with the default theme per key, since that is where the log colours live) and the chatbox resolver |
 | Animated widget art (`.gif`/`.apng` on buttons) | Panel images are static; only viewport-side art animates |
 | `courtroom_sounds.ini` UI sounds for our own extra controls | Only AO2's own sound keys exist; our extra buttons are silent |
+
+### What `courtroom_sounds.ini` actually covers
+Six keys, each a file name resolved through the theme chain (and overridable per background through its
+`misc` pack). GrayGarden fills five of them:
+
+| Key | AO2 plays it when | We |
+|---|---|---|
+| `witness_testimony` | the Witness Testimony banner appears | Played by the viewport |
+| `cross_examination` | the Cross Examination banner appears | Played by the viewport |
+| `guilty` / `not_guilty` | a verdict banner appears | Played by the viewport |
+| `realization` | someone sends a message with the realization flag | **Not played** - our realization is visual only |
+| `evidence_present` | a piece of evidence is presented | **Not played** - no evidence support |
+| `word_call` | one of your callwords appears in a message | We play our own callword sound instead of the theme's, and it is not read from `courtroom_sounds.ini` |
+| `mod_call` | a moderator is called in your area, unless Guard is ticked | **Not played** - and we have no Guard toggle, so there is nothing to suppress it either |
+
+So of the theme's UI sounds, the three courtroom banners are honoured and the rest are silent. None of them
+change behaviour - they are feedback for actions that already work.
 
 ### Things that look like gaps but are not
 - **1x1 transparent artwork** for a button is faithful: the theme paints that button into

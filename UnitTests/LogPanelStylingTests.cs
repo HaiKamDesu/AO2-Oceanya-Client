@@ -2,6 +2,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media.Imaging;
+using System.Collections.Generic;
 using System.IO;
 using System.Windows.Documents;
 using System.Windows.Media;
@@ -292,6 +293,61 @@ namespace UnitTests
             }
 
             return null;
+        }
+
+        [Test]
+        public void ApplyingAThemeRepaintsMessagesThatAreAlreadyInTheLog()
+        {
+            OOCLog log = new OOCLog();
+            Window host = new Window { Width = 320, Height = 240, Content = log, ShowActivated = false };
+            host.Show();
+
+            AOBot_Testing.Agents.AOClient client = new AOBot_Testing.Agents.AOClient("ws://localhost:10001/");
+            log.SetCurrentClient(client);
+            log.AddMessage(client, "Franziska", "hello", isSentFromServer: false);
+            log.AddMessage(client, "SERVER", "welcome", isSentFromServer: true);
+            log.UpdateLayout();
+
+            SolidColorBrush sender = new SolidColorBrush(Color.FromRgb(0x3D, 0x8D, 0xC0));
+            SolidColorBrush server = new SolidColorBrush(Color.FromRgb(0xE1, 0xE1, 0x00));
+            log.SetThemeColors(new LogThemeColors { SenderName = sender, ServerName = server });
+
+            // A theme has to repaint the backlog too, or applying one leaves the log in two colour schemes.
+            Assert.That(NameColorsOf(log), Is.EqualTo(new[] { sender.Color, server.Color }));
+
+            log.SetThemeColors(null);
+
+            // And clearing it puts the built-in colours back, which is what a reset does.
+            Assert.That(NameColorsOf(log), Is.EqualTo(new[] { Colors.DarkBlue, Color.FromRgb(0x5F, 0x5F, 0x00) }));
+
+            host.Close();
+        }
+
+        private static List<Color> NameColorsOf(OOCLog log)
+        {
+            RichTextBox box = (RichTextBox)FindByName(log, "LogBox")!;
+            List<Color> colors = new List<Color>();
+            foreach (Block block in box.Document.Blocks)
+            {
+                if (block is not Paragraph paragraph)
+                {
+                    continue;
+                }
+
+                foreach (Inline inline in paragraph.Inlines)
+                {
+                    if (inline.Tag is LogRunRole role
+                        && (role == LogRunRole.SenderName || role == LogRunRole.ServerName)
+                        && inline is Run run
+                        && run.Text.Length > 2
+                        && inline.Foreground is SolidColorBrush brush)
+                    {
+                        colors.Add(brush.Color);
+                    }
+                }
+            }
+
+            return colors;
         }
 
         private static void FlushDispatcher()

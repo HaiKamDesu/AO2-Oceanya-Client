@@ -308,6 +308,28 @@ namespace UnitTests
         }
 
         [Test]
+        public void Translate_GivesTheOocChatTheWholeChatlogWhenTheHeaderIsElsewhere()
+        {
+            Dictionary<string, string> design = new Dictionary<string, string>
+            {
+                ["courtroom"] = "0, 0, 1262, 700",
+                ["server_chatlog"] = "1001, 50, 211, 211",
+
+                // A window-sized display: the header text goes where the theme draws its music name, not on
+                // top of the chat.
+                ["music_display"] = "0, 0, 1262, 700",
+                ["music_name"] = "103, 21, 130, 23"
+            };
+
+            Ao2ThemeImportResult result = Ao2ThemeLayoutImporter.Translate(design);
+
+            // No strip is carved out of the chat, so it fills the chatlog rectangle like AO2's does.
+            Assert.That(result.Layout.Panels["ooc_chat"].Top, Is.EqualTo(50));
+            Assert.That(result.Layout.Panels["ooc_chat"].Height, Is.EqualTo(211));
+            Assert.That(result.Layout.Panels["ooc_stream_text"].Top, Is.EqualTo(21));
+        }
+
+        [Test]
         public void Translate_UsesTheMusicDisplayAsTheOocHeaderOnlyWhenItIsShapedLikeOne()
         {
             // AO2's default theme: a 26px bar directly above the server chatlog, same x, same width.
@@ -347,6 +369,99 @@ namespace UnitTests
             // Our own header bar has no counterpart there, so it is hidden rather than invented.
             Assert.That(decoration.Layout.Panels["ooc_stream_backdrop"].IsHidden, Is.True);
             Assert.That(decoration.Layout.Panels["ooc_stream_text"].IsHidden, Is.False);
+        }
+
+        [Test]
+        public void ApplyThemeAppearance_ImportsTheLogColoursAndClearsTheirBackgrounds()
+        {
+            string baseFolder = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+            string themeFolder = Path.Combine(baseFolder, "themes", "ColourTheme");
+            Directory.CreateDirectory(themeFolder);
+            File.WriteAllText(Path.Combine(themeFolder, "courtroom_design.ini"), "courtroom = 0, 0, 714, 668");
+            File.WriteAllText(Path.Combine(themeFolder, "courtroom_fonts.ini"), string.Join("\n", new[]
+            {
+                "ic_chatlog = 10",
+                "ic_chatlog_showname_color = 61, 141, 192",
+                "ic_chatlog_selfname_color = 154, 220, 225",
+                "ic_chatlog_timestamp_color = 160, 181, 205",
+                "server_chatlog = 8",
+                "server_chatlog_sender_color = 225, 225, 0",
+                "ms_chatlog_sender_color = 61, 141, 192"
+            }));
+
+            List<string> originalBaseFolders = Globals.BaseFolders?.ToList() ?? new List<string>();
+            try
+            {
+                Globals.BaseFolders = new List<string> { baseFolder };
+                OceanyaThemeLayoutState layout = new OceanyaThemeLayoutState();
+                Ao2ThemeLayoutImporter.ApplyThemeAppearance("ColourTheme", layout, 714, 668);
+
+                // AO2 splits a log's colours: body, other people's names, your own, the timestamp.
+                Assert.That(layout.Panels["ic_log"].SenderColor, Is.EqualTo("#FF3D8DC0"));
+                Assert.That(layout.Panels["ic_log"].SelfNameColor, Is.EqualTo("#FF9ADCE1"));
+                Assert.That(layout.Panels["ic_log"].TimestampColor, Is.EqualTo("#FFA0B5CD"));
+                // AO2 picks the OOC name colour by where the message came from: a plain player message uses
+                // the master-server key, a server one the server key.
+                Assert.That(layout.Panels["ooc_chat"].SenderColor, Is.EqualTo("#FF3D8DC0"));
+                Assert.That(layout.Panels["ooc_chat"].ServerNameColor, Is.EqualTo("#FFE1E100"));
+
+                // AO2's logs are transparent widgets over the courtroom art, so ours stop painting theirs.
+                Assert.That(layout.Panels["ic_log"].BackgroundColor, Is.EqualTo("#00000000"));
+                Assert.That(layout.Panels["ooc_log"].BackgroundColor, Is.EqualTo("#00000000"));
+            }
+            finally
+            {
+                Globals.BaseFolders = originalBaseFolders;
+                Directory.Delete(baseFolder, recursive: true);
+            }
+        }
+
+        [Test]
+        public void ApplyThemeAppearance_InheritsLogColoursTheThemeLeavesOut()
+        {
+            string baseFolder = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+            string themeFolder = Path.Combine(baseFolder, "themes", "SparseTheme");
+            string defaultFolder = Path.Combine(baseFolder, "themes", "default");
+            Directory.CreateDirectory(themeFolder);
+            Directory.CreateDirectory(defaultFolder);
+            File.WriteAllText(Path.Combine(themeFolder, "courtroom_design.ini"), "courtroom = 0, 0, 714, 668");
+
+            // What almost every real theme looks like: it sets the sizes and the body colour and leaves the
+            // name and timestamp colours to the default theme, which is the only one that defines them.
+            File.WriteAllText(Path.Combine(themeFolder, "courtroom_fonts.ini"), string.Join("\n", new[]
+            {
+                "ic_chatlog = 10",
+                "ic_chatlog_color = 252, 235, 166"
+            }));
+            File.WriteAllText(Path.Combine(defaultFolder, "courtroom_fonts.ini"), string.Join("\n", new[]
+            {
+                "ic_chatlog = 9",
+                "ic_chatlog_color = 255, 255, 255",
+                "ic_chatlog_showname_color = 225, 225, 225",
+                "ic_chatlog_selfname_color = 200, 255, 255",
+                "ic_chatlog_selftimestamp_color = 100, 128, 128"
+            }));
+
+            List<string> originalBaseFolders = Globals.BaseFolders?.ToList() ?? new List<string>();
+            try
+            {
+                Globals.BaseFolders = new List<string> { baseFolder };
+                OceanyaThemeLayoutState layout = new OceanyaThemeLayoutState();
+                Ao2ThemeLayoutImporter.ApplyThemeAppearance("SparseTheme", layout, 714, 668);
+
+                // AO2 resolves each key through the theme chain, so the theme's own value wins per key and
+                // the rest come from the default theme - not from our built-in colours.
+                Assert.That(layout.Panels["ic_log"].TextColor, Is.EqualTo("#FFFCEBA6"));
+                Assert.That(layout.Panels["ic_log"].SenderColor, Is.EqualTo("#FFE1E1E1"));
+                Assert.That(layout.Panels["ic_log"].SelfNameColor, Is.EqualTo("#FFC8FFFF"));
+                Assert.That(layout.Panels["ic_log"].TimestampColor, Is.EqualTo("#FF648080"));
+                Assert.That(layout.Panels["ic_log"].FontSize, Is.EqualTo(13.33).Within(0.01));
+            }
+            finally
+            {
+                Globals.BaseFolders = originalBaseFolders;
+                Directory.Delete(baseFolder, recursive: true);
+            }
         }
 
         [Test]

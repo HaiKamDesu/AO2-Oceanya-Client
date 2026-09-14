@@ -179,6 +179,14 @@ namespace OceanyaClient
         private static readonly TimeSpan PendingAiOriginRetention = TimeSpan.FromMinutes(2);
         private const int WmGetMinMaxInfo = 0x0024;
         private const int WmMouseActivate = 0x0021;
+        private const int WmShowWindow = 0x0018;
+        /// <summary>Reentrancy guard for <see cref="ReassertViewportPreviewShellVisibility"/>.</summary>
+        private bool isReassertingViewportPreviewShellVisibility;
+        /// <summary>Debounce before a background asset refresh rebuilds the live UI.</summary>
+        private const int BackgroundAssetRefreshUiDebounceMilliseconds = 600;
+        private DispatcherTimer? backgroundAssetRefreshUiTimer;
+        private const int WmStyleChanged = 0x007D;
+        private const int WmDpiChanged = 0x02E0;
         private const int WmSizing = 0x0214;
         private const double MinimumViewportContentWidth = 160;
         private const double MinimumViewportContentHeight = 120;
@@ -261,13 +269,20 @@ namespace OceanyaClient
             this.aiModeEnabled = aiModeEnabled;
             InitializeComponent();
             AdoptIcSettingsPlaceableControls();
+
+            // Panel artwork and colours are applied on deferred callbacks, so the very first frame would
+            // otherwise show the stock layout before the theme lands on it. The surface stays hidden until
+            // that first pass has run - the launch wait form is still up, so nothing flashes.
+            MainCanvas.Visibility = Visibility.Hidden;
             ApplyPanelCatalogPlacements();
+            RevealSurfaceAfterFirstLayout();
             StartupTimingLogger.Log("main_window_initializecomponent_end");
             InitializeClientsHeaderContextMenu();
             Title = aiModeEnabled ? "Oceanya Online - AO2 AI Bot" : "Oceanya Online";
             Icon = new BitmapImage(new Uri("pack://application:,,,/OceanyaClient;component/Resources/OceanyaO.ico"));
             SourceInitialized += MainWindow_SourceInitialized;
             Closed += MainWindow_Closed;
+            ClientAssetRefreshService.AssetsRefreshed += OnAssetsRefreshedInBackground;
             Loaded += MainWindow_Loaded;
             AddHandler(Keyboard.GotKeyboardFocusEvent, new KeyboardFocusChangedEventHandler(MainWindow_GotKeyboardFocus), true);
             AddHandler(Mouse.PreviewMouseDownEvent, new MouseButtonEventHandler(MainWindow_PreviewMouseDown), true);
@@ -527,22 +542,13 @@ namespace OceanyaClient
             {
                 shoutSelection.ClearSelection();
             };
-            ICMessageSettingsControl.OnRefreshCharacterRequested += async characterName =>
-            {
-                await RefreshCharacterAssetsAsync(characterName, refreshAllCharacters: false, refreshAllAssets: false);
-            };
-            ICMessageSettingsControl.OnRefreshBackgroundRequested += async backgroundName =>
-            {
-                await RefreshBackgroundAssetsAsync(backgroundName);
-            };
-            ICMessageSettingsControl.OnRefreshAllAssetsRequested += async () =>
-            {
-                await RefreshCharacterAssetsAsync(null, refreshAllCharacters: false, refreshAllAssets: true);
-            };
-            ICMessageSettingsControl.OnRefreshAllCharactersRequested += async () =>
-            {
-                await RefreshCharacterAssetsAsync(null, refreshAllCharacters: true, refreshAllAssets: false);
-            };
+            ICMessageSettingsControl.OnRefreshCharacterRequested += characterName =>
+                RefreshCharacterAssetsAsync(characterName, refreshAllCharacters: false, refreshAllAssets: false);
+            ICMessageSettingsControl.OnRefreshBackgroundRequested += RefreshBackgroundAssetsAsync;
+            ICMessageSettingsControl.OnRefreshAllAssetsRequested += () =>
+                RefreshCharacterAssetsAsync(null, refreshAllCharacters: false, refreshAllAssets: true);
+            ICMessageSettingsControl.OnRefreshAllCharactersRequested += () =>
+                RefreshCharacterAssetsAsync(null, refreshAllCharacters: true, refreshAllAssets: false);
             ICMessageSettingsControl.OnNewCharacterFolderRequested += async () =>
             {
                 await OpenNewCharacterInEditorAsync();
@@ -750,6 +756,7 @@ namespace OceanyaClient
             OceanyaPanelLayout.ApplyLayout(panels, SaveFile.Data.OceanyaThemeLayout);
             OceanyaPanelEditModeController.ApplyHiddenPanels(panels, SaveFile.Data.OceanyaThemeLayout);
             ApplySurfaceSizeFromLayout();
+            ApplyLogThemeColors();
             // Applied after layout so the panel hosts and the buttons swap in the right order.
             Dispatcher.BeginInvoke(new Action(() =>
             {
@@ -855,9 +862,57 @@ namespace OceanyaClient
             ApplyViewportRenderInPanel();
             ApplyListRenderInPanel();
             ApplyConditionalPanelVisibility();
+            ApplyLogThemeColors();
             RefreshHealthBars();
             ApplyHostedListCompactMode(MusicListPopupSurface);
             RestoreMainWindowForegroundIfOwned();
+        }
+
+        /// <summary>
+        /// Shows the surface once the first layout and styling pass has been applied.
+        /// </summary>
+        /// <remarks>
+        /// Queued at the same priority as the styling callbacks and after them, so it runs once they have
+        /// all had their turn.
+        /// </remarks>
+        private void RevealSurfaceAfterFirstLayout()
+        {
+            Dispatcher.BeginInvoke(
+                DispatcherPriority.Loaded,
+                new Action(() => MainCanvas.Visibility = Visibility.Visible));
+        }
+
+        /// <summary>
+        /// Hands each log the colours its panel carries.
+        /// </summary>
+        /// <remarks>
+        /// The logs write their runs with explicit brushes, so a theme colour cannot reach them through an
+        /// inherited Foreground - it has to be pushed in. An empty layout hands them nothing, which is what
+        /// makes a reset restore the built-in colours.
+        /// </remarks>
+        private void ApplyLogThemeColors()
+        {
+            IcLog.LogControl.SetThemeColors(BuildLogThemeColors(OceanyaPanelCatalog.IcLogPanelId));
+            OocLog.LogControl.SetThemeColors(BuildLogThemeColors(OceanyaPanelCatalog.OocChatPanelId));
+        }
+
+        private static LogThemeColors? BuildLogThemeColors(string panelId)
+        {
+            if (SaveFile.Data.OceanyaThemeLayout?.Panels == null
+                || !SaveFile.Data.OceanyaThemeLayout.Panels.TryGetValue(panelId, out OceanyaPanelPlacementState? state)
+                || state == null)
+            {
+                return null;
+            }
+
+            return new LogThemeColors
+            {
+                Text = OceanyaPanelStyleApplier.TryParseBrush(state.TextColor),
+                SenderName = OceanyaPanelStyleApplier.TryParseBrush(state.SenderColor),
+                ServerName = OceanyaPanelStyleApplier.TryParseBrush(state.ServerNameColor),
+                SelfName = OceanyaPanelStyleApplier.TryParseBrush(state.SelfNameColor),
+                Timestamp = OceanyaPanelStyleApplier.TryParseBrush(state.TimestampColor)
+            };
         }
 
         /// <summary>
@@ -1479,10 +1534,14 @@ namespace OceanyaClient
         private void UpdateJudgeControlVisibility()
         {
             AOClient? profileClient = currentClient;
-            string position = profileClient?.curPos ?? string.Empty;
+            AOClient? networkClient = GetTargetClientForNetwork(profileClient);
+
+            // AO2 tests the CURRENT OR DEFAULT side, so a character whose own side is a judge position gets
+            // the controls without having to pick it from the dropdown.
+            string position = profileClient?.CurrentOrDefaultSide ?? string.Empty;
             if (string.IsNullOrWhiteSpace(position))
             {
-                position = GetTargetClientForNetwork(profileClient)?.curPos ?? string.Empty;
+                position = networkClient?.CurrentOrDefaultSide ?? string.Empty;
             }
 
             AOBot_Testing.Structures.Background? background = string.IsNullOrWhiteSpace(profileClient?.curBG)
@@ -1492,6 +1551,14 @@ namespace OceanyaClient
                 position.Trim(),
                 "jud",
                 StringComparison.OrdinalIgnoreCase);
+
+            // A server can override the whole thing with JD#: -1 hands the decision back to us, 0 hides the
+            // controls outright, 1 shows them wherever you are standing.
+            int serverState = networkClient?.JudgeControlsState ?? AOClient.JudgeControlsFollowPosition;
+            if (serverState != AOClient.JudgeControlsFollowPosition)
+            {
+                isJudge = serverState == 1;
+            }
 
             foreach (string panelId in JudgeButtonPanelIds)
             {
@@ -2707,6 +2774,8 @@ namespace OceanyaClient
 
         private void MainWindow_Closed(object? sender, EventArgs e)
         {
+            ClientAssetRefreshService.AssetsRefreshed -= OnAssetsRefreshedInBackground;
+            StopBackgroundAssetRefreshUiTimer();
             StopViewportTaskbarPreviewRefreshTimer();
             StopViewportAltTabFocusRedirectTimer();
             StopViewportAltTabExitPreparationTimer(restoreNoActivate: false);
@@ -2732,6 +2801,11 @@ namespace OceanyaClient
             IntPtr lParam,
             ref bool handled)
         {
+            if (message == WmStyleChanged || message == WmShowWindow || message == WmDpiChanged)
+            {
+                ReassertViewportPreviewShellVisibility();
+            }
+
             if (!IsViewportUsingWindowsPreview())
             {
                 return IntPtr.Zero;
@@ -5077,6 +5151,12 @@ namespace OceanyaClient
 
         private async Task RefreshLocalMusicAssetsAndRefreshAsync()
         {
+            // Measured at 4.2 seconds of recursive disk scanning for 4448 tracks, kicked off from the
+            // snapshot restore's SelectClient - i.e. straight into the server connect's disk time. Nothing
+            // needs it until the user opens the music list, so it waits for the launch-critical path the
+            // same way the asset scan does.
+            await ClientAssetRefreshService.WaitForStartupCriticalPathAsync(120000);
+
             var scanSw = Stopwatch.StartNew();
             IReadOnlyList<MusicAssetEntry> assets;
             try
@@ -5284,7 +5364,8 @@ namespace OceanyaClient
                     "Courtroom 2",
                     "Detention Center"
                 });
-            singleInternalClient.ApplyCharacterAvailabilityForTests(CharacterFolder.FullList.Select(character => character.Name));
+            singleInternalClient.ApplyCharacterAvailabilityForTests(
+                CharacterFolder.Index.Select(character => character.Name));
         }
 
         private void InitializeDreddFeatureUi()
@@ -5997,6 +6078,8 @@ namespace OceanyaClient
             // a profile - so the health bars have to listen here or they never repaint.
             singleInternalClient.OnHealthChanged += (_, _) => Dispatcher.BeginInvoke(new Action(RefreshHealthBars));
             singleInternalClient.OnSideChange += (_) => Dispatcher.BeginInvoke(new Action(UpdateJudgeControlVisibility));
+            singleInternalClient.OnJudgeControlsStateChanged += (_) =>
+                Dispatcher.BeginInvoke(new Action(UpdateJudgeControlVisibility));
 
             singleInternalClient.OnICMessageReceived += (ICMessage icMessage) =>
             {
@@ -6233,8 +6316,7 @@ namespace OceanyaClient
                 return;
             }
 
-            if (CharacterFolder.FullList.Any(folder =>
-                    string.Equals(folder.Name, charName, StringComparison.OrdinalIgnoreCase)))
+            if (CharacterFolder.Exists(charName))
             {
                 return;
             }
@@ -6406,15 +6488,27 @@ namespace OceanyaClient
                     handshakeGreetingTimeoutMs: 2000);
                 ao2TextLogWriter.RefreshSession();
             }
-            catch (TimeoutException ex) when (IsHandshakeTimeout(ex))
+            catch (Exception ex) when (ex is ServerRefusedConnectionException || (ex is TimeoutException && IsHandshakeTimeout(ex)))
             {
-                StartupTimingLogger.Log("connect_handshake_timeout_retry", $"name={bot.clientName}, reason={ex.Message}");
+                // Two different failures share one recovery. A handshake TIMEOUT is a socket that never
+                // greeted us. A ServerRefusedConnectionException is the server explicitly saying no (rate
+                // limit, ban, full) - it arrives immediately instead of after the timeout, which is the
+                // point: the retry below used to cost an extra 4.1s of dead waiting for a packet the
+                // server had already told us would never arrive.
+                bool wasRefused = ex is ServerRefusedConnectionException;
+                StartupTimingLogger.Log(
+                    wasRefused ? "connect_refused_retry" : "connect_handshake_timeout_retry",
+                    $"name={bot.clientName}, reason={ex.Message}");
                 CustomConsole.Warning(
-                    $"Retrying client connection after handshake timeout for \"{bot.clientName}\".",
+                    wasRefused
+                        ? $"Server refused the connection for \"{bot.clientName}\" ({ex.Message}); retrying."
+                        : $"Retrying client connection after handshake timeout for \"{bot.clientName}\".",
                     category: CustomConsole.LogCategory.System);
                 if (WaitForm.Showing)
                 {
-                    WaitForm.SetSubtitle("Server didn't respond yet — retrying connection...");
+                    WaitForm.SetSubtitle(wasRefused
+                        ? "Server refused the connection — retrying..."
+                        : "Server didn't respond yet — retrying connection...");
                 }
 
                 await bot.DisconnectWebsocket();
@@ -7144,8 +7238,7 @@ namespace OceanyaClient
                 && serverAvailability.TryGetValue(requestedPuppet, out bool isAvailable)
                 && isAvailable
                 && !reservedPuppets.Contains(requestedPuppet)
-                && CharacterFolder.FullList.Any(character =>
-                    string.Equals(character.Name, requestedPuppet, StringComparison.OrdinalIgnoreCase));
+                && CharacterFolder.Exists(requestedPuppet);
         }
 
         private static SnapshotPuppetConflictReason GetSnapshotPuppetConflictReason(
@@ -7173,8 +7266,7 @@ namespace OceanyaClient
                 return SnapshotPuppetConflictReason.ReservedBySnapshot;
             }
 
-            bool hasMatchingLocalFolder = CharacterFolder.FullList.Any(character =>
-                string.Equals(character.Name, requestedPuppet, StringComparison.OrdinalIgnoreCase));
+            bool hasMatchingLocalFolder = CharacterFolder.Exists(requestedPuppet);
             return hasMatchingLocalFolder
                 ? SnapshotPuppetConflictReason.Taken
                 : SnapshotPuppetConflictReason.MissingLocal;
@@ -7351,6 +7443,7 @@ namespace OceanyaClient
 
             // Multi-client mode: each profile owns its own connection, so the area state arrives here.
             bot.OnHealthChanged += (_, _) => Dispatcher.BeginInvoke(new Action(RefreshHealthBars));
+            bot.OnJudgeControlsStateChanged += (_) => Dispatcher.BeginInvoke(new Action(UpdateJudgeControlVisibility));
 
             bot.OnICMessageReceived += (ICMessage icMessage) =>
             {
@@ -7460,9 +7553,9 @@ namespace OceanyaClient
                     {
                         bot.SetCharacter(singleInternalClient.currentINI);
                     }
-                    else if (CharacterFolder.FullList.Any())
+                    else if (CharacterFolder.Index.Count > 0)
                     {
-                        bot.SetCharacter(CharacterFolder.FullList.First());
+                        bot.SetCharacter(CharacterFolder.Get(CharacterFolder.Index[0]));
                     }
 
                     if (singleInternalClient != null)
@@ -7548,9 +7641,7 @@ namespace OceanyaClient
                         return;
                     }
 
-                    CharacterFolder? localCharacter = CharacterFolder.FullList.FirstOrDefault(character =>
-                        string.Equals(character.Name, puppetName, StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(character.configINI?.Name, puppetName, StringComparison.OrdinalIgnoreCase));
+                    CharacterFolder? localCharacter = CharacterFolder.GetByNameOrShowName(puppetName);
                     if (localCharacter == null)
                     {
                         return;
@@ -7573,9 +7664,7 @@ namespace OceanyaClient
                     string visibleName = string.IsNullOrWhiteSpace(puppetName) ? "None" : puppetName.Trim();
                     setCharacterToIniPuppet.Header = $"Set character to INIPuppet ({visibleName})";
                     setCharacterToIniPuppet.IsEnabled = !string.IsNullOrWhiteSpace(puppetName)
-                        && CharacterFolder.FullList.Any(character =>
-                            string.Equals(character.Name, puppetName, StringComparison.OrdinalIgnoreCase)
-                            || string.Equals(character.configINI?.Name, puppetName, StringComparison.OrdinalIgnoreCase));
+                        && CharacterFolder.ExistsByNameOrShowName(puppetName);
                 };
 
                 ContextMenuSectionHelper.AddHeader(contextMenu, "Order", addLeadingSeparator: true);
@@ -8939,6 +9028,11 @@ namespace OceanyaClient
 
             MarkViewportAltTabKeyIfNeeded(message, wParam);
 
+            if (message == WmStyleChanged || message == WmShowWindow || message == WmDpiChanged)
+            {
+                ReassertViewportPreviewShellVisibility();
+            }
+
             if (message == WmGetMinMaxInfo)
             {
                 ApplyViewportMinMaxInfo(lParam, viewportWindow);
@@ -9093,6 +9187,48 @@ namespace OceanyaClient
             finally
             {
                 isSynchronizingWindowState = false;
+            }
+        }
+
+        /// <summary>
+        /// Re-applies only the taskbar/alt-tab window styles for the current viewport-preview mode.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="ApplyViewportTaskbarPriority"/> runs on discrete user actions, but WPF re-asserts its
+        /// own extended styles whenever the HWND state changes underneath it (minimize/restore, a monitor
+        /// or DPI move, the <see cref="Window.ShowInTaskbar"/> setter's internal hide/show). That wipes the
+        /// manual WS_EX_TOOLWINDOW bit and the main window pops back into the taskbar next to the viewport,
+        /// which the user could only fix by toggling the setting off and on. This runs from the window
+        /// procedures on exactly those events. It is style-only and idempotent - no owner changes, no
+        /// timers, no focus work - and <see cref="SetWindowShellVisibility"/> is a no-op when the styles
+        /// already match, so it cannot recurse through WM_STYLECHANGED.
+        /// </remarks>
+        private void ReassertViewportPreviewShellVisibility()
+        {
+            if (isReassertingViewportPreviewShellVisibility)
+            {
+                return;
+            }
+
+            bool useViewport = IsViewportUsingWindowsPreview();
+            Window? hostWindow = HostWindow ?? Window.GetWindow(this) ?? Application.Current.MainWindow;
+
+            isReassertingViewportPreviewShellVisibility = true;
+            try
+            {
+                if (viewportWindow != null)
+                {
+                    SetWindowShellVisibility(viewportWindow, forceTaskbar: useViewport, showInAltTab: useViewport);
+                }
+
+                if (hostWindow != null)
+                {
+                    SetWindowShellVisibility(hostWindow, forceTaskbar: !useViewport, showInAltTab: !useViewport);
+                }
+            }
+            finally
+            {
+                isReassertingViewportPreviewShellVisibility = false;
             }
         }
 
@@ -11033,15 +11169,75 @@ namespace OceanyaClient
             string targetDirectory = item.DirectoryPath?.Trim() ?? string.Empty;
             string targetName = item.Name?.Trim() ?? string.Empty;
 
-            CharacterFolder? byDirectory = CharacterFolder.FullList.FirstOrDefault(character =>
-                string.Equals(character.DirectoryPath, targetDirectory, StringComparison.OrdinalIgnoreCase));
+            CharacterFolder? byDirectory = CharacterFolder.GetByDirectory(targetDirectory);
             if (byDirectory != null)
             {
                 return byDirectory;
             }
 
-            return CharacterFolder.FullList.FirstOrDefault(character =>
-                string.Equals(character.Name, targetName, StringComparison.OrdinalIgnoreCase));
+            return CharacterFolder.GetByName(targetName);
+        }
+
+        /// <summary>
+        /// Folds a background asset refresh (live watcher, startup scan, Drive sync) into the live UI.
+        /// </summary>
+        /// <remarks>
+        /// Fires on a background thread, so this only marshals and debounces. The debounce matters because
+        /// a large drop-in produces several refreshes in a row and the actual UI rebuild
+        /// (<see cref="OnAssetsRefreshedFromVisualizer"/>) re-runs <see cref="SelectClient"/>, which is the
+        /// heaviest thing on the switch path.
+        /// </remarks>
+        private void OnAssetsRefreshedInBackground(AssetRefreshCompletedEventArgs args)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.BeginInvoke(
+                    new Action(() => OnAssetsRefreshedInBackground(args)),
+                    DispatcherPriority.Background);
+                return;
+            }
+
+            if (isMainWindowClosing)
+            {
+                return;
+            }
+
+            backgroundAssetRefreshUiTimer ??= CreateBackgroundAssetRefreshUiTimer();
+            backgroundAssetRefreshUiTimer.Stop();
+            backgroundAssetRefreshUiTimer.Start();
+        }
+
+        private DispatcherTimer CreateBackgroundAssetRefreshUiTimer()
+        {
+            DispatcherTimer timer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromMilliseconds(BackgroundAssetRefreshUiDebounceMilliseconds)
+            };
+            timer.Tick += (_, _) =>
+            {
+                timer.Stop();
+                if (isMainWindowClosing)
+                {
+                    return;
+                }
+
+                try
+                {
+                    RebindClientsToRefreshedCharacters();
+                    OnAssetsRefreshedFromVisualizer();
+                }
+                catch (Exception ex)
+                {
+                    CustomConsole.Error("Applying a background asset refresh to the UI failed.", ex);
+                }
+            };
+            return timer;
+        }
+
+        private void StopBackgroundAssetRefreshUiTimer()
+        {
+            backgroundAssetRefreshUiTimer?.Stop();
+            backgroundAssetRefreshUiTimer = null;
         }
 
         private void OnAssetsRefreshedFromVisualizer()
@@ -11066,25 +11262,34 @@ namespace OceanyaClient
                 return;
             }
 
-            if (refreshAllAssets)
-            {
-                await ClientAssetRefreshService.RefreshCharactersAndBackgroundsAsync(owner);
-            }
-            else if (refreshAllCharacters)
-            {
-                await ClientAssetRefreshService.RefreshAllCharactersAsync(owner);
-            }
-            else if (!string.IsNullOrWhiteSpace(characterName))
-            {
-                await ClientAssetRefreshService.RefreshCharacterAsync(owner, characterName);
-            }
-            else
+            // Whatever the refresh managed to complete still has to be bound into the live clients and UI,
+            // so the rebind runs even when part of the refresh reported a failure; the failure is then
+            // rethrown for the caller (the context menu) to show.
+            if (!refreshAllAssets && !refreshAllCharacters && string.IsNullOrWhiteSpace(characterName))
             {
                 return;
             }
 
-            RebindClientsToRefreshedCharacters();
-            OnAssetsRefreshedFromVisualizer();
+            try
+            {
+                if (refreshAllAssets)
+                {
+                    await ClientAssetRefreshService.RefreshCharactersAndBackgroundsAsync(owner);
+                }
+                else if (refreshAllCharacters)
+                {
+                    await ClientAssetRefreshService.RefreshAllCharactersAsync(owner);
+                }
+                else
+                {
+                    await ClientAssetRefreshService.RefreshCharacterAsync(owner, characterName!);
+                }
+            }
+            finally
+            {
+                RebindClientsToRefreshedCharacters();
+                OnAssetsRefreshedFromVisualizer();
+            }
         }
 
         private async Task RefreshBackgroundAssetsAsync(string? backgroundName)
@@ -11235,8 +11440,9 @@ namespace OceanyaClient
                 .Where(client => IsCharacterFolderPath(client.currentINI?.DirectoryPath, normalizedTarget))
                 .ToList();
 
-            CharacterFolder? replacement = CharacterFolder.FullList.FirstOrDefault(character =>
-                !IsCharacterFolderPath(character.DirectoryPath, normalizedTarget));
+            CharacterFolder? replacement = CharacterFolder.Get(
+                CharacterFolder.Index.FirstOrDefault(character =>
+                    !IsCharacterFolderPath(character.DirectoryPath, normalizedTarget)));
 
             foreach (AOClient client in clientsToUpdate)
             {
@@ -11330,8 +11536,7 @@ namespace OceanyaClient
 
         private void OpenCharacterInEmoteVisualizer(string characterDirectory)
         {
-            CharacterFolder? character = CharacterFolder.FullList.FirstOrDefault(folder =>
-                string.Equals(folder.DirectoryPath, characterDirectory, StringComparison.OrdinalIgnoreCase));
+            CharacterFolder? character = CharacterFolder.GetByDirectory(characterDirectory);
             if (character == null)
             {
                 return;
@@ -11361,10 +11566,9 @@ namespace OceanyaClient
                     continue;
                 }
 
-                CharacterFolder? refreshedCharacter = CharacterFolder.FullList.FirstOrDefault(character =>
-                    string.Equals(character.DirectoryPath, currentCharacter.DirectoryPath, StringComparison.OrdinalIgnoreCase))
-                    ?? CharacterFolder.FullList.FirstOrDefault(character =>
-                        string.Equals(character.Name, currentCharacter.Name, StringComparison.OrdinalIgnoreCase));
+                CharacterFolder? refreshedCharacter =
+                    CharacterFolder.GetByDirectory(currentCharacter.DirectoryPath)
+                    ?? CharacterFolder.GetByName(currentCharacter.Name);
                 if (refreshedCharacter == null)
                 {
                     continue;

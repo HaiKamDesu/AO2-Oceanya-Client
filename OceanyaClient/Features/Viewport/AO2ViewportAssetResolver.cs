@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -60,6 +60,24 @@ namespace OceanyaClient.Features.Viewport
         private static readonly Dictionary<string, CachedImageSize> ImageSizeCache = new(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, ParsedDesignIni> DesignIniCache = new(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, (BackgroundPositionResolution Resolution, DateTime DesignIniWriteTimeUtc)> PositionResolutionCache = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Reports viewport resolver cache occupancy for the periodic memory sample.</summary>
+        /// <remarks>
+        /// These caches are UI-thread-only, so the sampler just reads the counts defensively rather than
+        /// introducing a lock on the render path for diagnostics.
+        /// </remarks>
+        public static string GetCacheDiagnostics()
+        {
+            try
+            {
+                return $"imageSizeCache={ImageSizeCache.Count} designIniCache={DesignIniCache.Count}"
+                    + $" positionCache={PositionResolutionCache.Count}";
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
 
         private static readonly Dictionary<string, string> LegacyPositionImageNames = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -1086,10 +1104,11 @@ namespace OceanyaClient.Features.Viewport
                 return null;
             }
 
-            return CharacterFolder.FullList.FirstOrDefault(character =>
-                string.Equals(character.Name, normalized, StringComparison.OrdinalIgnoreCase))
-                ?? CharacterFolder.FullList.FirstOrDefault(character =>
-                    string.Equals(character.configINI.ShowName, normalized, StringComparison.OrdinalIgnoreCase));
+            // The on-demand probe is what makes a character that appeared after the last scan render on the
+            // very next message instead of after a manual refresh. It is negative-cached, so the common
+            // case (a character the user genuinely does not have) costs nothing per message.
+            return CharacterFolder.GetByNameOrShowName(normalized)
+                ?? CharacterFolder.ResolveOnDemand(normalized);
         }
 
         /// <summary>

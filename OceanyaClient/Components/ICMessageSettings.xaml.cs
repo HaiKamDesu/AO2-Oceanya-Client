@@ -50,10 +50,13 @@ namespace OceanyaClient.Components
         public bool stickyEffects;
 
         public Action<string>? OnSendICMessage;
-        public Action<string>? OnRefreshCharacterRequested;
-        public Action<string>? OnRefreshBackgroundRequested;
-        public Action? OnRefreshAllAssetsRequested;
-        public Action? OnRefreshAllCharactersRequested;
+        // These must stay Task-returning: the context menu awaits them inside its own try/catch, so an
+        // asset-refresh failure surfaces as a message box. Making them Action turns the handler into an
+        // async void and any refresh exception becomes an unhandled dispatcher exception (app crash).
+        public Func<string, Task>? OnRefreshCharacterRequested;
+        public Func<string, Task>? OnRefreshBackgroundRequested;
+        public Func<Task>? OnRefreshAllAssetsRequested;
+        public Func<Task>? OnRefreshAllCharactersRequested;
         public Action? OnNewCharacterFolderRequested;
         public Action<string>? OnOpenInCharacterEditorRequested;
         public Action<string>? OnDuplicateInCharacterEditorRequested;
@@ -146,8 +149,9 @@ namespace OceanyaClient.Components
 
             #region Char dropdown
             var alphabeticalCharacters = GetAlphabeticalCharacterFolders().ToList();
-            StartupTimingLogger.Log("ic_settings_character_fulllist_touched",
-                $"cacheHit={CharacterFolder.LastFullListWasCacheHit}, loadMs={CharacterFolder.LastFullListLoadMs}, "
+            StartupTimingLogger.Log("ic_settings_character_index_touched",
+                $"alreadyResident={CharacterFolder.LastIndexAccessWasAlreadyResident}, "
+                + $"cacheHit={CharacterFolder.LastFullListWasCacheHit}, loadMs={CharacterFolder.LastFullListLoadMs}, "
                 + $"fileBytes={CharacterFolder.LastFullListCacheFileBytes}, fileReadMs={CharacterFolder.LastFullListFileReadMs}, "
                 + $"deserializeMs={CharacterFolder.LastFullListDeserializeMs}, "
                 + $"compatibilityCheckMs={CharacterFolder.LastFullListCompatibilityCheckMs}, "
@@ -208,9 +212,13 @@ namespace OceanyaClient.Components
             DropdownDefaultStateChanged?.Invoke();
         }
 
-        private static IEnumerable<CharacterFolder> GetAlphabeticalCharacterFolders()
+        /// <summary>
+        /// The character dropdown needs only names and icons, so it reads the index and never forces a
+        /// parse of the whole install.
+        /// </summary>
+        private static IEnumerable<CharacterIndexEntry> GetAlphabeticalCharacterFolders()
         {
-            return CharacterFolder.FullList
+            return CharacterFolder.Index
                 .OrderBy(character => character.Name, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(character => character.DirectoryPath, StringComparer.OrdinalIgnoreCase);
         }
@@ -238,7 +246,7 @@ namespace OceanyaClient.Components
             if (serverCharacterNames != null && WebAssetService.IsActive)
             {
                 HashSet<string> local = new HashSet<string>(
-                    CharacterFolder.FullList.Select(folder => folder.Name),
+                    CharacterFolder.Index.Select(folder => folder.Name),
                     StringComparer.OrdinalIgnoreCase);
 
                 foreach (string name in serverCharacterNames)
@@ -262,7 +270,7 @@ namespace OceanyaClient.Components
             System.Diagnostics.Stopwatch stopwatch = System.Diagnostics.Stopwatch.StartNew();
             List<ImageComboBox.DropdownItem> items = new List<ImageComboBox.DropdownItem>();
 
-            foreach (CharacterFolder ini in GetAlphabeticalCharacterFolders())
+            foreach (CharacterIndexEntry ini in GetAlphabeticalCharacterFolders())
             {
                 items.Add(new ImageComboBox.DropdownItem
                 {
@@ -406,23 +414,15 @@ namespace OceanyaClient.Components
                 HasReadme = !string.IsNullOrWhiteSpace(readmePath),
                 RefreshCharacterAsync = () =>
                 {
-                    if (!string.IsNullOrWhiteSpace(characterName))
+                    if (string.IsNullOrWhiteSpace(characterName))
                     {
-                        OnRefreshCharacterRequested?.Invoke(characterName);
+                        return Task.CompletedTask;
                     }
 
-                    return Task.CompletedTask;
+                    return OnRefreshCharacterRequested?.Invoke(characterName) ?? Task.CompletedTask;
                 },
-                RefreshAllAssetsAsync = () =>
-                {
-                    OnRefreshAllAssetsRequested?.Invoke();
-                    return Task.CompletedTask;
-                },
-                RefreshAllCharactersAsync = () =>
-                {
-                    OnRefreshAllCharactersRequested?.Invoke();
-                    return Task.CompletedTask;
-                },
+                RefreshAllAssetsAsync = () => OnRefreshAllAssetsRequested?.Invoke() ?? Task.CompletedTask,
+                RefreshAllCharactersAsync = () => OnRefreshAllCharactersRequested?.Invoke() ?? Task.CompletedTask,
                 NewCharacterFolderAsync = () =>
                 {
                     OnNewCharacterFolderRequested?.Invoke();
@@ -475,12 +475,27 @@ namespace OceanyaClient.Components
             contextMenu.Items.Add(copyNameItem);
 
             MenuItem refreshBackgroundItem = new MenuItem();
-            refreshBackgroundItem.Click += (_, _) =>
+            refreshBackgroundItem.Click += async (_, _) =>
             {
                 string backgroundName = ResolveCurrentBackgroundName();
-                if (!string.IsNullOrWhiteSpace(backgroundName))
+                if (string.IsNullOrWhiteSpace(backgroundName) || OnRefreshBackgroundRequested == null)
                 {
-                    OnRefreshBackgroundRequested?.Invoke(backgroundName);
+                    return;
+                }
+
+                try
+                {
+                    await OnRefreshBackgroundRequested.Invoke(backgroundName);
+                }
+                catch (Exception ex)
+                {
+                    CustomConsole.Error("Background refresh from the IC context menu failed.", ex);
+                    OceanyaMessageBox.Show(
+                        Window.GetWindow(this),
+                        "The background could not be refreshed:\n" + ex.Message,
+                        "Refresh Background",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
                 }
             };
             contextMenu.Items.Add(refreshBackgroundItem);
@@ -717,7 +732,7 @@ namespace OceanyaClient.Components
             DropdownDefaultStateChanged?.Invoke();
             if (curClient == null) return;
 
-            var ini = CharacterFolder.FullList.FirstOrDefault(x => x.Name == iniName);
+            CharacterFolder? ini = CharacterFolder.GetByName(iniName);
             if (ini == null && WebAssetService.IsActive)
             {
                 // A server-only entry: fetch its char.ini, then finish the selection.
@@ -769,7 +784,7 @@ namespace OceanyaClient.Components
                 return;
             }
 
-            CharacterFolder? ini = CharacterFolder.FullList.FirstOrDefault(x => x.Name == iniName);
+            CharacterFolder? ini = CharacterFolder.GetByName(iniName);
             if (ini == null || curClient == null || curClient.currentINI == ini)
             {
                 return;
@@ -805,9 +820,9 @@ namespace OceanyaClient.Components
             // snapping back to the emote default.
             bool preservedPreanim = client.PreanimEnabled;
             CharacterFolder? iniToUse = client.currentINI;
-            if (iniToUse == null && CharacterFolder.FullList.Any())
+            if (iniToUse == null && CharacterFolder.Index.Count > 0)
             {
-                client.SetCharacter(CharacterFolder.FullList.First());
+                client.SetCharacter(CharacterFolder.Get(CharacterFolder.Index[0]));
                 iniToUse = client.currentINI;
             }
 
@@ -1066,6 +1081,72 @@ namespace OceanyaClient.Components
             new Dictionary<string, (DateTime, BitmapImage)>(StringComparer.OrdinalIgnoreCase);
         private const int EmoteButtonImageCacheLimit = 1500;
 
+        /// <summary>
+        /// Byte budget for cached button bitmaps.
+        /// </summary>
+        /// <remarks>
+        /// An entry limit says nothing about memory: button art is usually tiny but nothing stops a
+        /// character shipping full-size images as buttons, and decoded <c>BitmapImage</c> pixel buffers are
+        /// unmanaged, so the GC will not reclaim them under pressure.
+        /// </remarks>
+        private const long EmoteButtonImageCacheByteLimit = 64L * 1024 * 1024;
+
+        /// <summary>Insertion order of <see cref="EmoteButtonImageCache"/> keys, oldest first.</summary>
+        private static readonly LinkedList<string> EmoteButtonImageCacheOrder = new LinkedList<string>();
+
+        private static long emoteButtonImageCacheBytes;
+
+        /// <summary>Reports emote-button bitmap cache occupancy for the periodic memory sample.</summary>
+        public static string GetEmoteButtonImageCacheDiagnostics()
+        {
+            int entries;
+            long bytes;
+            lock (EmoteButtonImageCacheLock)
+            {
+                entries = EmoteButtonImageCache.Count;
+                bytes = emoteButtonImageCacheBytes;
+            }
+
+            return $"emoteButtonCacheEntries={entries}"
+                + $" emoteButtonCacheMB={bytes / (1024 * 1024)}/{EmoteButtonImageCacheByteLimit / (1024 * 1024)}";
+        }
+
+        /// <summary>Drops every cached emote-button bitmap.</summary>
+        public static void ClearEmoteButtonImageCache()
+        {
+            lock (EmoteButtonImageCacheLock)
+            {
+                EmoteButtonImageCache.Clear();
+                EmoteButtonImageCacheOrder.Clear();
+                emoteButtonImageCacheBytes = 0;
+            }
+        }
+
+        /// <summary>Removes one cached button bitmap and its byte/order bookkeeping. Caller holds the lock.</summary>
+        private static void RemoveEmoteButtonCacheEntryLocked(string cacheKey)
+        {
+            if (!EmoteButtonImageCache.TryGetValue(cacheKey, out (DateTime WriteUtc, BitmapImage Image) existing))
+            {
+                return;
+            }
+
+            EmoteButtonImageCache.Remove(cacheKey);
+            emoteButtonImageCacheBytes -= Ao2AnimationPreview.EstimateBitmapBytes(existing.Image);
+            if (emoteButtonImageCacheBytes < 0)
+            {
+                emoteButtonImageCacheBytes = 0;
+            }
+
+            for (LinkedListNode<string>? node = EmoteButtonImageCacheOrder.First; node != null; node = node.Next)
+            {
+                if (string.Equals(node.Value, cacheKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    EmoteButtonImageCacheOrder.Remove(node);
+                    break;
+                }
+            }
+        }
+
         private static BitmapImage GetCachedButtonImage(string cacheKey, string statPath, Func<BitmapImage> factory)
         {
             DateTime writeUtc;
@@ -1089,15 +1170,25 @@ namespace OceanyaClient.Components
 
             BitmapImage image = factory();
 
+            long imageBytes = Ao2AnimationPreview.EstimateBitmapBytes(image);
             lock (EmoteButtonImageCacheLock)
             {
+                RemoveEmoteButtonCacheEntryLocked(cacheKey);
                 EmoteButtonImageCache[cacheKey] = (writeUtc, image);
-                if (EmoteButtonImageCache.Count > EmoteButtonImageCacheLimit)
+                EmoteButtonImageCacheOrder.AddLast(cacheKey);
+                emoteButtonImageCacheBytes += imageBytes;
+
+                while (EmoteButtonImageCacheOrder.First != null
+                    && (EmoteButtonImageCache.Count > EmoteButtonImageCacheLimit
+                        || emoteButtonImageCacheBytes > EmoteButtonImageCacheByteLimit))
                 {
-                    foreach (string staleKey in EmoteButtonImageCache.Keys.Take(EmoteButtonImageCache.Count - EmoteButtonImageCacheLimit).ToList())
+                    string oldestKey = EmoteButtonImageCacheOrder.First.Value;
+                    if (string.Equals(oldestKey, cacheKey, StringComparison.OrdinalIgnoreCase))
                     {
-                        EmoteButtonImageCache.Remove(staleKey);
+                        break;
                     }
+
+                    RemoveEmoteButtonCacheEntryLocked(oldestKey);
                 }
             }
 

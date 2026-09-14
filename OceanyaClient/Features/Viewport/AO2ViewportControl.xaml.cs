@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -1028,8 +1028,10 @@ namespace OceanyaClient.Features.Viewport
             {
                 if (renderAudioEnabled)
                 {
+                    audioManager.IsMusicAudible = true;
                     audioManager.RefreshVolumes();
                 }
+
                 return;
             }
 
@@ -1037,7 +1039,10 @@ namespace OceanyaClient.Features.Viewport
             FlashOverlay.BeginAnimation(OpacityProperty, null);
             FlashOverlay.Visibility = Visibility.Collapsed;
             FlashOverlay.Opacity = 0;
-            audioManager.StopAll();
+            // Only the one-shot audio is stopped. Music is muted instead of stopped so switching profiles
+            // does not kill the room's song and make the next MC# restart it from the beginning.
+            audioManager.StopSfxAndBlips();
+            audioManager.IsMusicAudible = false;
         }
 
         private void OnIcActionReceived(string showName, string action, bool isSentFromSelf, ICMessage.TextColors textColor)
@@ -1046,6 +1051,9 @@ namespace OceanyaClient.Features.Viewport
 
         private void OnMusicChanged(string showName, string? songPath, bool loop, int channel, int effectFlags)
         {
+            // Music tracks the connection, not the pane's visibility: a hidden pane keeps its stream in
+            // sync (muted) so re-selecting its profile resumes mid-song instead of restarting. Only a pane
+            // with audio rendering switched off entirely (the picture-in-picture mirror) ignores music.
             if (channel != 0)
             {
                 if (actionFilter != null && !actionFilter(showName))
@@ -1055,11 +1063,12 @@ namespace OceanyaClient.Features.Viewport
 
                 Dispatcher.Invoke(() =>
                 {
-                    if (!ShouldPlayViewportAudio)
+                    if (!renderAudioEnabled)
                     {
                         return;
                     }
 
+                    audioManager.IsMusicAudible = IsVisible;
                     audioManager.PlayAmbientMusic(channel, songPath, loop, messageSourceClient?.ServerAssetUrl);
                 });
                 return;
@@ -1072,11 +1081,12 @@ namespace OceanyaClient.Features.Viewport
 
             Dispatcher.Invoke(() =>
             {
-                if (!ShouldPlayViewportAudio)
+                if (!renderAudioEnabled)
                 {
                     return;
                 }
 
+                audioManager.IsMusicAudible = IsVisible;
                 if (string.IsNullOrWhiteSpace(songPath))
                 {
                     audioManager.StopMusic(effectFlags);

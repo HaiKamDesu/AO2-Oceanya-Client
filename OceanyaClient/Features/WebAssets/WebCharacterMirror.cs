@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -92,9 +92,7 @@ namespace OceanyaClient.Features.WebAssets
         public static bool IsInstalledLocally(string characterName)
         {
             string trimmed = (characterName ?? string.Empty).Trim();
-            return trimmed.Length > 0
-                && CharacterFolder.FullList.Any(folder =>
-                    string.Equals(folder.Name, trimmed, StringComparison.OrdinalIgnoreCase));
+            return CharacterFolder.Exists(trimmed);
         }
 
         /// <summary>
@@ -104,7 +102,7 @@ namespace OceanyaClient.Features.WebAssets
         public static List<string> FindCharactersMissingLocally(IEnumerable<string> publishedNames)
         {
             HashSet<string> localNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (CharacterFolder folder in CharacterFolder.FullList)
+            foreach (CharacterIndexEntry folder in CharacterFolder.Index)
             {
                 if (!string.IsNullOrWhiteSpace(folder.Name))
                 {

@@ -1,4 +1,4 @@
-using AOBot_Testing.Agents;
+﻿using AOBot_Testing.Agents;
 using AOBot_Testing.Structures;
 
 namespace AO2AIBot.Controller
@@ -53,7 +53,7 @@ namespace AO2AIBot.Controller
                 Screenshake = profileClient.screenshake,
                 SelfOffsetHorizontal = profileClient.SelfOffset.Horizontal,
                 SelfOffsetVertical = profileClient.SelfOffset.Vertical,
-                AvailableCharacters = CharacterFolder.FullList
+                AvailableCharacters = CharacterFolder.Index
                     .Select(character => character.Name)
                     .Where(name => !string.IsNullOrWhiteSpace(name))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -150,6 +150,9 @@ namespace AO2AIBot.Controller
             Dictionary<string, IReadOnlyList<string>> result =
                 new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
 
+            // The AI prompt genuinely needs every character's emote names, so this is one of the few
+            // places that parses the whole install. The returned list is owned by this call and released
+            // when it goes out of scope, rather than being held resident the way the old cache was.
             foreach (CharacterFolder character in CharacterFolder.FullList)
             {
                 string characterName = character.Name?.Trim() ?? string.Empty;

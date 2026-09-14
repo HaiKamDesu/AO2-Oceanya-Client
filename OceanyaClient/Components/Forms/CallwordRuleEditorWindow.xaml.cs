@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -245,8 +245,7 @@ namespace OceanyaClient
         private void PopulateEmoteComboBox(string? characterName)
         {
             EmoteComboBox.Clear();
-            CharacterFolder? character = CharacterFolder.FullList.FirstOrDefault(folder =>
-                string.Equals(folder.Name, characterName?.Trim(), StringComparison.OrdinalIgnoreCase));
+            CharacterFolder? character = CharacterFolder.GetByName(characterName);
             if (character == null)
             {
                 return;
@@ -400,11 +399,12 @@ namespace OceanyaClient
 
         private static List<CharacterSelectorOption> BuildCharacterOptions()
         {
-            return CharacterFolder.FullList
+            // Name, showname, folder and icon all live in the index, so the picker never parses anything.
+            return CharacterFolder.Index
                 .OrderBy(character => character.Name, StringComparer.OrdinalIgnoreCase)
                 .Select(character => new CharacterSelectorOption(
                     character.Name,
-                    character.configINI.ShowName,
+                    character.ShowName,
                     character.DirectoryPath,
                     character.CharIconPath))
                 .ToList();

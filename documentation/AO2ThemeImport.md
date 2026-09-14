@@ -562,3 +562,69 @@ AO2 puts a small X to the left of the iniswap, sfx and pos dropdowns (`iniswap_r
 default** (`Courtroom::on_pos_dropdown_changed`); clicking it resets the dropdown. Those are
 `ic_combo_*_reset`, hidden by default like the rest of the optional widgets, and their visibility follows
 `ICMessageSettings.DropdownDefaultStateChanged`.
+
+## Log colours and backgrounds
+A log is more than one colour in AO2. `courtroom_fonts.ini` carries a body colour plus separate colours for
+names and timestamps, and `Courtroom::append_ic_text` / `append_server_chatmessage` paint each run with
+them:
+
+| AO2 key | Panel field | Used for |
+|---|---|---|
+| `ic_chatlog_color`, `server_chatlog_color` | `TextColor` | body text |
+| `ic_chatlog_showname_color`, `ms_chatlog_sender_color` | `SenderColor` | other people's names |
+| `server_chatlog_sender_color` | `ServerNameColor` | the name on a server message |
+| `ic_chatlog_selfname_color` | `SelfNameColor` | your own name |
+| `ic_chatlog_selftimestamp_color`, else `ic_chatlog_timestamp_color` | `TimestampColor` | the `[GM]` marker, which only appears on your own lines |
+
+**`courtroom_fonts.ini` is merged with the default theme per key**, because AO2 resolves each key through
+the theme chain. That matters more than it sounds: of the 61 themes in the reference install, 51 set
+`ic_chatlog_color` but only **two** set any of the name or timestamp colours - the default theme is where
+those live, so reading a single file left every other theme falling back to *our* colours instead of AO2's.
+
+AO2 picks an OOC name colour by **where the message came from**, not by which log it lands in: a plain
+player message carries colour flag `"0"` on its `CT#` packet and uses `ms_chatlog_sender_color`, while a
+server one carries `"1"` and uses `server_chatlog_sender_color` (`Courtroom::append_server_chatmessage`).
+
+Messages already in a log were written with the colours in force at the time, so each run carries its role
+in `Tag` (`LogRunRole`) and `LogRunRecolorer` repaints the whole backlog when the colours change - otherwise
+applying a theme leaves a log in two colour schemes at once. Clearing the colours repaints it back, which is
+what a reset does. IC message colours (green, red, blue) are tagged `None` and never repainted.
+
+Our logs write their runs with **explicit brushes**, so an inherited `Foreground` never reaches them - the
+colours are pushed in through `ICLog.SetThemeColors` / `OOCLog.SetThemeColors` by
+`MainWindow.ApplyLogThemeColors`. Every field is nullable and null means "keep the control's own colour",
+which is what makes a reset free: an empty layout hands the logs nothing.
+
+The IC message colours themselves (green, red, blue...) are deliberately **not** themed: those belong to
+the protocol, and AO2 keeps them in `chat_config.ini`, which the viewport already consumes.
+
+AO2's logs are transparent widgets with the courtroom art showing through, so an import clears the
+backgrounds our log panels paint. That has to reach whatever is **actually painting** - the log
+panels put their artwork on a Grid several levels down, behind the UserControl's own template border, so
+painting the control's brush (or the first container found) left the picture untouched and a theme asking
+for a transparent log got it anyway. Both that and the four colours are editable by hand: a static panel's
+font dialog carries them, along with a background image and its scaling.
+
+## The OOC chat keeps the whole chatlog
+A strip is only carved off the top of the chat when the header text actually sits there. When the theme
+puts that text somewhere else - GrayGarden draws its music name beside the realization button - the chat
+takes the entire `server_chatlog` rectangle, which is what AO2 does.
+
+## No flash before the theme lands
+Panel artwork and colours are applied on deferred callbacks, so the first frame would otherwise show the
+stock layout with the theme arriving on top of it. `MainWindow` keeps the surface hidden until that first
+pass has run (revealed by a callback queued after them, at the same priority), which happens while the
+launch wait form is still up.
+
+## Judge controls: the whole rule
+AO2 decides in two steps (`Courtroom::show_judge_controls`):
+
+1. The `JD#` packet is a server override - `1` shows the controls wherever you stand, `0` hides them, and
+   `-1` hands the decision back to the client.
+2. Otherwise it tests `current_or_default_side()` against the background's `judges=` list. **Current or
+   default**: a character whose own side is a judge position gets the controls without picking anything
+   from the dropdown.
+
+Both are implemented: `AOClient.JudgeControlsState` / `CurrentOrDefaultSide` and
+`MainWindow.UpdateJudgeControlVisibility`. Only the four verdict buttons and the four health steppers are
+affected; the bars stay visible everywhere.

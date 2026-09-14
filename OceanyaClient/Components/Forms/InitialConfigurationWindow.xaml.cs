@@ -1,6 +1,7 @@
 ﻿using Microsoft.Win32;
 using AOBot_Testing.Structures;
 using Common;
+using OceanyaClient.Features.Assets;
 using OceanyaClient.Features.Updates;
 using OceanyaClient.Features.Startup;
 using OceanyaClient.Utilities;
@@ -29,6 +30,12 @@ namespace OceanyaClient
         private const double CharacterViewerWindowHeight = 312;
         private static Func<string, string, MessageBoxButton, MessageBoxImage, MessageBoxResult>? testMessageBoxOverride = null;
         private static Func<Window, Task>? testRefreshCharactersAndBackgroundsAsyncOverride = null;
+
+        /// <summary>
+        /// Set when launch decided a full asset refresh is needed; consumed by the deferred post-launch
+        /// asset work so the scan never competes with window creation and the first server connect.
+        /// </summary>
+        private bool pendingStartupFullAssetRefresh;
         private static Func<Window, TargetedAssetRefreshPlan, Task>? testRefreshTargetedAssetsAsyncOverride = null;
 
         private ServerEndpointDefinition? selectedServer;
@@ -180,6 +187,11 @@ namespace OceanyaClient
                     }
                 }
 
+                // Re-arm the launch-critical gate: closing the GM window reopens this window in the same
+                // process, so a later launch must not inherit the previous launch's completed gate and
+                // start its deferred asset work straight into the new connect.
+                ClientAssetRefreshService.BeginStartupCriticalPath();
+
                 string forcedRefreshReason = await Task.Run(() =>
                 {
                     WaitForm.SetSubtitle("Loading configuration...");
@@ -203,7 +215,7 @@ namespace OceanyaClient
                             selectedFunctionality.Id,
                             StartupFunctionalityIds.CharacterDatabaseViewer,
                             StringComparison.OrdinalIgnoreCase)
-                        && CharacterFolder.FullList.Count == 0)
+                        && CharacterFolder.Index.Count == 0)
                     {
                         return "The character database viewer does not currently have a loaded character/background index.";
                     }
@@ -213,30 +225,10 @@ namespace OceanyaClient
                     return computedForcedRefreshReason;
                 });
 
-                bool shouldRefreshAssets = refreshRequested || !string.IsNullOrWhiteSpace(forcedRefreshReason);
-
-                if (OceanyaTestMode.Current.SkipAssetRefreshPrompts)
-                {
-                    shouldRefreshAssets = false;
-                    forcedRefreshReason = string.Empty;
-                }
-
-                if (!refreshRequested && !string.IsNullOrWhiteSpace(forcedRefreshReason))
-                {
-                    await CloseLaunchWaitFormAsync();
-
-                    MessageBoxResult refreshDecision = ShowMessageBox(
-                        BuildForcedRefreshPrompt(forcedRefreshReason),
-                        "Refresh Required",
-                        MessageBoxButton.YesNo,
-                        MessageBoxImage.Question);
-                    if (refreshDecision != MessageBoxResult.Yes)
-                    {
-                        return;
-                    }
-
-                    shouldRefreshAssets = true;
-                }
+                bool shouldRefreshAssets = ShouldRunStartupAssetRefresh(
+                    refreshRequested,
+                    forcedRefreshReason,
+                    OceanyaTestMode.Current.SkipAssetRefreshPrompts);
 
                 if (selectedFunctionality.RequiresServerEndpoint)
                 {
@@ -252,14 +244,20 @@ namespace OceanyaClient
 
                 if (shouldRefreshAssets)
                 {
-                    Window? refreshOwner = HostWindow ?? Application.Current?.MainWindow;
-                    if (refreshOwner == null)
-                    {
-                        return;
-                    }
-
-                    await CloseLaunchWaitFormAsync();
-                    await RefreshCharactersAndBackgroundsAsync(refreshOwner);
+                    // Deliberately NOT started here, and deliberately not awaited here either.
+                    //
+                    // Awaiting it blocks launch behind a scan that can take tens of seconds. Starting it
+                    // here without awaiting is worse: the scan is heavy single-threaded disk I/O over every
+                    // character folder, and running it alongside window creation and the GM snapshot
+                    // restore's server connect starves that connect - the same disk contention that
+                    // ClientAssetRefreshService.StartupCriticalPathGate exists to prevent, which shows up
+                    // as a window that stays empty for a long time after pressing Launch.
+                    //
+                    // So it is handed to the deferred block below, which runs after the launch-critical
+                    // path has finished. The client comes up on the cache it already has, results fold in
+                    // through ClientAssetRefreshService.AssetsRefreshed, and anything the scan has not
+                    // reached yet still resolves on demand the first time a message names it.
+                    pendingStartupFullAssetRefresh = true;
                     RefreshInfoCheckBox.IsChecked = false;
                 }
 
@@ -299,15 +297,33 @@ namespace OceanyaClient
                     await ClientAssetRefreshService.WaitForStartupCriticalPathAsync(120000);
                     StartupTimingLogger.Log("launch_waitform_hold_end");
                 }
+                else
+                {
+                    // Offline tools never signal the gate themselves, so release it here; otherwise the
+                    // deferred asset work below would sit behind its timeout.
+                    ClientAssetRefreshService.SignalStartupCriticalPathComplete();
+                }
 
                 await CloseLaunchWaitFormAsync();
                 TryPlayStartupFunctionalityJingle();
                 // Detect and refresh only changed assets in the background — this scan is deferred off the launch
                 // critical path (we already awaited it above for server-backed startups) so startup feels instant.
+                bool runFullAssetRefresh = pendingStartupFullAssetRefresh;
+                pendingStartupFullAssetRefresh = false;
+                Window? assetRefreshOwner = HostWindow ?? Application.Current?.MainWindow;
                 _ = Task.Run(async () =>
                 {
                     try
                     {
+                        if (runFullAssetRefresh)
+                        {
+                            StartupTimingLogger.Log("background_full_refresh_begin");
+                            await RefreshCharactersAndBackgroundsAsync(assetRefreshOwner!);
+                            StartupTimingLogger.Log("background_full_refresh_end");
+                            StartupTimingLogger.WriteLog();
+                            return;
+                        }
+
                         StartupTimingLogger.Log("background_tracked_check_begin");
                         TargetedAssetRefreshPlan plan =
                             ClientAssetRefreshService.GetTrackedChangePlanForCurrentEnvironment();
@@ -322,6 +338,21 @@ namespace OceanyaClient
                     catch (Exception ex)
                     {
                         CustomConsole.Warning("Background asset change check failed.", ex);
+                    }
+                    finally
+                    {
+                        // From here on the asset folders are watched live, so anything dropped into the AO
+                        // install mid-session is picked up on its own instead of waiting for a manual
+                        // "Refresh all assets". Started after the one-shot scan so the two do not fight
+                        // over the disk during launch.
+                        try
+                        {
+                            LiveAssetWatcher.StartOrRestart();
+                        }
+                        catch (Exception ex)
+                        {
+                            CustomConsole.Warning("Could not start live asset watching.", ex);
+                        }
                     }
                 });
             }
@@ -1358,14 +1389,53 @@ namespace OceanyaClient
             }
         }
 
-        private static string BuildForcedRefreshPrompt(string forcedRefreshReason)
+        /// <summary>
+        /// Decides whether a startup asset refresh should run, without ever prompting the user.
+        /// </summary>
+        /// <remarks>
+        /// A forced refresh (mount list or app version changed) used to pop a blocking "this may take a
+        /// long time, continue?" message box, and declining it aborted the launch entirely. The refresh no
+        /// longer blocks anything - it runs in the background while the client launches on the cache it
+        /// already has, and anything it has not reached yet still resolves on demand - so there is no wait
+        /// left to approve. The reason is logged instead.
+        /// </remarks>
+        /// <param name="refreshRequested">The user ticked the refresh checkbox themselves.</param>
+        /// <param name="forcedRefreshReason">Why the environment requires a refresh, or empty.</param>
+        /// <param name="skipAssetRefreshPrompts">Test-mode flag that suppresses startup refreshes entirely.</param>
+        /// <returns>True when a refresh should be started.</returns>
+        internal static bool ShouldRunStartupAssetRefresh(
+            bool refreshRequested,
+            string forcedRefreshReason,
+            bool skipAssetRefreshPrompts)
+        {
+            if (skipAssetRefreshPrompts)
+            {
+                return false;
+            }
+
+            if (refreshRequested)
+            {
+                return true;
+            }
+
+            if (string.IsNullOrWhiteSpace(forcedRefreshReason))
+            {
+                return false;
+            }
+
+            CustomConsole.Info(
+                "A full asset refresh will run in the background because "
+                + DescribeForcedRefreshReason(forcedRefreshReason));
+            return true;
+        }
+
+        /// <summary>Normalizes a forced-refresh reason for logging.</summary>
+        internal static string DescribeForcedRefreshReason(string forcedRefreshReason)
         {
             string trimmedReason = forcedRefreshReason?.Trim().TrimEnd('.') ?? string.Empty;
-            string normalizedReason = string.IsNullOrWhiteSpace(trimmedReason)
+            return string.IsNullOrWhiteSpace(trimmedReason)
                 ? "something in the asset environment changed"
                 : char.ToLowerInvariant(trimmedReason[0]) + trimmedReason[1..];
-            return "A full asset refresh is required because " + normalizedReason
-                + ". This may take a long time. Do you want to continue?";
         }
 
         private static MessageBoxResult ShowMessageBox(

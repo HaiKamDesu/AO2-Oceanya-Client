@@ -1,5 +1,6 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using AOBot_Testing.Structures;
 using Common;
 using Common.WebAssets;
@@ -91,7 +92,24 @@ namespace OceanyaClient.Features.WebAssets
                 return;
             }
 
+            // The emote grid is rebuilt on every client switch and every asset refresh, and each rebuild
+            // re-queued the same stems for the same character. Once per character per session is enough;
+            // the fetch queue's own negative cache handles individual assets, but it still had to be
+            // entered once per emote per rebuild to get there.
+            string prefetchKey = characterName.Trim();
+            lock (prefetchedCharactersLock)
+            {
+                if (!prefetchedCharacters.Add(prefetchKey))
+                {
+                    return;
+                }
+            }
+
+            // Only art we do not already have locally is worth streaming. A fully local character used to
+            // queue two web requests per emote anyway - measured at 376 for one character, re-queued on
+            // every grid rebuild - all of which can only ever resolve to a miss.
             int queued = 0;
+            int skippedLocal = 0;
             foreach (Emote emote in emotes)
             {
                 if (emote == null || emote.ID <= 0)
@@ -99,20 +117,88 @@ namespace OceanyaClient.Features.WebAssets
                     continue;
                 }
 
-                WebAssetService.PrefetchIfActive(
-                    BuildButtonStem(characterName, emote, on: false),
-                    WebAssetKind.CharacterIcon);
-                WebAssetService.PrefetchIfActive(
-                    BuildButtonStem(characterName, emote, on: true),
-                    WebAssetKind.CharacterIcon);
-                queued += 2;
+                if (HasLocalButtonArt(emote.PathToImage_off))
+                {
+                    skippedLocal++;
+                }
+                else
+                {
+                    WebAssetService.PrefetchIfActive(
+                        BuildButtonStem(characterName, emote, on: false),
+                        WebAssetKind.CharacterIcon);
+                    queued++;
+                }
+
+                if (HasLocalButtonArt(emote.PathToImage_on))
+                {
+                    skippedLocal++;
+                }
+                else
+                {
+                    WebAssetService.PrefetchIfActive(
+                        BuildButtonStem(characterName, emote, on: true),
+                        WebAssetKind.CharacterIcon);
+                    queued++;
+                }
             }
 
-            if (queued > 0)
+            if (queued > 0 || skippedLocal > 0)
             {
                 CustomConsole.Debug(
-                    $"[WEB-PREFETCH] emote buttons character=\"{characterName}\" queued={queued}",
+                    $"[WEB-PREFETCH] emote buttons character=\"{characterName}\" queued={queued} skippedLocal={skippedLocal}",
                     CustomConsole.LogCategory.WebAssets);
+            }
+        }
+
+        private static readonly object prefetchedCharactersLock = new object();
+
+        /// <summary>Characters whose emote button art has already been queued this session.</summary>
+        private static readonly HashSet<string> prefetchedCharacters =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Forgets which characters have been prefetched, so a new server (or a refresh that changed a
+        /// character's emotes) re-queues them.
+        /// </summary>
+        public static void ResetPrefetchedCharacters()
+        {
+            lock (prefetchedCharactersLock)
+            {
+                prefetchedCharacters.Clear();
+            }
+        }
+
+        /// <summary>Forgets one character, so its button art is queued again on next use.</summary>
+        public static void ResetPrefetchedCharacter(string? characterName)
+        {
+            string key = (characterName ?? string.Empty).Trim();
+            if (key.Length == 0)
+            {
+                return;
+            }
+
+            lock (prefetchedCharactersLock)
+            {
+                prefetchedCharacters.Remove(key);
+            }
+        }
+
+        /// <summary>Whether this emote's button art is already resolved to a file on disk.</summary>
+        private static bool HasLocalButtonArt(string? resolvedPath)
+        {
+            string path = resolvedPath?.Trim() ?? string.Empty;
+            if (path.Length == 0 || WebAssetSource.IsWebAsset(path))
+            {
+                return false;
+            }
+
+            try
+            {
+                return File.Exists(path);
+            }
+            catch
+            {
+                return false;
             }
         }
 

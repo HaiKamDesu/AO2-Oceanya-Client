@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -465,11 +465,12 @@ namespace OceanyaClient
 
         private static List<CharacterSelectorOption> BuildCharacterOptions()
         {
-            return CharacterFolder.FullList
+            // Name, showname, folder and icon all live in the index, so the picker never parses anything.
+            return CharacterFolder.Index
                 .OrderBy(character => character.Name, StringComparer.OrdinalIgnoreCase)
                 .Select(character => new CharacterSelectorOption(
                     character.Name,
-                    character.configINI.ShowName,
+                    character.ShowName,
                     character.DirectoryPath,
                     character.CharIconPath))
                 .ToList();
@@ -663,9 +664,8 @@ namespace OceanyaClient
                 return null;
             }
 
-            CharacterFolder? character = CharacterFolder.FullList.FirstOrDefault(folder =>
-                string.Equals(folder.Name, name, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(folder.DirectoryPath, name, StringComparison.OrdinalIgnoreCase));
+            CharacterFolder? character = CharacterFolder.GetByName(name)
+                ?? CharacterFolder.GetByDirectory(name);
             return AO2ViewportAssetResolver.ResolveCharacterBlipToken(character, null);
         }
 

@@ -258,6 +258,37 @@ namespace OceanyaClient.Components
             return currentClient;
         }
 
+        /// <summary>
+        /// Applies the colours a theme set for this log, or clears them.
+        /// </summary>
+        /// <remarks>
+        /// The log writes its runs with explicit brushes, so an inherited Foreground never reaches them;
+        /// a null field means "use the control's own colour", which is how a reset restores the defaults.
+        /// Only messages added after this call are affected - like AO2, which colours each line as it is
+        /// appended.
+        /// </remarks>
+        /// <param name="colors">Colours to use, or null to go back to the built-in ones.</param>
+        public void SetThemeColors(LogThemeColors? colors)
+        {
+            themeColors = colors != null && !colors.IsEmpty ? colors : null;
+            LogRunRecolorer.Apply(
+                clientLogs.Values.Select(state => state.Document),
+                themeColors,
+                IcFallbackColors);
+        }
+
+        /// <summary>The colours a run goes back to when the theme does not set one.</summary>
+        private static readonly Dictionary<LogRunRole, Brush> IcFallbackColors = new Dictionary<LogRunRole, Brush>
+        {
+            [LogRunRole.Body] = Brushes.White,
+            [LogRunRole.SenderName] = Brushes.White,
+            [LogRunRole.SelfName] = new SolidColorBrush(Color.FromArgb(255, 154, 220, 225)),
+            [LogRunRole.Timestamp] = new SolidColorBrush(Color.FromRgb(160, 181, 205))
+        };
+
+        /// <summary>Colours a theme set for this log, or null for the built-in ones.</summary>
+        private LogThemeColors? themeColors;
+
         public void SetInvertOnClientLogs(bool isInverted)
         {
             InvertICLog = isInverted;
@@ -492,20 +523,25 @@ namespace OceanyaClient.Components
                 Run gmTag = new Run("[GM] ")
                 {
                     FontWeight = FontWeights.Bold,
-                    Foreground = formatRules.First(rule => rule.Name == ICMessage.TextColors.Gray).ColorBrush
+                    Foreground = themeColors?.Timestamp
+                        ?? formatRules.First(rule => rule.Name == ICMessage.TextColors.Gray).ColorBrush,
+                    Tag = LogRunRole.Timestamp
                 };
                 paragraph.Inlines.Add(gmTag);
-                nameBrush = new SolidColorBrush(Color.FromArgb(255, 154, 220, 225));
+                nameBrush = themeColors?.SelfName ?? new SolidColorBrush(Color.FromArgb(255, 154, 220, 225));
             }
             else
             {
-                nameBrush = Brushes.White;
+                nameBrush = themeColors?.SenderName ?? Brushes.White;
             }
 
+            // Tagged so a theme applied later repaints the backlog as well as what arrives next.
+            LogRunRole nameRole = isSentFromSelf ? LogRunRole.SelfName : LogRunRole.SenderName;
             Run nameRun = new Run(showName ?? string.Empty)
             {
                 FontWeight = FontWeights.Bold,
-                Foreground = nameBrush
+                Foreground = nameBrush,
+                Tag = nameRole
             };
             paragraph.Inlines.Add(nameRun);
             AppendActionLinks(paragraph, nameLinks);
@@ -513,7 +549,8 @@ namespace OceanyaClient.Components
             Run suffixRun = new Run(": ")
             {
                 FontWeight = FontWeights.Bold,
-                Foreground = nameBrush
+                Foreground = nameBrush,
+                Tag = nameRole
             };
             paragraph.Inlines.Add(suffixRun);
 
@@ -541,30 +578,36 @@ namespace OceanyaClient.Components
                 Run gmTag = new Run("[GM] ")
                 {
                     FontWeight = FontWeights.Bold,
-                    Foreground = formatRules.First(rule => rule.Name == ICMessage.TextColors.Gray).ColorBrush
+                    Foreground = themeColors?.Timestamp
+                        ?? formatRules.First(rule => rule.Name == ICMessage.TextColors.Gray).ColorBrush,
+                    Tag = LogRunRole.Timestamp
                 };
                 paragraph.Inlines.Add(gmTag);
-                nameBrush = new SolidColorBrush(Color.FromArgb(255, 154, 220, 225));
+                nameBrush = themeColors?.SelfName ?? new SolidColorBrush(Color.FromArgb(255, 154, 220, 225));
             }
             else
             {
-                nameBrush = Brushes.White;
+                nameBrush = themeColors?.SenderName ?? Brushes.White;
             }
 
+            LogRunRole actionNameRole = isSentFromSelf ? LogRunRole.SelfName : LogRunRole.SenderName;
             paragraph.Inlines.Add(new Run(showName ?? string.Empty)
             {
                 FontWeight = FontWeights.Bold,
-                Foreground = nameBrush
+                Foreground = nameBrush,
+                Tag = actionNameRole
             });
 
             paragraph.Inlines.Add(new Run(" ")
             {
-                Foreground = Brushes.White
+                Foreground = themeColors?.Text ?? Brushes.White,
+                Tag = LogRunRole.Body
             });
 
             paragraph.Inlines.Add(new Run(action ?? string.Empty)
             {
-                Foreground = Brushes.White
+                Foreground = themeColors?.Text ?? Brushes.White,
+                Tag = LogRunRole.Body
             });
 
             if (string.IsNullOrWhiteSpace(message))
@@ -574,7 +617,8 @@ namespace OceanyaClient.Components
 
             paragraph.Inlines.Add(new Run(" ")
             {
-                Foreground = Brushes.White
+                Foreground = themeColors?.Text ?? Brushes.White,
+                Tag = LogRunRole.Body
             });
 
             bool emphasizeMessage = string.Equals(action, "shouts", StringComparison.OrdinalIgnoreCase);
@@ -696,6 +740,8 @@ namespace OceanyaClient.Components
             {
                 new Run(message ?? string.Empty)
                 {
+                    // Only plain white body text follows the theme; the IC colours are the protocol's own.
+                    Tag = defaultColor == ICMessage.TextColors.White ? LogRunRole.Body : LogRunRole.None,
                     Foreground = brush
                 }
             };
@@ -729,8 +775,10 @@ namespace OceanyaClient.Components
 
         private Brush GetFallbackBrush(ICMessage.TextColors color)
         {
+            // Only plain white text follows the theme: the IC colours are the protocol's own
+            // (AO2 keeps those in chat_config.ini, not in the log's font colour).
             return color == ICMessage.TextColors.White
-                ? Brushes.White
+                ? themeColors?.Text ?? Brushes.White
                 : formatRules.FirstOrDefault(rule => rule.Name == color)?.ColorBrush ?? Brushes.White;
         }
 

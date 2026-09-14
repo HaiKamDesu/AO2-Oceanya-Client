@@ -163,6 +163,9 @@ namespace AOBot_Testing.Agents
         /// </summary>
         public Action<int, int>? OnHealthChanged;
 
+        /// <summary>Raised when the server changes whether the judge controls are shown.</summary>
+        public Action<int>? OnJudgeControlsStateChanged;
+
         public Action<IReadOnlyList<AreaInfo>>? OnAvailableAreaInfosUpdated;
 
         /// <summary>
@@ -577,6 +580,21 @@ namespace AOBot_Testing.Agents
         /// <summary>Highest health bar value AO2 uses.</summary>
         public const int MaximumHealthValue = 10;
 
+        /// <summary>
+        /// Server's say on the judge controls: -1 follow the position, 0 hide, 1 show.
+        /// </summary>
+        /// <remarks>AO2's <c>Courtroom::JudgeState</c>, set by the <c>JD#</c> packet.</remarks>
+        public int JudgeControlsState { get; private set; } = JudgeControlsFollowPosition;
+
+        /// <summary>Judge control state meaning "decide from the position".</summary>
+        public const int JudgeControlsFollowPosition = -1;
+
+        /// <summary>
+        /// Gets the position in effect, falling back to the character's own default side.
+        /// </summary>
+        /// <remarks>AO2's <c>current_or_default_side()</c>, which is what it tests for a judge position.</remarks>
+        public string CurrentOrDefaultSide => ResolveCurrentOrDefaultSide();
+
         /// <summary>Gets the last known defence health bar value (0-10).</summary>
         public int DefenceHealth { get; private set; } = MaximumHealthValue;
 
@@ -796,10 +814,7 @@ namespace AOBot_Testing.Agents
 
         public void SetCharacter(string characterName)
         {
-            CharacterFolder? newChar = CharacterFolder.FullList.FirstOrDefault(c => c.Name == characterName)
-                ?? CharacterFolder.FullList.FirstOrDefault(c => c.Name.Equals(characterName, StringComparison.OrdinalIgnoreCase));
-
-            SetCharacter(newChar);
+            SetCharacter(CharacterFolder.GetByName(characterName));
         }
         public void SetCharacter(CharacterFolder? character)
         {
@@ -1117,6 +1132,17 @@ namespace AOBot_Testing.Agents
                     SetCurrentArea(pendingArea);
                 }
             }
+            else if (message.StartsWith("JD#"))
+            {
+                // AO2 reference: packet_distribution.cpp "JD". -1 hands the decision back to the client
+                // (follow the position), 0 hides the judge controls outright, 1 shows them.
+                string[] judgeFields = message.Split('#');
+                if (judgeFields.Length >= 2 && int.TryParse(judgeFields[1].TrimEnd('%'), out int judgeState))
+                {
+                    JudgeControlsState = judgeState;
+                    OnJudgeControlsStateChanged?.Invoke(judgeState);
+                }
+            }
             else if (message.StartsWith("HP#"))
             {
                 // AO2 reference: Courtroom::set_hp_bar. Bar 1 is the defence, bar 2 the prosecution, and the
@@ -1429,8 +1455,7 @@ namespace AOBot_Testing.Agents
             }
 
             string characterName = ResolveIncomingIcCharacterName(icMessage);
-            CharacterFolder? matchingCharacter = CharacterFolder.FullList.FirstOrDefault(character =>
-                string.Equals(character.Name, characterName, StringComparison.OrdinalIgnoreCase));
+            CharacterFolder? matchingCharacter = CharacterFolder.GetByName(characterName);
 
             return icMessage.ShoutModifier switch
             {
@@ -1610,10 +1635,8 @@ namespace AOBot_Testing.Agents
                 return null;
             }
 
-            return CharacterFolder.FullList.FirstOrDefault(character =>
-                    string.Equals(character.Name, normalized, StringComparison.OrdinalIgnoreCase))
-                ?? CharacterFolder.FullList.FirstOrDefault(character =>
-                    string.Equals(character.configINI?.Name, normalized, StringComparison.OrdinalIgnoreCase));
+            return CharacterFolder.GetByNameOrShowName(normalized)
+                ?? CharacterFolder.ResolveOnDemand(normalized);
         }
 
         private string ResolveEffectStringForPacket(bool hasSelectedCustomSfx)
@@ -2546,6 +2569,15 @@ namespace AOBot_Testing.Agents
             CustomConsole.Info("Handshake completed successfully!");
         }
 
+        /// <summary>Reads the human-readable reason out of a <c>BD#</c> disconnect packet.</summary>
+        private static string ExtractDisconnectReason(string packet)
+        {
+            string[] fields = packet.Split('#');
+            string reason = fields.Length > 1 ? fields[1] : string.Empty;
+            reason = Globals.ReplaceTextForSymbols(reason).Trim();
+            return string.IsNullOrWhiteSpace(reason) ? "The server refused the connection." : reason;
+        }
+
         private async Task<string> WaitForPacketAsync(
             Func<string, bool> predicate,
             string expectedPacketHeader,
@@ -2572,7 +2604,23 @@ namespace AOBot_Testing.Agents
                     break;
                 }
 
-                if (!string.IsNullOrEmpty(response) && predicate(response))
+                if (string.IsNullOrEmpty(response))
+                {
+                    continue;
+                }
+
+                // A BD# during the handshake is the server refusing this connection outright (rate limit,
+                // ban, full). Measured: the server answered "Please wait before connecting another client"
+                // immediately, and the client then sat out the whole handshake timeout and retried the
+                // connect anyway - 4.1 seconds of the launch spent waiting for a packet that was never
+                // coming, with the real reason already in hand.
+                if (response.StartsWith("BD#", StringComparison.Ordinal))
+                {
+                    string refusalReason = ExtractDisconnectReason(response);
+                    throw new ServerRefusedConnectionException(refusalReason);
+                }
+
+                if (predicate(response))
                 {
                     return response;
                 }

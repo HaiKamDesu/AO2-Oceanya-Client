@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -542,11 +542,14 @@ namespace OceanyaClient
                 return exactFromAll;
             }
 
-            string? startsWith = suggestions
-                .Where(static item => item.IsSelectable)
-                .Select(static item => item.Text)
-                .FirstOrDefault(item => item.StartsWith(normalized, StringComparison.OrdinalIgnoreCase));
-            return startsWith ?? normalized;
+            // The suggestion list itself already matches on substring, so committing must resolve the same
+            // way or typing a substring and pressing Enter would silently keep the raw text instead of the
+            // item the user was looking at.
+            string? bestMatch = OceanyaClient.Utilities.DropdownSearchMatcher.FindBestMatch(
+                suggestions.Where(static item => item.IsSelectable).Select(static item => item.Text),
+                normalized,
+                static text => text);
+            return string.IsNullOrWhiteSpace(bestMatch) ? normalized : bestMatch;
         }
 
         private static IReadOnlyList<AutoCompleteDropdownItem> BuildSuggestionList(

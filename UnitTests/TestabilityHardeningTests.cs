@@ -983,91 +983,76 @@ namespace UnitTests
             });
         }
 
+        /// <summary>
+        /// A forced refresh (mount list or app version changed) used to pop a blocking "this may take a
+        /// long time, continue?" prompt, and declining it aborted the launch. The refresh now runs in the
+        /// background while the client launches on the cache it already has, so there is no wait to
+        /// approve: the decision must be taken without any prompt.
+        /// </summary>
         [Test]
-        public async Task StartupRefreshPrompt_WhenUserDeclines_DoesNotRefreshAssets()
+        public void ShouldRunStartupAssetRefresh_ForcedReason_RefreshesWithoutPrompting()
         {
-            string configIniPath = CreateConfigIni();
-            SaveFile.ResetForTests(
-                new SaveData
-                {
-                    ConfigIniPath = "stale.ini",
-                    StartupFunctionalityId = StartupFunctionalityIds.GmMultiClient,
-                    UseSingleInternalClient = true,
-                    SelectedServerEndpoint = "ws://stale-server:27016",
-                    SelectedServerName = "Stale Server"
-                },
-                persist: false);
-
-            OceanyaTestMode.SetCurrent(new OceanyaTestModeOptions
-            {
-                IsEnabled = true,
-                DisableWaitForms = true,
-                DisableFakeLoading = true,
-                SkipServerValidation = true
-            });
-
-            Globals.UpdateConfigINI(configIniPath);
-            ResetCharacterCache();
-            CharacterFolder.RefreshCharacterList();
-            Assert.That(CharacterFolder.FullList, Is.Empty);
-
-            InitialConfigurationWindow window = new InitialConfigurationWindow();
-            ((TextBox)window.FindName("ConfigINIPathTextBox")).Text = configIniPath;
-            ((ComboBox)window.FindName("StartupFunctionalityComboBox")).SelectedValue =
-                StartupFunctionalityIds.CharacterDatabaseViewer;
-            ((CheckBox)window.FindName("RefreshInfoCheckBox")).IsChecked = false;
-
             int promptCalls = 0;
-            int fullRefreshCalls = 0;
-            int targetedRefreshCalls = 0;
-
             SetNonPublicStaticField(
                 typeof(InitialConfigurationWindow),
                 "testMessageBoxOverride",
                 new Func<string, string, MessageBoxButton, MessageBoxImage, MessageBoxResult>(
-                    (message, caption, buttons, image) =>
+                    (_, _, _, _) =>
                     {
                         promptCalls++;
-
-                        Assert.Multiple(() =>
-                        {
-                            Assert.That(caption, Is.EqualTo("Refresh Required"));
-                            Assert.That(buttons, Is.EqualTo(MessageBoxButton.YesNo));
-                            Assert.That(image, Is.EqualTo(MessageBoxImage.Question));
-                            Assert.That(message, Does.Contain("full asset refresh is required").IgnoreCase);
-                        });
-
                         return MessageBoxResult.No;
                     }));
 
-            SetNonPublicStaticField(
-                typeof(InitialConfigurationWindow),
-                "testRefreshCharactersAndBackgroundsAsyncOverride",
-                new Func<Window, Task>(_ =>
+            try
+            {
+                bool shouldRefresh = InitialConfigurationWindow.ShouldRunStartupAssetRefresh(
+                    refreshRequested: false,
+                    forcedRefreshReason: "the AO mount/base-folder list in config.ini changed since the last full asset refresh.",
+                    skipAssetRefreshPrompts: false);
+
+                Assert.Multiple(() =>
                 {
-                    fullRefreshCalls++;
-                    return Task.CompletedTask;
-                }));
+                    Assert.That(shouldRefresh, Is.True);
+                    Assert.That(promptCalls, Is.EqualTo(0), "a forced refresh must not prompt any more");
+                });
+            }
+            finally
+            {
+                SetNonPublicStaticField(typeof(InitialConfigurationWindow), "testMessageBoxOverride", null);
+            }
+        }
 
-            SetNonPublicStaticField(
-                typeof(InitialConfigurationWindow),
-                "testRefreshTargetedAssetsAsyncOverride",
-                new Func<Window, TargetedAssetRefreshPlan, Task>((_, _) =>
-                {
-                    targetedRefreshCalls++;
-                    return Task.CompletedTask;
-                }));
-
-            await InvokeNonPublicInstanceMethodAsync(window, "ExecuteOkButtonClickAsync");
-
+        [Test]
+        public void ShouldRunStartupAssetRefresh_HonoursExplicitRequestAndTestModeSuppression()
+        {
             Assert.Multiple(() =>
             {
-                Assert.That(promptCalls, Is.EqualTo(1));
-                Assert.That(fullRefreshCalls, Is.EqualTo(0));
-                Assert.That(targetedRefreshCalls, Is.EqualTo(0));
-                Assert.That(SaveFile.Data.ConfigIniPath, Is.EqualTo("stale.ini"));
-                Assert.That(SaveFile.Data.StartupFunctionalityId, Is.EqualTo(StartupFunctionalityIds.GmMultiClient));
-                Assert.That(SaveFile.Data.SelectedServerEndpoint, Is.EqualTo("ws://stale-server:27016"));
+                Assert.That(
+                    InitialConfigurationWindow.ShouldRunStartupAssetRefresh(true, string.Empty, false),
+                    Is.True,
+                    "a refresh the user asked for must still run");
+                Assert.That(
+                    InitialConfigurationWindow.ShouldRunStartupAssetRefresh(false, string.Empty, false),
+                    Is.False,
+                    "nothing to do without a request or a forced reason");
+                Assert.That(
+                    InitialConfigurationWindow.ShouldRunStartupAssetRefresh(true, "mounts changed", true),
+                    Is.False,
+                    "test mode suppresses startup refreshes entirely");
+            });
+        }
+
+        [Test]
+        public void DescribeForcedRefreshReason_NormalizesTheReasonForLogging()
+        {
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    InitialConfigurationWindow.DescribeForcedRefreshReason("The Oceanya version changed."),
+                    Is.EqualTo("the Oceanya version changed"));
+                Assert.That(
+                    InitialConfigurationWindow.DescribeForcedRefreshReason("   "),
+                    Is.EqualTo("something in the asset environment changed"));
             });
         }
 

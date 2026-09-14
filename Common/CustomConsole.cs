@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -57,19 +57,40 @@ namespace Common
         /// </summary>
         public record LogEntry(string Text, LogLevel Level, LogCategory Category, DateTime Timestamp);
 
-        public const int MaxStoredEntries = 1_000_000;
-        private const int StoredEntryTrimBatch = 10_000;
+        /// <summary>
+        /// How many entries are kept in memory for the debug console window.
+        /// </summary>
+        /// <remarks>
+        /// This used to be 1,000,000 entries held in TWO parallel lists (a formatted string AND a
+        /// <see cref="LogEntry"/> record per line), which on a long session with packet logging on is
+        /// hundreds of megabytes of pure log text that is never released. The full stream now goes to
+        /// <see cref="DebugFileLogger"/> on disk, so memory only has to hold what the console window can
+        /// realistically show; anything older is read from <c>DEBUG.txt</c>.
+        /// </remarks>
+        public const int MaxStoredEntries = 25_000;
         private static readonly object syncRoot = new object();
 
         /// <summary>
-        /// Collection of raw formatted log strings (kept for backward compat / test capture)
+        /// Structured log entries kept for the debug console, oldest first, capped at
+        /// <see cref="MaxStoredEntries"/>.
         /// </summary>
-        public static List<string> lines = new List<string>();
+        /// <remarks>
+        /// A queue, not a list: the previous implementation trimmed with <c>RemoveRange(0, n)</c>, which
+        /// copies the entire remaining buffer down on every trim.
+        /// </remarks>
+        private static readonly Queue<LogEntry> logEntries = new Queue<LogEntry>();
 
-        /// <summary>
-        /// Collection of structured log entries (used by the debug console for filtering)
-        /// </summary>
-        public static List<LogEntry> logEntries = new List<LogEntry>();
+        /// <summary>Number of entries currently held in memory.</summary>
+        public static int StoredEntryCount
+        {
+            get
+            {
+                lock (syncRoot)
+                {
+                    return logEntries.Count;
+                }
+            }
+        }
 
         /// <summary>
         /// Fires with the formatted string whenever a line is written (backward-compat)
@@ -89,6 +110,28 @@ namespace Common
             }
         }
 
+        /// <summary>Replaces the in-memory entries (test helper).</summary>
+        public static void ReplaceStoredEntriesForTests(IEnumerable<LogEntry> entries)
+        {
+            lock (syncRoot)
+            {
+                logEntries.Clear();
+                foreach (LogEntry entry in entries)
+                {
+                    logEntries.Enqueue(entry);
+                }
+            }
+        }
+
+        /// <summary>Clears the in-memory entries (test helper).</summary>
+        public static void ClearStoredEntriesForTests()
+        {
+            lock (syncRoot)
+            {
+                logEntries.Clear();
+            }
+        }
+
         /// <summary>
         /// Base method for all logging - writes a message to the console with timestamp
         /// </summary>
@@ -98,11 +141,6 @@ namespace Common
             Console.WriteLine(timestampedMessage);
             System.Diagnostics.Debug.WriteLine(timestampedMessage);
 
-            lock (syncRoot)
-            {
-                lines.Add(timestampedMessage);
-                TrimStoredLinesIfNeeded();
-            }
             OnWriteLine?.Invoke(timestampedMessage);
         }
 
@@ -138,11 +176,6 @@ namespace Common
             string timestampedMessage = $"[{entry.Timestamp:yyyy-MM-dd HH:mm:ss}] {formattedMessage}";
             Console.WriteLine(timestampedMessage);
             System.Diagnostics.Debug.WriteLine(timestampedMessage);
-            lock (syncRoot)
-            {
-                lines.Add(timestampedMessage);
-                TrimStoredLinesIfNeeded();
-            }
             OnWriteLine?.Invoke(timestampedMessage);
 
             if (exception != null)
@@ -178,11 +211,6 @@ namespace Common
             string timestampedMessage = $"[{timestamp:yyyy-MM-dd HH:mm:ss}] {text}";
             Console.WriteLine(timestampedMessage);
             System.Diagnostics.Debug.WriteLine(timestampedMessage);
-            lock (syncRoot)
-            {
-                lines.Add(timestampedMessage);
-                TrimStoredLinesIfNeeded();
-            }
             OnWriteLine?.Invoke(timestampedMessage);
         }
 
@@ -190,24 +218,12 @@ namespace Common
         {
             lock (syncRoot)
             {
-                logEntries.Add(entry);
-                if (logEntries.Count > MaxStoredEntries)
+                logEntries.Enqueue(entry);
+                while (logEntries.Count > MaxStoredEntries)
                 {
-                    int removeCount = Math.Min(StoredEntryTrimBatch, logEntries.Count - MaxStoredEntries);
-                    logEntries.RemoveRange(0, removeCount);
+                    logEntries.Dequeue();
                 }
             }
-        }
-
-        private static void TrimStoredLinesIfNeeded()
-        {
-            if (lines.Count <= MaxStoredEntries)
-            {
-                return;
-            }
-
-            int removeCount = Math.Min(StoredEntryTrimBatch, lines.Count - MaxStoredEntries);
-            lines.RemoveRange(0, removeCount);
         }
 
         /// <summary>

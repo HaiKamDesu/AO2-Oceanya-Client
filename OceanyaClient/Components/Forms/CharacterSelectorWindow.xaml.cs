@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -85,6 +85,32 @@ namespace OceanyaClient
 
         /// <summary>Upper bound on <see cref="IconCache"/> before it is dropped wholesale.</summary>
         private const int IconCacheCapacity = 4000;
+
+        /// <summary>
+        /// Byte budget for <see cref="IconCache"/>, checked alongside the entry cap.
+        /// </summary>
+        /// <remarks>
+        /// Icons are normally 60x60, but nothing stops a character shipping a full-size image as its
+        /// char_icon, and an entry count cannot tell those apart. Decoded pixel buffers are unmanaged.
+        /// </remarks>
+        private const long IconCacheByteLimit = 64L * 1024 * 1024;
+
+        private static long iconCacheBytes;
+
+        /// <summary>Reports character-icon cache occupancy for the periodic memory sample.</summary>
+        public static string GetIconCacheDiagnostics()
+        {
+            long bytes = Interlocked.Read(ref iconCacheBytes);
+            return $"charIconCacheEntries={IconCache.Count}"
+                + $" charIconCacheMB={bytes / (1024 * 1024)}/{IconCacheByteLimit / (1024 * 1024)}";
+        }
+
+        /// <summary>Drops every cached character icon.</summary>
+        public static void ClearIconCache()
+        {
+            IconCache.Clear();
+            Interlocked.Exchange(ref iconCacheBytes, 0);
+        }
 
         /// <summary>Icon decodes dispatched per UI batch while filling cards in the background.</summary>
         private const int IconBatchSize = 48;
@@ -188,8 +214,14 @@ namespace OceanyaClient
             CharacterAutomationButtonsPanel.Children.Clear();
             sections.Clear();
 
-            var localByName = CharacterFolder.FullList
-                .ToDictionary(f => f.Name, f => f, StringComparer.OrdinalIgnoreCase);
+            // Name, category and icon all come from the index: the selector never needs a character's
+            // emotes, and parsing thousands of them to build a picker was most of its open cost.
+            Dictionary<string, CharacterIndexEntry> localByName = new Dictionary<string, CharacterIndexEntry>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (CharacterIndexEntry entry in CharacterFolder.Index)
+            {
+                localByName.TryAdd(entry.Name, entry);
+            }
             double msLocalIndex = Lap();
 
             // With web asset fallback active the server's own characters are all obtainable, exactly as
@@ -201,8 +233,8 @@ namespace OceanyaClient
             var allEntries = serverCharacterAvailability
                 .Select(kvp =>
                 {
-                    localByName.TryGetValue(kvp.Key, out CharacterFolder? local);
-                    string category = local?.configINI?.Category ?? string.Empty;
+                    localByName.TryGetValue(kvp.Key, out CharacterIndexEntry? local);
+                    string category = local?.Category ?? string.Empty;
                     string iconPath = local?.CharIconPath ?? string.Empty;
                     if (string.IsNullOrWhiteSpace(iconPath) && webFallbackActive)
                     {
@@ -325,7 +357,7 @@ namespace OceanyaClient
                 + $"localIndex={msLocalIndex:0.0} entries={msEntries:0.0} cards={msCards:0.0} "
                 + $"automation={msAutomation:0.0} select={msSelect:0.0} | "
                 + $"serverChars={serverCharacterAvailability.Count} cards={totalCards} sections={sections.Count} "
-                + $"localChars={CharacterFolder.FullList.Count} webOnly={webOnly} "
+                + $"localChars={CharacterFolder.Index.Count} webOnly={webOnly} "
                 + $"automationButtons={automationButtons} webFallback={webFallbackActive}",
                 CustomConsole.LogCategory.Viewport);
 
@@ -651,12 +683,15 @@ namespace OceanyaClient
                 bitmap.EndInit();
                 bitmap.Freeze();
 
-                if (IconCache.Count >= IconCacheCapacity)
+                if (IconCache.Count >= IconCacheCapacity
+                    || Interlocked.Read(ref iconCacheBytes) >= IconCacheByteLimit)
                 {
                     IconCache.Clear();
+                    Interlocked.Exchange(ref iconCacheBytes, 0);
                 }
 
                 IconCache[iconPath] = (bitmap, writeTimeUtc);
+                Interlocked.Add(ref iconCacheBytes, Ao2AnimationPreview.EstimateBitmapBytes(bitmap));
                 return bitmap;
             }
             catch

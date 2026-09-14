@@ -19,6 +19,28 @@ namespace UnitTests;
 public class NetworkTests
 {
     [Test]
+    public async Task HandleMessage_JudgeStatePacketOverridesThePositionRule()
+    {
+        AOClient client = new AOClient("ws://localhost:10001/");
+        List<int> raised = new List<int>();
+        client.OnJudgeControlsStateChanged += state => raised.Add(state);
+
+        // AO2 reference packet_distribution.cpp "JD": 0 hides the judge controls, 1 shows them wherever you
+        // are standing, and -1 hands the decision back to the client's own position rule.
+        Assert.That(client.JudgeControlsState, Is.EqualTo(AOClient.JudgeControlsFollowPosition));
+
+        await client.HandleMessage("JD#1#%");
+        Assert.That(client.JudgeControlsState, Is.EqualTo(1));
+
+        await client.HandleMessage("JD#0#%");
+        Assert.That(client.JudgeControlsState, Is.EqualTo(0));
+
+        await client.HandleMessage("JD#-1#%");
+        Assert.That(client.JudgeControlsState, Is.EqualTo(AOClient.JudgeControlsFollowPosition));
+        Assert.That(raised, Is.EqualTo(new[] { 1, 0, -1 }));
+    }
+
+    [Test]
     public async Task HandleMessage_HealthPacketUpdatesTheBarAndRaisesTheEvent()
     {
         AOClient client = new AOClient("ws://localhost:10001/");

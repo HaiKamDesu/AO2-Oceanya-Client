@@ -97,7 +97,7 @@ public class MusicPacketTests
         List<CustomConsole.LogEntry> originalEntries = CustomConsole.GetLogEntriesSnapshot();
         try
         {
-            CustomConsole.logEntries.Clear();
+            CustomConsole.ClearStoredEntriesForTests();
             MethodInfo? logMethod = typeof(AOClient).GetMethod(
                 "LogNetworkPacket",
                 BindingFlags.NonPublic | BindingFlags.Static);
@@ -116,8 +116,8 @@ public class MusicPacketTests
         }
         finally
         {
-            CustomConsole.logEntries.Clear();
-            CustomConsole.logEntries.AddRange(originalEntries);
+            CustomConsole.ClearStoredEntriesForTests();
+            CustomConsole.ReplaceStoredEntriesForTests(originalEntries);
         }
     }
 
