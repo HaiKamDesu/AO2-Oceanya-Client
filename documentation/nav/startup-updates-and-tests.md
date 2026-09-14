@@ -128,3 +128,30 @@ on a profile with a saved GM snapshot the first frame the window is on screen al
 restored, the server connected, the area list, the OOC log and the viewport rendered.
 
 Do not "simplify" this back to setting `Opacity` inline - that is the ghost-window bug.
+
+## X needs two presses / empty client list on launch
+
+**Also called:** "have to hit X twice to close the client", "closing reopens the launcher", "no clients when I open the client", "auto add client"
+
+**Status:** Confirmed (verified by driving the app)
+
+**Two presses:** not a hang. `HandleStartupFunctionalityClosedAsync` called `ReopenConfigurationWindow()` for
+EVERY launched tool, so closing the GM client brought the launcher back and a second press on the launcher
+was what actually exited. Confirmed by enumerating top-level windows after the close: the process was alive
+with `Initial Configuration` on screen (`offscreen=False`).
+
+Closing now exits outright when `selectedFunctionality.RequiresServerEndpoint` (GM Multi-Client and the AI
+Bot) via `Application.Current.Shutdown()`. The three offline tools (Character Database Viewer, File Creator,
+File Hivemind) still return to the launcher, since switching between those without relaunching the exe is
+what it is for. Verified: one `CloseMainWindow()` and the process is gone inside a second.
+
+Separately, `MainWindow.HookHostWindowClosing`'s handler cancels the close, runs an async shutdown, then
+calls `Close()` again. Disabling the window was the only feedback, so a slow disconnect looked like the X had
+done nothing. It now hides the host window immediately, always closes even if the disconnect throws, and logs
+`[SHUTDOWN] clean close took Nms` (measured 58 ms - the disconnect was never the slow part).
+
+**Empty client list:** `MainWindow.AddFirstClientIfNoneRestored` opens the add-client flow when the snapshot
+restored no clients, so the window is never usable-but-empty. It connects one client and still lets the user
+pick the INI puppet. Posted at `DispatcherPriority.ApplicationIdle`, deliberately a LOWER priority than the
+`ContextIdle` the launch flow reveals the window at, so the character selector never opens over a window the
+user cannot see yet. Guarded by `hasAutoAddedFirstClient` so it can only fire once.

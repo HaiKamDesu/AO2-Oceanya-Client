@@ -96,6 +96,9 @@ namespace OceanyaClient
         private bool isUpdatingPictureInPictureViewportToggle;
         private bool isPictureInPictureViewportEnabled;
         private bool isMainWindowClosing;
+
+        /// <summary>Guards <see cref="AddFirstClientIfNoneRestored"/> so it can only ever fire once.</summary>
+        private bool hasAutoAddedFirstClient;
         private bool viewportPreviewInputProxyActive;
         private bool viewportPreviewInputProxyFailureLogged;
         private bool pendingMainInputRestoreAfterActivation;
@@ -2748,7 +2751,13 @@ namespace OceanyaClient
                 // so the scan's disk I/O does not starve the launch-critical connect. Runs on all paths, including
                 // no-snapshot / failure, via the continuation.
                 _ = RestoreGmMultiClientSnapshotAsync()
-                    .ContinueWith(_ => ClientAssetRefreshService.SignalStartupCriticalPathComplete());
+                    .ContinueWith(_ =>
+                    {
+                        ClientAssetRefreshService.SignalStartupCriticalPathComplete();
+                        Dispatcher.BeginInvoke(
+                            new Action(AddFirstClientIfNoneRestored),
+                            DispatcherPriority.ApplicationIdle);
+                    });
             }
             else
             {
@@ -2756,6 +2765,36 @@ namespace OceanyaClient
             }
 
             FinishedLoading?.Invoke();
+        }
+
+        /// <summary>
+        /// Opens the add-client flow when startup restored no GM clients, so the window is never usable-
+        /// but-empty.
+        /// </summary>
+        /// <remarks>
+        /// Equivalent to the user pressing "+" the moment the client opens: it connects one client and
+        /// still asks them which INI puppet to use, rather than picking one for them.
+        ///
+        /// Posted at <see cref="DispatcherPriority.ApplicationIdle"/> on purpose. The launch flow reveals
+        /// the window from <see cref="DispatcherPriority.ContextIdle"/>, which is a HIGHER priority, so the
+        /// window is on screen before the character selector opens over it - otherwise the selector would
+        /// appear floating over a window the user cannot see yet.
+        /// </remarks>
+        private void AddFirstClientIfNoneRestored()
+        {
+            if (isMainWindowClosing || hasAutoAddedFirstClient)
+            {
+                return;
+            }
+
+            if (clients.Count > 0)
+            {
+                return;
+            }
+
+            hasAutoAddedFirstClient = true;
+            StartupTimingLogger.Log("auto_add_first_client");
+            AddClient();
         }
 
         private void MainWindow_SourceInitialized(object? sender, EventArgs e)
@@ -2853,10 +2892,25 @@ namespace OceanyaClient
                     return;
                 }
 
+                // The close is cancelled so the async shutdown below can run, then Close() is called again.
+                // Disabling the window was the only feedback, so a slow disconnect looked like the X had
+                // done nothing and the user pressed it again - the second press hit the cleanCloseInProgress
+                // path and closed immediately, which is the "X needs two clicks" report. Hiding it makes the
+                // first press do what the user expects; the process still exits through the same path.
                 e.Cancel = true;
                 cleanCloseInProgress = true;
                 IsEnabled = false;
                 isMainWindowClosing = true;
+                Stopwatch shutdownStopwatch = Stopwatch.StartNew();
+                try
+                {
+                    hostWindow.Hide();
+                }
+                catch (InvalidOperationException)
+                {
+                    // Window already being destroyed.
+                }
+
                 CaptureViewportWindowState();
                 CapturePictureInPictureViewportWindowState("shutdown");
                 viewportContent?.AttachClient(null, null);
@@ -2868,8 +2922,20 @@ namespace OceanyaClient
                 callwordAudioNotifier.Dispose();
                 ao2TextLogWriter.ResetSession();
                 mainMusicAudioManager.Dispose();
-                await DisconnectAllClientsForShutdownAsync();
+                try
+                {
+                    await DisconnectAllClientsForShutdownAsync();
+                }
+                catch (Exception ex)
+                {
+                    // A failed disconnect must never strand a hidden window and a live process.
+                    CustomConsole.Error("Shutdown disconnect failed; closing anyway.", ex);
+                }
+
                 IsEnabled = true;
+                CustomConsole.Info(
+                    $"[SHUTDOWN] clean close took {shutdownStopwatch.ElapsedMilliseconds}ms.",
+                    CustomConsole.LogCategory.System);
                 try
                 {
                     hostWindow.Close();

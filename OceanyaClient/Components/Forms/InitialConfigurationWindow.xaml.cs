@@ -409,6 +409,18 @@ namespace OceanyaClient
             {
                 await RevealStartupWindowAsync();
                 await CloseLaunchWaitFormAsync();
+
+                // Closing the client means quitting, not "go back and pick another tool". The launcher used
+                // to reopen for everything, so exiting the GM client took two X presses - one to close the
+                // client, one to close the launcher it had just brought back. The offline tools keep the
+                // launcher, because switching between them without relaunching the exe is the point of it.
+                if (selectedFunctionality.RequiresServerEndpoint)
+                {
+                    StartupTimingLogger.Log("startup_functionality_closed_exiting");
+                    Application.Current?.Shutdown();
+                    return;
+                }
+
                 ReopenConfigurationWindow();
             }
 
