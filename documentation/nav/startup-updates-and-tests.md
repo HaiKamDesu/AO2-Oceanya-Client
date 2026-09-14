@@ -103,3 +103,28 @@ Behaviour changes to be aware of: `ClientAssetRefreshService.RefreshCharactersAn
 **Status:** Confirmed
 
 `UiAutomationTests/`; opt-in only, Windows interactive desktop required, run categories sequentially. Fixture args live in `SmokeFixturePaths` / `OnlineFixturePaths` and disable GM snapshot + viewport persistence for isolation. `SmokeFixturePaths.AppExePath` resolves the exe via `OCEANYA_TEST_APP_EXE` env override, then probes `bin/Debug` then `bin/Release` (`net8.0-windows`), so Smoke can run against a Release build. Release gate wiring: `release.yml` runs UnitTests **and** `Category=Smoke` (per channel; `OCEANYA_TEST_APP_EXE` points Smoke at that channel's exe) before packaging; `ui-smoke.yml` auto-runs Smoke on push→main; `ui-online.yml` is manual/self-hosted only. **`Category=Smoke` = 12/12 green.** Two GmPacket parity anchors that broke on UI drift were fixed: (1) `InitialConfig.SelectedServerCombo` items now set `AutomationProperties.Name="{Binding Name}"` in `ServerHistoryComboBoxItemStyle` (was reading `ToString()` = type name) — also a real screen-reader fix; (2) the in-test loopback servers were stale vs the current handshake contract. `GmPacketLoopbackServer` and `OnlineLaneTests.RunServerAsync` now send `PV#<conn>#CID#<charId>#%` after `CC#` (client gates IC sends on `iniPuppetID >= 0`, confirmed only by `PV#`) and `CharsCheck#`; `OnlineLaneTests.RunServerAsync` now **accepts connections in a loop** (was single-accept) so the client's transient first-attempt-then-retry connection does not starve the real connection. `Category=Online` (incl `GmPacket`) went 0/15 → **15/15 green**. The last 2 were corrected test-side (not app bugs): GM client IC `ShowName` assertions now expect the character's configured showname (`ResolveShowNameForPacket` falls back to it when `ICShowname` is unset — AO2-correct), and connection assertions now check *distinct* connections (`ConnectionId > 0`, first != second) instead of exact accept-order ids. The client's first handshake attempt transiently retries and opens an extra loopback connection (why exact ids were unstable); treated as a test-lab artifact — production v7.9 connects to real servers fine.
+
+## empty window while launching
+
+**Also called:** "shows the background main window completely empty", "broken state on launch", "ghost/see-through window on launch", "startup_window_revealed"
+
+**Status:** Confirmed (verified by driving the app and screenshotting the launch)
+
+`InitialConfigurationWindow` shows the launched window at `Opacity = 0` and calls
+`RevealStartupWindowAsync()` once the launch-critical path is done, before the wait form closes. The window
+must be SHOWN for WPF to raise Loaded, and Loaded is what starts the GM snapshot restore, so it cannot just
+be created hidden. `startupRevealSafetyTimer` (`StartupRevealSafetySeconds`, 45 s) guarantees it can never
+stay invisible, and the error and closed paths reveal too.
+
+**The ordering trap:** the readiness callback fires RE-ENTRANTLY from inside `Show()` - Loaded runs the
+restore, the restore signals the critical path, and the ready handler runs, all before `Show()` returns.
+Setting `Opacity = 1` there produced a ghost: chrome painted, body not yet rendered, desktop visible through
+it. Measured as `startup_window_revealed` at 104992 ms against `startup_window_show_end` at 105139 ms.
+
+The reveal is therefore posted at `DispatcherPriority.ContextIdle`, which is a LOWER priority than the
+`DispatcherPriority.Loaded` that `MainWindow.RevealSurfaceAfterFirstLayout` uses for `MainCanvas`, so it
+always runs after both that reveal and the render pass. Verified: `show_end` 10137 → `revealed` 10560, and
+on a profile with a saved GM snapshot the first frame the window is on screen already has the client
+restored, the server connected, the area list, the OOC log and the viewport rendered.
+
+Do not "simplify" this back to setting `Opacity` inline - that is the ghost-window bug.

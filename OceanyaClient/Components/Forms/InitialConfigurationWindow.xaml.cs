@@ -29,6 +29,9 @@ namespace OceanyaClient
         private const double MultiClientWindowHeight = 384;
         private const double CharacterViewerWindowHeight = 312;
         private static Func<string, string, MessageBoxButton, MessageBoxImage, MessageBoxResult>? testMessageBoxOverride = null;
+        /// <summary>Upper bound on how long the launched window may stay transparent.</summary>
+        private const int StartupRevealSafetySeconds = 45;
+
         private static Func<Window, Task>? testRefreshCharactersAndBackgroundsAsyncOverride = null;
 
         /// <summary>
@@ -36,6 +39,56 @@ namespace OceanyaClient
         /// asset work so the scan never competes with window creation and the first server connect.
         /// </summary>
         private bool pendingStartupFullAssetRefresh;
+
+        /// <summary>
+        /// The launched window, kept transparent until its startup work has finished.
+        /// </summary>
+        /// <remarks>
+        /// The window has to be SHOWN for WPF to raise Loaded, and Loaded is what starts the GM snapshot
+        /// restore - so it cannot simply be created hidden. Showing it immediately means the user watches an
+        /// empty, asset-less shell for the whole restore. Opacity 0 gets both: the window is live and
+        /// loading, but nothing half-built is on screen until <see cref="RevealStartupWindow"/> runs. The
+        /// viewport window already uses this exact pattern for the same reason.
+        /// </remarks>
+        private Window? pendingStartupWindowReveal;
+
+        /// <summary>Safety net so a startup that never signals ready cannot leave an invisible window.</summary>
+        private DispatcherTimer? startupRevealSafetyTimer;
+
+        /// <summary>
+        /// Makes the launched window visible once it has actually rendered. Idempotent.
+        /// </summary>
+        /// <remarks>
+        /// The readiness callback fires RE-ENTRANTLY from inside <c>Show()</c>: Loaded runs the snapshot
+        /// restore, the restore signals the critical path, and the ready handler runs - all before Show()
+        /// has returned. Measured as <c>startup_window_revealed</c> at 104992 ms against
+        /// <c>startup_window_show_end</c> at 105139 ms. Setting Opacity there produced a ghost window: the
+        /// chrome painted but the body had not rendered, so the desktop showed through it.
+        ///
+        /// Posting at <see cref="DispatcherPriority.ContextIdle"/> fixes the ordering. It is a LOWER
+        /// priority than <see cref="DispatcherPriority.Loaded"/>, which is what the content's own
+        /// first-layout reveal uses, so this always runs after both that reveal and the render pass.
+        /// </remarks>
+        private Task RevealStartupWindowAsync()
+        {
+            startupRevealSafetyTimer?.Stop();
+            startupRevealSafetyTimer = null;
+
+            Window? window = pendingStartupWindowReveal;
+            pendingStartupWindowReveal = null;
+            if (window == null)
+            {
+                return Task.CompletedTask;
+            }
+
+            return window.Dispatcher.InvokeAsync(
+                () =>
+                {
+                    window.Opacity = 1;
+                    StartupTimingLogger.Log("startup_window_revealed");
+                },
+                DispatcherPriority.ContextIdle).Task;
+        }
         private static Func<Window, TargetedAssetRefreshPlan, Task>? testRefreshTargetedAssetsAsyncOverride = null;
 
         private ServerEndpointDefinition? selectedServer;
@@ -296,6 +349,9 @@ namespace OceanyaClient
                     ClientAssetRefreshService.SignalStartupCriticalPathComplete();
                 }
 
+                // Everything the launch waits on is done, so the window can come up fully populated.
+                // Awaited, and done BEFORE the wait form closes, so the form never uncovers a blank window.
+                await RevealStartupWindowAsync();
                 await CloseLaunchWaitFormAsync();
                 TryPlayStartupFunctionalityJingle();
                 // Detect and refresh only changed assets in the background — this scan is deferred off the launch
@@ -351,6 +407,7 @@ namespace OceanyaClient
 
             async Task HandleStartupFunctionalityClosedAsync()
             {
+                await RevealStartupWindowAsync();
                 await CloseLaunchWaitFormAsync();
                 ReopenConfigurationWindow();
             }
@@ -375,8 +432,23 @@ namespace OceanyaClient
                     useSharedStartupWaitForm: true);
                 StartupTimingLogger.Log("startup_window_construct_end");
 
+                // Shown transparent: Loaded must fire for the snapshot restore to start, but nothing
+                // half-built should be visible while it does. RevealStartupWindow puts it on screen.
+                startupWindow.Opacity = 0;
+                pendingStartupWindowReveal = startupWindow;
                 startupWindow.Show();
                 StartupTimingLogger.Log("startup_window_show_end");
+
+                startupRevealSafetyTimer = new DispatcherTimer
+                {
+                    Interval = TimeSpan.FromSeconds(StartupRevealSafetySeconds)
+                };
+                startupRevealSafetyTimer.Tick += (_, _) =>
+                {
+                    StartupTimingLogger.Log("startup_window_reveal_safety_timeout");
+                    _ = RevealStartupWindowAsync();
+                };
+                startupRevealSafetyTimer.Start();
                 if (launchWaitFormShown)
                 {
                     WaitForm.SetSubtitle("Loading startup tasks...");
@@ -386,6 +458,7 @@ namespace OceanyaClient
             }
             catch (Exception ex)
             {
+                await RevealStartupWindowAsync();
                 await CloseLaunchWaitFormAsync();
 
                 OceanyaMessageBox.Show(
