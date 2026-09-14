@@ -130,6 +130,12 @@ Wired into the two lookups that run per message:
 - The startup "a full asset refresh is required, continue?" prompt is gone. A forced refresh (mount list or
   app version changed) now just logs its reason and runs in the background while the client launches on the
   cache it already has.
+- The **"Refresh character and background info" checkbox is gone** from the initial configuration window.
+  Its tooltip promised a rebuild "after adding, removing, or renaming AO asset folders", and all three are
+  now automatic: the live watcher covers changes while the client runs, the post-launch tracked-change scan
+  covers changes made while it was closed, `GetRefreshRequirementReasonForCurrentEnvironment` forces a full
+  rebuild when the mount list or app version changes, and `ResolveOnDemand` self-heals anything those miss.
+  `ShouldRunStartupAssetRefresh` therefore only reacts to a forced reason.
 - The manual "Refresh all assets" / "Refresh all characters" / "Refresh <character>" menu entries remain as
   an explicit override; they no longer freeze the client.
 

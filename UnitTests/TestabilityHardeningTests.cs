@@ -1006,7 +1006,6 @@ namespace UnitTests
             try
             {
                 bool shouldRefresh = InitialConfigurationWindow.ShouldRunStartupAssetRefresh(
-                    refreshRequested: false,
                     forcedRefreshReason: "the AO mount/base-folder list in config.ini changed since the last full asset refresh.",
                     skipAssetRefreshPrompts: false);
 
@@ -1022,21 +1021,26 @@ namespace UnitTests
             }
         }
 
+        /// <summary>
+        /// There is no manual "refresh assets" checkbox any more - asset changes are picked up by the live
+        /// watcher, the post-launch tracked-change scan, the forced-refresh check and the on-demand probe -
+        /// so the only thing that can start a startup refresh is a forced environment reason.
+        /// </summary>
         [Test]
-        public void ShouldRunStartupAssetRefresh_HonoursExplicitRequestAndTestModeSuppression()
+        public void ShouldRunStartupAssetRefresh_OnlyRunsForAForcedReason()
         {
             Assert.Multiple(() =>
             {
                 Assert.That(
-                    InitialConfigurationWindow.ShouldRunStartupAssetRefresh(true, string.Empty, false),
-                    Is.True,
-                    "a refresh the user asked for must still run");
-                Assert.That(
-                    InitialConfigurationWindow.ShouldRunStartupAssetRefresh(false, string.Empty, false),
+                    InitialConfigurationWindow.ShouldRunStartupAssetRefresh(string.Empty, false),
                     Is.False,
-                    "nothing to do without a request or a forced reason");
+                    "nothing to do without a forced reason");
                 Assert.That(
-                    InitialConfigurationWindow.ShouldRunStartupAssetRefresh(true, "mounts changed", true),
+                    InitialConfigurationWindow.ShouldRunStartupAssetRefresh("mounts changed", false),
+                    Is.True,
+                    "a forced environment change must still rebuild");
+                Assert.That(
+                    InitialConfigurationWindow.ShouldRunStartupAssetRefresh("mounts changed", true),
                     Is.False,
                     "test mode suppresses startup refreshes entirely");
             });
@@ -1068,7 +1072,6 @@ namespace UnitTests
                 Assert.That(GetAutomationId(window, "StartupFunctionalityComboBox"), Is.EqualTo("InitialConfig.StartupFunctionality"));
                 Assert.That(GetAutomationId(window, "SelectedServerComboBox"), Is.EqualTo("InitialConfig.SelectedServerCombo"));
                 Assert.That(GetAutomationId(window, "SelectServerButton"), Is.EqualTo("InitialConfig.SelectServer"));
-                Assert.That(GetAutomationId(window, "RefreshInfoCheckBox"), Is.EqualTo("InitialConfig.RefreshAssets"));
                 Assert.That(GetAutomationId(window, "UseSingleClientCheckBox"), Is.EqualTo("InitialConfig.UseSingleInternalClient"));
                 Assert.That(GetAutomationId(window, "OkButton"), Is.EqualTo("InitialConfig.Launch"));
             });

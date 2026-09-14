@@ -93,7 +93,6 @@ namespace OceanyaClient
             StartupFunctionalityOption selectedFunctionality = GetSelectedStartupFunctionality();
             string selectedServerEndpoint = selectedServer?.Endpoint?.Trim() ?? string.Empty;
             string selectedServerName = selectedServer?.Name?.Trim() ?? string.Empty;
-            bool refreshRequested = RefreshInfoCheckBox.IsChecked == true;
             Window? startupLaunchOwner = HostWindow ?? Window.GetWindow(this) ?? Application.Current?.MainWindow;
             bool launchWaitFormShown = false;
             bool launchWaitFormClosed = true;
@@ -201,11 +200,6 @@ namespace OceanyaClient
                         Globals.SetSelectedServerEndpoint(selectedServerEndpoint);
                     }
 
-                    if (refreshRequested)
-                    {
-                        return string.Empty;
-                    }
-
                     WaitForm.SetSubtitle("Verifying asset cache...");
                     string computedForcedRefreshReason =
                         ClientAssetRefreshService.GetRefreshRequirementReasonForCurrentEnvironment();
@@ -226,7 +220,6 @@ namespace OceanyaClient
                 });
 
                 bool shouldRefreshAssets = ShouldRunStartupAssetRefresh(
-                    refreshRequested,
                     forcedRefreshReason,
                     OceanyaTestMode.Current.SkipAssetRefreshPrompts);
 
@@ -258,7 +251,6 @@ namespace OceanyaClient
                     // through ClientAssetRefreshService.AssetsRefreshed, and anything the scan has not
                     // reached yet still resolves on demand the first time a message names it.
                     pendingStartupFullAssetRefresh = true;
-                    RefreshInfoCheckBox.IsChecked = false;
                 }
 
                 await EnsureLaunchWaitFormAsync("Creating window...");
@@ -1398,24 +1390,24 @@ namespace OceanyaClient
         /// longer blocks anything - it runs in the background while the client launches on the cache it
         /// already has, and anything it has not reached yet still resolves on demand - so there is no wait
         /// left to approve. The reason is logged instead.
+        ///
+        /// There is also no longer a "Refresh character and background info" checkbox to honour. Asset
+        /// changes are picked up without the user asking: the live watcher while the client runs, the
+        /// post-launch tracked-change scan for anything that happened while it was closed, a forced full
+        /// refresh when the mount list or app version changes, and an on-demand probe for anything those
+        /// miss. The character context menus still expose an explicit "Refresh All Assets" for the case
+        /// where someone wants to force a rebuild anyway.
         /// </remarks>
-        /// <param name="refreshRequested">The user ticked the refresh checkbox themselves.</param>
         /// <param name="forcedRefreshReason">Why the environment requires a refresh, or empty.</param>
         /// <param name="skipAssetRefreshPrompts">Test-mode flag that suppresses startup refreshes entirely.</param>
         /// <returns>True when a refresh should be started.</returns>
         internal static bool ShouldRunStartupAssetRefresh(
-            bool refreshRequested,
             string forcedRefreshReason,
             bool skipAssetRefreshPrompts)
         {
             if (skipAssetRefreshPrompts)
             {
                 return false;
-            }
-
-            if (refreshRequested)
-            {
-                return true;
             }
 
             if (string.IsNullOrWhiteSpace(forcedRefreshReason))

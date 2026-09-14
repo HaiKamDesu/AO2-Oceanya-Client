@@ -834,8 +834,11 @@ namespace OceanyaClient
 
             if (entryBytes >= HeavyAnimationLogThresholdBytes)
             {
+                BitmapSource sampleFrame = frames[0];
                 CustomConsole.Info(
                     $"[ANIM-DECODE] {Path.GetFileName(key.path)} frames={frames.Count}"
+                    + $" frameSize={sampleFrame.PixelWidth}x{sampleFrame.PixelHeight}"
+                    + $" dimKey={key.maxDim}"
                     + $" decodedMB={entryBytes / (1024 * 1024)}"
                     + $" cached={(entryBytes <= MaxCachedAnimationBytes ? "yes" : "no (too large)")}"
                     + $" path={key.path}",

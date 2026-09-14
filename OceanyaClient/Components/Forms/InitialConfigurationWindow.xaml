@@ -1,4 +1,4 @@
-<local:OceanyaWindowContentControl x:Class="OceanyaClient.InitialConfigurationWindow"
+﻿<local:OceanyaWindowContentControl x:Class="OceanyaClient.InitialConfigurationWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:OceanyaClient"
@@ -364,18 +364,11 @@
                     </Grid>
                 </StackPanel>
 
-                <CheckBox x:Name="RefreshInfoCheckBox"
-                          AutomationProperties.AutomationId="InitialConfig.RefreshAssets"
-                          Content="Refresh character and background info"
-                          Style="{StaticResource ModernCheckBox}"
-                          Margin="0,10,0,0"
-                          ToolTip="Rebuild Oceanya's local character/background index before launch. Use this after adding, removing, or renaming AO asset folders."/>
-
                 <CheckBox x:Name="SkipLoadingScreenCheckBox"
                           AutomationProperties.AutomationId="InitialConfig.SkipLoadingScreen"
                           Content="Skip intro loading screen"
                           Style="{StaticResource ModernCheckBox}"
-                          Margin="0,4,0,0"
+                          Margin="0,10,0,0"
                           ToolTip="Skip the intro/loading screen and open the selected tool directly after startup checks finish."
                           Checked="SkipLoadingScreenCheckBox_CheckedChanged"
                           Unchecked="SkipLoadingScreenCheckBox_CheckedChanged"/>
