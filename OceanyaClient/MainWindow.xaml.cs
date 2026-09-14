@@ -6533,6 +6533,14 @@ namespace OceanyaClient
             }
         }
 
+        /// <summary>Backoff, in milliseconds, between connection attempts the server actively refused.</summary>
+        /// <remarks>
+        /// A refusal is a rate limiter ("Please wait before connecting another client"), so the only thing
+        /// that helps is waiting longer. Restoring a snapshot opens the internal client and then each saved
+        /// client back to back, which is exactly the pattern the limiter exists to stop.
+        /// </remarks>
+        private static readonly int[] RefusedConnectBackoffMs = { 1500, 3000, 5000, 8000 };
+
         private async Task ConnectClientAsync(AOClient bot, bool autoSelectCharacter = true)
         {
             if (testConnectClientAsyncOverride != null)
@@ -6542,51 +6550,78 @@ namespace OceanyaClient
                 return;
             }
 
-            try
-            {
-                // First attempt uses a short handshake-greeting timeout so a dead first socket (server sends
-                // nothing) is detected in a few seconds and recycled via the retry below, instead of hanging the
-                // full ~15s. A healthy server sends its greeting in well under a second.
-                await bot.Connect(
-                    betweenAreasAndIniPuppet: autoSelectCharacter ? 1000 : 0,
-                    finalDelay: 0,
-                    autoSelectCharacter: autoSelectCharacter,
-                    handshakeGreetingTimeoutMs: 2000);
-                ao2TextLogWriter.RefreshSession();
-            }
-            catch (Exception ex) when (ex is ServerRefusedConnectionException || (ex is TimeoutException && IsHandshakeTimeout(ex)))
-            {
-                // Two different failures share one recovery. A handshake TIMEOUT is a socket that never
-                // greeted us. A ServerRefusedConnectionException is the server explicitly saying no (rate
-                // limit, ban, full) - it arrives immediately instead of after the timeout, which is the
-                // point: the retry below used to cost an extra 4.1s of dead waiting for a packet the
-                // server had already told us would never arrive.
-                bool wasRefused = ex is ServerRefusedConnectionException;
-                StartupTimingLogger.Log(
-                    wasRefused ? "connect_refused_retry" : "connect_handshake_timeout_retry",
-                    $"name={bot.clientName}, reason={ex.Message}");
-                CustomConsole.Warning(
-                    wasRefused
-                        ? $"Server refused the connection for \"{bot.clientName}\" ({ex.Message}); retrying."
-                        : $"Retrying client connection after handshake timeout for \"{bot.clientName}\".",
-                    category: CustomConsole.LogCategory.System);
-                if (WaitForm.Showing)
-                {
-                    WaitForm.SetSubtitle(wasRefused
-                        ? "Server refused the connection — retrying..."
-                        : "Server didn't respond yet — retrying connection...");
-                }
+            Stopwatch connectStopwatch = Stopwatch.StartNew();
+            int refusalCount = 0;
+            bool retriedAfterTimeout = false;
 
-                await bot.DisconnectWebsocket();
-                await Task.Delay(750);
-                // Retry with a generous greeting timeout so a genuinely slow-but-alive server (which AO2 would wait
-                // indefinitely for) still gets a full chance to greet before we give up.
-                await bot.Connect(
-                    betweenAreasAndIniPuppet: autoSelectCharacter ? 1000 : 0,
-                    finalDelay: 0,
-                    autoSelectCharacter: autoSelectCharacter,
-                    handshakeGreetingTimeoutMs: 10000);
-                ao2TextLogWriter.RefreshSession();
+            for (int attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    // The first attempt uses a short handshake-greeting timeout so a dead socket (server
+                    // sends nothing) is detected in a couple of seconds. Later attempts are generous, so a
+                    // slow-but-alive server still gets a full chance to greet.
+                    int greetingTimeoutMs = attempt == 1 ? 2000 : 10000;
+                    await bot.Connect(
+                        betweenAreasAndIniPuppet: autoSelectCharacter ? 1000 : 0,
+                        finalDelay: 0,
+                        autoSelectCharacter: autoSelectCharacter,
+                        handshakeGreetingTimeoutMs: greetingTimeoutMs);
+                    ao2TextLogWriter.RefreshSession();
+                    CustomConsole.Info(
+                        $"[CONNECT] \"{bot.clientName}\" connected on attempt {attempt}"
+                        + $" after {connectStopwatch.ElapsedMilliseconds}ms (refusals={refusalCount}).",
+                        CustomConsole.LogCategory.Network);
+                    return;
+                }
+                catch (ServerRefusedConnectionException refusal)
+                {
+                    // The server said no and said why. Only a longer wait helps, so back off and try again
+                    // rather than failing the whole snapshot restore on a transient rate limit.
+                    if (refusalCount >= RefusedConnectBackoffMs.Length)
+                    {
+                        CustomConsole.Warning(
+                            $"[CONNECT] \"{bot.clientName}\" refused {refusalCount + 1} times"
+                            + $" after {connectStopwatch.ElapsedMilliseconds}ms; giving up. Reason: {refusal.Reason}",
+                            category: CustomConsole.LogCategory.Network);
+                        throw;
+                    }
+
+                    int backoffMs = RefusedConnectBackoffMs[refusalCount];
+                    refusalCount++;
+                    StartupTimingLogger.Log(
+                        "connect_refused_retry",
+                        $"name={bot.clientName}, attempt={attempt}, backoffMs={backoffMs}, reason={refusal.Reason}");
+                    CustomConsole.Warning(
+                        $"[CONNECT] \"{bot.clientName}\" refused on attempt {attempt} ({refusal.Reason});"
+                        + $" waiting {backoffMs}ms before retrying.",
+                        category: CustomConsole.LogCategory.Network);
+                    if (WaitForm.Showing)
+                    {
+                        WaitForm.SetSubtitle($"Server is rate limiting connections — retrying in {backoffMs / 1000.0:0.#}s...");
+                    }
+
+                    await bot.DisconnectWebsocket();
+                    await Task.Delay(backoffMs);
+                }
+                catch (TimeoutException timeout) when (IsHandshakeTimeout(timeout) && !retriedAfterTimeout)
+                {
+                    // A socket that never greeted us. One recycle is enough; a second timeout is a real fault.
+                    retriedAfterTimeout = true;
+                    StartupTimingLogger.Log(
+                        "connect_handshake_timeout_retry",
+                        $"name={bot.clientName}, attempt={attempt}, reason={timeout.Message}");
+                    CustomConsole.Warning(
+                        $"[CONNECT] \"{bot.clientName}\" handshake timed out on attempt {attempt}; recycling the socket.",
+                        category: CustomConsole.LogCategory.Network);
+                    if (WaitForm.Showing)
+                    {
+                        WaitForm.SetSubtitle("Server didn't respond yet — retrying connection...");
+                    }
+
+                    await bot.DisconnectWebsocket();
+                    await Task.Delay(750);
+                }
             }
         }
 

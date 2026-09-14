@@ -155,3 +155,37 @@ restored no clients, so the window is never usable-but-empty. It connects one cl
 pick the INI puppet. Posted at `DispatcherPriority.ApplicationIdle`, deliberately a LOWER priority than the
 `ContextIdle` the launch flow reveals the window at, so the character selector never opens over a window the
 user cannot see yet. Guarded by `hasAutoAddedFirstClient` so it can only fire once.
+
+## snapshot restore warning / unfocused second window on launch
+
+**Also called:** "Could not restore the previous GM client snapshot", "Please wait before connecting another client", "launch window appears without focus", "two fully separate windows", "[CONNECT]", "[SHELL-STATE]"
+
+**Status:** Confirmed (found by instrumenting DEBUG.txt and driving the app)
+
+One root cause chain, all of it introduced by the launch changes above.
+
+**The warning.** `WaitForPacketAsync` throws `ServerRefusedConnectionException` on a `BD#`, which is a
+RATE LIMIT ("Please wait before connecting another client"). The old code waited out a handshake timeout
+first, which incidentally gave the limiter ~3 s to clear; failing fast and retrying after 750 ms hit the
+same limiter and threw, failing the whole snapshot restore. Restoring a snapshot opens the internal client
+and then each saved client back to back, which is exactly the pattern the limiter exists to stop.
+`ConnectClientAsync` is now a retry loop with `RefusedConnectBackoffMs` (1.5 s, 3 s, 5 s, 8 s) for refusals,
+one socket recycle for a handshake timeout, and a `[CONNECT]` line per outcome.
+
+**The stall and the lost focus.** With the window at `Opacity = 0`, any modal raised during the restore -
+the "Client1 did not have a saved INIPuppet" prompt, or the restore warning - opened over a window the user
+could not see, unfocused, and blocked the restore until the 45 s safety timer fired. Measured:
+`snapshot_single_connect_end` at 12033 ms, then nothing until `startup_window_reveal_safety_timeout` at
+56464 ms. `InitialConfigurationWindow` now subscribes to `ComponentDispatcher.EnterThreadModal` while a
+reveal is pending and reveals synchronously (`RevealStartupWindowNow`), so a dialog always lands on a real,
+focused window. The normal reveal also calls `Activate()`, because a window shown at Opacity 0 does not take
+the foreground.
+
+**The second window.** `OceanyaWindowPresentationOptions.ShowInTaskbar` defaults to `true`, so every hosted
+dialog claimed its own taskbar button. `OceanyaWindowManager.ShowDialog` now forces it false - a modal is
+part of the window that raised it, never a separate app window. It cannot be conditional on `Owner`, which
+is not always resolvable at startup. Verified by enumerating root-level windows with `WS_EX_APPWINDOW`:
+exactly one.
+
+`LogStartupShellState` writes `[SHELL-STATE]` (every window's title, visibility, opacity, ShowInTaskbar and
+ex-styles) at each reveal, which is what made the duplicate diagnosable at all.

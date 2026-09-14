@@ -63,6 +63,12 @@ namespace OceanyaClient
         /// <returns>Dialog result returned by the hosted window.</returns>
         public static bool? ShowDialog(OceanyaWindowContentControl content, OceanyaWindowPresentationOptions options)
         {
+            // A modal is part of the window that raised it, never a separate app window. Leaving
+            // ShowInTaskbar at its default gave every dialog its own taskbar button, so a prompt raised
+            // during startup looked like the app had opened "two fully separate windows" - and because the
+            // owner may not be resolvable at that point, this cannot be conditional on Owner.
+            options.ShowInTaskbar = false;
+
             GenericOceanyaWindow window = CreateHostedWindow(content, options);
             content.AttachHost(window);
 

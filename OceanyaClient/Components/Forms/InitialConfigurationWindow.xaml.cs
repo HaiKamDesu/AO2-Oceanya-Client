@@ -6,6 +6,7 @@ using OceanyaClient.Features.Updates;
 using OceanyaClient.Features.Startup;
 using OceanyaClient.Utilities;
 using System;
+using System.Windows.Interop;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
@@ -29,6 +30,44 @@ namespace OceanyaClient
         private const double MultiClientWindowHeight = 384;
         private const double CharacterViewerWindowHeight = 312;
         private static Func<string, string, MessageBoxButton, MessageBoxImage, MessageBoxResult>? testMessageBoxOverride = null;
+        /// <summary>
+        /// Records which of this process's windows the shell can see, so a duplicate taskbar entry is
+        /// diagnosable from DEBUG.txt instead of by eye.
+        /// </summary>
+        private static void LogStartupShellState(Window revealedWindow, string reason)
+        {
+            try
+            {
+                const int GWL_EXSTYLE = -20;
+                const int WS_EX_TOOLWINDOW = 0x00000080;
+                const int WS_EX_APPWINDOW = 0x00040000;
+
+                List<string> descriptions = new List<string>();
+                foreach (Window window in Application.Current?.Windows ?? (System.Windows.WindowCollection?)null!)
+                {
+                    IntPtr handle = new WindowInteropHelper(window).Handle;
+                    int exStyle = handle == IntPtr.Zero ? 0 : GetWindowLong(handle, GWL_EXSTYLE);
+                    descriptions.Add(
+                        $"{window.GetType().Name}[title=\"{window.Title}\" visible={window.IsVisible}"
+                        + $" opacity={window.Opacity:0.##} showInTaskbar={window.ShowInTaskbar}"
+                        + $" appWindow={(exStyle & WS_EX_APPWINDOW) != 0}"
+                        + $" toolWindow={(exStyle & WS_EX_TOOLWINDOW) != 0}"
+                        + $" isRevealTarget={ReferenceEquals(window, revealedWindow)}]");
+                }
+
+                CustomConsole.Info(
+                    $"[SHELL-STATE] ({reason}) windows={descriptions.Count} | {string.Join(" | ", descriptions)}",
+                    CustomConsole.LogCategory.System);
+            }
+            catch (Exception ex)
+            {
+                CustomConsole.Warning("Could not log startup shell state.", ex);
+            }
+        }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "GetWindowLong")]
+        private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+
         /// <summary>Upper bound on how long the launched window may stay transparent.</summary>
         private const int StartupRevealSafetySeconds = 45;
 
@@ -69,10 +108,50 @@ namespace OceanyaClient
         /// priority than <see cref="DispatcherPriority.Loaded"/>, which is what the content's own
         /// first-layout reveal uses, so this always runs after both that reveal and the render pass.
         /// </remarks>
+        /// <summary>Reveals the launched window as soon as anything opens a modal dialog over it.</summary>
+        private void OnEnterThreadModalDuringStartup(object? sender, EventArgs e)
+        {
+            if (pendingStartupWindowReveal == null)
+            {
+                return;
+            }
+
+            StartupTimingLogger.Log("startup_window_reveal_for_modal");
+            RevealStartupWindowNow();
+        }
+
+        /// <summary>Applies the reveal synchronously. Used when a modal cannot wait for the idle queue.</summary>
+        private void RevealStartupWindowNow()
+        {
+            Window? window = pendingStartupWindowReveal;
+            if (window == null)
+            {
+                return;
+            }
+
+            pendingStartupWindowReveal = null;
+            startupRevealSafetyTimer?.Stop();
+            startupRevealSafetyTimer = null;
+            ComponentDispatcher.EnterThreadModal -= OnEnterThreadModalDuringStartup;
+
+            try
+            {
+                window.Opacity = 1;
+                window.Activate();
+            }
+            catch (InvalidOperationException)
+            {
+                // Window was closed while the reveal was pending.
+            }
+
+            LogStartupShellState(window, "revealed for modal");
+        }
+
         private Task RevealStartupWindowAsync()
         {
             startupRevealSafetyTimer?.Stop();
             startupRevealSafetyTimer = null;
+            ComponentDispatcher.EnterThreadModal -= OnEnterThreadModalDuringStartup;
 
             Window? window = pendingStartupWindowReveal;
             pendingStartupWindowReveal = null;
@@ -85,7 +164,22 @@ namespace OceanyaClient
                 () =>
                 {
                     window.Opacity = 1;
+
+                    // A window shown at Opacity 0 does not take the foreground, so without this the client
+                    // comes up behind whatever the user was looking at and they have to click its taskbar
+                    // icon to reach it.
+                    try
+                    {
+                        window.Activate();
+                        window.Focus();
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        // Window was closed while the reveal was queued.
+                    }
+
                     StartupTimingLogger.Log("startup_window_revealed");
+                    LogStartupShellState(window, "after reveal");
                 },
                 DispatcherPriority.ContextIdle).Task;
         }
@@ -461,6 +555,12 @@ namespace OceanyaClient
                     _ = RevealStartupWindowAsync();
                 };
                 startupRevealSafetyTimer.Start();
+
+                // Anything that opens a modal before the reveal (the snapshot INI-puppet conflict prompt,
+                // a restore warning) would otherwise appear over a window the user cannot see, unfocused,
+                // and would block the restore until the safety timer fired - measured at a 45 second stall.
+                // Revealing on modal entry makes the dialog land on a real, focused window.
+                ComponentDispatcher.EnterThreadModal += OnEnterThreadModalDuringStartup;
                 if (launchWaitFormShown)
                 {
                     WaitForm.SetSubtitle("Loading startup tasks...");
