@@ -1,4 +1,4 @@
-using Common;
+﻿using Common;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -46,10 +46,6 @@ namespace OceanyaClient.Utilities
                 Owner = owner,
                 Title = "Image Asset Viewer",
                 HeaderText = "Image Asset Viewer",
-                Width = 1080,
-                Height = 760,
-                MinWidth = 820,
-                MinHeight = 600,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 ShowInTaskbar = false,
                 IsUserResizeEnabled = true,
@@ -57,6 +53,11 @@ namespace OceanyaClient.Utilities
                 IsCloseButtonVisible = true,
                 BodyMargin = new Thickness(0)
             };
+
+            // Stated as CONTENT size: the shell scales its body, so Width/Height here would leave the
+            // viewer size/scale short of what was asked for.
+            dialog.MinimumContentSizeRequest = new Size(820, 600);
+            dialog.ContentSizeRequest = new Size(1080, 760);
 
             // — Navigation buttons —
             Button previousButton = MakeNavButton("←");

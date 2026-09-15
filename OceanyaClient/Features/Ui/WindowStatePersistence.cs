@@ -54,10 +54,14 @@ namespace OceanyaClient.Features.Ui
                 (double horizontalOffset, double verticalOffset) =
                     GenericOceanyaWindow.GetChromeOffsets(shellWindow.BodyMargin, scale);
 
-                double contentWidth = IsUsableLength(content.Width)
+                // The body's own Width/Height only describe the window when something syncs the two. On a
+                // shell without that controller they are whatever was last written to them, so the window
+                // is the only honest source.
+                bool bodyOwnsSize = shellWindow.HasHostedContentSizing;
+                double contentWidth = bodyOwnsSize && IsUsableLength(content.Width)
                     ? content.Width
                     : (windowWidth - horizontalOffset) / scale;
-                double contentHeight = IsUsableLength(content.Height)
+                double contentHeight = bodyOwnsSize && IsUsableLength(content.Height)
                     ? content.Height
                     : (windowHeight - verticalOffset) / scale;
 
@@ -89,6 +93,21 @@ namespace OceanyaClient.Features.Ui
                 (double horizontalOffset, double verticalOffset) =
                     GenericOceanyaWindow.GetChromeOffsets(shellWindow.BodyMargin, scale);
                 (double availableWidth, double availableHeight) = UiScaleManager.GetLogicalWorkAreaSize(window);
+
+                // Without a sizing controller nothing propagates a body size back to the window, so sizing
+                // the body only makes it overflow: the saved size has to go on the window itself. This was
+                // the Solid Color Picker opening with its OK/Cancel row below the bottom edge, unreachable
+                // until the window was dragged much larger, because a saved body size of 972x665 was being
+                // drawn inside a 760x680 window.
+                if (!shellWindow.HasHostedContentSizing)
+                {
+                    if (IsUsableLength(contentWidth) && IsUsableLength(contentHeight))
+                    {
+                        shellWindow.ContentSizeRequest = new Size(contentWidth, contentHeight);
+                    }
+
+                    return;
+                }
 
                 double maximumContentWidth = (availableWidth - horizontalOffset) / scale;
                 double maximumContentHeight = (availableHeight - verticalOffset) / scale;

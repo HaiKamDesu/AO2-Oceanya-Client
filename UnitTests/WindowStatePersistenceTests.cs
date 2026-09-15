@@ -1,4 +1,4 @@
-using System.Threading;
+﻿using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using NUnit.Framework;
@@ -117,7 +117,11 @@ namespace UnitTests
             GenericOceanyaWindow window = new GenericOceanyaWindow
             {
                 BodyContent = content,
-                ContentScale = scale
+                ContentScale = scale,
+
+                // Stands in for a window hosted through OceanyaWindowManager: only those have a sizing
+                // controller, and only those may be sized through their body.
+                HasHostedContentSizing = true
             };
 
             return (window, content);

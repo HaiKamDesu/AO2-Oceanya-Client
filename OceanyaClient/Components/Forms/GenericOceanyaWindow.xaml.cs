@@ -318,7 +318,76 @@ namespace OceanyaClient
             ShellContentScaleTransform.ScaleY = scale;
             HeaderOffsetBackdropRectangle.Margin = new Thickness(0, SharedHeaderHeight * scale, 0, 0);
             ApplyInteractionSettings();
+            ApplyContentSizeRequest();
             ContentScaleChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        /// <summary>
+        /// Gets or sets how much body content this shell should size its window to hold. Null leaves the
+        /// window size alone.
+        /// </summary>
+        /// <remarks>
+        /// A shell's Width and Height cover the SCALED body plus chrome, so a caller that knows its content
+        /// in layout units cannot compute them until the shell has resolved its own <see cref="ContentScale"/>
+        /// - which happens later, on a monitor the caller cannot predict. Stating the content size instead
+        /// lets the shell do that conversion whenever its scale changes. Windows hosted through
+        /// <see cref="OceanyaWindowManager"/> already get this from their sizing controller and leave it null.
+        /// </remarks>
+        public Size? ContentSizeRequest
+        {
+            get => contentSizeRequest;
+            set
+            {
+                contentSizeRequest = value;
+                ApplyContentSizeRequest();
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets the smallest body content this shell must keep room for, in the same units as
+        /// <see cref="ContentSizeRequest"/>.
+        /// </summary>
+        public Size? MinimumContentSizeRequest
+        {
+            get => minimumContentSizeRequest;
+            set
+            {
+                minimumContentSizeRequest = value;
+                ApplyContentSizeRequest();
+            }
+        }
+
+        private Size? contentSizeRequest;
+        private Size? minimumContentSizeRequest;
+
+        /// <summary>Converts the requested content size into a window size at the current scale.</summary>
+        private void ApplyContentSizeRequest()
+        {
+            if (contentSizeRequest == null && minimumContentSizeRequest == null)
+            {
+                return;
+            }
+
+            if (WindowState != WindowState.Normal)
+            {
+                return;
+            }
+
+            double scale = UiScaleMath.ClampScale(ContentScale);
+            (double horizontalOffset, double verticalOffset) = GetChromeOffsets(BodyMargin, scale);
+            (double availableWidth, double availableHeight) = UiScaleManager.GetLogicalWorkAreaSize(this);
+
+            if (minimumContentSizeRequest is Size minimum)
+            {
+                MinWidth = Math.Min((minimum.Width * scale) + horizontalOffset, availableWidth);
+                MinHeight = Math.Min((minimum.Height * scale) + verticalOffset, availableHeight);
+            }
+
+            if (contentSizeRequest is Size requested)
+            {
+                Width = Math.Max(MinWidth, Math.Min((requested.Width * scale) + horizontalOffset, availableWidth));
+                Height = Math.Max(MinHeight, Math.Min((requested.Height * scale) + verticalOffset, availableHeight));
+            }
         }
 
         /// <summary>
@@ -338,6 +407,20 @@ namespace OceanyaClient
             get => GetValue(BodyContentProperty);
             set => SetValue(BodyContentProperty, value);
         }
+
+        /// <summary>
+        /// Gets a value indicating whether a hosted sizing controller keeps this shell's window size and
+        /// its body's size in step.
+        /// </summary>
+        /// <remarks>
+        /// Only <see cref="OceanyaWindowManager"/> attaches that controller, and only for an
+        /// <see cref="OceanyaWindowContentControl"/> body. A shell built directly - every dialog from
+        /// <c>CreateEmoteDialog</c>, for example - has no such controller, so writing a size onto its body
+        /// is a one-way write the window never follows: the body renders at that size inside a window that
+        /// keeps its own, and the overflow is simply clipped. Size persistence uses this to decide which
+        /// of the two it is allowed to size.
+        /// </remarks>
+        public bool HasHostedContentSizing { get; internal set; }
 
         /// <summary>
         /// Gets or sets the margin for the content area.

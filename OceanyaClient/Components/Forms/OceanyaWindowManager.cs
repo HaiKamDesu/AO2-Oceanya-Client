@@ -174,7 +174,23 @@ namespace OceanyaClient
 
             void OnCloseRequested(object? sender, OceanyaWindowCloseRequestedEventArgs eventArgs)
             {
+                // Windows hands activation back to the owner when the USER closes a window, but not when
+                // code does: closing an owned window programmatically can leave nothing activated, and the
+                // whole app drops behind whatever is underneath it - reported as "the Oceanya windows all
+                // minimize instead of going back to the window below". Measured on the character editor's
+                // close-after-commit: the owner came back with IsActive=false and the process was not the
+                // foreground window. Deferring the close does NOT help; re-activating the owner does.
+                Window? ownerWindow = window.Owner;
+                bool shouldRestoreOwnerFocus = window.IsActive;
                 window.Close();
+
+                if (shouldRestoreOwnerFocus
+                    && ownerWindow != null
+                    && ownerWindow.IsVisible
+                    && ownerWindow.WindowState != WindowState.Minimized)
+                {
+                    ownerWindow.Activate();
+                }
             }
 
             content.CloseRequested += OnCloseRequested;
@@ -205,6 +221,7 @@ namespace OceanyaClient
             {
                 this.content = content;
                 this.window = window;
+                window.HasHostedContentSizing = true;
 
                 contentWidthDescriptor = DependencyPropertyDescriptor.FromProperty(FrameworkElement.WidthProperty, typeof(FrameworkElement));
                 contentHeightDescriptor = DependencyPropertyDescriptor.FromProperty(FrameworkElement.HeightProperty, typeof(FrameworkElement));
@@ -297,7 +314,20 @@ namespace OceanyaClient
 
                 window.RefreshContentScaleFromSettings();
                 ApplyContentConstraintsToWindow();
-                ApplyContentSizeToWindow();
+
+                // A maximized window's size is the monitor's, not the content's, so the content has to
+                // follow IT. Pushing the other way is a no-op while maximized (ApplyContentSizeToWindow
+                // returns early), which left a window restored as maximized showing content still sized to
+                // its saved restore bounds - a 1420-wide body with dead bands inside a 1920-wide window,
+                // until any resize finally ran the window -> content sync.
+                if (window.WindowState == WindowState.Normal)
+                {
+                    ApplyContentSizeToWindow();
+                }
+                else
+                {
+                    ApplyWindowSizeToContent();
+                }
             }
 
             private void OnWindowContentScaleChanged(object? sender, EventArgs e)

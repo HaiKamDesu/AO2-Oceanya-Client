@@ -110,3 +110,88 @@ Users: `ImageComboBox.FilterDropdown` and `ImageComboBox.FindItemByPrefixText` (
 Deliberately NOT changed: `CharacterFolderVisualizerWindow`'s tag box (~line 2425) stays prefix-only because it is an INLINE autocomplete that rewrites the textbox and selects the completion - substring matching there would replace what the user typed with an unrelated string. `CharacterSelectorWindow.SearchBox_TextChanged` and `AutoCompleteComboBoxBehavior` already matched on substring.
 
 Tests: `UnitTests/DropdownSearchMatcherTests.cs`.
+
+## color picker window is broken
+
+Reported as "the color picker controls don't adapt to resize correctly, I had to make the window way
+bigger to see all the controls". The Solid Color Picker opened with its Save/Cancel row *below the bottom
+edge*, unreachable.
+
+Two independent defects, both in how a shell dialog is sized. Neither is specific to the colour picker.
+
+### 1. A size restored onto a body nothing syncs
+
+`OceanyaWindowManager` attaches a `HostedSizingSyncController` that keeps a shell's window size and its
+`OceanyaWindowContentControl` body's size in step. **Only that path attaches one.** Dialogs built by
+`AOCharacterFileCreatorWindow.CreateEmoteDialog` (and `AssetImageViewerDialog`, the IC emote preview, the
+panel settings dialogs) construct a `GenericOceanyaWindow` directly with a plain `Border` body, so they
+have no controller.
+
+`App.Window_LoadedForPersistence` still restores their saved size for them, through
+`WindowStatePersistence.ApplySize`, which writes it onto `BodyContent`. With no controller that is a
+one-way write: the body renders at 972x665 inside a window that stays 760x680, the overflow is clipped,
+and resizing the window changes nothing because nothing propagates either way. Measured live: saved state
+`Solid Color Picker -> {Width: 972.19, Height: 665.18, IsContentSpace: true}` matched the body's explicit
+`Width`/`Height` in the visual tree exactly.
+
+Fix: `GenericOceanyaWindow.HasHostedContentSizing` (set by the controller's constructor) tells
+`WindowStatePersistence` which of the two it may size. Without a controller the saved size goes on the
+window, via `ContentSizeRequest`.
+
+### 2. Content-space numbers used as window sizes
+
+`Width`/`Height` size the WINDOW, around a body the shell scales by `ContentScale`. A dialog asking for
+760x680 was therefore getting `760/scale` of content - at the reporter's 1.16 UI scale about 100px short
+vertically, which is what pushed the buttons off the bottom. The caller cannot pre-compute this: the scale
+is resolved later, from a monitor the caller does not know.
+
+Fix: `GenericOceanyaWindow.ContentSizeRequest` / `MinimumContentSizeRequest` state the size in CONTENT
+units, and the shell converts them (`content * scale + GetChromeOffsets(...)`, clamped to the work area)
+every time its scale changes. **New shell dialogs should use these, not `Width`/`Height`.**
+
+Once it fits, `BuildStyledDialogContent`'s `Viewbox` (Uniform, `StretchDirection.DownOnly`) does the
+adapting it was always meant to: 1:1 at or above natural size, shrink-to-fit below it, with the button row
+outside the Viewbox so it never scales away. Verified at 1130x808, 884x826, 640x1100 and 620x430 - all
+controls reachable at every size.
+
+Tests: `UnitTests/DialogSizePersistenceTests.cs`, `UnitTests/WindowStatePersistenceTests.cs` (whose
+`CreateHostedPair` now sets `HasHostedContentSizing`, since it stands in for a manager-hosted window).
+
+## editor opens with wrongly sized controls, and closing it drops the app behind
+
+Two separate defects reported together on the character editor.
+
+### Controls sized for the restore bounds inside a maximized window
+
+`AOCharacterFileCreatorWindow.ManagesOwnWindowSize` is true, so it applies its own saved state
+(`SaveData.CharacterCreatorWindowState`) - including `WindowState = Maximized` plus an explicit
+`Width`/`Height` from its *restore* bounds.
+
+`HostedSizingSyncController.ReapplySizing` (Loaded / ContentRendered / re-show) only ever pushed
+content -> window, and `ApplyContentSizeToWindow` returns early while maximized. So nothing sized the
+content to the window it was actually in: measured 1420x1040 of content inside a 1920x1040 maximized
+window, with dead bands down both sides, until any resize finally ran the window -> content sync.
+
+Fix: `ReapplySizing` picks a direction. Normal state, the content drives the window; otherwise the
+window's size is the monitor's and the content must follow it (`ApplyWindowSizeToContent`).
+
+### Closing it programmatically drops the whole app behind
+
+Windows hands activation back to the owner when the USER closes a window. It does not when code does:
+a programmatic `Close()` of an owned window can leave nothing activated, so the app falls behind
+whatever is underneath - reported as "the Oceanya windows all minimize instead of going back to the
+window that was below". It only surfaced once the editor started closing itself after a successful
+commit; a manual close was always fine.
+
+Measured on the real path (owner shell -> modal editor -> modal success box -> close):
+
+| | owner `IsActive` | owner is foreground |
+|---|---|---|
+| close directly | false | false |
+| close deferred to `DispatcherPriority.Background` | false | false |
+| close + `owner.Activate()` | true | true |
+
+**Deferring does not help. Re-activating the owner does.** `OceanyaWindowManager`'s `OnCloseRequested`
+now re-activates the owner after a `RequestHostClose`, guarded on the closing window having been active
+(so a background modeless close never steals focus). This covers every hosted content that closes
+itself, not just the editor.
