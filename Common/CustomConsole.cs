@@ -250,12 +250,26 @@ namespace Common
         /// <summary>
         /// Logs a debug message (only in debug builds)
         /// </summary>
+        /// <summary>
+        /// Whether <see cref="Debug"/> lines are recorded.
+        /// </summary>
+        /// <remarks>
+        /// These used to be compiled out with <c>#if DEBUG</c>, which meant a log collected from a user on
+        /// a release build was missing ~30 diagnostic sites - exactly the ones worth having when something
+        /// only reproduces on someone else's machine. They are now a runtime switch so a release build can
+        /// produce a complete DEBUG.txt.
+        /// </remarks>
+        public static bool IsDebugLoggingEnabled { get; set; } = true;
+
         public static void Debug(string message, LogCategory category = LogCategory.System,
             [CallerFilePath] string sourceFile = "", [CallerLineNumber] int sourceLine = 0)
         {
-            #if DEBUG
+            if (!IsDebugLoggingEnabled)
+            {
+                return;
+            }
+
             Log(message, LogLevel.Debug, category, null, sourceFile, sourceLine);
-            #endif
         }
     }
 }

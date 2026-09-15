@@ -78,11 +78,7 @@ public partial class App : Application
         // first line, so startup timing and asset work are in the file without the console window open.
         if (!testModeOptions.IsEnabled)
         {
-            DebugFileLogger.Start(sessionHeaderLines: new[]
-            {
-                $"App version: {AppVersionInfo.AssemblyVersion}",
-                $"Command line: {Environment.CommandLine}"
-            });
+            DebugFileLogger.Start(sessionHeaderLines: BuildSessionHeaderLines());
             RegisterDebugMemorySampleProviders();
         }
         if (testModeOptions.IsEnabled)
@@ -241,6 +237,68 @@ public partial class App : Application
     }
 
     /// <summary>
+    /// Describes the machine and configuration the session is running on.
+    /// </summary>
+    /// <remarks>
+    /// A log collected from someone else is only useful if it says what their machine and install look
+    /// like. Render tier in particular decides whether WPF composites on the GPU, which is the difference
+    /// between a smooth viewport and a slideshow, and the mount list explains "works on my machine"
+    /// asset differences.
+    /// </remarks>
+    private static IEnumerable<string> BuildSessionHeaderLines()
+    {
+        List<string> lines = new List<string>
+        {
+            $"App version: {AppVersionInfo.AssemblyVersion}",
+            $"Build: {(IsDebugBuild ? "Debug" : "Release")}",
+            $"Command line: {Environment.CommandLine}"
+        };
+
+        try
+        {
+            GCMemoryInfo gcInfo = GC.GetGCMemoryInfo();
+            lines.Add(
+                $"Machine: {Environment.MachineName} | cores={Environment.ProcessorCount}"
+                + $" | totalRAM={gcInfo.TotalAvailableMemoryBytes / (1024 * 1024)}MB"
+                + $" | 64bitProcess={Environment.Is64BitProcess} | serverGC={System.Runtime.GCSettings.IsServerGC}");
+            lines.Add(
+                $"Culture: {System.Globalization.CultureInfo.CurrentCulture.Name}"
+                + $" | UICulture: {System.Globalization.CultureInfo.CurrentUICulture.Name}");
+            lines.Add(
+                $"Render tier: {System.Windows.Media.RenderCapability.Tier >> 16}"
+                + " (0=software, 1=partial GPU, 2=full GPU)");
+            lines.Add(
+                $"Primary screen: {SystemParameters.PrimaryScreenWidth}x{SystemParameters.PrimaryScreenHeight}"
+                + $" | virtual: {SystemParameters.VirtualScreenWidth}x{SystemParameters.VirtualScreenHeight}");
+        }
+        catch (Exception ex)
+        {
+            lines.Add("Machine details unavailable: " + ex.GetType().Name);
+        }
+
+        try
+        {
+            lines.Add($"Savefile: {SaveFile.CurrentStoragePath} (development profile: {SaveFile.IsUsingDevelopmentStorage})");
+            lines.Add($"Savefile load: {SaveFile.LastLoadDiagnostic}");
+            lines.Add($"config.ini: {Globals.PathToConfigINI}");
+            lines.Add($"Mounts ({Globals.PhysicalBaseFolders.Count}): {string.Join(" ; ", Globals.PhysicalBaseFolders)}");
+        }
+        catch (Exception ex)
+        {
+            lines.Add("Configuration details unavailable: " + ex.GetType().Name);
+        }
+
+        return lines;
+    }
+
+    private static bool IsDebugBuild =>
+#if DEBUG
+        true;
+#else
+        false;
+#endif
+
+    /// <summary>
     /// Adds the app-level counters that the periodic <c>[MEM]</c> sample cannot see from Common.
     /// </summary>
     private static void RegisterDebugMemorySampleProviders()
@@ -255,6 +313,7 @@ public partial class App : Application
         DebugFileLogger.MemorySampleProviders.Add(Components.ICMessageSettings.GetEmoteButtonImageCacheDiagnostics);
         DebugFileLogger.MemorySampleProviders.Add(CharacterSelectorWindow.GetIconCacheDiagnostics);
         DebugFileLogger.MemorySampleProviders.Add(Features.Viewport.AO2ViewportAssetResolver.GetCacheDiagnostics);
+        DebugFileLogger.MemorySampleProviders.Add(Features.Viewport.AO2ViewportControl.GetChatQueueDiagnostics);
     }
 
     protected override void OnExit(ExitEventArgs e)

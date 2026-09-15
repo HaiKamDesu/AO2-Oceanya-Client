@@ -6533,6 +6533,12 @@ namespace OceanyaClient
             }
         }
 
+        /// <summary>
+        /// Gap between consecutive client connects during a snapshot restore, to stay under server
+        /// reconnection rate limits rather than having to recover from them.
+        /// </summary>
+        private const int SnapshotClientConnectStaggerMs = 900;
+
         /// <summary>Backoff, in milliseconds, between connection attempts the server actively refused.</summary>
         /// <remarks>
         /// A refusal is a rate limiter ("Please wait before connecting another client"), so the only thing
@@ -7055,6 +7061,16 @@ namespace OceanyaClient
                         WaitForm.SetSubtitle($"Connecting {i + 1}/{resolvedStates.Count}: {state.ClientName}");
                     }
 
+                    // Servers rate limit rapid reconnections from one address ("Please wait before
+                    // connecting another client"), and restoring opens the internal client and then every
+                    // saved client back to back - the exact pattern that trips it. The backoff in
+                    // ConnectClientAsync recovers from a refusal; this spacing avoids provoking one. Only
+                    // between clients, so a single-client restore pays nothing.
+                    if (i > 0)
+                    {
+                        await Task.Delay(SnapshotClientConnectStaggerMs);
+                    }
+
                     StartupTimingLogger.Log("snapshot_client_connect_begin", $"index={i}, name={state.ClientName}");
                     await AddClientInternalAsync(
                         state.ClientName,
@@ -7292,13 +7308,18 @@ namespace OceanyaClient
             string currentSelectedCharName,
             IReadOnlyCollection<string> additionalUnavailableCharacters)
         {
-            // Building the selector is real work on a large server, so show progress rather than a
-            // frozen window. The wait form hides itself automatically once the dialog goes modal.
+            // This runs SYNCHRONOUSLY on the UI thread, and WaitForm lives on its own STA thread whose
+            // suspend/resume continuations are posted back to this one. Blocking on it here with
+            // GetAwaiter().GetResult() deadlocks whenever the form is mid-resume - which is exactly what
+            // happens when this is reached straight after the snapshot INIPuppet prompt closed, and shows
+            // up as "Loading characters..." hanging forever. Fire-and-forget both ends instead; the form
+            // is only progress feedback, and since the character index/parse split building the selector
+            // no longer parses anything, so there is very little to report anyway.
             Window? owner = HostWindow ?? Application.Current?.MainWindow;
             bool waitFormShown = false;
             if (owner != null && !OceanyaTestMode.Current.DisableWaitForms)
             {
-                WaitForm.ShowFormAsync("Loading characters...", owner).GetAwaiter().GetResult();
+                _ = WaitForm.ShowFormAsync("Loading characters...", owner);
                 waitFormShown = true;
                 WaitForm.SetSubtitle("Building character list...");
             }
@@ -7318,7 +7339,7 @@ namespace OceanyaClient
             {
                 if (waitFormShown)
                 {
-                    WaitForm.CloseFormAsync().GetAwaiter().GetResult();
+                    WaitForm.CloseForm();
                 }
             }
 

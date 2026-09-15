@@ -144,7 +144,12 @@ namespace OceanyaClient
                 // Window was closed while the reveal was pending.
             }
 
-            LogStartupShellState(window, "revealed for modal");
+            // Diagnostics are POSTED, never run inline. This executes inside the modal-entry callback,
+            // where anything that enumerates windows or waits on another thread risks deadlocking the
+            // dialog that is opening - the same hazard WaitForm's suspend/resume documents.
+            window.Dispatcher.BeginInvoke(
+                new Action(() => LogStartupShellState(window, "revealed for modal")),
+                DispatcherPriority.Background);
         }
 
         private Task RevealStartupWindowAsync()
@@ -374,6 +379,13 @@ namespace OceanyaClient
                 {
                     RecordServerConnectionUsage(selectedServerEndpoint, selectedServerName, selectedServer?.Description);
                 }
+
+                // Record what the user actually chose, so a log collected after something breaks says which
+                // settings produced it instead of having to ask.
+                LaunchConfigurationReport.Log(
+                    selectedFunctionality.Id,
+                    selectedServerName,
+                    selectedServerEndpoint);
 
                 SaveConfiguration(
                     configIniPath,

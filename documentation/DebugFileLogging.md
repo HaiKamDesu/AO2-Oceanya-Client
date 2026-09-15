@@ -41,6 +41,33 @@ Everything the in-app debug console shows, plus:
 - The existing tagged streams: `[HANDSHAKE-TIMING]`, `[SWITCH-TIMING]`, `[RENDER-TIMING]`,
   `[LIVE-ASSETS]`, `[WEB-SUMMARY]`, `[AUDIO]`.
 
+## Designed to be sent to you after something breaks
+
+The goal is that a user can hand over `DEBUG.txt` and it answers "what were they running and what
+happened" without a follow-up interrogation.
+
+- **Session header** - app version, **build type (Debug/Release)**, command line, OS, runtime, cores, total
+  RAM, server GC, culture, **WPF render tier** (0 = software, 1 = partial GPU, 2 = full GPU), primary and
+  virtual screen size, savefile path plus whether it is the development profile, the savefile load
+  diagnostic, `config.ini` path, and the full mount list.
+- **`[LAUNCH-CONFIG]` block** (`Features/Startup/LaunchConfigurationReport.cs`) - written once per launch:
+  functionality, server, single-vs-multi internal client, skip-loading-screen, OOC name, showname/iniswap/
+  sticky-effect toggles, IC log inversion and cap, UI scale mode and factor, viewport and panel placement
+  toggles, audio volumes and music effect flags, the saved GM snapshot (client names and INI puppets),
+  enabled advanced feature flags, and indexed/parsed character counts.
+- **`icQueues=` in every `[MEM]` sample** - per viewport pane: `queued`, `busy`, `advanceTimer`,
+  `sinceLastAdvanceMs`. `busy=true` with a rising `queued` IS the "IC is frozen" state.
+- **`[IC-QUEUE-STALL]`** - the chat queue watchdog fired, naming the character, emote, preanim, text length
+  and queue depth of the message that wedged it.
+
+**Secrets are deliberately excluded**: no Google Drive tokens, no API keys, no credential paths. Only
+settings that change behaviour.
+
+`CustomConsole.Debug` is no longer `#if DEBUG`. It is a runtime switch
+(`CustomConsole.IsDebugLoggingEnabled`), because a log collected from a user on a release build was
+previously missing ~30 diagnostic sites - including `[WEB-GRACE]`, which sits directly on the chat-queue
+path.
+
 ## Implementation
 
 `Common/DebugFileLogger.cs`.

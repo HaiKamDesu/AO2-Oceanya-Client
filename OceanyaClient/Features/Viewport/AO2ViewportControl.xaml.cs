@@ -40,6 +40,49 @@ namespace OceanyaClient.Features.Viewport
         private readonly Queue<ICMessage> chatMessageQueue = new Queue<ICMessage>();
         private bool messageDisplayInProgress;
         private DispatcherTimer? queueAdvanceTimer;
+
+        /// <summary>Live viewport panes, so the IC queue can be reported without a reference to each one.</summary>
+        private static readonly List<WeakReference<AO2ViewportControl>> LiveControls =
+            new List<WeakReference<AO2ViewportControl>>();
+
+        private static readonly object LiveControlsLock = new object();
+
+        /// <summary>When the queue last started displaying a message, for stall detection.</summary>
+        private DateTime lastQueueAdvanceUtc = DateTime.UtcNow;
+
+        /// <summary>
+        /// Reports every pane's IC chat queue for the periodic memory sample.
+        /// </summary>
+        /// <remarks>
+        /// "IC is frozen" is almost always this queue: `messageDisplayInProgress` stuck true with a backlog
+        /// behind it means nothing will ever display again. Without these counters that state is invisible
+        /// in a log collected from someone else's machine.
+        /// </remarks>
+        public static string GetChatQueueDiagnostics()
+        {
+            List<string> parts = new List<string>();
+            lock (LiveControlsLock)
+            {
+                LiveControls.RemoveAll(reference => !reference.TryGetTarget(out _));
+                foreach (WeakReference<AO2ViewportControl> reference in LiveControls)
+                {
+                    if (!reference.TryGetTarget(out AO2ViewportControl? control))
+                    {
+                        continue;
+                    }
+
+                    int queued = control.chatMessageQueue.Count;
+                    bool busy = control.messageDisplayInProgress;
+                    bool timerAlive = control.queueAdvanceTimer?.IsEnabled == true;
+                    double sinceMs = (DateTime.UtcNow - control.lastQueueAdvanceUtc).TotalMilliseconds;
+                    parts.Add($"[queued={queued} busy={busy} advanceTimer={timerAlive} sinceLastAdvanceMs={sinceMs:0}]");
+                }
+            }
+
+            return parts.Count == 0
+                ? "icQueues=none"
+                : $"icQueues={parts.Count} {string.Join(" ", parts)}";
+        }
         // When a single RenderScene pass takes at least this long on the UI thread, log a per-phase breakdown
         // (category Viewport, prefix "[RENDER-TIMING]") so slow/hitchy renders can be diagnosed from real numbers.
         // A 60fps frame is ~16.7ms; anything over this threshold is a visible risk of stalling the animation timer.
@@ -101,6 +144,11 @@ namespace OceanyaClient.Features.Viewport
         public AO2ViewportControl()
         {
             InitializeComponent();
+            lock (LiveControlsLock)
+            {
+                LiveControls.Add(new WeakReference<AO2ViewportControl>(this));
+            }
+
             BackgroundImage.RenderTransform = backgroundShakeTransform;
             ChatPreview.RenderTransform = chatShakeTransform;
             audioManager.RefreshVolumes();
@@ -785,6 +833,7 @@ namespace OceanyaClient.Features.Viewport
             }
 
             chatMessageQueue.Enqueue(message);
+            lastQueueAdvanceUtc = DateTime.UtcNow;
             if (!messageDisplayInProgress)
             {
                 DequeueAndDisplayNextMessage();
@@ -869,9 +918,65 @@ namespace OceanyaClient.Features.Viewport
         /// genuinely absent locally. With fallback off, or on a warm asset, this stays fully
         /// synchronous - identical to the pre-feature code path, including its timing.
         /// </remarks>
+        /// <summary>
+        /// Hard ceiling on how long one queued message may hold the chat queue before it is force-advanced.
+        /// </summary>
+        /// <remarks>
+        /// The queue only advances from <c>CompleteChatTextReveal</c> (text messages) or the explicit
+        /// schedule in <see cref="DisplayQueuedMessageNow"/> (blank ones). That split relies on
+        /// <c>willRevealText</c> predicting what <c>RenderScene</c> will do, and it cannot always: the
+        /// pre-animation path renders with <c>showChat: immediate &amp;&amp; ...</c>, so a non-blank message
+        /// whose phase never reaches Speaking - a pre-animation that never finishes because its asset is
+        /// missing or its playback callback never fires - reveals no text and schedules no advance.
+        /// <c>messageDisplayInProgress</c> then stays true forever and the viewport stops showing IC
+        /// entirely while the IC log keeps working, which is precisely how "IC is frozen" is reported.
+        ///
+        /// Rather than chase every predicate into agreement, this guarantees the queue can never wedge. It
+        /// is generous enough that no legitimate message ever hits it.
+        /// </remarks>
+        private static readonly TimeSpan QueueStallWatchdogTimeout = TimeSpan.FromSeconds(20);
+
+        private DispatcherTimer? queueStallWatchdogTimer;
+
+        private void StartQueueStallWatchdog(ICMessage message)
+        {
+            StopQueueStallWatchdog();
+            int watchedSequence = messageSequence;
+            queueStallWatchdogTimer = new DispatcherTimer(DispatcherPriority.Normal, Dispatcher)
+            {
+                Interval = QueueStallWatchdogTimeout
+            };
+            queueStallWatchdogTimer.Tick += (_, _) =>
+            {
+                StopQueueStallWatchdog();
+                if (!messageDisplayInProgress)
+                {
+                    return;
+                }
+
+                CustomConsole.Warning(
+                    $"[IC-QUEUE-STALL] No advance {QueueStallWatchdogTimeout.TotalSeconds:0}s after starting a message"
+                    + $" (char=\"{message.Character}\" showname=\"{message.ShowName}\""
+                    + $" emote=\"{message.Emote}\" preanim=\"{message.PreAnim}\""
+                    + $" textLen={message.Message?.Length ?? 0} queued={chatMessageQueue.Count}"
+                    + $" sequence={watchedSequence}/{messageSequence}); force-advancing.",
+                    category: CustomConsole.LogCategory.Viewport);
+                ScheduleQueueAdvance(TimeSpan.Zero);
+            };
+            queueStallWatchdogTimer.Start();
+        }
+
+        private void StopQueueStallWatchdog()
+        {
+            queueStallWatchdogTimer?.Stop();
+            queueStallWatchdogTimer = null;
+        }
+
         private void StartQueuedMessageDisplay(ICMessage message)
         {
             messageDisplayInProgress = true;
+            lastQueueAdvanceUtc = DateTime.UtcNow;
+            StartQueueStallWatchdog(message);
 
             string? graceStem = ResolveGraceWindowSpriteStem(message);
             if (graceStem == null)
@@ -987,6 +1092,8 @@ namespace OceanyaClient.Features.Viewport
         private void ScheduleQueueAdvance(TimeSpan delay)
         {
             StopQueueAdvanceTimer();
+            StopQueueStallWatchdog();
+            lastQueueAdvanceUtc = DateTime.UtcNow;
             if (chatMessageQueue.Count == 0)
             {
                 messageDisplayInProgress = false;
@@ -1018,6 +1125,7 @@ namespace OceanyaClient.Features.Viewport
         private void ResetMessageQueue()
         {
             StopQueueAdvanceTimer();
+            StopQueueStallWatchdog();
             chatMessageQueue.Clear();
             messageDisplayInProgress = false;
         }
