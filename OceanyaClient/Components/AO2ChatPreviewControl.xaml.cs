@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -431,6 +431,9 @@ namespace OceanyaClient
                 BitmapImage image = new BitmapImage();
                 image.BeginInit();
                 image.CacheOption = BitmapCacheOption.OnLoad;
+
+                // Theme and character art can be replaced in place; WPF's URI cache would pin the old file.
+                image.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
                 image.UriSource = new Uri(imagePath, UriKind.Absolute);
                 image.EndInit();
                 if (image.CanFreeze)

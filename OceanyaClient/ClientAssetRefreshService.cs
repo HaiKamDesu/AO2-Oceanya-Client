@@ -34,6 +34,31 @@ namespace OceanyaClient
         /// </remarks>
         public static event Action<AssetRefreshCompletedEventArgs>? AssetsRefreshed;
 
+        /// <summary>
+        /// Announces that one character folder changed on disk outside the refresh pipeline.
+        /// </summary>
+        /// <param name="characterName">Character whose folder was re-read.</param>
+        /// <remarks>
+        /// The character editor replaces a folder and re-indexes it itself, so no refresh runs and nothing
+        /// told the UI to rebind. Everything holding that character - the emote buttons, the character
+        /// icon, the dropdowns - keeps the pre-edit model until something else triggers a rebind, which is
+        /// why an edit to a character in use only fully appeared after a restart. This reuses the existing
+        /// (debounced) rebind path rather than adding a second one.
+        /// </remarks>
+        public static void NotifyCharacterFolderChanged(string? characterName)
+        {
+            string name = (characterName ?? string.Empty).Trim();
+            if (name.Length == 0)
+            {
+                return;
+            }
+
+            CustomConsole.Info(
+                $"[ASSET-EDIT] Announcing character folder change for \"{name}\"; subscribers will rebind.",
+                CustomConsole.LogCategory.System);
+            RaiseAssetsRefreshed(AssetRefreshCompletedEventArgs.ForCharacter(name));
+        }
+
         /// <summary>Raises <see cref="AssetsRefreshed"/>, never letting a subscriber break the refresh.</summary>
         private static void RaiseAssetsRefreshed(AssetRefreshCompletedEventArgs args)
         {
@@ -1595,6 +1620,16 @@ namespace OceanyaClient
                 refreshedAllCharacters: true,
                 refreshedAllBackgrounds: true,
                 Array.Empty<string>(),
+                Array.Empty<string>());
+        }
+
+        /// <summary>One named character changed on disk, outside the refresh pipeline.</summary>
+        internal static AssetRefreshCompletedEventArgs ForCharacter(string characterName)
+        {
+            return new AssetRefreshCompletedEventArgs(
+                refreshedAllCharacters: false,
+                refreshedAllBackgrounds: false,
+                new[] { characterName },
                 Array.Empty<string>());
         }
 

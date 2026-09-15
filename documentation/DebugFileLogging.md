@@ -57,6 +57,9 @@ happened" without a follow-up interrogation.
   enabled advanced feature flags, and indexed/parsed character counts.
 - **`icQueues=` in every `[MEM]` sample** - per viewport pane: `queued`, `busy`, `advanceTimer`,
   `sinceLastAdvanceMs`. `busy=true` with a rising `queued` IS the "IC is frozen" state.
+- **`[ASSET-EDIT]`** - the full character-folder edit path: release, re-index, per-pane repaint (including
+  the character instance and the sprite each emote resolves to, before and after), and the client rebind.
+  This is what to read when an edit to a character in use does not show up.
 - **`[IC-QUEUE-STALL]`** - the chat queue watchdog fired, naming the character, emote, preanim, text length
   and queue depth of the message that wedged it.
 

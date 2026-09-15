@@ -863,6 +863,10 @@ namespace OceanyaClient.Components
             BitmapImage image = new BitmapImage();
             image.BeginInit();
             image.CacheOption = BitmapCacheOption.OnLoad;
+
+            // Character art is rewritten in place by the editor, and WPF's URI cache would keep serving the
+            // pre-edit icon for the rest of the session.
+            image.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
             image.UriSource = imageUri;
             image.EndInit();
             if (image.CanFreeze)

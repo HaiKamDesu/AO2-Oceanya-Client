@@ -25,6 +25,7 @@ using System.Windows.Threading;
 using Microsoft.Win32;
 using AOBot_Testing.Structures;
 using Common;
+using OceanyaClient.Features.Assets;
 using OceanyaClient.Features.CharacterCreator;
 using OceanyaClient.Features.Startup;
 using OceanyaClient.Features.Ui;
@@ -12992,10 +12993,6 @@ namespace OceanyaClient
                 Owner = ownerWindow,
                 Title = title,
                 HeaderText = title,
-                Width = width,
-                Height = height,
-                MinWidth = Math.Min(width, 520),
-                MinHeight = Math.Min(height, 240),
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 ShowInTaskbar = false,
                 IsUserResizeEnabled = true,
@@ -13003,6 +13000,13 @@ namespace OceanyaClient
                 IsCloseButtonVisible = true,
                 BodyMargin = new Thickness(0)
             };
+
+            // These numbers describe the CONTENT, while Width/Height would size the WINDOW around a body the
+            // shell scales by ContentScale. Setting them directly gave the content only width/scale - at a
+            // 1.16 UI scale about 100px short vertically, which is what pushed the Solid Color Picker's
+            // Save/Cancel row below the bottom edge. The shell converts these once it knows its own scale.
+            dialog.MinimumContentSizeRequest = new Size(Math.Min(width, 520), Math.Min(height, 240));
+            dialog.ContentSizeRequest = new Size(width, height);
 
             return dialog;
         }
@@ -13015,14 +13019,24 @@ namespace OceanyaClient
         private static (double Width, double Height) ResolveDialogSpace(Window? ownerWindow)
         {
             (double workAreaWidth, double workAreaHeight) = UiScaleManager.GetLogicalWorkAreaSize(ownerWindow);
-            double scale = ownerWindow is GenericOceanyaWindow shell
-                ? UiScaleMath.ClampScale(shell.ContentScale)
-                : UiScaleMath.ClampScale(UiScaleManager.GlobalScale);
+            double scale = ResolveDialogContentScale(ownerWindow);
 
             // Leave room for the shell chrome and a small margin from the screen edges.
             double usableWidth = Math.Max(320, (workAreaWidth / scale) - 16);
             double usableHeight = Math.Max(240, (workAreaHeight / scale) - GenericOceanyaWindow.SharedHeaderHeight - 24);
             return (usableWidth, usableHeight);
+        }
+
+        /// <summary>
+        /// Resolves the content scale a dialog raised from <paramref name="ownerWindow"/> will end up with.
+        /// </summary>
+        /// <param name="ownerWindow">Owner window, or null when the dialog has no shell owner.</param>
+        /// <returns>The clamped UI scale to size the dialog against.</returns>
+        private static double ResolveDialogContentScale(Window? ownerWindow)
+        {
+            return ownerWindow is GenericOceanyaWindow shell
+                ? UiScaleMath.ClampScale(shell.ContentScale)
+                : UiScaleMath.ClampScale(UiScaleManager.GlobalScale);
         }
 
         private static string BuildPopupStateKey(string id)
@@ -16899,6 +16913,15 @@ namespace OceanyaClient
                 CharacterCreationEmoteViewModel emote = emotes[i];
                 int emoteId = Math.Max(1, emote.Index);
 
+                // The whole emote as the editor sees it, before any copying: this is where an edit that
+                // "did not apply" shows up as an unchanged source path.
+                CustomConsole.Info(
+                    $"[ASSET-EDIT] Emote {emoteId} \"{emote.Name}\": anim=\"{emote.AnimationAssetSourcePath}\""
+                    + $" preanim=\"{emote.PreAnimationAssetSourcePath}\""
+                    + $" idle=\"{emote.FinalAnimationIdleAssetSourcePath}\""
+                    + $" talking=\"{emote.FinalAnimationTalkingAssetSourcePath}\"",
+                    CustomConsole.LogCategory.System);
+
                 if (!string.IsNullOrWhiteSpace(emote.PreAnimationAssetSourcePath) && File.Exists(emote.PreAnimationAssetSourcePath))
                 {
                     CopyAssetToOrganizedPath(
@@ -16976,6 +16999,15 @@ namespace OceanyaClient
         {
             if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
             {
+                // Worth saying out loud: an emote whose source went missing is silently left at whatever the
+                // staged copy of the original folder already had, which looks exactly like "my edit did
+                // nothing".
+                if (!string.IsNullOrWhiteSpace(sourcePath))
+                {
+                    CustomConsole.Warning(
+                        $"[ASSET-EDIT] Skipped {assetKey}: source \"{sourcePath}\" does not exist.");
+                }
+
                 return;
             }
 
@@ -16988,6 +17020,30 @@ namespace OceanyaClient
             }
 
             File.Copy(sourcePath, destinationPath, overwrite: true);
+
+            CustomConsole.Info(
+                $"[ASSET-EDIT] Staged {assetKey}: \"{sourcePath}\" ({DescribeFileForLog(sourcePath)})"
+                + $" -> \"{relativePath}\" ({DescribeFileForLog(destinationPath)})",
+                CustomConsole.LogCategory.System);
+        }
+
+        /// <summary>Size and write time of a file, so a staged copy can be compared with its source.</summary>
+        private static string DescribeFileForLog(string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return "(none)";
+            }
+
+            try
+            {
+                FileInfo info = new FileInfo(path);
+                return info.Exists ? $"{info.Length}b@{info.LastWriteTimeUtc:HH:mm:ss.fff}" : "(missing)";
+            }
+            catch (Exception ex)
+            {
+                return "(" + ex.GetType().Name + ")";
+            }
         }
 
         private void SaveBitmapToOrganizedPath(BitmapSource bitmap, string characterDirectory, string assetKey, string defaultRelativePath)
@@ -17648,6 +17704,13 @@ namespace OceanyaClient
                         model.Animation = RemoveExtensionFromRelativePath(animationPath);
                     }
 
+                    // The token that lands in char.ini, next to the source it came from. If the source is
+                    // still the pre-edit file, the edit never reached this point at all.
+                    CustomConsole.Info(
+                        $"[ASSET-EDIT] char.ini emote {emoteId} \"{model.Name}\": anim token=\"{model.Animation}\""
+                        + $" from source=\"{viewModel.AnimationAssetSourcePath}\" split={hasSplit}",
+                        CustomConsole.LogCategory.System);
+
                     if (!string.IsNullOrWhiteSpace(viewModel.SfxAssetSourcePath) && File.Exists(viewModel.SfxAssetSourcePath))
                     {
                         string sfxPath = ResolveOutputPathForAsset(
@@ -17777,6 +17840,13 @@ namespace OceanyaClient
 
                 if (isEditMode)
                 {
+                    // Release, apply, reload. The client may be actively showing this character - its
+                    // sprite, its emote buttons, its icon - and everything holding a decode of those files
+                    // has to let go before the folder is replaced, or the move fails and the UI keeps
+                    // serving the old art afterwards.
+                    await SetGenerateSubtitleAsync("Releasing character assets in use...");
+                    AssetHandleReleaser.Release(originalEditCharacterDirectoryPath);
+
                     await SetGenerateSubtitleAsync("Replacing original character folder...");
                     ReplaceCharacterFolderFromStaging(
                         stagedCharacterDirectory: workingDirectory,
@@ -17791,6 +17861,13 @@ namespace OceanyaClient
                 }
 
                 await SetGenerateSubtitleAsync("Updating character index...");
+                if (isEditMode && !string.IsNullOrWhiteSpace(successCharacterDirectory))
+                {
+                    // Re-read the folder and re-resolve whatever is on screen, so an edit to a character in
+                    // use is visible immediately instead of on the next message.
+                    AssetHandleReleaser.Reload(successCharacterDirectory, originalEditCharacterDirectoryPath);
+                }
+
                 try
                 {
                     string? previousDirectory = isEditMode ? originalEditCharacterDirectoryPath : string.Empty;
@@ -17847,6 +17924,12 @@ namespace OceanyaClient
                     + successCharacterDirectory,
                     "AO Character File Creator",
                     MessageBoxImage.Information);
+
+                // Committing IS the end of the task, so the editor closes with it. Leaving it open meant
+                // acknowledging the success dialog and then closing the editor by hand, twice over. The
+                // unsaved-changes guard cannot fire here: lastCommittedStateFingerprint was just set to the
+                // current state, so there is nothing pending.
+                RequestHostClose(true);
             }
         }
 

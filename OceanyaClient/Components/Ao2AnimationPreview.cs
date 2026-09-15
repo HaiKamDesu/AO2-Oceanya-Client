@@ -72,8 +72,20 @@ namespace OceanyaClient
 
         private static readonly ImageSource FallbackImage = LoadEmbeddedFallback();
         private static readonly object StaticPreviewCacheLock = new object();
-        private static readonly Dictionary<(string path, int width, int maxDim), WeakReference<ImageSource>> StaticPreviewCache =
-            new Dictionary<(string path, int width, int maxDim), WeakReference<ImageSource>>();
+
+        /// <summary>
+        /// Decoded still images, keyed by path AND the file's write time.
+        /// </summary>
+        /// <remarks>
+        /// The write time is part of the key for the same reason it is in <see cref="AnimationFrameCache"/>:
+        /// editing a character rewrites its sprites IN PLACE, at the same paths, so a path-only key kept
+        /// serving the pre-edit bitmap for the rest of the session. That is invisible for animated emotes
+        /// (they go through the timestamped animation cache) and permanent for static ones - which is why
+        /// "the edit did not apply" looked intermittent. Purging on edit is still done, but as an
+        /// optimisation; correctness must not depend on the purge running at the right moment.
+        /// </remarks>
+        private static readonly Dictionary<(string path, DateTime lastWriteUtc, int width, int maxDim), WeakReference<ImageSource>> StaticPreviewCache =
+            new Dictionary<(string path, DateTime lastWriteUtc, int width, int maxDim), WeakReference<ImageSource>>();
         private static readonly object AnimationFrameCacheLock = new object();
         private static readonly Dictionary<(string path, DateTime lastWriteUtc, int maxDim), CachedDecodedAnimation> AnimationFrameCache =
             new Dictionary<(string path, DateTime lastWriteUtc, int maxDim), CachedDecodedAnimation>();
@@ -84,8 +96,9 @@ namespace OceanyaClient
 
         /// <summary>Running total of the decoded bytes held in <see cref="AnimationFrameCache"/>.</summary>
         private static long animationFrameCacheBytes;
-        private static readonly ConcurrentDictionary<string, bool> ApngDetectionCache =
-            new ConcurrentDictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        /// <summary>Whether a .png is really an APNG, keyed by path AND write time so an edit re-probes.</summary>
+        private static readonly ConcurrentDictionary<(string Path, DateTime LastWriteUtc), bool> ApngDetectionCache =
+            new ConcurrentDictionary<(string Path, DateTime LastWriteUtc), bool>();
 
         /// <summary>
         /// Reports what the decoded-image caches are currently holding, for the periodic memory sample.
@@ -150,6 +163,46 @@ namespace OceanyaClient
             }
         }
 
+        /// <summary>
+        /// Drops every cached decode whose source file lives under <paramref name="directoryPath"/>.
+        /// </summary>
+        /// <remarks>
+        /// Every decode cache here is keyed by path AND write time, so all of them self-heal once an edited
+        /// file lands. This purge is an optimisation - it frees the pre-edit bytes immediately instead of
+        /// waiting for eviction - and correctness must never depend on it running at the right moment.
+        /// </remarks>
+        public static void ReleaseCachedAssetsUnder(string directoryPath)
+        {
+            lock (AnimationFrameCacheLock)
+            {
+                List<(string path, DateTime lastWriteUtc, int maxDim)> stale = AnimationFrameCache.Keys
+                    .Where(key => Features.Assets.AssetHandleReleaser.IsUnder(key.path, directoryPath))
+                    .ToList();
+                foreach ((string path, DateTime lastWriteUtc, int maxDim) key in stale)
+                {
+                    RemoveAnimationCacheEntryLocked(key);
+                }
+            }
+
+            lock (StaticPreviewCacheLock)
+            {
+                List<(string path, DateTime lastWriteUtc, int width, int maxDim)> stale = StaticPreviewCache.Keys
+                    .Where(key => Features.Assets.AssetHandleReleaser.IsUnder(key.path, directoryPath))
+                    .ToList();
+                foreach ((string path, DateTime lastWriteUtc, int width, int maxDim) key in stale)
+                {
+                    StaticPreviewCache.Remove(key);
+                }
+            }
+
+            foreach ((string Path, DateTime LastWriteUtc) key in ApngDetectionCache.Keys
+                .Where(key => Features.Assets.AssetHandleReleaser.IsUnder(key.Path, directoryPath))
+                .ToList())
+            {
+                ApngDetectionCache.TryRemove(key, out _);
+            }
+        }
+
         /// <summary>Drops every decoded frame and preview currently cached.</summary>
         public static void ClearCaches()
         {
@@ -181,16 +234,36 @@ namespace OceanyaClient
 
             if (extension == ".png" && File.Exists(path))
             {
-                return IsApngFile(path);
+                return IsApngFile(path, TryGetLastWriteUtc(path));
             }
 
             return false;
         }
 
-        private static bool IsApngFile(string path)
+        /// <summary>Last write time of a file, or <see cref="DateTime.MinValue"/> when it cannot be read.</summary>
+        private static DateTime TryGetLastWriteUtc(string? path)
         {
-            return ApngDetectionCache.GetOrAdd(path, static p =>
+            if (string.IsNullOrWhiteSpace(path))
             {
+                return DateTime.MinValue;
+            }
+
+            try
+            {
+                return File.GetLastWriteTimeUtc(path);
+            }
+            catch
+            {
+                // An unreadable timestamp must not fail the decode; it just means no cache hit.
+                return DateTime.MinValue;
+            }
+        }
+
+        private static bool IsApngFile(string path, DateTime lastWriteUtc)
+        {
+            return ApngDetectionCache.GetOrAdd((path, lastWriteUtc), static key =>
+            {
+                string p = key.Path;
                 try
                 {
                     using FileStream fs = new FileStream(p, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
@@ -268,7 +341,8 @@ namespace OceanyaClient
             }
 
             int normalizedDecodeWidth = Math.Max(0, decodePixelWidth);
-            if (TryGetCachedStaticPreview(resolvedPath, normalizedDecodeWidth, maxDimension, out ImageSource? cachedImage)
+            DateTime lastWriteUtc = TryGetLastWriteUtc(resolvedPath);
+            if (TryGetCachedStaticPreview(resolvedPath, lastWriteUtc, normalizedDecodeWidth, maxDimension, out ImageSource? cachedImage)
                 && cachedImage != null)
             {
                 return cachedImage;
@@ -282,7 +356,7 @@ namespace OceanyaClient
                 result = firstFrame is BitmapSource bitmapFirstFrame
                     ? ScaleBitmapForPreview(bitmapFirstFrame, decodePixelWidth)
                     : firstFrame;
-                CacheStaticPreview(resolvedPath, normalizedDecodeWidth, maxDimension, result);
+                CacheStaticPreview(resolvedPath, lastWriteUtc, normalizedDecodeWidth, maxDimension, result);
                 return result;
             }
 
@@ -291,6 +365,11 @@ namespace OceanyaClient
                 BitmapImage bitmapImage = new BitmapImage();
                 bitmapImage.BeginInit();
                 bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
+
+                // WPF keeps its OWN decoded-image cache keyed by URI, so a sprite rewritten IN PLACE - which
+                // is exactly what editing a character does - comes back as the pre-edit bitmap no matter what
+                // our caches do. This is what kept the edited emote on screen until a restart.
+                bitmapImage.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
                 bitmapImage.UriSource = new Uri(resolvedPath, UriKind.Absolute);
                 if (decodePixelWidth > 0)
                 {
@@ -310,7 +389,7 @@ namespace OceanyaClient
                 result = selectedFallback;
             }
 
-            CacheStaticPreview(resolvedPath, normalizedDecodeWidth, maxDimension, result);
+            CacheStaticPreview(resolvedPath, lastWriteUtc, normalizedDecodeWidth, maxDimension, result);
             return result;
         }
 
@@ -324,7 +403,12 @@ namespace OceanyaClient
             }
 
             int normalizedDecodeWidth = Math.Max(0, decodePixelWidth);
-            return TryGetCachedStaticPreview(resolvedPath, normalizedDecodeWidth, maxDimension, out image)
+            return TryGetCachedStaticPreview(
+                    resolvedPath,
+                    TryGetLastWriteUtc(resolvedPath),
+                    normalizedDecodeWidth,
+                    maxDimension,
+                    out image)
                 && image != null;
         }
 
@@ -931,7 +1015,7 @@ namespace OceanyaClient
 
             if (string.Equals(extension, ".png", StringComparison.OrdinalIgnoreCase))
             {
-                return IsApngFile(path);
+                return IsApngFile(path, TryGetLastWriteUtc(path));
             }
 
             return false;
@@ -1405,10 +1489,16 @@ namespace OceanyaClient
             return NormalizeBitmapForUi(scaled);
         }
 
-        private static bool TryGetCachedStaticPreview(string path, int decodePixelWidth, int maxDimension, out ImageSource? image)
+        private static bool TryGetCachedStaticPreview(
+            string path,
+            DateTime lastWriteUtc,
+            int decodePixelWidth,
+            int maxDimension,
+            out ImageSource? image)
         {
             image = null;
-            (string path, int width, int maxDim) cacheKey = (path, decodePixelWidth, maxDimension);
+            (string path, DateTime lastWriteUtc, int width, int maxDim) cacheKey =
+                (path, lastWriteUtc, decodePixelWidth, maxDimension);
             lock (StaticPreviewCacheLock)
             {
                 if (!StaticPreviewCache.TryGetValue(cacheKey, out WeakReference<ImageSource>? reference))
@@ -1427,9 +1517,15 @@ namespace OceanyaClient
             }
         }
 
-        private static void CacheStaticPreview(string path, int decodePixelWidth, int maxDimension, ImageSource image)
+        private static void CacheStaticPreview(
+            string path,
+            DateTime lastWriteUtc,
+            int decodePixelWidth,
+            int maxDimension,
+            ImageSource image)
         {
-            (string path, int width, int maxDim) cacheKey = (path, decodePixelWidth, maxDimension);
+            (string path, DateTime lastWriteUtc, int width, int maxDim) cacheKey =
+                (path, lastWriteUtc, decodePixelWidth, maxDimension);
             lock (StaticPreviewCacheLock)
             {
                 StaticPreviewCache[cacheKey] = new WeakReference<ImageSource>(image);
@@ -1438,7 +1534,7 @@ namespace OceanyaClient
                     return;
                 }
 
-                List<(string path, int width, int maxDim)> keys = StaticPreviewCache.Keys.ToList();
+                List<(string path, DateTime lastWriteUtc, int width, int maxDim)> keys = StaticPreviewCache.Keys.ToList();
                 int removeCount = StaticPreviewCache.Count - StaticPreviewCacheEntryLimit;
                 for (int i = 0; i < removeCount && i < keys.Count; i++)
                 {
@@ -2209,6 +2305,22 @@ namespace OceanyaClient
         private const int MaxGifPreviewFrames = 180;
 
         private readonly DrawingImage gifImage;
+
+        /// <summary>
+        /// The GIF's bytes, kept alive because <see cref="gifImage"/> reads frames from this stream.
+        /// </summary>
+        /// <remarks>
+        /// <c>Image.FromFile</c> keeps the FILE open for the lifetime of the image, and this player lives
+        /// for as long as its sprite or background is on screen. That locked the character's .gif, so
+        /// editing a character the client had used during this session failed with "access to the path is
+        /// denied" - the reported symptom being that a folder could not be edited once the character had
+        /// been used. Decoding from an in-memory copy releases the file immediately.
+        ///
+        /// System.Drawing requires the stream to outlive the image (frame selection reads from it), so it
+        /// is a field and is disposed alongside the image. The cost is one compressed GIF held in memory,
+        /// which is negligible next to the decoded frames this player already holds.
+        /// </remarks>
+        private readonly MemoryStream gifSourceStream;
         private readonly List<BitmapSource> frames = new List<BitmapSource>();
         private readonly List<TimeSpan> frameDurations = new List<TimeSpan>();
         private readonly int maxDimension;
@@ -2239,7 +2351,8 @@ namespace OceanyaClient
             this.loop = loop;
             this.maxDimension = maxDimension;
             this.maxFrames = maxFrames;
-            gifImage = DrawingImage.FromFile(gifPath);
+            gifSourceStream = new MemoryStream(File.ReadAllBytes(gifPath));
+            gifImage = DrawingImage.FromStream(gifSourceStream);
             int sourceFrameCount = gifImage.GetFrameCount(DrawingFrameDimension.Time);
 
             if (sourceFrameCount <= 0)
@@ -2304,6 +2417,7 @@ namespace OceanyaClient
         {
             StopPlayback();
             gifImage.Dispose();
+            gifSourceStream.Dispose();
             FrameChanged = null;
             FrameIndexChanged = null;
             PlaybackFinished = null;

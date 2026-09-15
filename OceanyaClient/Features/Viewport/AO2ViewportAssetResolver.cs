@@ -61,6 +61,32 @@ namespace OceanyaClient.Features.Viewport
         private static readonly Dictionary<string, ParsedDesignIni> DesignIniCache = new(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, (BackgroundPositionResolution Resolution, DateTime DesignIniWriteTimeUtc)> PositionResolutionCache = new(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>Drops resolver caches whose source lives under the given folder.</summary>
+        /// <remarks>UI-thread-only caches, matching how every other access to them is made.</remarks>
+        public static void ReleaseCachesUnder(string directoryPath)
+        {
+            foreach (string path in ImageSizeCache.Keys
+                .Where(path => Features.Assets.AssetHandleReleaser.IsUnder(path, directoryPath))
+                .ToList())
+            {
+                ImageSizeCache.Remove(path);
+            }
+
+            foreach (string path in DesignIniCache.Keys
+                .Where(path => Features.Assets.AssetHandleReleaser.IsUnder(path, directoryPath))
+                .ToList())
+            {
+                DesignIniCache.Remove(path);
+            }
+
+            foreach (string path in PositionResolutionCache.Keys
+                .Where(path => Features.Assets.AssetHandleReleaser.IsUnder(path, directoryPath))
+                .ToList())
+            {
+                PositionResolutionCache.Remove(path);
+            }
+        }
+
         /// <summary>Reports viewport resolver cache occupancy for the periodic memory sample.</summary>
         /// <remarks>
         /// These caches are UI-thread-only, so the sampler just reads the counts defensively rather than

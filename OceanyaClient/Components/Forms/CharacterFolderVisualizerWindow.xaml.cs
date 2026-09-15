@@ -4710,6 +4710,9 @@ namespace OceanyaClient
                 BitmapImage bitmapImage = new BitmapImage();
                 bitmapImage.BeginInit();
                 bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
+
+                // An edited character rewrites its icon in place; WPF's URI cache would keep the old one.
+                bitmapImage.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
                 bitmapImage.UriSource = new Uri(uri, UriKind.Absolute);
                 bitmapImage.EndInit();
                 bitmapImage.Freeze();

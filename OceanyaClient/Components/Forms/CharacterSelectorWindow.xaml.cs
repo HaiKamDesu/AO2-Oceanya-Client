@@ -105,6 +105,25 @@ namespace OceanyaClient
                 + $" charIconCacheMB={bytes / (1024 * 1024)}/{IconCacheByteLimit / (1024 * 1024)}";
         }
 
+        /// <summary>Drops cached character icons whose source lives under the given folder.</summary>
+        public static void ReleaseIconsUnder(string directoryPath)
+        {
+            foreach (string path in IconCache.Keys
+                .Where(path => Features.Assets.AssetHandleReleaser.IsUnder(path, directoryPath))
+                .ToList())
+            {
+                if (IconCache.TryRemove(path, out (BitmapSource Image, DateTime WriteTimeUtc) removed))
+                {
+                    Interlocked.Add(ref iconCacheBytes, -Ao2AnimationPreview.EstimateBitmapBytes(removed.Image));
+                }
+            }
+
+            if (Interlocked.Read(ref iconCacheBytes) < 0)
+            {
+                Interlocked.Exchange(ref iconCacheBytes, 0);
+            }
+        }
+
         /// <summary>Drops every cached character icon.</summary>
         public static void ClearIconCache()
         {
@@ -675,6 +694,9 @@ namespace OceanyaClient
             {
                 BitmapImage bitmap = new BitmapImage();
                 bitmap.BeginInit();
+
+                // An edited character rewrites its icon in place; WPF's URI cache would keep the old one.
+                bitmap.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
                 bitmap.UriSource = new Uri(iconPath, UriKind.Absolute);
                 bitmap.CacheOption = BitmapCacheOption.OnLoad;
                 // Icons never render larger than the biggest card, so decoding at that size instead of

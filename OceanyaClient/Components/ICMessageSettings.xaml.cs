@@ -1111,6 +1111,20 @@ namespace OceanyaClient.Components
                 + $" emoteButtonCacheMB={bytes / (1024 * 1024)}/{EmoteButtonImageCacheByteLimit / (1024 * 1024)}";
         }
 
+        /// <summary>Drops cached emote-button bitmaps whose source lives under the given folder.</summary>
+        public static void ReleaseEmoteButtonImagesUnder(string directoryPath)
+        {
+            lock (EmoteButtonImageCacheLock)
+            {
+                foreach (string key in EmoteButtonImageCache.Keys
+                    .Where(key => OceanyaClient.Features.Assets.AssetHandleReleaser.IsUnder(key, directoryPath))
+                    .ToList())
+                {
+                    RemoveEmoteButtonCacheEntryLocked(key);
+                }
+            }
+        }
+
         /// <summary>Drops every cached emote-button bitmap.</summary>
         public static void ClearEmoteButtonImageCache()
         {
@@ -1534,10 +1548,6 @@ namespace OceanyaClient.Components
                 Owner = ownerWindow,
                 Title = $"Emote Preview — {emoteName}",
                 HeaderText = $"Emote Preview — {emoteName}",
-                Width = 540,
-                Height = 660,
-                MinWidth = 320,
-                MinHeight = 420,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 ShowInTaskbar = false,
                 IsUserResizeEnabled = true,
@@ -1546,6 +1556,11 @@ namespace OceanyaClient.Components
                 BodyMargin = new Thickness(0),
                 BodyContent = content
             };
+
+            // Stated as CONTENT size: the shell scales its body, so Width/Height here would leave the
+            // preview short of what was asked for at any UI scale above 1.
+            dialog.MinimumContentSizeRequest = new Size(320, 420);
+            dialog.ContentSizeRequest = new Size(540, 660);
 
             replayButton.Click += (_, _) => viewport.PreviewMessage(previewMsg);
             dialog.Loaded += (_, _) => viewport.PreviewMessage(previewMsg);

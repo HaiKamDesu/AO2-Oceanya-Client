@@ -51,6 +51,265 @@ namespace OceanyaClient.Features.Viewport
         private DateTime lastQueueAdvanceUtc = DateTime.UtcNow;
 
         /// <summary>
+        /// Stops every live animation in every pane, releasing the frames they decoded.
+        /// </summary>
+        /// <remarks>
+        /// Used before a character folder is edited in place. A running player holds the frames it decoded
+        /// from that folder's files, so it has to let go before the folder is replaced; the art comes back
+        /// through <see cref="RequestVisualRefreshForAll"/> once the edit has landed.
+        /// </remarks>
+        public static void ReleaseLiveAnimations()
+        {
+            foreach (AO2ViewportControl control in EnumerateLiveControls())
+            {
+                control.Dispatcher.Invoke(() =>
+                {
+                    foreach (Image image in control.animationPlayers.Keys.ToList())
+                    {
+                        control.StopAnimation(image);
+                    }
+
+                    control.placedImageStates.Clear();
+                });
+            }
+        }
+
+        /// <summary>
+        /// Re-resolves the art of whatever each pane is currently showing, without disturbing playback.
+        /// </summary>
+        /// <remarks>
+        /// Reuses the web-asset refresh path, which is visual-only by construction: the current message
+        /// keeps typing, its SFX do not replay and the chat queue is untouched.
+        /// </remarks>
+        public static void RequestVisualRefreshForAll()
+        {
+            List<AO2ViewportControl> controls = EnumerateLiveControls();
+            CustomConsole.Info(
+                $"[ASSET-EDIT] Visual refresh requested for {controls.Count} viewport pane(s).",
+                CustomConsole.LogCategory.System);
+
+            foreach (AO2ViewportControl control in controls)
+            {
+                control.Dispatcher.BeginInvoke(
+                    DispatcherPriority.Background,
+                    new Action(() =>
+                    {
+                        // Unlike a late web asset, an edit can change WHICH files an emote points at, so the
+                        // character has to be read again, not just its art re-decoded.
+                        System.Threading.Interlocked.Exchange(ref control.pendingCharacterReresolve, 1);
+                        System.Threading.Interlocked.Increment(ref control.pendingWebAssetRefreshCount);
+                        control.RefreshSceneVisualsForWebAsset();
+                    }));
+            }
+        }
+
+        /// <summary>
+        /// Size and write time of the file a layer is about to draw, so a repaint that "did nothing" can be
+        /// told apart from a repaint of a file that never changed.
+        /// </summary>
+        internal static string DescribeAssetFileForLog(string? assetPath)
+        {
+            if (string.IsNullOrWhiteSpace(assetPath))
+            {
+                return "(none)";
+            }
+
+            try
+            {
+                FileInfo info = new FileInfo(assetPath);
+                if (!info.Exists)
+                {
+                    return "(missing)";
+                }
+
+                return $"{info.Length}b@{info.LastWriteTimeUtc:HH:mm:ss.fff}";
+            }
+            catch (Exception ex)
+            {
+                return "(" + ex.GetType().Name + ")";
+            }
+        }
+
+        /// <summary>Compact description of the character model a pane is drawing, for the edit trace.</summary>
+        private static string DescribeCharacterForLog(CharacterFolder? character, string? emoteName)
+        {
+            if (character == null)
+            {
+                return "(null)";
+            }
+
+            string animation = "(no emote matches)";
+            try
+            {
+                // What the scene carries is the ANIMATION token ("Images/Attack"), not the emote's display
+                // name, so match that first and fall back to the name.
+                if (TryFindEmote(character, emoteName, out AOBot_Testing.Structures.Emote? emote))
+                {
+                    animation = $"id={emote!.ID} name=\"{emote.Name}\" anim={emote.Animation}";
+                }
+            }
+            catch (Exception ex)
+            {
+                animation = "(" + ex.GetType().Name + ")";
+            }
+
+            // The instance identity is the point: two different objects for the same character means one of
+            // them is a pre-edit parse.
+            return $"\"{character.Name}\" instance={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(character):X8}"
+                + $" emotes={character.configINI?.Emotions?.Count ?? 0} emote[{emoteName}]={animation}";
+        }
+
+        /// <summary>Finds a character's emote by its animation token, falling back to its display name.</summary>
+        private static bool TryFindEmote(
+            CharacterFolder? character,
+            string? animationTokenOrName,
+            out AOBot_Testing.Structures.Emote? emote)
+        {
+            emote = null;
+            string wanted = (animationTokenOrName ?? string.Empty).Trim();
+            Dictionary<int, AOBot_Testing.Structures.Emote>? emotions = character?.configINI?.Emotions;
+            if (wanted.Length == 0 || emotions == null)
+            {
+                return false;
+            }
+
+            foreach (KeyValuePair<int, AOBot_Testing.Structures.Emote> pair in emotions)
+            {
+                if (string.Equals(pair.Value.Animation, wanted, StringComparison.OrdinalIgnoreCase))
+                {
+                    emote = pair.Value;
+                    return true;
+                }
+            }
+
+            foreach (KeyValuePair<int, AOBot_Testing.Structures.Emote> pair in emotions)
+            {
+                if (string.Equals(pair.Value.Name, wanted, StringComparison.OrdinalIgnoreCase))
+                {
+                    emote = pair.Value;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Maps the animation token a scene is drawing through an edited character, so the emote that was on
+        /// screen keeps pointing at whatever image it uses NOW.
+        /// </summary>
+        /// <param name="previousCharacter">The character as parsed before the edit.</param>
+        /// <param name="currentCharacter">The character as re-read after the edit.</param>
+        /// <param name="renderedEmoteToken">Animation token the scene was drawn with.</param>
+        /// <returns>The replacement token, or null when it is unchanged or cannot be mapped.</returns>
+        /// <remarks>
+        /// The viewport draws the animation token the MESSAGE carried ("Images/Attack"), not the character's
+        /// emote list - so re-reading the character alone repaints the same file. Repointing emote 1 at a
+        /// different image therefore stayed invisible until a new message was sent, or a restart. Only the
+        /// identity of the emote survives an edit, so the token is mapped back to its emote (by id, then by
+        /// name) and forward to that emote's current animation.
+        /// </remarks>
+        internal static string? ResolveEmoteTokenForVisualRefresh(
+            CharacterFolder? previousCharacter,
+            CharacterFolder? currentCharacter,
+            string? renderedEmoteToken)
+        {
+            string token = (renderedEmoteToken ?? string.Empty).Trim();
+            if (token.Length == 0
+                || currentCharacter == null
+                || ReferenceEquals(previousCharacter, currentCharacter))
+            {
+                return null;
+            }
+
+            if (!TryFindEmote(previousCharacter, token, out AOBot_Testing.Structures.Emote? previousEmote)
+                || previousEmote == null)
+            {
+                return null;
+            }
+
+            Dictionary<int, AOBot_Testing.Structures.Emote>? currentEmotions = currentCharacter.configINI?.Emotions;
+            if (currentEmotions == null)
+            {
+                return null;
+            }
+
+            AOBot_Testing.Structures.Emote? currentEmote = null;
+            if (currentEmotions.TryGetValue(previousEmote.ID, out AOBot_Testing.Structures.Emote? byId))
+            {
+                currentEmote = byId;
+            }
+
+            // An emote the user reordered keeps its name but not its id.
+            if (currentEmote == null || string.IsNullOrWhiteSpace(currentEmote.Animation))
+            {
+                foreach (KeyValuePair<int, AOBot_Testing.Structures.Emote> pair in currentEmotions)
+                {
+                    if (string.Equals(pair.Value.Name, previousEmote.Name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        currentEmote = pair.Value;
+                        break;
+                    }
+                }
+            }
+
+            string updated = currentEmote?.Animation ?? string.Empty;
+            if (updated.Length == 0 || string.Equals(updated, token, StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            return updated;
+        }
+
+        /// <summary>
+        /// Looks a scene's character up again after its folder changed on disk.
+        /// </summary>
+        /// <param name="capturedCharacter">The instance the scene was drawn with.</param>
+        /// <param name="messageCharacterName">Character name from the message, used when there is no instance.</param>
+        /// <param name="resolve">Character lookup, normally <see cref="AO2ViewportAssetResolver.ResolveCharacter"/>.</param>
+        /// <returns>The re-read character, or null when it cannot be resolved.</returns>
+        /// <remarks>
+        /// A <see cref="CharacterFolder"/> resolves each emote's sprite paths ONCE, at parse time, so the
+        /// instance captured when a scene was drawn still describes the PRE-edit folder. Repainting from it
+        /// shows the old art no matter how many decode caches were dropped, which is why editing the emote
+        /// currently on screen only took effect after restarting the client.
+        /// </remarks>
+        internal static CharacterFolder? ResolveCharacterForVisualRefresh(
+            CharacterFolder? capturedCharacter,
+            string? messageCharacterName,
+            Func<string?, CharacterFolder?> resolve)
+        {
+            string characterName = !string.IsNullOrWhiteSpace(capturedCharacter?.Name)
+                ? capturedCharacter!.Name
+                : messageCharacterName ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(characterName))
+            {
+                return null;
+            }
+
+            return resolve(characterName);
+        }
+
+        private static List<AO2ViewportControl> EnumerateLiveControls()
+        {
+            List<AO2ViewportControl> controls = new List<AO2ViewportControl>();
+            lock (LiveControlsLock)
+            {
+                LiveControls.RemoveAll(reference => !reference.TryGetTarget(out _));
+                foreach (WeakReference<AO2ViewportControl> reference in LiveControls)
+                {
+                    if (reference.TryGetTarget(out AO2ViewportControl? control))
+                    {
+                        controls.Add(control);
+                    }
+                }
+            }
+
+            return controls;
+        }
+
+        /// <summary>
         /// Reports every pane's IC chat queue for the periodic memory sample.
         /// </summary>
         /// <remarks>
@@ -109,6 +368,10 @@ namespace OceanyaClient.Features.Viewport
         private int currentChatSequence;
         private ICMessage? lastRenderedMessage;
         private SceneRenderArgs? lastSceneRenderArgs;
+
+        // Set when the refresh was requested because a character folder changed on disk, rather than
+        // because a web asset arrived. See RefreshSceneVisualsForWebAsset.
+        private int pendingCharacterReresolve;
         private DispatcherTimer? webAssetRefreshTimer;
         private int pendingWebAssetRefreshCount;
         // Late web assets arrive in bursts (a sprite pair, a background plus its desk). Coalescing them into
@@ -304,9 +567,42 @@ namespace OceanyaClient.Features.Viewport
         private void RefreshSceneVisualsForWebAsset()
         {
             int coalesced = System.Threading.Interlocked.Exchange(ref pendingWebAssetRefreshCount, 0);
-            if (coalesced <= 0 || !IsVisible)
+            bool reresolveCharacter = System.Threading.Interlocked.Exchange(ref pendingCharacterReresolve, 0) != 0;
+            if (coalesced <= 0)
             {
                 return;
+            }
+
+            if (!IsVisible)
+            {
+                // Put the request back instead of dropping it. In GM multi-client only the selected
+                // client's pane is visible, and every pane is hidden while the viewport window is closed,
+                // so a hidden pane used to swallow the edit outright and keep the pre-edit art for the rest
+                // of the session - "sometimes it worked, sometimes it did not". OnIsVisibleChanged replays
+                // it when the pane comes back.
+                System.Threading.Interlocked.Add(ref pendingWebAssetRefreshCount, coalesced);
+                if (reresolveCharacter)
+                {
+                    System.Threading.Interlocked.Exchange(ref pendingCharacterReresolve, 1);
+                }
+
+                if (reresolveCharacter)
+                {
+                    CustomConsole.Info(
+                        $"[ASSET-EDIT] Pane not visible; deferring repaint (pending={coalesced}).",
+                        CustomConsole.LogCategory.System);
+                }
+
+                return;
+            }
+
+            if (reresolveCharacter)
+            {
+                CustomConsole.Info(
+                    $"[ASSET-EDIT] Repainting pane: coalesced={coalesced} hasScene={lastSceneRenderArgs != null} "
+                    + $"emote=\"{lastSceneRenderArgs?.EmoteName}\" "
+                    + $"captured={DescribeCharacterForLog(lastSceneRenderArgs?.Character, lastSceneRenderArgs?.EmoteName)}",
+                    CustomConsole.LogCategory.System);
             }
 
             System.Diagnostics.Stopwatch stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -318,6 +614,46 @@ namespace OceanyaClient.Features.Viewport
                     // since, so re-resolve rather than replaying the null.
                     CharacterFolder? character = args.Character
                         ?? AO2ViewportAssetResolver.ResolveCharacter(args.Message?.Character);
+
+                    if (reresolveCharacter)
+                    {
+                        CharacterFolder? previousCharacter = character;
+                        CharacterFolder? reresolved = ResolveCharacterForVisualRefresh(
+                            args.Character,
+                            args.Message?.Character,
+                            AO2ViewportAssetResolver.ResolveCharacter);
+                        bool replaced = reresolved != null && !ReferenceEquals(reresolved, character);
+                        if (replaced)
+                        {
+                            character = reresolved;
+
+                            // Kept, or the next repaint would replay the stale instance all over again:
+                            // lastSceneRenderArgs is only rewritten by a real render, not by a refresh.
+                            args = args with { Character = reresolved };
+                            lastSceneRenderArgs = args;
+                        }
+
+                        CustomConsole.Info(
+                            $"[ASSET-EDIT] Re-resolved character: replaced={replaced} "
+                            + $"now={DescribeCharacterForLog(reresolved, args.EmoteName)}",
+                            CustomConsole.LogCategory.System);
+
+                        // The scene draws the token the MESSAGE carried, so re-reading the character is not
+                        // enough on its own: an emote repointed at a different image keeps rendering the old
+                        // file until the token is mapped through the edit as well.
+                        string? remappedToken = ResolveEmoteTokenForVisualRefresh(
+                            previousCharacter,
+                            character,
+                            args.EmoteName);
+                        if (remappedToken != null)
+                        {
+                            CustomConsole.Info(
+                                $"[ASSET-EDIT] Emote repointed: \"{args.EmoteName}\" -> \"{remappedToken}\".",
+                                CustomConsole.LogCategory.System);
+                            args = args with { EmoteName = remappedToken };
+                            lastSceneRenderArgs = args;
+                        }
+                    }
 
                     RenderScene(
                         args.BackgroundName,
@@ -1140,6 +1476,15 @@ namespace OceanyaClient.Features.Viewport
                     audioManager.RefreshVolumes();
                 }
 
+                // A repaint requested while this pane was hidden (an asset edit, or a late web asset) waited
+                // for exactly this moment.
+                if (System.Threading.Volatile.Read(ref pendingWebAssetRefreshCount) > 0)
+                {
+                    Dispatcher.BeginInvoke(
+                        DispatcherPriority.Background,
+                        new Action(RefreshSceneVisualsForWebAsset));
+                }
+
                 return;
             }
 
@@ -1584,7 +1929,8 @@ namespace OceanyaClient.Features.Viewport
                 ? AO2ViewportAssetResolver.ResolveCharacterPreAnimationDetails(character, message?.PreAnim)
                 : AO2ViewportAssetResolver.ResolveCharacterDialogAnimationDetails(character, emoteName, useTalkingSprite);
             CustomConsole.Debug(
-                $"Render character char=\"{character?.configINI?.Name ?? "(null)"}\" emote=\"{emoteName}\" talking={useTalkingSprite} assetPath=\"{resolvedCharacterAnimation.AssetPath ?? "(null)"}\"",
+                $"Render character char=\"{character?.configINI?.Name ?? "(null)"}\" emote=\"{emoteName}\" talking={useTalkingSprite} assetPath=\"{resolvedCharacterAnimation.AssetPath ?? "(null)"}\""
+                + $" file={DescribeAssetFileForLog(resolvedCharacterAnimation.AssetPath)}",
                 CustomConsole.LogCategory.Viewport);
             Action<int>? frameHandler = message == null
                 ? null

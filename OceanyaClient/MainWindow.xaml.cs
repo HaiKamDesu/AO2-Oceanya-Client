@@ -11345,8 +11345,14 @@ namespace OceanyaClient
 
                 try
                 {
+                    CustomConsole.Info(
+                        "[ASSET-EDIT] Rebinding clients and UI to the refreshed characters.",
+                        CustomConsole.LogCategory.System);
                     RebindClientsToRefreshedCharacters();
                     OnAssetsRefreshedFromVisualizer();
+                    CustomConsole.Info(
+                        "[ASSET-EDIT] Rebind finished.",
+                        CustomConsole.LogCategory.System);
                 }
                 catch (Exception ex)
                 {
