@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -52,6 +52,21 @@ namespace Common
         private static long writtenBytes;
         private static bool capReached;
         private static bool started;
+
+        /// <summary>Baseline and running extremes for the growth columns on each <c>[MEM]</c> line.</summary>
+        /// <remarks>
+        /// A slow leak reads as several hundred near-identical absolute numbers: "it was fine for two hours,
+        /// then it stacks" is a REPORT about the shape of the curve, and absolutes alone make whoever reads
+        /// the log reconstruct that curve by hand across hundreds of samples. Carrying the delta since the
+        /// previous sample, the total since session start, and the peak puts the inflection point on the
+        /// line where it happens.
+        /// </remarks>
+        private static long sessionStartPrivateMb = -1;
+        private static long previousPrivateMb = -1;
+        private static long peakPrivateMb;
+        private static long peakWorkingSetMb;
+        private static DateTime sessionStartUtc = DateTime.UtcNow;
+        private static int memorySampleCount;
 
         /// <summary>Absolute path of the current session's log file, or empty when not started.</summary>
         public static string LiveLogPath => liveLogPath;
@@ -213,8 +228,32 @@ namespace Common
                 long managedMb = GC.GetTotalMemory(forceFullCollection: false) / (1024 * 1024);
                 GCMemoryInfo gcInfo = GC.GetGCMemoryInfo();
                 long heapMb = gcInfo.HeapSizeBytes / (1024 * 1024);
+
+                memorySampleCount++;
+                if (sessionStartPrivateMb < 0)
+                {
+                    sessionStartPrivateMb = privateMb;
+                    sessionStartUtc = DateTime.UtcNow;
+                }
+
+                long deltaMb = previousPrivateMb < 0 ? 0 : privateMb - previousPrivateMb;
+                previousPrivateMb = privateMb;
+                peakPrivateMb = Math.Max(peakPrivateMb, privateMb);
+                peakWorkingSetMb = Math.Max(peakWorkingSetMb, workingSetMb);
+
+                // Managed bytes the GC is holding but not using, and the large object heap, which is where
+                // decoded bitmaps and big strings land. A rising LOH with a flat managed heap is a very
+                // different bug from a rising managed heap.
+                long fragmentedMb = gcInfo.FragmentedBytes / (1024 * 1024);
+                long committedMb = gcInfo.TotalCommittedBytes / (1024 * 1024);
+                long lohMb = ReadLargeObjectHeapMb(gcInfo);
+
                 details =
                     $"workingSetMB={workingSetMb} privateMB={privateMb} managedMB={managedMb} gcHeapMB={heapMb}"
+                    + $" deltaMB={deltaMb:+#;-#;0} sinceStartMB={privateMb - sessionStartPrivateMb:+#;-#;0}"
+                    + $" peakPrivateMB={peakPrivateMb} peakWorkingSetMB={peakWorkingSetMb}"
+                    + $" upMin={(DateTime.UtcNow - sessionStartUtc).TotalMinutes:0}"
+                    + $" lohMB={lohMb} fragmentedMB={fragmentedMb} committedMB={committedMb}"
                     + $" gen0={GC.CollectionCount(0)} gen1={GC.CollectionCount(1)} gen2={GC.CollectionCount(2)}"
                     + $" threads={process.Threads.Count} handles={process.HandleCount}"
                     + $" logEntries={CustomConsole.StoredEntryCount}";
@@ -241,6 +280,22 @@ namespace Common
             }
 
             return $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [MEM] ({reason}) {details}";
+        }
+
+        /// <summary>Large object heap size, which is not exposed directly on every runtime.</summary>
+        private static long ReadLargeObjectHeapMb(GCMemoryInfo gcInfo)
+        {
+            try
+            {
+                ReadOnlySpan<GCGenerationInfo> generations = gcInfo.GenerationInfo;
+
+                // Generations are gen0, gen1, gen2, LOH, POH; older runtimes stop earlier.
+                return generations.Length > 3 ? generations[3].SizeAfterBytes / (1024 * 1024) : -1;
+            }
+            catch
+            {
+                return -1;
+            }
         }
 
         private static void Enqueue(string line)

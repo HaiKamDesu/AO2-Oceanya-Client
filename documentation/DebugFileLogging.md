@@ -41,6 +41,23 @@ Everything the in-app debug console shows, plus:
 - The existing tagged streams: `[HANDSHAKE-TIMING]`, `[SWITCH-TIMING]`, `[RENDER-TIMING]`,
   `[LIVE-ASSETS]`, `[WEB-SUMMARY]`, `[AUDIO]`.
 
+## Diagnosing "RAM was fine, then it stacks"
+
+Read it in this order:
+
+1. **Find the turn.** `grep "\[MEM\]" DEBUG.txt` and look for the first large `deltaMB`. `upMin` says how
+   far into the session it happened.
+2. **Decide managed vs unmanaged.** If `managedMB` and `lohMB` track `privateMB`, it is a managed leak and
+   `gen2` collections will not be reclaiming it. If `privateMB` climbs while both stay flat, it is
+   unmanaged - decoded bitmap pixel buffers are the usual answer, so check `animCacheMB`, `livePlayerMB`,
+   `emoteButtonCacheMB` and `charIconCacheMB`.
+3. **Rule out the transcripts.** `icLogBlocks` and `oocLogBlocks` climbing with `icLogCap=0` means an
+   unbounded chat log, which grows for as long as the session runs.
+4. **Rule out accumulation.** `clients`, `gmWindows`, `icLogDocs`, `openWindows` and `threads` should be
+   flat in steady use; any of them climbing points at something never being released.
+5. **If every counter is flat and `privateMB` still climbs**, the growth is in something not yet
+   instrumented - add a provider via `App.RegisterDebugMemorySampleProviders()` rather than guessing.
+
 ## Designed to be sent to you after something breaks
 
 The goal is that a user can hand over `DEBUG.txt` and it answers "what were they running and what
@@ -57,6 +74,20 @@ happened" without a follow-up interrogation.
   enabled advanced feature flags, and indexed/parsed character counts.
 - **`icQueues=` in every `[MEM]` sample** - per viewport pane: `queued`, `busy`, `advanceTimer`,
   `sinceLastAdvanceMs`. `busy=true` with a rising `queued` IS the "IC is frozen" state.
+- **Growth columns on every `[MEM]` line** - `deltaMB` (since the previous sample), `sinceStartMB`,
+  `peakPrivateMB`, `peakWorkingSetMB` and `upMin`. A slow leak is a claim about the SHAPE of the curve
+  ("fine for two hours, then it stacks"), and absolutes alone make the reader reconstruct that curve across
+  hundreds of samples. Grep for a large `deltaMB` to land on the exact sample where it turned.
+- **`lohMB` / `fragmentedMB` / `committedMB`** - the large object heap is where decoded bitmaps and big
+  strings land, so a rising `lohMB` with a flat `managedMB` is a different bug from a rising `managedMB`,
+  and a large `privateMB` with all of these flat means the growth is unmanaged (bitmap pixel buffers, which
+  no managed counter can see).
+- **`icLogDocs` / `icLogBlocks` / `icLogMaxBlocks` / `icLogTransient` / `icLogCap`, and the `oocLog*`
+  equivalents** - how much chat transcript is held. Both logs keep a `FlowDocument` PER CLIENT.
+  `ICLog.TrimLog` is a NO-OP when `icLogCap=0` (what AO2 writes for "unlimited"), and the OOC log has no
+  trim at all, so these are the first thing to rule out on any long session.
+- **`gmWindows` / `clients` / `mode`** - neither log drops a client's document when that client goes away,
+  so a `clients` count that climbs over a session is itself the finding.
 - **`[ASSET-EDIT]`** - the full character-folder edit path: release, re-index, per-pane repaint (including
   the character instance and the sprite each emote resolves to, before and after), and the client rebind.
   This is what to read when an edit to a character in use does not show up.

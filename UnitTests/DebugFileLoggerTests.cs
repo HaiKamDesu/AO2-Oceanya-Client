@@ -1,4 +1,4 @@
-using Common;
+﻿using Common;
 using NUnit.Framework;
 
 namespace UnitTests;
@@ -98,6 +98,15 @@ public sealed class DebugFileLoggerTests
         {
             Assert.That(contents, Does.Contain("[MEM] (unit test)"));
             Assert.That(contents, Does.Contain("workingSetMB="));
+
+            // Growth columns: absolutes alone make a slow leak unreadable, because "fine for two hours,
+            // then it stacks" is a claim about the shape of the curve across hundreds of samples.
+            Assert.That(contents, Does.Contain("deltaMB="));
+            Assert.That(contents, Does.Contain("sinceStartMB="));
+            Assert.That(contents, Does.Contain("peakPrivateMB="));
+            Assert.That(contents, Does.Contain("upMin="));
+            Assert.That(contents, Does.Contain("lohMB="));
+            Assert.That(contents, Does.Contain("fragmentedMB="));
             Assert.That(contents, Does.Contain("managedMB="));
             Assert.That(contents, Does.Contain("testProvider=42"));
         });

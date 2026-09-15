@@ -42,6 +42,10 @@ namespace OceanyaClient.Components
         public string FindScopeName => "OOC";
 
         private Dictionary<AOClient, LogState> clientLogs = new Dictionary<AOClient, LogState>();
+
+        /// <summary>Live OOC log controls, for the periodic memory sample.</summary>
+        private static readonly List<WeakReference<OOCLog>> LiveLogs = new List<WeakReference<OOCLog>>();
+        private static readonly object LiveLogsLock = new object();
         private readonly List<TextRange> activeSearchHighlights = new List<TextRange>();
         private IReadOnlyList<LogTextMatch> activeSearchMatches = Array.Empty<LogTextMatch>();
         private int activeSearchMatchIndex = -1;
@@ -102,10 +106,54 @@ namespace OceanyaClient.Components
             return placeable;
         }
 
+        /// <summary>
+        /// Reports how much OOC transcript is being held, for the periodic memory sample.
+        /// </summary>
+        /// <remarks>
+        /// The OOC log has NO trim at all - unlike the IC log it does not even consult
+        /// <c>log_maximum</c> - so on a long session it only ever grows. Worth measuring before assuming a
+        /// leak is somewhere more exotic.
+        /// </remarks>
+        public static string GetTranscriptDiagnostics()
+        {
+            int documents = 0;
+            int totalBlocks = 0;
+            int maxBlocks = 0;
+
+            lock (LiveLogsLock)
+            {
+                LiveLogs.RemoveAll(reference => !reference.TryGetTarget(out _));
+                foreach (WeakReference<OOCLog> reference in LiveLogs)
+                {
+                    if (!reference.TryGetTarget(out OOCLog? log))
+                    {
+                        continue;
+                    }
+
+                    foreach (LogState state in log.clientLogs.Values)
+                    {
+                        documents++;
+                        int blocks = state.Document.Blocks.Count;
+                        totalBlocks += blocks;
+                        maxBlocks = Math.Max(maxBlocks, blocks);
+                    }
+                }
+            }
+
+            return $"oocLogDocs={documents} oocLogBlocks={totalBlocks} oocLogMaxBlocks={maxBlocks}";
+        }
+
         public OOCLog()
         {
             InitializeComponent();
             LogBox.Document = new FlowDocument();
+
+            lock (LiveLogsLock)
+            {
+                LiveLogs.RemoveAll(reference => !reference.TryGetTarget(out _));
+                LiveLogs.Add(new WeakReference<OOCLog>(this));
+            }
+
             SizeChanged += OOCLog_SizeChanged;
 
             // Watch the VIEWPORT, not the label: whether the name fits, how far it scrolls and where the

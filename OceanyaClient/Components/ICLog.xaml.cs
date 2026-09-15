@@ -28,6 +28,61 @@ namespace OceanyaClient.Components
         }
 
         private static int LogMaxMessages => Globals.LogMaxMessages;
+
+        /// <summary>Live IC log controls, for the periodic memory sample.</summary>
+        private static readonly List<WeakReference<ICLog>> LiveLogs = new List<WeakReference<ICLog>>();
+        private static readonly object LiveLogsLock = new object();
+
+        /// <summary>
+        /// Reports how much IC transcript is being held, for the periodic memory sample.
+        /// </summary>
+        /// <remarks>
+        /// An IC log is a <see cref="FlowDocument"/> per client that grows for the whole session, and
+        /// <see cref="TrimLog"/> is a NO-OP when <c>log_maximum</c> is 0 - which is what AO2 writes for
+        /// "unlimited". That makes an unbounded transcript the first thing to rule out for "RAM was fine
+        /// for two hours, then it stacks", and until now nothing in the log could confirm or deny it.
+        /// </remarks>
+        public static string GetTranscriptDiagnostics()
+        {
+            int documents = 0;
+            int totalBlocks = 0;
+            int maxBlocks = 0;
+            int transientEntries = 0;
+
+            lock (LiveLogsLock)
+            {
+                LiveLogs.RemoveAll(reference => !reference.TryGetTarget(out _));
+                foreach (WeakReference<ICLog> reference in LiveLogs)
+                {
+                    if (!reference.TryGetTarget(out ICLog? log))
+                    {
+                        continue;
+                    }
+
+                    foreach (LogState state in log.clientLogs.Values)
+                    {
+                        documents++;
+                        int blocks = state.Document.Blocks.Count;
+                        totalBlocks += blocks;
+                        maxBlocks = Math.Max(maxBlocks, blocks);
+                        transientEntries += state.TransientEntries.Count;
+                    }
+                }
+            }
+
+            return $"icLogDocs={documents} icLogBlocks={totalBlocks} icLogMaxBlocks={maxBlocks}"
+                + $" icLogTransient={transientEntries} icLogCap={LogMaxMessages}";
+        }
+
+        /// <summary>Registers this control so its transcript size appears in the memory sample.</summary>
+        private void RegisterForDiagnostics()
+        {
+            lock (LiveLogsLock)
+            {
+                LiveLogs.RemoveAll(reference => !reference.TryGetTarget(out _));
+                LiveLogs.Add(new WeakReference<ICLog>(this));
+            }
+        }
         public Func<AOClient, AOClient?>? LogKeyResolver { get; set; }
 
         private readonly Dictionary<AOClient, LogState> clientLogs = new Dictionary<AOClient, LogState>();
@@ -72,6 +127,7 @@ namespace OceanyaClient.Components
         {
             InitializeComponent();
             LogBox.Document.Blocks.Clear();
+            RegisterForDiagnostics();
         }
 
         public void SetCurrentClient(AOClient? client)

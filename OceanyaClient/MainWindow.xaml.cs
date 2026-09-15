@@ -286,6 +286,7 @@ namespace OceanyaClient
             SourceInitialized += MainWindow_SourceInitialized;
             Closed += MainWindow_Closed;
             ClientAssetRefreshService.AssetsRefreshed += OnAssetsRefreshedInBackground;
+            RegisterForSessionDiagnostics();
             Loaded += MainWindow_Loaded;
             AddHandler(Keyboard.GotKeyboardFocusEvent, new KeyboardFocusChangedEventHandler(MainWindow_GotKeyboardFocus), true);
             AddHandler(Mouse.PreviewMouseDownEvent, new MouseButtonEventHandler(MainWindow_PreviewMouseDown), true);
@@ -11309,6 +11310,56 @@ namespace OceanyaClient
         /// (<see cref="OnAssetsRefreshedFromVisualizer"/>) re-runs <see cref="SelectClient"/>, which is the
         /// heaviest thing on the switch path.
         /// </remarks>
+        /// <summary>Live GM windows, so the memory sample can report client and pane counts.</summary>
+        private static readonly List<WeakReference<MainWindow>> LiveMainWindows =
+            new List<WeakReference<MainWindow>>();
+
+        private static readonly object LiveMainWindowsLock = new object();
+
+        /// <summary>
+        /// Reports per-session client state for the periodic memory sample.
+        /// </summary>
+        /// <remarks>
+        /// "It was fine for two hours, then it stacks" needs something that distinguishes steady-state use
+        /// from accumulation. Both log controls keep a document PER AOClient and never drop one when a
+        /// client goes away, so a client count that climbs over a session is itself the finding - and a
+        /// second GM window would double every other counter here.
+        /// </remarks>
+        public static string GetSessionDiagnostics()
+        {
+            int windows = 0;
+            int clientCount = 0;
+            bool single = false;
+
+            lock (LiveMainWindowsLock)
+            {
+                LiveMainWindows.RemoveAll(reference => !reference.TryGetTarget(out _));
+                foreach (WeakReference<MainWindow> reference in LiveMainWindows)
+                {
+                    if (!reference.TryGetTarget(out MainWindow? window))
+                    {
+                        continue;
+                    }
+
+                    windows++;
+                    clientCount += window.clients.Count;
+                    single |= window.useSingleInternalClient;
+                }
+            }
+
+            return $"gmWindows={windows} clients={clientCount} mode={(single ? "single" : "multi")}";
+        }
+
+        /// <summary>Registers this window so its client counts appear in the memory sample.</summary>
+        private void RegisterForSessionDiagnostics()
+        {
+            lock (LiveMainWindowsLock)
+            {
+                LiveMainWindows.RemoveAll(reference => !reference.TryGetTarget(out _));
+                LiveMainWindows.Add(new WeakReference<MainWindow>(this));
+            }
+        }
+
         private void OnAssetsRefreshedInBackground(AssetRefreshCompletedEventArgs args)
         {
             if (!Dispatcher.CheckAccess())

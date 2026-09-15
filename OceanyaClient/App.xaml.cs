@@ -314,6 +314,12 @@ public partial class App : Application
         DebugFileLogger.MemorySampleProviders.Add(CharacterSelectorWindow.GetIconCacheDiagnostics);
         DebugFileLogger.MemorySampleProviders.Add(Features.Viewport.AO2ViewportAssetResolver.GetCacheDiagnostics);
         DebugFileLogger.MemorySampleProviders.Add(Features.Viewport.AO2ViewportControl.GetChatQueueDiagnostics);
+
+        // Session-scoped growth: the transcripts and the client list are the things that get bigger the
+        // longer the app is open, which is exactly the shape of "fine for two hours, then it stacks".
+        DebugFileLogger.MemorySampleProviders.Add(OceanyaClient.MainWindow.GetSessionDiagnostics);
+        DebugFileLogger.MemorySampleProviders.Add(Components.ICLog.GetTranscriptDiagnostics);
+        DebugFileLogger.MemorySampleProviders.Add(Components.OOCLog.GetTranscriptDiagnostics);
     }
 
     protected override void OnExit(ExitEventArgs e)
