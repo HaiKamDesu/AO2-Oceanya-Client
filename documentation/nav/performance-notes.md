@@ -183,3 +183,61 @@ Gotcha: `allItems` is a plain `List<>` behind a `CollectionViewSource` default v
 `GetOrCreateItemsView().Refresh()`. Refresh resets scroll, so the offset is captured before and restored
 after each batch - otherwise a batch landing mid-scroll yanks the user back to the top. The wait form closes
 after the FIRST chunk, not at the end. Timing lands in the log as `[CHARDB-LOAD]`.
+
+## why does AO2 use so little RAM compared to us
+
+Source-verified against the `AO2-Client` submodule, not inferred.
+
+### What AO2 actually does
+
+- **One courtroom, ~13 animation layers, fixed.** `courtroom.cpp` constructs exactly one
+  `BackgroundAnimationLayer`, two `CharacterAnimationLayer`s (plus two dummies), a desk, effects, sticker,
+  chat arrow, testimony, WTCE and objection layer. That is the whole budget, for the life of the process.
+- **Each layer owns exactly one `AnimationLoader`, holding only its CURRENT file's frames.**
+  `AnimationLoader::load` early-returns when the filename is unchanged, and otherwise calls `stopLoading()`
+  then `m_frames.clear()` before repopulating. Changing emote frees the previous emote's frames
+  immediately.
+- **There is no cross-asset cache anywhere.** Nothing survives a file change. AO2 never holds the frames of
+  a character it is not currently drawing.
+- **Frames are stored at SOURCE resolution; only the current frame is scaled.**
+  `AnimationLayer::displayCurrentFrame` scales `m_current_frame.texture` per paint into the widget size, so
+  exactly one scaled bitmap exists at a time (`AnimationFrame m_current_frame`, singular).
+- **Emote buttons are Qt stylesheets.** `AOEmoteButton::setImage` sets `border-image: url(...)`, so those
+  bitmaps live in Qt's own `QPixmapCache` (default limit ~10 MB), not in an application dictionary.
+- Two layers even set `setResetCacheWhenStopped(true)`, dropping their frames when playback stops.
+
+AO2 is not doing anything clever per frame: a 251-frame background costs it roughly what it costs us
+(~936 KB/frame). It simply holds **almost nothing else**.
+
+### What we do differently
+
+| | AO2 | Oceanya |
+|---|---|---|
+| Courtrooms | exactly 1 | 1 in single-internal-client mode, **one pane PER PROFILE** in multi |
+| Retention across assets | none | `AnimationFrameCache` 64 MB + emote buttons 64 MB + char icons 64 MB |
+| On emote change | previous frames freed | previous frames kept for reuse |
+| Frame storage | source resolution, scaled at paint | pre-scaled at viewport height |
+| Hidden viewport | n/a | keeps every decoded frame AND keeps ticking |
+| Runtime floor | Qt | .NET + WPF, materially higher |
+
+Two of these are the big ones:
+
+1. **Retention is a deliberate 192 MB of cache budget** that AO2 simply does not have. That is a design
+   choice (re-decode cost vs memory), not a bug - but it is most of the baseline difference.
+2. **In MULTI-internal-client mode every profile gets its own `AO2ViewportControl`**
+   (`AO2ViewportWindowContent.profileControls`), kept alive and merely collapsed. `OnIsVisibleChanged`
+   stops screen shake and one-shot audio but releases **no image memory**, and
+   `Ao2AnimationPreview.SharedTimer_Tick` advances every active player with no visibility check - so hidden
+   panes hold their frames and burn CPU rendering pixels nobody sees. One animated background measured
+   70-235 MB, so this multiplies fast.
+
+**Single-internal-client mode uses ONE shared pane** (`MainWindow.RefreshViewportAttachment` attaches
+`singleInternalClient` directly), so the per-profile multiplier does NOT apply there.
+
+### What this does and does not explain
+
+It explains a higher **floor** than AO2. It does not by itself explain **growth over hours** in
+single-client mode, where the pane count is fixed at one and every cache is bounded. Anything that climbs
+with session length has to come from something unbounded - the chat transcripts and the per-client log
+documents are the first candidates, which is what the `[MEM]` growth columns and the `icLog*`/`oocLog*`
+counters exist to settle. Do not assume the structural gap is the leak.
