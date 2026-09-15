@@ -28,6 +28,10 @@ Use this file as the first stop before broad repository searches. It should poin
 - Tests: `UnitTests/DebugFileLoggerTests.cs`
 - Notes: `DEBUG.txt` beside the executable holds exactly the current session; the previous 5 are rotated into `DebugHistory/`. Carries everything the in-app debug console shows plus a session header, `[STARTUP]` phase timings and a `[MEM]` sample every 15s with process counters and per-cache occupancy (log entries, cached characters, decoded animation frames/MB, emote button bitmaps, character icons, viewport resolver caches). Writing happens on a dedicated background thread. `CustomConsole`'s in-memory buffer dropped from 1,000,000 entries in two parallel collections to a single 25,000-entry queue, since the full stream is now on disk.
 
+## Unified Client Seats (concept only)
+- Doc: `Documentation/UnifiedClientSeatsConcept.md`
+- Notes: Design for replacing the single/multi internal client toggle with automatic connection creation. Investigated and written up, NOT implemented. Records the exact differences between the two modes, what genuinely needs its own connection, and the finding that merging costs a CC#/PV# round trip per speaker change.
+
 ## Live Asset Loading
 - Doc: `Documentation/LiveAssetLoading.md`
 - Main code: `OceanyaClient/Features/Assets/LiveAssetWatcher.cs`, `OceanyaClient/ClientAssetRefreshService.cs` (`AssetsRefreshed`, `RefreshTargetedAssetsInBackgroundAsync`), `AOBot-Testing/Structures/CharacterFolder.cs` (`ResolveOnDemand`), `OceanyaClient/MainWindow.xaml.cs` (`OnAssetsRefreshedInBackground`), `OceanyaClient/Features/Viewport/AO2ViewportAssetResolver.cs` (`ResolveCharacter`)

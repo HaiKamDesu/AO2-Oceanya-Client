@@ -39,6 +39,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Documentation", "Documentat
 		Documentation\DebugConsoleAndLogging.md = Documentation\DebugConsoleAndLogging.md
 		Documentation\FeatureIndex.md = Documentation\FeatureIndex.md
 		Documentation\LiveAssetLoading.md = Documentation\LiveAssetLoading.md
+		Documentation\UnifiedClientSeatsConcept.md = Documentation\UnifiedClientSeatsConcept.md
 		Documentation\DebugFileLogging.md = Documentation\DebugFileLogging.md
 		Documentation\UiAutomationExecution.md = Documentation\UiAutomationExecution.md
 		Documentation\nav\protocol-and-server.md = Documentation\nav\protocol-and-server.md
