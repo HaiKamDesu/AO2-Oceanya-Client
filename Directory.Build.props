@@ -6,4 +6,86 @@
     <FileVersion>$(OceanyaAppVersion).0.0</FileVersion>
     <InformationalVersion>$(OceanyaAppVersion)</InformationalVersion>
   </PropertyGroup>
+
+  <!--
+    Stamps the build with the git commit it came from, so a DEBUG.txt a user sends back names the exact
+    source state. It has to happen HERE, at build time: a released client has no repository and no git
+    binary, so nothing can be read at runtime.
+
+    Everything below is best-effort by design. `ContinueOnError="true"` plus the `Exists` guard means a
+    zip-download of the source, a machine without git, or a CI checkout with no history still builds - the
+    stamp simply reads "unknown", which is honest rather than fatal.
+  -->
+  <Target Name="OceanyaStampGitInfo"
+          BeforeTargets="GetAssemblyAttributes"
+          Condition="'$(OceanyaSkipGitStamp)' != 'true' AND Exists('$(MSBuildThisFileDirectory).git')">
+
+    <Exec Command="git -C &quot;$(MSBuildThisFileDirectory.TrimEnd('\'))&quot; rev-parse --short=12 HEAD"
+          ConsoleToMSBuild="true"
+          StandardOutputImportance="low"
+          ContinueOnError="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="OceanyaGitCommitRaw"/>
+      <Output TaskParameter="ExitCode" PropertyName="OceanyaGitCommitExit"/>
+    </Exec>
+
+    <Exec Command="git -C &quot;$(MSBuildThisFileDirectory.TrimEnd('\'))&quot; rev-parse --abbrev-ref HEAD"
+          ConsoleToMSBuild="true"
+          StandardOutputImportance="low"
+          ContinueOnError="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="OceanyaGitBranchRaw"/>
+      <Output TaskParameter="ExitCode" PropertyName="OceanyaGitBranchExit"/>
+    </Exec>
+
+    <!--
+      Submodules are ignored on purpose (see the status flags below): the reference clones (AO2-Client,
+      tsuserver3, ...) show permanent whole-file CRLF churn on this repo, so counting them would mark EVERY
+      build dirty and the flag would tell us nothing. What we care about is uncommitted changes to OUR code.
+    -->
+    <Exec Command="git -C &quot;$(MSBuildThisFileDirectory.TrimEnd('\'))&quot; status --porcelain --untracked-files=no --ignore-submodules=all"
+          ConsoleToMSBuild="true"
+          StandardOutputImportance="low"
+          ContinueOnError="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="OceanyaGitStatusRaw"/>
+      <Output TaskParameter="ExitCode" PropertyName="OceanyaGitStatusExit"/>
+    </Exec>
+
+    <PropertyGroup>
+      <OceanyaGitCommit Condition="'$(OceanyaGitCommitExit)' == '0' AND '$(OceanyaGitCommitRaw)' != ''">$(OceanyaGitCommitRaw.Trim())</OceanyaGitCommit>
+      <OceanyaGitBranch Condition="'$(OceanyaGitBranchExit)' == '0' AND '$(OceanyaGitBranchRaw)' != ''">$(OceanyaGitBranchRaw.Trim())</OceanyaGitBranch>
+      <!-- Any output at all from the porcelain status means there is an uncommitted change. -->
+      <OceanyaGitDirty Condition="'$(OceanyaGitStatusExit)' == '0'">false</OceanyaGitDirty>
+      <OceanyaGitDirty Condition="'$(OceanyaGitStatusExit)' == '0' AND '$(OceanyaGitStatusRaw.Trim())' != ''">true</OceanyaGitDirty>
+    </PropertyGroup>
+  </Target>
+
+  <!--
+    Written as assembly metadata rather than a generated source file so every project gets it for free and
+    nothing has to be checked in or kept in step.
+  -->
+  <Target Name="OceanyaWriteBuildInfoAttributes"
+          BeforeTargets="GetAssemblyAttributes"
+          DependsOnTargets="OceanyaStampGitInfo">
+    <ItemGroup>
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>OceanyaGitCommit</_Parameter1>
+        <_Parameter2>$(OceanyaGitCommit)</_Parameter2>
+      </AssemblyAttribute>
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>OceanyaGitBranch</_Parameter1>
+        <_Parameter2>$(OceanyaGitBranch)</_Parameter2>
+      </AssemblyAttribute>
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>OceanyaGitDirty</_Parameter1>
+        <_Parameter2>$(OceanyaGitDirty)</_Parameter2>
+      </AssemblyAttribute>
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>OceanyaBuildConfiguration</_Parameter1>
+        <_Parameter2>$(Configuration)</_Parameter2>
+      </AssemblyAttribute>
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>OceanyaBuildTimestampUtc</_Parameter1>
+        <_Parameter2>$([System.DateTime]::UtcNow.ToString("yyyy-MM-dd HH:mm:ss"))</_Parameter2>
+      </AssemblyAttribute>
+    </ItemGroup>
+  </Target>
 </Project>

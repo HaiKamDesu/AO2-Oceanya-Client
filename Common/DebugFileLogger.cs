@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -354,6 +354,10 @@ namespace Common
             List<string> header = new List<string>
             {
                 "=== OCEANYA CLIENT DEBUG LOG ===",
+
+                // First line after the banner on purpose: when a user sends this file back, the very first
+                // question is always "which build is this?", and the version alone does not answer it.
+                $"Build: {OceanyaBuildInfo.DescribeBuild()}",
                 $"Session start: {DateTime.Now:yyyy-MM-dd HH:mm:ss} (UTC {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss})",
                 $"OS: {Environment.OSVersion} ({(Environment.Is64BitProcess ? "x64" : "x86")} process, {Environment.ProcessorCount} cores)",
                 $"Runtime: {Environment.Version}",

@@ -1,4 +1,4 @@
-﻿# Debug File Logging
+# Debug File Logging
 
 `DEBUG.txt` next to the executable always holds **exactly the current session**. The previous five
 sessions are rotated into `DebugHistory/`.
@@ -134,3 +134,29 @@ Anything older is read from `DEBUG.txt`.
 
 `UnitTests/DebugFileLoggerTests.cs` - session file contents, history rotation and cap, memory-sample
 contents including custom providers, and the `CustomConsole` buffer bound.
+
+## Build stamp (which source a log came from)
+The second line of every `DEBUG.txt` names the exact build:
+
+```
+Build: 7.13 (Debug) commit d0ba36569cf1 on release/8-0, DIRTY (uncommitted changes at build time) - built 2026-09-16 17:40 UTC
+```
+
+Read it before anything else in a log a user sends back - the version alone does not identify the source,
+and a developer build is often ahead of or dirty against whatever the version claims.
+
+- **Where it comes from:** `Directory.Build.props` -> `OceanyaStampGitInfo` runs git at BUILD time and writes
+  `AssemblyMetadata` attributes; `Common/OceanyaBuildInfo.cs` reads them back. It cannot be done at runtime -
+  a released client has no repository and no git binary.
+- **`DIRTY` means the binary contains changes that exist nowhere in history**, so the commit alone will not
+  reproduce it. That is the single most important thing to notice when a log does not match the source.
+- **Submodules are excluded from the dirty check.** The reference clones (`tsuserver3`, `tsuserverCC`, ...)
+  carry permanent whole-file CRLF churn here, so counting them would mark every build dirty and the flag
+  would mean nothing. Measured: 25 dirty entries with submodules, 23 without, and those 2 are always there.
+- **Everything degrades to `unknown`** rather than failing the build: a source zip, a machine without git or
+  a history-less CI checkout still builds and still logs. `-p:OceanyaSkipGitStamp=true` forces that path.
+- **Test mode does not write DEBUG.txt at all** (`App.xaml.cs` only calls `DebugFileLogger.Start` when test
+  mode is off), so a capture sweep produces no log - that is expected, not a bug.
+
+Tests: `UnitTests/OceanyaBuildInfoTests.cs`, including one that writes a real log through
+`DebugFileLogger.Start` and asserts the header carries the commit.
