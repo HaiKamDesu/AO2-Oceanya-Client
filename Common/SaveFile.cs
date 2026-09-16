@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -298,6 +298,54 @@ namespace OceanyaClient
         /// stylesheet, which reads as the button inverting while pressed.
         /// </remarks>
         public string HoverImagePath { get; set; } = string.Empty;
+
+        /// <summary>Slider handle fill; empty keeps the handle's artwork or stock colour.</summary>
+        /// <remarks>
+        /// A theme skins the handle through <c>QSlider::handle</c>, and several do it with a colour rather
+        /// than an image - AOHD paints its handle <c>#328CBD</c> with a white border and ships no art at
+        /// all, so an image-only path left it looking nothing like AO2's.
+        /// </remarks>
+        public string SliderHandleColor { get; set; } = string.Empty;
+
+        /// <summary>Slider handle border colour; empty draws no frame around the handle.</summary>
+        public string SliderHandleBorderColor { get; set; } = string.Empty;
+
+        /// <summary>Slider handle corner radius in pixels; zero is a square handle.</summary>
+        /// <remarks>
+        /// A theme rounds its handle with <c>border-radius</c> on <c>QSlider::handle</c>; AOHD's 5px turns
+        /// its handle into a circle, which is the most visible part of that theme's slider.
+        /// </remarks>
+        public double SliderHandleCornerRadius { get; set; }
+
+        /// <summary>Checkbox tick-box fill while unchecked; empty keeps AO2's stock white.</summary>
+        /// <remarks>
+        /// A theme skins the tick box through Qt's <c>QCheckBox::indicator</c> sub-control, and several do
+        /// it with colours rather than artwork - AOHD paints the checked box <c>#328CBD</c> with a white
+        /// border. Without these the box always drew in AO2's stock colours no matter what the theme said.
+        /// </remarks>
+        public string IndicatorBackgroundColor { get; set; } = string.Empty;
+
+        /// <summary>Checkbox tick-box border while unchecked; empty keeps AO2's stock grey.</summary>
+        public string IndicatorBorderColor { get; set; } = string.Empty;
+
+        /// <summary>Checkbox tick-box fill while checked; empty reuses the unchecked fill.</summary>
+        public string CheckedIndicatorBackgroundColor { get; set; } = string.Empty;
+
+        /// <summary>Checkbox tick-box border while checked; empty reuses the unchecked border.</summary>
+        public string CheckedIndicatorBorderColor { get; set; } = string.Empty;
+
+        /// <summary>
+        /// True when the panel should wear AO2's own default control chrome instead of Oceanya's.
+        /// </summary>
+        /// <remarks>
+        /// AO2's <c>AOButton::setImage</c> clears the widget's stylesheet and icon when the theme ships no
+        /// art for it, so the button falls back to the plain platform push button, keeping its text label -
+        /// which is why "Settings", "Change character", "Reload theme" and "Call mod" look like stock
+        /// Windows buttons in most themes. Its sliders work the same way. Our own controls look nothing
+        /// like that, so a theme that simply does not skin a control used to render in Oceanya's styling
+        /// instead of AO2's. Set by the theme importer for exactly those un-skinned panels.
+        /// </remarks>
+        public bool UseAo2DefaultChrome { get; set; }
 
         /// <summary>Border colour in #AARRGGBB form; empty keeps the control's own border.</summary>
         public string BorderColor { get; set; } = string.Empty;

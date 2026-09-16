@@ -20,3 +20,7 @@ OceanyaClient/Features/GoogleDriveSync/google-drive-oauth.local.json
 # Ignore test result artifacts (TRX files, screenshots, etc.)
 [Tt]est[Rr]esult*/
 *.trx
+
+# AO2 theme parity comparison viewer: ~20MB of captured PNGs, regenerated on demand
+# by the in-process theme capture sweep. See Documentation/AO2ThemeImport.md.
+ThemeParity/

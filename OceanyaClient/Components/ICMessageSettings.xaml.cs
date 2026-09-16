@@ -1,7 +1,8 @@
-﻿using AOBot_Testing.Agents;
+using AOBot_Testing.Agents;
 using AOBot_Testing.Structures;
 using Common;
 using Common.WebAssets;
+using OceanyaClient.Components.Forms;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -90,6 +91,7 @@ namespace OceanyaClient.Components
                 ["ic_check_flip"] = chkFlip,
                 ["ic_check_additive"] = chkAdditive,
                 ["ic_check_immediate"] = chkImmediate,
+                ["ic_check_casing"] = chkCasing,
                 ["ic_combo_character"] = CharacterDropdown,
                 ["ic_combo_emote"] = EmoteDropdown,
                 ["ic_combo_position"] = PositionDropdown,
@@ -635,7 +637,26 @@ namespace OceanyaClient.Components
         /// <summary>
         /// Gets a value indicating whether the position dropdown is on its default entry.
         /// </summary>
-        public bool IsPositionAtDefault => string.IsNullOrWhiteSpace(curClient?.curPos);
+        public bool IsPositionAtDefault
+        {
+            get
+            {
+                string current = curClient?.curPos?.Trim() ?? string.Empty;
+                if (current.Length == 0)
+                {
+                    return true;
+                }
+
+                // AO2 compares against the CHARACTER'S OWN default side, not against "no position":
+                // `on_pos_dropdown_changed` hides the reset button when `p_side == default_side()`, and
+                // `get_char_side` reads `[Options] side` falling back to "wit". Treating only an empty
+                // position as default left an X beside the dropdown on every theme that places one, where
+                // AO2 shows nothing at all.
+                string characterSide = curClient?.currentINI?.configINI?.Side?.Trim() ?? string.Empty;
+                string defaultSide = characterSide.Length > 0 ? characterSide : "wit";
+                return string.Equals(current, defaultSide, StringComparison.OrdinalIgnoreCase);
+            }
+        }
 
         /// <summary>
         /// Gets a value indicating whether the character dropdown shows the client's own character.
@@ -1886,6 +1907,29 @@ namespace OceanyaClient.Components
                 txtICMessage.Focus();
                 OnClientStateChanged?.Invoke();
             }
+        }
+
+        /// <summary>
+        /// Tells the user casing is not supported, then puts the box back.
+        /// </summary>
+        /// <remarks>
+        /// Oceanya does not implement AO2's casing announcements. The control exists so an imported theme
+        /// is not missing a widget it placed; it behaves like the evidence button - it says so and does
+        /// nothing, rather than pretending to hold a setting that goes nowhere.
+        /// </remarks>
+        private void chkCasing_Checked(object sender, RoutedEventArgs e)
+        {
+            if (chkCasing.IsChecked != true)
+            {
+                return;
+            }
+
+            chkCasing.IsChecked = false;
+            OceanyaMessageBox.Show(
+                "Oceanya Client is not compatible with casing!",
+                "Casing",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
         }
 
         private void chkImmediate_Checked(object sender, RoutedEventArgs e)

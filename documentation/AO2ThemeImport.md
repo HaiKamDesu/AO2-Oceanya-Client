@@ -1,4 +1,4 @@
-﻿# Importing AO2 themes into Oceanya
+# Importing AO2 themes into Oceanya
 
 ## Question
 Can an existing AO2 theme be reused as an Oceanya main-window layout, so users do not have to build
@@ -628,3 +628,234 @@ AO2 decides in two steps (`Courtroom::show_judge_controls`):
 Both are implemented: `AOClient.JudgeControlsState` / `CurrentOrDefaultSide` and
 `MainWindow.UpdateJudgeControlVisibility`. Only the four verdict buttons and the four health steppers are
 affected; the bars stay visible everywhere.
+
+## Capturing the comparison screenshots
+Theme parity is judged by putting an AO2 screenshot of a theme next to an Oceanya screenshot of the same
+theme. The AO2 half is fixed (that client never changes), so only the Oceanya half is re-captured as the
+theme system improves - which is why it is a first-class, in-process feature rather than UI automation.
+
+```bash
+OceanyaClient.exe --test-mode --test-auto-launch-startup \
+  --test-startup-functionality=gm_multi_client \
+  --test-savefile="<fixture with a one-client GM snapshot>" \
+  --test-config-ini="<AO2 base>/config.ini" \
+  --test-server-endpoint=tcp://127.0.0.1:27080 \
+  --test-capture-themes=@themes.txt \
+  --test-capture-output=<dir> \
+  --test-capture-exit-when-done
+```
+
+- `--test-capture-themes` takes `*` (every theme), `@file` (one name per line) or a comma-separated list.
+  Prefer `@file`: theme folder names contain commas, spaces and accents.
+- `--test-capture-settle-ms` (default 900) is the pause between apply, IC line and capture.
+- `--test-capture-message` is the IC line sent before each capture; `{theme}` is substituted. Empty sends
+  nothing and captures bare chrome.
+- Output: one PNG per theme plus `capture_manifest.tsv`, written per theme as it happens so a stalled sweep
+  still says which theme it reached.
+
+Owner: `OceanyaClient/Features/Theme/Ao2ThemeCaptureRunner.cs`; the savefile/config writes are shared with
+the Settings button through `Ao2ThemeLayoutApplier` so a capture always shows what the button produces.
+
+**Do not rewrite the sweep with `async`/`await`.** Measured during development: while a sweep runs, startup
+asset work saturates the thread pool, so an awaited `Task.Delay` - and equally an awaited
+`TaskCompletionSource` - never resumes, and the sweep hangs on its first theme. A Normal-priority
+`DispatcherTimer` keeps ticking throughout, so the runner is a timer state machine with no `await` in it.
+Waiting on the dispatcher queue does not work either: an animated theme keeps the UI thread busy at Render
+priority (7), which outranks Loaded (6), Background (4) and both idle levels.
+
+Use a fixture savefile carrying a one-client `GMMultiClientSnapshot` so startup restores a character instead
+of opening the character selector; do **not** pass `--test-disable-gm-snapshot-persistence` for a capture run.
+
+### The comparison viewer
+`ThemeParity/index.html` (gitignored; ~20MB of PNGs beside it). Open it in a browser - it is a plain local
+file, no server needed.
+
+It **blink-compares** rather than showing the pair side by side: both frames occupy the same box, one
+visible at a time, so swapping them makes a real difference jump out where two images an inch apart hide it.
+
+- <kbd>&larr;</kbd>/<kbd>&rarr;</kbd> or click the image: swap AO2 &harr; Oceanya
+- <kbd>Space</kbd> (held): peek at Oceanya, release to snap back
+- <kbd>&uarr;</kbd>/<kbd>&darr;</kbd>: previous/next theme
+- <kbd>A</kbd> align, <kbd>Z</kbd> fit/1:1, <kbd>S</kbd> side-by-side, <kbd>Alt</kbd>+arrows nudge the offset
+
+**Alignment is the thing that makes it work.** Oceanya adds a 54px clients strip on the left and a 24px
+connection bar on top, so the theme's own content starts at (54, 24) in our capture and at (0, 0) in AO2's.
+The viewer shifts the Oceanya frame by `-54, -24` so the two line up; without it every blink reads as "the
+whole window moved" and the actual differences are invisible. The rail shows each theme's delta and flags
+any theme that is not exactly `+54,+24`.
+
+Re-capture the Oceanya half with `ThemeParity/refresh-oceanya.cmd` (needs the local test server on
+127.0.0.1:27080), then refresh the browser. The AO2 half is never regenerated.
+
+## AO2's own defaults are part of the theme
+The trap this section exists to prevent: when a theme does **not** style something, the answer is not
+"leave Oceanya's own look on it" - it is "use AO2's look". AO2 is a Qt app on the native Windows style, so
+an un-skinned widget is a plain platform control, and `AOButton::setImage` says so outright: with no art it
+calls `setStyleSheet(QString())` and `setIcon(QIcon())` and falls back to the platform push button, text
+label and all. Sliders and fonts work the same way - AO2 only calls `set_font` for the widgets in its own
+`set_fonts()` list, so everything else draws in the application UI font.
+
+- `OceanyaPanelPlacementState.UseAo2DefaultChrome` is set on every panel an import touches.
+- `OceanyaClient/Styles/Ao2DefaultChrome.xaml` holds the stock button and slider looks. **The colours in it
+  are sampled from AO2 captures, not invented** - the slider groove is `#E7EAEA` on `#D6D6D6` and the handle
+  is the Windows accent `#007AD9`. If they ever look wrong, re-sample rather than guess.
+- `OceanyaPanelStyleApplier.ApplyAo2DefaultChrome` applies it first, so anything the theme *did* say still
+  wins on top; button captions come from `courtroom.cpp`'s own `setText` calls.
+
+## Qt stylesheet traps
+- **Qt matches on the widget's real class.** A theme's `QLabel` rule never touches a `QPushButton`. Our
+  class-to-kind map lumps labels and image buttons together, so `OceanyaPanelCatalog.Ao2PushButtonPanelIds`
+  is what keeps label rules off real buttons - without it AAI's `QLabel { background-color: transparent }`
+  erases the fill of every bar button and shout in the theme.
+- **Declarations later in a rule win.** AAI writes `border: 1px solid rgba(255,0,255,150); ... ;
+  border-color: black`, which draws a BLACK border. Reading only the shorthand put magenta outlines around
+  every AAI dropdown. `ApplyBorderLonghandOverrides` handles the long-hands.
+- **`transparent` is an instruction, not a parse failure.** Treating it as unreadable left our opaque fill
+  in place, so a label the theme wanted see-through rendered solid black.
+- **Alpha in Qt stylesheets is 0-255**, not CSS's 0-1. Already handled; do not "fix" it.
+- **Named colours pass through verbatim** (`darkgray`) for WPF to resolve, so do not assert hex in tests.
+
+## Applying style to a panel
+Anything that walks a panel's visual tree must be queued at `DispatcherPriority.Loaded` as well as run
+inline. Several panels' inner controls are re-parented into the theme surface after the style pass, so a
+purely synchronous walk finds an empty tree and silently does nothing - that is what left themed text boxes
+wearing our font and foreground while their themed background, which was already deferred, applied fine.
+
+## Animated theme art
+AO2 drives **every** piece of button art through a `QMovie`, so animated shouts are normal, not exotic -
+AAI ships `holdit.gif`/`objection.gif`/`takethat.gif` next to static PNGs and AO2 probes `.webp/.apng/.gif/
+.png` in that order, so the animated file is the one it picks. `Ao2ThemeArtAnimation` plays them and
+`Ao2ThemeArtAnimations.StopAll()` (called from `InvalidatePendingWork`) stops the previous pass's players -
+a live player retains its decoded frames, so skipping that leaks memory on every layout pass.
+
+## Round 2 rules (from the AAI comparison)
+- **The chatbox overlaps the viewport.** Every AO2 theme places its chatbox rectangle on top of the
+  viewport, so `Ao2ThemeLayoutApplier` turns `GMViewportChatboxOverlapsViewport` on with the import. With
+  it off the whole translation is wrong, not just the chatbox.
+- **A theme must not style Oceanya's own controls.** `Ao2ThemeLayoutImporter.OceanyaOnlyPanelIds` (the
+  functional-only strip) is passed to the translator as an exclusion set. Keep it to genuinely
+  Oceanya-only panels: several panels are theme-driven WITHOUT appearing in `PanelMappings` - the
+  composite regions place the OOC header from `music_display`/`music_name` - and excluding those stripped
+  the colour that made them visible at all.
+- **`UseAo2DefaultChrome` is for AO2 widgets only.** Oceanya's own controls (clients strip, add/remove,
+  the strip's icon buttons) pass `useAo2DefaultChrome: false`; their faces are icon glyphs and AO2's stock
+  button chrome turns them into blank platform buttons. A *stranded essential* - a real AO2 widget parked
+  in the strip because the theme gave it no rectangle - still keeps AO2 chrome.
+- **A stylesheet rule styles the widget, not its template parts.** Border and background application stops
+  at the first `Control`; descending further drew the theme's 1px frame on the combo box, its text area and
+  its drop-down button, which read as one thick border.
+- **Un-skinned checkboxes and the slider labels are AO2 widgets too.** `Ao2DefaultCheckBoxStyle` draws Qt's
+  white tick box, and the three volume labels carry AO2's own "Music"/"Sfx"/"Blips" text (they are `Label`s,
+  not bare `Image`s, so the text shows when the theme ships no art and is cleared when it does).
+- **Image names can have a fallback chain.** `PanelArt` takes an array: AO2 tries `courtroom_settings` and
+  falls back to the pre-2.10 `settings`, which is the only art AOHD and several other themes ship.
+- **Qt text metrics.** Themed panels get `TextFormattingMode.Display` (WPF's default `Ideal` puts glyphs on
+  fractional pixels and renders heavier than Qt) and Qt's `AlignVCenter` default for labels. This narrows
+  the gap; it cannot close it, because the two renderers hint differently.
+- **A layout that hides a panel outranks test mode.** `MainWindow.AreOptionCheckBoxesAllowed()` - otherwise
+  the capture sweep, which runs in test mode, forced Oceanya's option toggles into every themed shot.
+- **Watch static field order.** `OceanyaOnlyPanelIds` is a lazy property, not a field initializer: it is
+  declared above `PanelMappings`, and initializing eagerly threw in the type initializer and took 19 tests
+  with it.
+
+## Round 3 rules
+- **The A/M pair opens on the MUSIC list.** `courtroom.cpp` calls `ui_area_list->hide()` at construction,
+  so the import sets `GMAreaMusicSlotShowsMusic`. Both lists correctly share one rectangle - that part was
+  always right; only the default was wrong.
+- **Never blanket-set `VerticalContentAlignment`.** Qt's vertical centring applies to controls whose
+  content is TEXT. Applying it to every control collapsed the ones whose content must stretch: the music
+  name label hosts a marquee `Canvas`, which has no desired height, so centring it made the label render
+  nothing at all - and the IC log's document ended up floating in the middle of its box.
+- **A log anchors to the end its messages grow from.** AO2's chat log is a QTextEdit and always lays its
+  document from the top; inverted, the newest line is at the bottom. `ICLog.ApplyLogAnchor`.
+- **Un-themed text is 9pt (12 DIP).** AO2 only sizes the widgets in its own `set_fonts()` list; everything
+  else uses the application font. Measured: AO2's "Music" slider label spans 8px of glyph where ours spanned
+  9, and that extra size is what made the labels overlap their sliders.
+- **Decorative labels must not take input.** The volume labels are `IsClickThrough` - text even slightly
+  wider than the theme's rectangle overhangs the slider beside it and swallows the clicks meant for the
+  handle. Note `ApplyPanelCatalogPlacements` drives `IsHitTestVisible` from panel state, so setting it in
+  XAML alone is not enough.
+- **A checkbox indicator can be skinned with COLOURS, not just art.** AOHD paints its checked tick box
+  `#328CBD` with a white border and ships no image. `IndicatorBackgroundColor` / `IndicatorBorderColor` and
+  their checked counterparts carry it.
+- **`DynamicResource` cannot reach a detached dictionary.** `Ao2DefaultChrome.xaml` is loaded standalone and
+  only its Style is taken out, so a key the template resolves dynamically MUST also be written onto the
+  control's own `Resources` - otherwise it resolves to null and the element renders with no brush, which is
+  how the tick boxes vanished. Always write every key, defaulting to the stock colour.
+- **Template-bind chrome that a theme may set.** `ImageComboBox` hardcoded `BorderThickness="1"`, so a theme
+  asking for a different frame could not get one, and the un-snapped rounded border read as two pixels.
+- **Qt's drop-down is narrower than ours** (~18px against 30). On a dropdown sized to the theme's rectangle
+  those pixels come out of the text, which clipped the character name.
+
+## Round 4 rules
+- **Qt object-name selectors are supported** (`QPushButton#ui_ooc_toggle`). AOHD does almost all of its
+  per-widget styling this way, and ignoring it left those widgets wearing our own look. AO2 names widgets
+  `ui_` + the design.ini identifier, so `Ao2ThemeLayoutImporter.TryResolvePanelForIdentifier` answers it
+  from the mapping table already there - do not add a second list.
+- **Theme asset URLs are relative to the INSTALL ROOT** (`url(base/themes/<theme>/x.png)`), so
+  `ResolveAssetRoots` walks every ancestor of the stylesheet as well as asking the theme catalog. Deriving
+  the root from the catalog alone silently resolved to nothing whenever the catalog was unconfigured.
+- **A slider handle can be skinned with COLOURS, not just art**: `SliderHandleColor` /
+  `SliderHandleBorderColor`, from `QSlider::handle`. AOHD paints its handle `#328CBD` with a white border
+  and ships no image.
+- **The dropdown arrow glyph takes the control's Foreground**, the way Qt's does, so
+  `QComboBox { color: white }` gives a white arrow.
+- **AO2 hides a control that has nothing to do.** `set_emote_page` hides each emote arrow unless that
+  direction exists, and `on_pos_dropdown_changed` hides `pos_remove` when the position equals
+  `default_side()` - which is the CHARACTER'S `[Options] side` (falling back to `wit`), not "no position".
+  Comparing against empty put a stray X beside the pos dropdown in every theme that places one.
+- **Casing is present but inert.** `bar_button_casing` / `ic_check_casing` exist so an imported layout has
+  no holes; both say Oceanya does not support casing and do nothing, exactly like the evidence button.
+- **The OOC toggle is called the Debug Console** in Oceanya's UI. The panel id stays `ooc_server_console`
+  so saved layouts keep working - renaming an id needs a theme compatibility bump.
+- **New panels must be registered in three places**, or the catalog guard tests fail: the descriptor list,
+  the default z-order table, and `UnitTests/OceanyaPanelCatalogTests` id list.
+
+## The sub-control rule (learned three times, write it down)
+A Qt rule styles the **widget**; its sub-controls (`QComboBox::drop-down`, `QCheckBox::indicator`,
+`QSlider::handle`) have selectors of their own. Every generic pass that walks a panel's visual tree must
+therefore STOP at a nested control, or it silently destroys what a sub-control rule just set:
+
+- borders: `ApplyBorderRecursive` stops at the first `Control` (otherwise a 1px frame is drawn three times
+  over and reads as a thick one),
+- fills: `ApplyInnerSurfaceRecursive` stops at the widget, and `PaintExistingBackgrounds` skips
+  `ButtonBase`/`ComboBox`/`Slider` children entirely - descending repainted the Grid inside the dropdown's
+  toggle button and wiped the theme's arrow artwork, which is why GrayGarden's diamond rendered as a plain
+  grey box even though the art loaded correctly,
+- the checkbox tick box is named `PART_Ao2CheckBoxIndicator` so the same walk skips it.
+
+Two more details the diamond needed: a sub-control `image:` is drawn at its NATURAL size (`Stretch.None`),
+not stretched to the slot - GrayGarden's is a 10x10 asset - and the art replaces our own arrow frame, since
+the theme says `QComboBox::drop-down { border: hidden }`.
+
+**Debugging note:** `DEBUG.txt` is not reliably flushed by a capture sweep (the run ends via
+`Application.Shutdown`). When instrumenting a sweep, append to a dedicated file instead - that is what
+turned this from guesswork into a five-minute find.
+
+## The other half of that rule: a placed panel's visibility
+The layout pass re-applies every placed panel's visibility from its saved state, so a control that decides
+its own visibility at runtime has that decision overwritten the moment a theme places it as a panel. That is
+why the emote arrows still showed on both sides after `PageButtonGrid` had already hidden them.
+
+Anything whose visibility depends on RUNTIME state, not on the layout, therefore belongs in
+`MainWindow.ApplyConditionalPanelVisibility` (and must respect `IsHiddenByLayout`): the dropdown reset
+buttons, the judge controls, the option toggles, and now the emote arrows via
+`UpdateEmotePagingVisibility` plus `PageButtonGrid.PagingStateChanged` for the page-turn case.
+
+## Sliders and dropdowns a theme colours
+- **A rounded handle is a CIRCLE.** Qt clamps `border-radius` to half the handle box, so AOHD's
+  `border-radius: 5px` renders as a dot. Reproducing it needs the handle sized from the slider's height as
+  well as the radius applied - a radius on our stock 15px-wide handle only gives a rounded rectangle.
+- **A theme that styles only the handle still wants a track.** AOHD says nothing about its groove's fill,
+  and AO2 then draws the stock Windows groove; defaulting the two pages to transparent left the handle
+  floating on nothing. Groove ARTWORK still wins, because that art is the whole track.
+- **The stock groove is a flat 4px, not a fraction of the widget** - measured off an AO2 capture as
+  `#D6D6D6` edge, `#E7EAEA` fill, `#E7EAEA` fill, `#D6D6D6` edge. Our `height/6` heuristic gave 2-3px on a
+  short slider and read as a grey hairline; it is still used when the theme supplies groove art.
+- **A panel minimum that exceeds the theme's rectangle silently overrides the theme.** AOHD declares
+  `music_slider` 12px tall, our slider panels carried `minimumHeight: 16`, and the importer takes the max -
+  so the handle came out 16px where AO2 draws 12. When a parity gap is "ours is bigger", check the
+  descriptor's minimums before touching the drawing code.
+- **`QComboBox { background }` paints the drop-down slot too** - it is part of the same widget in Qt.
+  `ApplyInnerSurfaceRecursive` paints the combo AND its `btnDropdown`, which is why AOHD's arrow slot is
+  blue rather than our stock grey. Arrow ARTWORK still wins: it is applied later and replaces that brush.

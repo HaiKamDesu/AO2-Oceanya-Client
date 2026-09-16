@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Linq;
 using NUnit.Framework;
 using OceanyaClient;
@@ -40,13 +40,35 @@ namespace UnitTests
             // not be flattened onto every panel of that class.
             int changed = Ao2StylesheetTranslator.Apply(
                 "QComboBox::down-arrow { image: url(x.png); }"
-                + "QCheckBox::indicator:checked { background-color: #FF0000; }"
                 + "QPushButton[x=\"1001\"] { background-color: #00FF00; }"
                 + "QComboBox:hover { background-color: #0000FF; }",
                 layout);
 
             Assert.That(changed, Is.EqualTo(0));
             Assert.That(layout.Panels, Is.Empty);
+        }
+
+        /// <summary>
+        /// A checkbox indicator CAN be skinned with colours rather than artwork, and themes do it: AOHD
+        /// paints its checked tick box #328CBD with a white border and ships no indicator image at all.
+        /// </summary>
+        [Test]
+        public void Apply_TranslatesCheckBoxIndicatorColours()
+        {
+            OceanyaThemeLayoutState layout = new OceanyaThemeLayoutState();
+
+            int changed = Ao2StylesheetTranslator.Apply(
+                "QCheckBox::indicator:checked { border: 1px solid white; background-color: #328CBD; }",
+                layout);
+
+            Assert.That(changed, Is.GreaterThan(0));
+            OceanyaPanelPlacementState state = layout.Panels[OceanyaPanelCatalog.IcCheckPreanimPanelId];
+            Assert.Multiple(() =>
+            {
+                Assert.That(state.CheckedIndicatorBackgroundColor, Is.EqualTo("#FF328CBD"));
+                Assert.That(state.CheckedIndicatorBorderColor, Is.EqualTo("white"));
+                Assert.That(state.IndicatorBackgroundColor, Is.Empty, "An unnamed state keeps AO2's stock box.");
+            });
         }
 
         [Test]
@@ -61,8 +83,15 @@ namespace UnitTests
                 + "QLineEdit { color: transparent; font-size: 40px; }",
                 layout);
 
-            Assert.That(changed, Is.EqualTo(0));
-            Assert.That(layout.Panels.Values.Any(state => state.FontSize > 0), Is.False);
+            // The transparent BACKGROUND is a real instruction and does apply - AO2 shows the courtroom
+            // through such a checkbox. What must not happen is the indicator's sizing font or the
+            // transparent foreground reaching the label, which would erase text the theme still draws.
+            Assert.That(layout.Panels.Values.Any(state => state.FontSize > 0), Is.False, "Indicator sizing is not a text size.");
+            Assert.That(layout.Panels.Values.Any(state => state.TextColor == "#00000000"), Is.False, "A transparent foreground would erase the label.");
+            Assert.That(
+                layout.Panels.Values.All(state => state.BackgroundColor is "" or "#00000000"),
+                Is.True,
+                "The only thing these rules may set is the transparent background.");
         }
 
         [Test]

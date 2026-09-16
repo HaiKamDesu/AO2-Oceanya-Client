@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.ObjectModel;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -414,26 +414,13 @@ namespace OceanyaClient
                 return;
             }
 
-            int scalingFactor = Math.Max(1, Ao2ConfigIniSettings.GetInt(configValues, "theme_scaling_factor", 1));
-            Ao2ThemeImportResult? result = Ao2ThemeLayoutImporter.ImportTheme(themeName, scalingFactor);
+            Ao2ThemeImportResult? result = Ao2ThemeLayoutApplier.ApplyToSavefile(themeName, configValues);
             if (result == null)
             {
                 Ao2LayoutResultTextBlock.Text = $"\"{themeName}\" has no courtroom_design.ini to import.";
                 return;
             }
 
-            SaveFile.Data.OceanyaThemeLayout = result.Value.Layout;
-            // Every AO2 theme places the viewport inside the window, so that mode comes along with it, and
-            // the same is true of the area and music lists whenever the theme gives them a rectangle.
-            SaveFile.Data.GMViewportRenderInPanel = true;
-            SaveFile.Data.GMAreaListRenderInPanel = result.Value.ImportedPanelIds.Contains(OceanyaPanelCatalog.AreaListPanelId);
-            SaveFile.Data.GMMusicListRenderInPanel = result.Value.ImportedPanelIds.Contains(OceanyaPanelCatalog.MusicListPanelId);
-            SaveFile.Save();
-
-            // The chatbox, in-viewport art, colours and sounds already come from the AO2 theme selected
-            // in config.ini, so point that at the same theme or half the look stays on the old one.
-            configValues["theme"] = themeName;
-            Ao2ConfigIniSettings.Save(configValues);
             suppressControlEvents = true;
             try
             {

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -229,6 +229,26 @@ namespace OceanyaClient.Components
 
 
         public int GetCurrentPage() => currentPage;
+
+        /// <summary>Gets a value indicating whether there is a previous page to go back to.</summary>
+        public bool CanPageBack => currentPage > 0;
+
+        /// <summary>Gets a value indicating whether there is a next page to go forward to.</summary>
+        /// <remarks>
+        /// AO2's `set_emote_page` hides each arrow unless its direction exists, so a character whose emotes
+        /// fit on one page shows no arrows at all. The main window asks through these because a placed
+        /// panel's visibility is re-applied by the layout pass, which would otherwise force both arrows
+        /// back on.
+        /// </remarks>
+        public bool CanPageForward
+        {
+            get
+            {
+                int perPage = Math.Max(1, rows * columns);
+                int totalPages = (int)Math.Ceiling((double)GetItemCount() / perPage);
+                return currentPage + 1 < totalPages;
+            }
+        }
 
         public int GetPageCount()
         {
@@ -484,8 +504,16 @@ namespace OceanyaClient.Components
             currentScrollMode = mode;
             UpdateButtonVisibility();
         }
+        /// <summary>Raised whenever which paging directions exist may have changed.</summary>
+        /// <remarks>
+        /// A theme places the arrows as panels, so the main window owns their visibility; without this it
+        /// would only be recomputed on a layout pass and an arrow would linger after the last page.
+        /// </remarks>
+        public event EventHandler? PagingStateChanged;
+
         private void UpdateButtonVisibility()
         {
+            PagingStateChanged?.Invoke(this, EventArgs.Empty);
             int totalPages = (int)Math.Ceiling((double)GetItemCount() / Math.Max(1, rows * columns));
 
             Grid grid = LayoutGrid;
@@ -493,10 +521,24 @@ namespace OceanyaClient.Components
             {
                 // The buttons are panels now: their own placement owns their geometry, and the grid must
                 // not add or remove rows and columns for them any more.
-                LeftButton.IsEnabled = currentPage > 0;
-                RightButton.IsEnabled = currentPage + 1 < totalPages;
-                UpButton.IsEnabled = LeftButton.IsEnabled;
-                DownButton.IsEnabled = RightButton.IsEnabled;
+                //
+                // Visibility, not just enablement: AO2's `set_emote_page` hides each arrow and only shows
+                // the one whose direction actually exists, so a character with a single page of emotes
+                // shows no arrows at all rather than two dead ones.
+                bool canGoBack = currentPage > 0;
+                bool canGoForward = currentPage + 1 < totalPages;
+
+                LeftButton.IsEnabled = canGoBack;
+                RightButton.IsEnabled = canGoForward;
+                UpButton.IsEnabled = canGoBack;
+                DownButton.IsEnabled = canGoForward;
+
+                Visibility backVisibility = canGoBack ? Visibility.Visible : Visibility.Hidden;
+                Visibility forwardVisibility = canGoForward ? Visibility.Visible : Visibility.Hidden;
+                LeftButton.Visibility = backVisibility;
+                UpButton.Visibility = backVisibility;
+                RightButton.Visibility = forwardVisibility;
+                DownButton.Visibility = forwardVisibility;
                 return;
             }
 

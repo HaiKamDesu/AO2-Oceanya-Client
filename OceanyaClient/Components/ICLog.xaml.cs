@@ -1,4 +1,4 @@
-﻿using AOBot_Testing.Agents;
+using AOBot_Testing.Agents;
 using AOBot_Testing.Structures;
 using System;
 using System.Collections.Generic;
@@ -345,9 +345,24 @@ namespace OceanyaClient.Components
         /// <summary>Colours a theme set for this log, or null for the built-in ones.</summary>
         private LogThemeColors? themeColors;
 
+        /// <summary>
+        /// Anchors a log shorter than its box to the end the messages grow from.
+        /// </summary>
+        /// <remarks>
+        /// AO2's chat log is a QTextEdit, which always lays its document out from the top, so a handful of
+        /// messages sit at the top of the box rather than floating in the middle of it. When the log is
+        /// inverted the newest line is at the bottom instead, so that is the edge to hug.
+        /// </remarks>
+        /// <param name="isInverted">True when the newest message is at the bottom.</param>
+        public void ApplyLogAnchor(bool isInverted)
+        {
+            LogBox.VerticalContentAlignment = isInverted ? VerticalAlignment.Bottom : VerticalAlignment.Top;
+        }
+
         public void SetInvertOnClientLogs(bool isInverted)
         {
             InvertICLog = isInverted;
+            ApplyLogAnchor(isInverted);
             foreach (AOClient client in clientLogs.Keys.ToList())
             {
                 LogState state = clientLogs[client];

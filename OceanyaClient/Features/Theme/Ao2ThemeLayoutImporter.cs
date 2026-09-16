@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -94,35 +94,37 @@ namespace OceanyaClient.Features.Theme
         /// resolved through the theme chain with extension probing. Note the names are not the design.ini
         /// identifiers: the shout widgets use `holdit`/`takethat` without the underscore.
         /// </remarks>
-        private static readonly (string PanelId, string Image, string? CheckedImage)[] PanelArt =
+        private static readonly (string PanelId, string[] Images, string? CheckedImage)[] PanelArt =
         {
-            (OceanyaPanelCatalog.ShoutHoldItPanelId, "holdit", "holdit_selected"),
-            (OceanyaPanelCatalog.ShoutObjectionPanelId, "objection", "objection_selected"),
-            (OceanyaPanelCatalog.ShoutTakeThatPanelId, "takethat", "takethat_selected"),
-            (OceanyaPanelCatalog.ShoutCustomPanelId, "custom", "custom_selected"),
-            (OceanyaPanelCatalog.IcButtonRealizationPanelId, "realization", "realization_pressed"),
-            (OceanyaPanelCatalog.IcButtonScreenshakePanelId, "screenshake", "screenshake_pressed"),
-            (OceanyaPanelCatalog.IcButtonPairingPanelId, "pair_button", "pair_button_pressed"),
-            (OceanyaPanelCatalog.BarButtonSettingsPanelId, "courtroom_settings", "settings"),
-            (OceanyaPanelCatalog.BarButtonAreaMusicSwitchPanelId, "switch_area_music", null),
-            (OceanyaPanelCatalog.BarButtonMutePanelId, "mute", "mute_pressed"),
-            (OceanyaPanelCatalog.BarButtonEvidencePanelId, "evidence_button", null),
-            (OceanyaPanelCatalog.BarButtonReloadThemePanelId, "reload_theme", null),
-            (OceanyaPanelCatalog.BarButtonChangeCharacterPanelId, "change_character", null),
-            (OceanyaPanelCatalog.BarButtonCallModPanelId, "call_mod", null),
-            (OceanyaPanelCatalog.IcComboPositionResetPanelId, "evidencex", null),
-            (OceanyaPanelCatalog.IcComboCharacterResetPanelId, "evidencex", null),
-            (OceanyaPanelCatalog.IcComboSfxResetPanelId, "evidencex", null),
-            (OceanyaPanelCatalog.JudgeDefenceMinusPanelId, "defminus", null),
-            (OceanyaPanelCatalog.JudgeDefencePlusPanelId, "defplus", null),
-            (OceanyaPanelCatalog.JudgeProsecutionMinusPanelId, "prominus", null),
-            (OceanyaPanelCatalog.JudgeProsecutionPlusPanelId, "proplus", null),
-            (OceanyaPanelCatalog.JudgeWitnessTestimonyPanelId, "witnesstestimony", null),
-            (OceanyaPanelCatalog.JudgeCrossExaminationPanelId, "crossexamination", null),
-            (OceanyaPanelCatalog.JudgeNotGuiltyPanelId, "notguilty", null),
-            (OceanyaPanelCatalog.JudgeGuiltyPanelId, "guilty", null),
-            (OceanyaPanelCatalog.IcEmotePreviousPanelId, "arrow_left", null),
-            (OceanyaPanelCatalog.IcEmoteNextPanelId, "arrow_right", null)
+            (OceanyaPanelCatalog.ShoutHoldItPanelId, new[] { "holdit" }, "holdit_selected"),
+            (OceanyaPanelCatalog.ShoutObjectionPanelId, new[] { "objection" }, "objection_selected"),
+            (OceanyaPanelCatalog.ShoutTakeThatPanelId, new[] { "takethat" }, "takethat_selected"),
+            (OceanyaPanelCatalog.ShoutCustomPanelId, new[] { "custom" }, "custom_selected"),
+            (OceanyaPanelCatalog.IcButtonRealizationPanelId, new[] { "realization" }, "realization_pressed"),
+            (OceanyaPanelCatalog.IcButtonScreenshakePanelId, new[] { "screenshake" }, "screenshake_pressed"),
+            (OceanyaPanelCatalog.IcButtonPairingPanelId, new[] { "pair_button" }, "pair_button_pressed"),
+            // AO2 tries `courtroom_settings` and falls back to the pre-2.10 `settings` when it is
+            // missing (courtroom.cpp), which is the only art AOHD and several other themes ship.
+            (OceanyaPanelCatalog.BarButtonSettingsPanelId, new[] { "courtroom_settings", "settings" }, null),
+            (OceanyaPanelCatalog.BarButtonAreaMusicSwitchPanelId, new[] { "switch_area_music" }, null),
+            (OceanyaPanelCatalog.BarButtonMutePanelId, new[] { "mute" }, "mute_pressed"),
+            (OceanyaPanelCatalog.BarButtonEvidencePanelId, new[] { "evidence_button" }, null),
+            (OceanyaPanelCatalog.BarButtonReloadThemePanelId, new[] { "reload_theme" }, null),
+            (OceanyaPanelCatalog.BarButtonChangeCharacterPanelId, new[] { "change_character" }, null),
+            (OceanyaPanelCatalog.BarButtonCallModPanelId, new[] { "call_mod" }, null),
+            (OceanyaPanelCatalog.IcComboPositionResetPanelId, new[] { "evidencex" }, null),
+            (OceanyaPanelCatalog.IcComboCharacterResetPanelId, new[] { "evidencex" }, null),
+            (OceanyaPanelCatalog.IcComboSfxResetPanelId, new[] { "evidencex" }, null),
+            (OceanyaPanelCatalog.JudgeDefenceMinusPanelId, new[] { "defminus" }, null),
+            (OceanyaPanelCatalog.JudgeDefencePlusPanelId, new[] { "defplus" }, null),
+            (OceanyaPanelCatalog.JudgeProsecutionMinusPanelId, new[] { "prominus" }, null),
+            (OceanyaPanelCatalog.JudgeProsecutionPlusPanelId, new[] { "proplus" }, null),
+            (OceanyaPanelCatalog.JudgeWitnessTestimonyPanelId, new[] { "witnesstestimony" }, null),
+            (OceanyaPanelCatalog.JudgeCrossExaminationPanelId, new[] { "crossexamination" }, null),
+            (OceanyaPanelCatalog.JudgeNotGuiltyPanelId, new[] { "notguilty" }, null),
+            (OceanyaPanelCatalog.JudgeGuiltyPanelId, new[] { "guilty" }, null),
+            (OceanyaPanelCatalog.IcEmotePreviousPanelId, new[] { "arrow_left" }, null),
+            (OceanyaPanelCatalog.IcEmoteNextPanelId, new[] { "arrow_right" }, null)
         };
 
         /// <summary>
@@ -138,6 +140,70 @@ namespace OceanyaClient.Features.Theme
             // Deliberately absent: AO2's `showname` and `message` fonts belong to the VIEWPORT chatbox,
             // not to the IC input line, and Oceanya already themes the chatbox through
             // AO2ChatPreviewResolver. Copying them onto the input boxes made their text far too large.
+        };
+
+        /// <summary>
+        /// Panels with no AO2 counterpart, which a theme's stylesheet must therefore leave alone.
+        /// </summary>
+        /// <remarks>
+        /// A theme has no opinion about Oceanya's own controls, so applying its class rules to them is
+        /// guesswork - and destructive guesswork at that: AAI's <c>QLabel { background-color: transparent }</c>
+        /// turned the clients strip and its add/remove buttons invisible. Anything the mapping table does
+        /// not name keeps the look it has.
+        /// </remarks>
+        /// <remarks>
+        /// Built lazily, not as a field initializer: static fields initialize in declaration order, and this
+        /// one is declared above <see cref="PanelMappings"/>, so eagerly reading it threw in the type
+        /// initializer and took every test touching the importer with it.
+        /// </remarks>
+        private static IReadOnlySet<string>? oceanyaOnlyPanelIds;
+
+        private static IReadOnlySet<string> OceanyaOnlyPanelIds =>
+            oceanyaOnlyPanelIds ??= BuildOceanyaOnlyPanelIds();
+
+        /// <summary>
+        /// Resolves a <c>courtroom_design.ini</c> identifier to the panel it drives.
+        /// </summary>
+        /// <remarks>
+        /// Used by the stylesheet translator for Qt object-name selectors: AO2 names its widgets
+        /// <c>ui_</c> + the design identifier, so this one table answers both.
+        /// </remarks>
+        /// <param name="identifier">Design identifier, without the <c>ui_</c> prefix.</param>
+        /// <param name="panelId">Panel the identifier drives.</param>
+        /// <returns>True when the identifier is one we map.</returns>
+        public static bool TryResolvePanelForIdentifier(string identifier, out string panelId)
+        {
+            foreach ((string candidatePanelId, string[] identifiers) in PanelMappings)
+            {
+                foreach (string candidate in identifiers)
+                {
+                    if (string.Equals(candidate, identifier, StringComparison.OrdinalIgnoreCase))
+                    {
+                        panelId = candidatePanelId;
+                        return true;
+                    }
+                }
+            }
+
+            panelId = string.Empty;
+            return false;
+        }
+
+        private static IReadOnlySet<string> BuildOceanyaOnlyPanelIds()
+        {
+            // Deliberately the functional-only list rather than "everything PanelMappings does not name".
+            // Several panels ARE driven by the theme without appearing in that table - the composite
+            // regions place the OOC header from `music_display`/`music_name`, for one - and excluding
+            // those stripped the colour the theme gives them, which made the music name invisible.
+            return new HashSet<string>(FunctionalOnlyPanelIds, StringComparer.Ordinal);
+        }
+
+        /// <summary>Slider panels that wear AO2's stock slider unless the theme skins them.</summary>
+        private static readonly string[] Ao2DefaultChromeSliders =
+        {
+            OceanyaPanelCatalog.SliderMusicVolumePanelId,
+            OceanyaPanelCatalog.SliderSfxVolumePanelId,
+            OceanyaPanelCatalog.SliderBlipVolumePanelId
         };
 
         /// <summary>Image extensions AO2 probes, in its own order.</summary>
@@ -211,7 +277,12 @@ namespace OceanyaClient.Features.Theme
             (OceanyaPanelCatalog.JudgeCrossExaminationPanelId, new[] { "cross_examination" }),
             (OceanyaPanelCatalog.JudgeNotGuiltyPanelId, new[] { "not_guilty" }),
             (OceanyaPanelCatalog.JudgeGuiltyPanelId, new[] { "guilty" }),
-            (OceanyaPanelCatalog.OocServerConsolePanelId, new[] { "ooc_toggle" })
+            (OceanyaPanelCatalog.OocServerConsolePanelId, new[] { "ooc_toggle" }),
+
+            // Casing: Oceanya does not implement it, but a theme still places both widgets, and leaving
+            // them unmapped meant an imported layout had two holes where AO2 shows controls.
+            (OceanyaPanelCatalog.BarButtonCasingPanelId, new[] { "casing_button" }),
+            (OceanyaPanelCatalog.IcCheckCasingPanelId, new[] { "casing" })
         };
 
         /// <summary>
@@ -227,7 +298,14 @@ namespace OceanyaClient.Features.Theme
             OceanyaPanelCatalog.ShoutBackdropPanelId,
             OceanyaPanelCatalog.OocDividerPanelId,
             OceanyaPanelCatalog.DingButtonPanelId,
-            OceanyaPanelCatalog.BottomBarPanelId
+            OceanyaPanelCatalog.BottomBarPanelId,
+
+            // Oceanya's own option toggles. AO2 has nothing like them, and parking them in the clients
+            // strip put three stray checkboxes in the corner of every imported theme, clipped to boot.
+            // Hidden like any other unmapped panel; the layout editor can still bring them back.
+            OceanyaPanelCatalog.BarCheckStickyPanelId,
+            OceanyaPanelCatalog.BarCheckSwitchPosPanelId,
+            OceanyaPanelCatalog.BarCheckInvertLogPanelId
         };
 
         /// <summary>
@@ -271,10 +349,7 @@ namespace OceanyaClient.Features.Theme
             OceanyaPanelCatalog.BarButtonViewportPanelId,
             OceanyaPanelCatalog.BarButtonAreaPanelId,
             OceanyaPanelCatalog.BarButtonMusicPanelId,
-            OceanyaPanelCatalog.BarButtonDebugPanelId,
-            OceanyaPanelCatalog.BarCheckStickyPanelId,
-            OceanyaPanelCatalog.BarCheckSwitchPosPanelId,
-            OceanyaPanelCatalog.BarCheckInvertLogPanelId
+            OceanyaPanelCatalog.BarButtonDebugPanelId
         };
 
         /// <summary>
@@ -358,6 +433,22 @@ namespace OceanyaClient.Features.Theme
                     placement.Top / scale,
                     placement.Width / scale,
                     placement.Height / scale));
+            }
+
+            // The volume labels are decoration in AO2 and take no input there. Here they sit right beside
+            // their slider, so text even slightly wider than the theme's rectangle overhangs the handle and
+            // eats its clicks - which made the sliders unusable in AAI.
+            foreach (string labelPanelId in new[]
+                     {
+                         OceanyaPanelCatalog.SliderMusicLabelPanelId,
+                         OceanyaPanelCatalog.SliderSfxLabelPanelId,
+                         OceanyaPanelCatalog.SliderBlipLabelPanelId
+                     })
+            {
+                if (layout.Panels.TryGetValue(labelPanelId, out OceanyaPanelPlacementState? labelState) && labelState != null)
+                {
+                    labelState.IsClickThrough = true;
+                }
             }
 
             ApplyCompositeRegions(designEntries, scale, horizontalShift, layout, hidden);
@@ -474,11 +565,17 @@ namespace OceanyaClient.Features.Theme
             double themeHeight,
             IReadOnlyList<Ao2StylesheetTranslator.Ao2WidgetGeometry>? widgets = null)
         {
-            foreach ((string panelId, string image, string? checkedImage) in PanelArt)
+            foreach ((string panelId, string[] images, string? checkedImage) in PanelArt)
             {
-                string? imagePath = ResolveThemeImage(themeName, image);
+                string? imagePath = images
+                    .Select(image => ResolveThemeImage(themeName, image))
+                    .FirstOrDefault(resolved => resolved != null);
                 if (imagePath == null)
                 {
+                    // AO2 falls back to the plain platform widget when a theme ships no art for it
+                    // (AOButton::setImage clears the stylesheet and icon), keeping the text label. Marking
+                    // the panel makes us do the same instead of showing Oceanya's own button styling.
+                    ResolveState(layout, panelId).UseAo2DefaultChrome = true;
                     continue;
                 }
 
@@ -489,6 +586,13 @@ namespace OceanyaClient.Features.Theme
                 // AO2 scales button art to the widget with Qt::IgnoreAspectRatio (AOButton::updateIcon),
                 // which is Fill here; anything else letterboxes the art inside the widget rect.
                 state.ImageScaling = "Fill";
+            }
+
+            // The volume sliders carry no `setImage` art in AO2 either: unless the theme skins them
+            // through its stylesheet they are stock Qt sliders, which look nothing like ours.
+            foreach (string sliderPanelId in Ao2DefaultChromeSliders)
+            {
+                ResolveState(layout, sliderPanelId).UseAo2DefaultChrome = true;
             }
 
             Dictionary<string, string> fonts = ParseMergedThemeFile(themeName, "courtroom_fonts.ini");
@@ -503,7 +607,7 @@ namespace OceanyaClient.Features.Theme
 
             // The theme's Qt stylesheet carries most of its colours; translated into the same per-panel
             // fields the editor exposes.
-            Ao2StylesheetTranslator.ApplyThemeStylesheet(themeName, layout, widgets);
+            Ao2StylesheetTranslator.ApplyThemeStylesheet(themeName, layout, widgets, OceanyaOnlyPanelIds);
 
             string? background = ResolveThemeImage(themeName, "courtroombackground");
             if (background != null)
@@ -1202,20 +1306,20 @@ namespace OceanyaClient.Features.Theme
 
                 if (string.Equals(panelId, OceanyaPanelCatalog.ClientsTitlePanelId, StringComparison.Ordinal))
                 {
-                    layout.Panels[panelId] = ToState(new OceanyaPanelPlacement(2, cursorTop, ClientsStripWidth - 4, 20));
+                    layout.Panels[panelId] = ToState(new OceanyaPanelPlacement(2, cursorTop, ClientsStripWidth - 4, 20), useAo2DefaultChrome: false);
                     cursorTop += 22;
                     continue;
                 }
 
                 if (string.Equals(panelId, OceanyaPanelCatalog.ClientsAddPanelId, StringComparison.Ordinal))
                 {
-                    layout.Panels[panelId] = ToState(new OceanyaPanelPlacement(2, cursorTop, 24, 24));
+                    layout.Panels[panelId] = ToState(new OceanyaPanelPlacement(2, cursorTop, 24, 24), useAo2DefaultChrome: false);
                     continue;
                 }
 
                 if (string.Equals(panelId, OceanyaPanelCatalog.ClientsRemovePanelId, StringComparison.Ordinal))
                 {
-                    layout.Panels[panelId] = ToState(new OceanyaPanelPlacement(28, cursorTop, 24, 24));
+                    layout.Panels[panelId] = ToState(new OceanyaPanelPlacement(28, cursorTop, 24, 24), useAo2DefaultChrome: false);
                     cursorTop += 26;
                     continue;
                 }
@@ -1227,7 +1331,7 @@ namespace OceanyaClient.Features.Theme
                     // the bottom of the window once more controls moved into the strip.
                     double reserved = 4 + ResolveStripTailHeight(stripPanels, panelId);
                     double listHeight = Math.Max(descriptor.MinimumHeight, surfaceHeight - cursorTop - reserved);
-                    layout.Panels[panelId] = ToState(new OceanyaPanelPlacement(2, cursorTop, ClientsStripWidth - 4, listHeight));
+                    layout.Panels[panelId] = ToState(new OceanyaPanelPlacement(2, cursorTop, ClientsStripWidth - 4, listHeight), useAo2DefaultChrome: false);
                     cursorTop += listHeight + 4;
                     continue;
                 }
@@ -1244,6 +1348,14 @@ namespace OceanyaClient.Features.Theme
                 parked.Width = ClientsStripWidth - 4;
                 parked.Height = height;
                 parked.IsHidden = false;
+
+                // Oceanya's own strip controls keep Oceanya's look; their faces are icon glyphs, and AO2's
+                // stock button chrome replaced them with blank platform buttons. A STRANDED ESSENTIAL is a
+                // real AO2 widget that merely had nowhere to go, so it keeps AO2's chrome.
+                if (!strandedEssentials.Contains(panelId))
+                {
+                    parked.UseAo2DefaultChrome = false;
+                }
                 cursorTop += height + 2;
             }
         }
@@ -1276,7 +1388,15 @@ namespace OceanyaClient.Features.Theme
             return total;
         }
 
-        private static OceanyaPanelPlacementState ToState(OceanyaPanelPlacement placement)
+        /// <param name="placement">Rectangle for the panel.</param>
+        /// <param name="useAo2DefaultChrome">
+        /// True for panels that have an AO2 counterpart. False for Oceanya's own controls: AO2 has no
+        /// opinion about them, and giving them AO2's stock chrome replaced the clients add/remove glyphs
+        /// with blank platform buttons.
+        /// </param>
+        private static OceanyaPanelPlacementState ToState(
+            OceanyaPanelPlacement placement,
+            bool useAo2DefaultChrome = true)
         {
             return new OceanyaPanelPlacementState
             {
@@ -1288,7 +1408,13 @@ namespace OceanyaClient.Features.Theme
                 // A Qt widget has no frame unless the theme's stylesheet draws one, while several of our
                 // stock controls do (the emote grid's grey outline, the dropdown borders). Clearing them
                 // here lets the stylesheet put back exactly the borders the theme actually asks for.
-                BorderThickness = 0
+                BorderThickness = 0,
+
+                // Everything an imported theme does not skin itself falls back to AO2's stock look, not
+                // to Oceanya's: the platform push button and slider, and the platform UI font. AO2 only
+                // ever sets a font on the widgets listed in its own `set_fonts()`; every other widget uses
+                // the application font, which is why our stylised default font stood out everywhere.
+                UseAo2DefaultChrome = useAo2DefaultChrome
             };
         }
     }

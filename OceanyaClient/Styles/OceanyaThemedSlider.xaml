@@ -42,7 +42,20 @@
                                 <Thumb x:Name="PART_Thumb" Width="{DynamicResource OceanyaSliderHandleWidth}">
                                     <Thumb.Template>
                                         <ControlTemplate TargetType="{x:Type Thumb}">
-                                            <Grid Background="{DynamicResource OceanyaSliderHandleBrush}"/>
+                                            <!--
+                                                A border, not a bare Grid: a theme can colour the handle and
+                                                frame it (AOHD paints its #328CBD with a white border) as
+                                                well as supply artwork for it.
+                                            -->
+                                            <!--
+                                                CornerRadius so a theme can round the handle: AOHD asks for
+                                                `border-radius: 5px`, which in Qt makes its handle a circle.
+                                            -->
+                                            <Border Background="{DynamicResource OceanyaSliderHandleBrush}"
+                                                    BorderBrush="{DynamicResource OceanyaSliderHandleBorderBrush}"
+                                                    BorderThickness="{DynamicResource OceanyaSliderHandleBorderThickness}"
+                                                    CornerRadius="{DynamicResource OceanyaSliderHandleCornerRadius}"
+                                                    SnapsToDevicePixels="True"/>
                                         </ControlTemplate>
                                     </Thumb.Template>
                                 </Thumb>

@@ -1,4 +1,4 @@
-﻿<local:OceanyaWindowContentControl x:Class="OceanyaClient.MainWindow"
+<local:OceanyaWindowContentControl x:Class="OceanyaClient.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:OceanyaClient"
@@ -255,6 +255,19 @@
                         ToolTip="Evidence"
                         Click="btnEvidence_Click"/>
 
+                <!--
+                    Casing: AO2 announces case slots through these two. Oceanya does not implement casing,
+                    so they exist purely so a theme's layout is not missing two widgets - they say so and
+                    do nothing, exactly like the evidence button.
+                -->
+                <Button x:Name="btnCasing"
+                        AutomationProperties.AutomationId="Main.Casing"
+                        AutomationProperties.Name="Casing"
+                        Content="Casing"
+                        Style="{StaticResource ThemeableFaceButton}"
+                        ToolTip="Casing"
+                        Click="btnCasing_Click"/>
+
                 <Button x:Name="btnReloadTheme"
                         AutomationProperties.AutomationId="Main.ReloadTheme"
                         AutomationProperties.Name="Reload theme"
@@ -397,10 +410,26 @@
                         ToolTip="Play the Guilty verdict"
                         Click="btnGuilty_Click"/>
 
-                <!-- Decorative label art beside the sliders; AO2 themes draw the words as one image. -->
-                <Image x:Name="imgMusicVolumeLabel" Stretch="Fill"/>
-                <Image x:Name="imgSfxVolumeLabel" Stretch="Fill"/>
-                <Image x:Name="imgBlipVolumeLabel" Stretch="Fill"/>
+                <!--
+                    The words beside the sliders. In AO2 these are QLabels carrying "Music", "Sfx" and
+                    "Blips" (courtroom.cpp), which a theme MAY cover with its own art - so they are labels
+                    with text, not bare images: with no art the text is what AO2 shows, and when a theme
+                    does supply art the image override paints the face and clears the caption.
+                -->
+                <!--
+                    IsHitTestVisible is off on purpose: a theme sizes these to fit ITS font, so text even
+                    slightly wider than the rectangle overhangs the slider next to it and swallows the
+                    clicks meant for the handle. AO2's labels never take input either.
+                -->
+                <Label x:Name="imgMusicVolumeLabel" Content="Music" Padding="0" Foreground="#FFE8E8E8"
+                       IsHitTestVisible="False"
+                       VerticalContentAlignment="Center" HorizontalContentAlignment="Left"/>
+                <Label x:Name="imgSfxVolumeLabel" Content="Sfx" Padding="0" Foreground="#FFE8E8E8"
+                       IsHitTestVisible="False"
+                       VerticalContentAlignment="Center" HorizontalContentAlignment="Left"/>
+                <Label x:Name="imgBlipVolumeLabel" Content="Blips" Padding="0" Foreground="#FFE8E8E8"
+                       IsHitTestVisible="False"
+                       VerticalContentAlignment="Center" HorizontalContentAlignment="Left"/>
 
                 <Slider x:Name="sliderMusicVolume"
                         AutomationProperties.AutomationId="Main.Volume.Music"

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -33,13 +33,13 @@ namespace UnitTests
                     "shout_holdit", "shout_objection",
                     "shout_takethat", "shout_custom", "ic_settings", "ic_showname", "ic_message",
                     "ic_emote_grid", "ic_emote_prev", "ic_emote_next", "ic_check_preanim", "ic_check_flip", "ic_check_additive",
-                    "ic_check_immediate", "ic_combo_character", "ic_combo_emote", "ic_combo_position",
+                    "ic_check_immediate", "ic_check_casing", "ic_combo_character", "ic_combo_emote", "ic_combo_position",
                     "ic_combo_textcolor", "ic_combo_effect", "ic_combo_sfx", "ic_button_realization",
                     "ic_button_screenshake", "ic_button_offset", "ic_button_pairing", "bottom_bar",
                     "bar_check_sticky", "bar_check_switchpos", "bar_check_invertlog",
                     "bar_button_editlayout", "bar_button_refresh", "bar_button_viewport",
                     "area_list", "music_list", "bar_button_areamusic",
-                    "bar_button_mute", "bar_button_evidence", "bar_button_reloadtheme",
+                    "bar_button_mute", "bar_button_evidence", "bar_button_casing", "bar_button_reloadtheme",
                     "bar_button_changecharacter", "bar_button_callmod",
                     "slider_music_volume", "slider_sfx_volume", "slider_blip_volume",
                     "slider_music_label", "slider_sfx_label", "slider_blip_label",

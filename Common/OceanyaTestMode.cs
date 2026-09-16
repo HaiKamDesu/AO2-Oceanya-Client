@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 
 namespace OceanyaClient
 {
@@ -22,6 +23,21 @@ namespace OceanyaClient
         public string ServerEndpoint { get; set; } = string.Empty;
         public string SaveFilePath { get; set; } = string.Empty;
         public string ServerJsonPath { get; set; } = string.Empty;
+
+        /// <summary>Themes to capture, as a comma-separated list, <c>*</c> for every theme, or <c>@path</c> to read one name per line.</summary>
+        public string ThemeCaptureThemes { get; set; } = string.Empty;
+
+        /// <summary>Directory the captured theme PNGs are written to. Empty means no capture run.</summary>
+        public string ThemeCaptureOutputDirectory { get; set; } = string.Empty;
+
+        /// <summary>Milliseconds to wait after applying a theme before capturing, so async art finishes decoding.</summary>
+        public int ThemeCaptureSettleMilliseconds { get; set; } = 900;
+
+        /// <summary>IC line sent before each capture so the chatbox and sprite are populated. Empty sends nothing.</summary>
+        public string ThemeCaptureMessage { get; set; } = "Theme check: {theme}";
+
+        /// <summary>Closes the client once the capture sweep finishes.</summary>
+        public bool ThemeCaptureExitWhenDone { get; set; }
     }
 
     /// <summary>
@@ -129,6 +145,32 @@ namespace OceanyaClient
                 {
                     options.IsEnabled = true;
                     options.ServerJsonPath = serverJsonPath;
+                }
+                else if (TryParseAssignment(arg, "--test-capture-themes", out string captureThemes))
+                {
+                    options.IsEnabled = true;
+                    options.ThemeCaptureThemes = captureThemes;
+                }
+                else if (TryParseAssignment(arg, "--test-capture-output", out string captureOutput))
+                {
+                    options.IsEnabled = true;
+                    options.ThemeCaptureOutputDirectory = captureOutput;
+                }
+                else if (TryParseAssignment(arg, "--test-capture-message", out string captureMessage))
+                {
+                    options.IsEnabled = true;
+                    options.ThemeCaptureMessage = captureMessage;
+                }
+                else if (TryParseAssignment(arg, "--test-capture-settle-ms", out string captureSettle)
+                    && int.TryParse(captureSettle, NumberStyles.Integer, CultureInfo.InvariantCulture, out int settleMs))
+                {
+                    options.IsEnabled = true;
+                    options.ThemeCaptureSettleMilliseconds = Math.Max(0, settleMs);
+                }
+                else if (string.Equals(arg, "--test-capture-exit-when-done", StringComparison.OrdinalIgnoreCase))
+                {
+                    options.IsEnabled = true;
+                    options.ThemeCaptureExitWhenDone = true;
                 }
             }
 

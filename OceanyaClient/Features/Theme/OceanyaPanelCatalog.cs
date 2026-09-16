@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -233,7 +233,13 @@ namespace OceanyaClient.Features.Theme
         /// <summary>Panel id for the ooc showname.</summary>
         public const string OocShownamePanelId = "ooc_showname";
 
-        /// <summary>Panel id for the server console button.</summary>
+        /// <summary>Panel id for the casing announcement button; Oceanya does not implement casing.</summary>
+        public const string BarButtonCasingPanelId = "bar_button_casing";
+
+        /// <summary>Panel id for the casing checkbox; Oceanya does not implement casing.</summary>
+        public const string IcCheckCasingPanelId = "ic_check_casing";
+
+        /// <summary>Panel id for the debug console button (AO2 calls its equivalent the OOC toggle).</summary>
         public const string OocServerConsolePanelId = "ooc_server_console";
         /// <summary>Panel id for the ding button.</summary>
         public const string DingButtonPanelId = "ding_button";
@@ -508,6 +514,13 @@ namespace OceanyaClient.Features.Theme
                 minimumHeight: 14,
                 kind: OceanyaPanelKind.TextToggle),
             new OceanyaPanelDescriptor(
+                IcCheckCasingPanelId,
+                "Casing Checkbox",
+                new OceanyaPanelPlacement(170, 537, 56, 16),
+                minimumWidth: 40,
+                minimumHeight: 14,
+                kind: OceanyaPanelKind.TextToggle),
+            new OceanyaPanelDescriptor(
                 IcCheckImmediatePanelId,
                 "Immediate Checkbox",
                 new OceanyaPanelPlacement(170, 537, 73, 16),
@@ -621,7 +634,7 @@ namespace OceanyaClient.Features.Theme
                 kind: OceanyaPanelKind.TextInput),
             new OceanyaPanelDescriptor(
                 OocServerConsolePanelId,
-                "Server Console Button",
+                "Debug Console Button",
                 new OceanyaPanelPlacement(380, 281, 129, 17),
                 minimumWidth: 40,
                 minimumHeight: 12,
@@ -702,6 +715,13 @@ namespace OceanyaClient.Features.Theme
                 minimumHeight: 12,
                 kind: OceanyaPanelKind.ImageButton),
             new OceanyaPanelDescriptor(
+                BarButtonCasingPanelId,
+                "Casing Button",
+                new OceanyaPanelPlacement(431, 603, 71, 24),
+                minimumWidth: 16,
+                minimumHeight: 12,
+                kind: OceanyaPanelKind.ImageButton),
+            new OceanyaPanelDescriptor(
                 BarButtonReloadThemePanelId,
                 "Reload Theme Button",
                 new OceanyaPanelPlacement(431, 603, 94, 20),
@@ -723,25 +743,28 @@ namespace OceanyaClient.Features.Theme
                 minimumHeight: 12,
                 kind: OceanyaPanelKind.ImageButton),
             new OceanyaPanelDescriptor(
+                // minimumHeight is deliberately small: AO2 themes declare slider rectangles as short as
+                // 12px (AOHD), and a larger minimum silently overrides the theme - which made our handle
+                // 16px where AO2 draws 12.
                 SliderMusicVolumePanelId,
                 "Music Volume Slider",
                 new OceanyaPanelPlacement(431, 603, 168, 30),
                 minimumWidth: 40,
-                minimumHeight: 16,
+                minimumHeight: 8,
                 kind: OceanyaPanelKind.Slider),
             new OceanyaPanelDescriptor(
                 SliderSfxVolumePanelId,
                 "SFX Volume Slider",
                 new OceanyaPanelPlacement(431, 603, 168, 30),
                 minimumWidth: 40,
-                minimumHeight: 16,
+                minimumHeight: 8,
                 kind: OceanyaPanelKind.Slider),
             new OceanyaPanelDescriptor(
                 SliderBlipVolumePanelId,
                 "Blip Volume Slider",
                 new OceanyaPanelPlacement(431, 603, 168, 30),
                 minimumWidth: 40,
-                minimumHeight: 16,
+                minimumHeight: 8,
                 kind: OceanyaPanelKind.Slider),
             new OceanyaPanelDescriptor(
                 SliderMusicLabelPanelId,
@@ -1015,6 +1038,7 @@ namespace OceanyaClient.Features.Theme
             ["ic_check_flip"] = 240,
             ["ic_check_additive"] = 250,
             ["ic_check_immediate"] = 260,
+            ["ic_check_casing"] = 260,
             ["ic_combo_character"] = 270,
             ["ic_combo_emote"] = 280,
             ["ic_combo_position"] = 290,
@@ -1038,6 +1062,7 @@ namespace OceanyaClient.Features.Theme
             ["bar_button_areamusic"] = 461,
             ["bar_button_mute"] = 462,
             ["bar_button_evidence"] = 463,
+            ["bar_button_casing"] = 463,
             ["bar_button_reloadtheme"] = 464,
             ["bar_button_changecharacter"] = 465,
             ["bar_button_callmod"] = 466,
@@ -1106,6 +1131,8 @@ namespace OceanyaClient.Features.Theme
                 BarButtonAreaMusicSwitchPanelId,
                 BarButtonMutePanelId,
                 BarButtonEvidencePanelId,
+                BarButtonCasingPanelId,
+                IcCheckCasingPanelId,
                 BarButtonReloadThemePanelId,
                 BarButtonChangeCharacterPanelId,
                 BarButtonCallModPanelId,
@@ -1233,6 +1260,33 @@ namespace OceanyaClient.Features.Theme
         /// </summary>
         /// <param name="id">Panel id.</param>
         /// <returns>The descriptor, or null when the id is not registered.</returns>
+        /// <summary>
+        /// Panels backed by an AO2 <c>AOButton</c>, which is a <c>QPushButton</c>.
+        /// </summary>
+        /// <remarks>
+        /// Qt selects by widget class, so a theme's <c>QLabel</c> rule never touches one of these - but our
+        /// class-to-kind map lumps labels and image buttons together, because an AO2 label is sometimes just
+        /// an image display. That was harmless until <c>background-color: transparent</c> started being
+        /// honoured: AAI's <c>QLabel { background-color: transparent }</c> then erased the fill of every bar
+        /// button and shout. This set is what keeps label rules off real push buttons.
+        /// </remarks>
+        public static readonly IReadOnlySet<string> Ao2PushButtonPanelIds = new HashSet<string>(StringComparer.Ordinal)
+        {
+            ShoutHoldItPanelId, ShoutObjectionPanelId, ShoutTakeThatPanelId, ShoutCustomPanelId,
+            IcButtonRealizationPanelId, IcButtonScreenshakePanelId, IcButtonPairingPanelId,
+            BarButtonSettingsPanelId, BarButtonAreaMusicSwitchPanelId, BarButtonMutePanelId,
+            BarButtonEvidencePanelId, BarButtonReloadThemePanelId, BarButtonChangeCharacterPanelId,
+            BarButtonCallModPanelId,
+            IcComboPositionResetPanelId, IcComboCharacterResetPanelId, IcComboSfxResetPanelId,
+            JudgeDefenceMinusPanelId, JudgeDefencePlusPanelId,
+            JudgeProsecutionMinusPanelId, JudgeProsecutionPlusPanelId,
+            JudgeWitnessTestimonyPanelId, JudgeCrossExaminationPanelId,
+            JudgeNotGuiltyPanelId, JudgeGuiltyPanelId,
+            IcEmotePreviousPanelId, IcEmoteNextPanelId,
+            OocServerConsolePanelId,
+            BarButtonCasingPanelId
+        };
+
         public static OceanyaPanelDescriptor? TryGet(string id)
         {
             if (CustomPanels.TryGetValue(id, out OceanyaPanelDescriptor? custom))

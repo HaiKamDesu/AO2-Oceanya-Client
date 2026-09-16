@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
@@ -43,6 +43,10 @@ namespace OceanyaClient.Features.Theme
         public static void InvalidatePendingWork()
         {
             styleGeneration++;
+
+            // Theme art animations hold their decoded frames while they run, so the previous pass's
+            // players are stopped here rather than left ticking behind the new layout.
+            Ao2ThemeArtAnimations.StopAll();
         }
 
         private static readonly Dictionary<string, List<PanelVisualBaseline>> Baselines =
@@ -65,6 +69,10 @@ namespace OceanyaClient.Features.Theme
             }
 
             CaptureBaseline(descriptor.Id, element);
+            // Before anything else: a panel the theme never skinned wears AO2's stock chrome, which the
+            // theme's own colours and art (applied below) then override.
+            ApplyAo2DefaultChrome(descriptor, element, state);
+            ApplyAo2TextMetrics(element, state);
             ApplyZOrder(element, state.ZOrder);
             element.IsHitTestVisible = !state.IsClickThrough;
             ApplyOpacity(element, state.Opacity);
@@ -389,20 +397,60 @@ namespace OceanyaClient.Features.Theme
                 }
             }
 
+            double effectiveFontSize = state.FontSize;
+            if (effectiveFontSize <= 0 && state.UseAo2DefaultChrome)
+            {
+                // AO2 only sizes the widgets in its own set_fonts() list; everything else draws in the
+                // application font, which on Windows is the system UI font at 9pt - 12 device-independent
+                // pixels. Measured against an AO2 capture: its "Music" slider label spans 8px of glyph
+                // where ours spanned 9, and that extra size is what made the labels overlap their sliders.
+                effectiveFontSize = Ao2DefaultFontSize;
+            }
+
+            if (family == null && state.UseAo2DefaultChrome)
+            {
+                // AO2 only sets a font on the widgets in its own set_fonts() list; everything else - the
+                // line edits, checkboxes, buttons and dropdowns - draws in the plain application font. Our
+                // stylised default font therefore stood out on every control a theme did not name, the OOC
+                // showname and message boxes being the obvious pair.
+                family = TryResolveAo2DefaultFont();
+            }
+
             FontWeight? weight = state.IsBold ? FontWeights.Bold : null;
             FontStyle? style = state.IsItalic ? FontStyles.Italic : null;
             Brush? foreground = TryParseBrush(state.TextColor);
             bool underline = state.IsUnderlined;
-            if (state.FontSize <= 0 && family == null && !state.IsBold && !state.IsItalic && !underline && foreground == null)
+            if (effectiveFontSize <= 0 && family == null && !state.IsBold && !state.IsItalic && !underline && foreground == null)
             {
                 return;
             }
 
-            SetFontRecursive(element, state.FontSize, family, weight, style, foreground, underline);
-            if (state.FontSize > 0)
+            // Applied twice, on purpose. The synchronous pass covers a panel whose inner controls already
+            // exist; the deferred one covers the panels whose controls are re-parented into the theme
+            // surface later, where a synchronous walk finds an empty visual tree and silently reaches
+            // nothing. That second case is what left themed text boxes - the OOC showname and message pair
+            // most visibly - wearing our own font and foreground while their themed background, which was
+            // already deferred, applied correctly.
+            double fontSize = effectiveFontSize;
+            void ApplyNow()
             {
-                DropLabelPaddingRecursive(element);
+                SetFontRecursive(element, fontSize, family, weight, style, foreground, underline);
+                if (fontSize > 0)
+                {
+                    DropLabelPaddingRecursive(element);
+                }
             }
+
+            ApplyNow();
+
+            int generation = styleGeneration;
+            element.Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+            {
+                if (generation == styleGeneration)
+                {
+                    ApplyNow();
+                }
+            }));
 
             if (resizeToFont && state.FontSize > 0)
             {
@@ -597,6 +645,15 @@ namespace OceanyaClient.Features.Theme
 
         private static bool PaintExistingBackgrounds(DependencyObject element, Brush brush)
         {
+            // A Qt rule styles the WIDGET; its `::indicator` sub-control has a selector of its own. This
+            // walk repaints every background it finds, so without this the theme's
+            // `QCheckBox { background-color: transparent }` also erased the tick box's white fill and the
+            // boxes read as empty outlines against the backdrop.
+            if (element is FrameworkElement named && named.Name == Ao2CheckBoxIndicatorPart)
+            {
+                return false;
+            }
+
             bool painted = false;
             switch (element)
             {
@@ -613,7 +670,19 @@ namespace OceanyaClient.Features.Theme
             int childCount = VisualTreeHelper.GetChildrenCount(element);
             for (int i = 0; i < childCount; i++)
             {
-                painted |= PaintExistingBackgrounds(VisualTreeHelper.GetChild(element, i), brush);
+                DependencyObject child = VisualTreeHelper.GetChild(element, i);
+
+                // Do not paint inside a nested control's own template. A Qt rule styles the WIDGET; its
+                // sub-controls (`QComboBox::drop-down`, `QCheckBox::indicator`) have selectors of their
+                // own. Descending here repainted the Grid inside the dropdown's toggle button, wiping the
+                // arrow artwork the theme had just been given - GrayGarden's diamond rendered as a plain
+                // box because of exactly this.
+                if (child is ButtonBase or ComboBox or Slider)
+                {
+                    continue;
+                }
+
+                painted |= PaintExistingBackgrounds(child, brush);
             }
 
             return painted;
@@ -702,7 +771,40 @@ namespace OceanyaClient.Features.Theme
             }));
         }
 
+        /// <summary>
+        /// Applies the border to the panel's widget, without descending into that widget's own template.
+        /// </summary>
+        /// <remarks>
+        /// A Qt stylesheet rule styles the WIDGET; its internal pieces need explicit <c>::sub-control</c>
+        /// selectors, which are handled separately. Walking on into a control's template gave a dropdown
+        /// three nested frames - one on the ComboBox, one round the text area, one round the arrow button -
+        /// which read as a single much-too-thick border next to AO2's clean 1px outline.
+        /// </remarks>
+        /// <summary>
+        /// Applies a border to the panel's own control, not to the parts inside its template.
+        /// </summary>
+        /// <remarks>
+        /// A Qt rule styles the WIDGET; its internal sub-controls need their own `::sub-control` selector.
+        /// Descending past the first control drew the theme's border again on every `Border` in that
+        /// control's template, which is what made AAI's 1px dropdown frame read as a thick one - the combo
+        /// box, its text area and its drop-down button each got their own outline.
+        /// </remarks>
         private static void ApplyBorderRecursive(DependencyObject element, Brush? brush, double? thickness)
+        {
+            ApplyBorderToTarget(element, brush, thickness);
+            if (element is Control)
+            {
+                return;
+            }
+
+            int childCount = VisualTreeHelper.GetChildrenCount(element);
+            for (int i = 0; i < childCount; i++)
+            {
+                ApplyBorderRecursive(VisualTreeHelper.GetChild(element, i), brush, thickness);
+            }
+        }
+
+        private static void ApplyBorderToTarget(DependencyObject element, Brush? brush, double? thickness)
         {
             switch (element)
             {
@@ -717,7 +819,8 @@ namespace OceanyaClient.Features.Theme
                         control.BorderThickness = new Thickness(thickness.Value);
                     }
 
-                    break;
+                    // The widget owns its frame from here down.
+                    return;
                 case Border border:
                     if (brush != null)
                     {
@@ -730,12 +833,6 @@ namespace OceanyaClient.Features.Theme
                     }
 
                     break;
-            }
-
-            int childCount = VisualTreeHelper.GetChildrenCount(element);
-            for (int i = 0; i < childCount; i++)
-            {
-                ApplyBorderRecursive(VisualTreeHelper.GetChild(element, i), brush, thickness);
             }
         }
 
@@ -769,9 +866,28 @@ namespace OceanyaClient.Features.Theme
 
         private static void ApplyInnerSurfaceRecursive(DependencyObject element, Brush background)
         {
+            // A dropdown's drop-down button is part of the same widget in Qt: `QComboBox { background }`
+            // paints the whole control, arrow slot included. Ours kept its own grey there, which stood out
+            // badly on a theme that colours its dropdowns (AOHD's are blue). Arrow ARTWORK still wins - it
+            // is applied later and replaces this brush.
+            if (element is ComboBox combo)
+            {
+                combo.Background = background;
+                combo.ApplyTemplate();
+                if (combo.Template?.FindName("btnDropdown", combo) is ToggleButton arrowButton)
+                {
+                    arrowButton.Background = background;
+                }
+
+                return;
+            }
+
             if (element is TextBox or ComboBox or CheckBox)
             {
+                // Fill the widget and stop: painting its template parts as well stacked a second and third
+                // filled box inside a dropdown, which is what made its frame look so heavy.
                 ((Control)element).Background = background;
+                return;
             }
 
             int childCount = VisualTreeHelper.GetChildrenCount(element);
@@ -910,9 +1026,37 @@ namespace OceanyaClient.Features.Theme
 
             try
             {
-                if (arrow != null && comboBox.Template.FindName("btnDropdown", comboBox) is ToggleButton dropdownButton)
+                // ApplyTemplate first, and fall back to a tree search: FindName only answers once the
+                // template has actually been instantiated for THIS element, and a dropdown that had not
+                // been realised yet silently kept its stock arrow - which is why GrayGarden's diamond
+                // never appeared even though the theme's art resolved correctly.
+                comboBox.ApplyTemplate();
+                ToggleButton? dropdownButton = comboBox.Template.FindName("btnDropdown", comboBox) as ToggleButton
+                    ?? FindDescendant<ToggleButton>(comboBox);
+                if (arrow != null && dropdownButton != null)
                 {
-                    dropdownButton.Background = new ImageBrush(arrow) { Stretch = Stretch.Uniform };
+                    // Natural size, not stretched: Qt draws a sub-control's `image:` at its own size
+                    // (GrayGarden's diamond is a 10x10 asset), and scaling it to fill our wider arrow
+                    // column made the diamond noticeably bigger than AO2's.
+                    dropdownButton.Background = new ImageBrush(arrow) { Stretch = Stretch.None };
+
+                    // The theme's art IS the whole arrow, so our own frame around it has to go - AO2's
+                    // `QComboBox::drop-down { border: hidden }` draws none.
+                    if (VisualTreeHelper.GetParent(dropdownButton) is Border arrowFrame)
+                    {
+                        Thickness previousThickness = arrowFrame.BorderThickness;
+                        Brush? previousBrush = arrowFrame.BorderBrush;
+                        arrowFrame.BorderThickness = new Thickness(0);
+                        arrowFrame.BorderBrush = Brushes.Transparent;
+                        PanelStateOverrides.Register(
+                            panelRoot,
+                            "arrowFrame",
+                            () =>
+                            {
+                                arrowFrame.BorderThickness = previousThickness;
+                                arrowFrame.BorderBrush = previousBrush;
+                            });
+                    }
                     if (FindDescendant<System.Windows.Shapes.Shape>(dropdownButton) is System.Windows.Shapes.Shape glyph)
                     {
                         Visibility previous = glyph.Visibility;
@@ -1219,6 +1363,13 @@ namespace OceanyaClient.Features.Theme
                 {
                     shoutPanel.UncheckedImage = unchecked_;
                     shoutPanel.CheckedImage = checked_ ?? unchecked_;
+
+                    // AO2 runs shout art through a QMovie, and themes ship animated shouts (AAI's
+                    // holdit/objection/takethat are .gif). Both states animate independently.
+                    Ao2ThemeArtAnimations.Track(
+                        Ao2ThemeArtAnimation.TryStart(imagePath, frame => shoutPanel.UncheckedImage = frame));
+                    Ao2ThemeArtAnimations.Track(
+                        Ao2ThemeArtAnimation.TryStart(checkedImagePath, frame => shoutPanel.CheckedImage = frame));
                 }
 
                 ApplyShoutHoverArt(shoutPanel, unchecked_, state);
@@ -1251,6 +1402,11 @@ namespace OceanyaClient.Features.Theme
                     if (source != null)
                     {
                         SetFaceArt(element, source);
+
+                        // Animated art is what AO2 shows here (AOButton drives every image with a QMovie),
+                        // so keep repainting the same face with each frame.
+                        Ao2ThemeArtAnimations.Track(
+                            Ao2ThemeArtAnimation.TryStart(imagePath, frame => SetFaceArt(element, frame)));
                         ClearThemedButtonChrome(element, state);
 
                         // AO2 buttons are pure artwork, so a glyph label like the emote arrows' "<" would
@@ -1337,7 +1493,10 @@ namespace OceanyaClient.Features.Theme
             Brush? fill = TryParseBrush(state.FillColor);
             Brush? empty = TryParseBrush(state.BackgroundColor);
             Brush? pageBorder = TryParseBrush(state.BorderColor);
-            if (groove == null && handle == null && fill == null && empty == null)
+            Brush? handleColour = TryParseBrush(state.SliderHandleColor);
+            Brush? handleBorder = TryParseBrush(state.SliderHandleBorderColor);
+            if (groove == null && handle == null && fill == null && empty == null
+                && handleColour == null && handleBorder == null)
             {
                 return;
             }
@@ -1354,6 +1513,9 @@ namespace OceanyaClient.Features.Theme
                 {
                     SliderGrooveBrushKey,
                     SliderHandleBrushKey,
+                    SliderHandleBorderBrushKey,
+                    SliderHandleBorderThicknessKey,
+                    SliderHandleCornerRadiusKey,
                     SliderFillBrushKey,
                     SliderEmptyBrushKey,
                     SliderPageBorderBrushKey,
@@ -1372,17 +1534,50 @@ namespace OceanyaClient.Features.Theme
             slider.Resources[SliderGrooveBrushKey] = groove == null
                 ? Brushes.Transparent
                 : new ImageBrush(groove) { Stretch = Stretch.Fill };
+            slider.Resources[SliderHandleBorderBrushKey] = handleBorder ?? Brushes.Transparent;
+            slider.Resources[SliderHandleBorderThicknessKey] = new Thickness(handleBorder == null ? 0 : 2);
+            if (handleColour != null && handle == null)
+            {
+                // A colour the theme named beats the stock handle, but never beats its own artwork.
+                slider.Resources[SliderHandleBrushKey] = handleColour;
+            }
+            else
             slider.Resources[SliderHandleBrushKey] = handle == null
                 ? Brushes.Transparent
                 : new ImageBrush(handle) { Stretch = Stretch.Uniform };
-            slider.Resources[SliderFillBrushKey] = fill ?? Brushes.Transparent;
-            slider.Resources[SliderEmptyBrushKey] = empty ?? Brushes.Transparent;
-            slider.Resources[SliderPageBorderBrushKey] = pageBorder ?? Brushes.Transparent;
+            // A theme that styles only the HANDLE still wants a visible track: AOHD says nothing about its
+            // groove's fill, and AO2 then draws the stock Windows one. Falling back to transparent left the
+            // slider as a handle floating on nothing. Groove ARTWORK still wins - it is the whole track.
+            Brush stockTrack = groove != null ? Brushes.Transparent : TryParseBrush(Ao2StockSliderTrack) ?? Brushes.Transparent;
+            slider.Resources[SliderFillBrushKey] = fill ?? stockTrack;
+            slider.Resources[SliderEmptyBrushKey] = empty ?? stockTrack;
+            // The stock groove carries its own 1px edge, so an un-skinned track reads as AO2's rather than
+            // as a flat bar. A border the theme asked for still wins.
+            Brush stockTrackBorder = groove != null
+                ? Brushes.Transparent
+                : TryParseBrush(Ao2StockSliderTrackBorder) ?? Brushes.Transparent;
+            slider.Resources[SliderPageBorderBrushKey] = pageBorder ?? stockTrackBorder;
 
             // Qt shapes the two pages with margins around a thin bar; a fraction of the widget height is the
             // same idea without needing a margin field per side.
-            double pageHeight = Math.Max(3d, Math.Round(ResolveSliderHeight(slider) / 6));
+            // A groove the theme did not skin is AO2's stock Windows one, which is a flat 4px regardless of
+            // how tall the widget is - measured off an AO2 capture: #D6D6D6 edge, #E7EAEA fill, #D6D6D6
+            // edge. Our height/6 heuristic gave 2-3px on a short slider, which read as a thin grey hairline
+            // next to AO2's. The heuristic still applies when the theme supplies its own groove art.
+            double pageHeight = groove != null
+                ? Math.Max(3d, Math.Round(ResolveSliderHeight(slider) / 6))
+                : Ao2StockGrooveHeight;
             double handleWidth = handle is BitmapSource sized ? sized.PixelWidth : 15d;
+
+            // A rounded handle is a CIRCLE in Qt, not a rounded rectangle: the handle is as wide as it is
+            // tall and the radius takes it the rest of the way, which is what makes AOHD's read as a dot.
+            // Matching that needs the width driven by the slider's height, not left at our stock 15px.
+            double handleDiameter = 0;
+            if (state.SliderHandleCornerRadius > 0 && handle == null)
+            {
+                handleDiameter = Math.Max(6d, Math.Round(ResolveSliderHeight(slider)));
+                handleWidth = handleDiameter;
+            }
             slider.Resources[SliderPageHeightKey] = pageHeight;
 
             // The fill sits INSIDE the track's border, and runs half a handle past the thumb so it reaches
@@ -1390,6 +1585,11 @@ namespace OceanyaClient.Features.Theme
             slider.Resources[SliderFillHeightKey] = Math.Max(1d, pageHeight - 2);
             slider.Resources[SliderFillMarginKey] = new Thickness(1, 0, -Math.Round(handleWidth / 2), 0);
             slider.Resources[SliderHandleWidthKey] = handleWidth;
+
+            // Qt clamps a handle's radius to half its box, so anything at or past that is a full circle.
+            slider.Resources[SliderHandleCornerRadiusKey] = handleDiameter > 0
+                ? new CornerRadius(handleDiameter / 2)
+                : new CornerRadius(Math.Max(0, state.SliderHandleCornerRadius));
             slider.Style = themedStyle;
         }
 
@@ -1398,6 +1598,18 @@ namespace OceanyaClient.Features.Theme
 
         /// <summary>Resource key of the themed slider's handle brush.</summary>
         private const string SliderHandleBrushKey = "OceanyaSliderHandleBrush";
+        private const string SliderHandleBorderBrushKey = "OceanyaSliderHandleBorderBrush";
+        private const string SliderHandleBorderThicknessKey = "OceanyaSliderHandleBorderThickness";
+        private const string SliderHandleCornerRadiusKey = "OceanyaSliderHandleCornerRadius";
+
+        /// <summary>AO2's stock slider track, sampled from a capture; used when a theme names no groove fill.</summary>
+        private const string Ao2StockSliderTrack = "#FFE7EAEA";
+
+        /// <summary>AO2's stock slider track border, sampled from the same capture.</summary>
+        private const string Ao2StockSliderTrackBorder = "#FFD6D6D6";
+
+        /// <summary>Height of AO2's stock slider groove, in pixels.</summary>
+        private const double Ao2StockGrooveHeight = 4d;
 
         /// <summary>Resource key of the filled part of a themed slider.</summary>
         private const string SliderFillBrushKey = "OceanyaSliderFillBrush";
@@ -1433,6 +1645,382 @@ namespace OceanyaClient.Features.Theme
             }
 
             return slider.ActualHeight > 0 ? slider.ActualHeight : 30d;
+        }
+
+        /// <summary>
+        /// Size AO2 draws un-themed text at: the system UI font's 9pt, in device-independent pixels.
+        /// </summary>
+        private const double Ao2DefaultFontSize = 12d;
+
+        /// <summary>Cached AO2 default UI font, per thread.</summary>
+        [ThreadStatic]
+        private static FontFamily? ao2DefaultFont;
+
+        /// <summary>
+        /// The font AO2 draws un-themed widgets in: the platform UI font.
+        /// </summary>
+        /// <remarks>
+        /// AO2 never changes <c>QApplication::font()</c> beyond scaling it, so every widget its theme does
+        /// not name explicitly renders in the system UI font. Segoe UI is that font on Windows, which is
+        /// the only platform this client runs on.
+        /// </remarks>
+        private static FontFamily? TryResolveAo2DefaultFont()
+        {
+            try
+            {
+                return ao2DefaultFont ??= new FontFamily("Segoe UI");
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>Cached AO2 default chrome dictionary, per thread (WPF styles are thread-affine).</summary>
+        [ThreadStatic]
+        private static ResourceDictionary? ao2DefaultChrome;
+
+        /// <summary>
+        /// Gives a panel the theme never skinned AO2's own stock control look.
+        /// </summary>
+        /// <remarks>
+        /// AO2 is a Qt app on the native Windows style, so a widget its theme does not skin is a plain
+        /// platform control. <c>AOButton::setImage</c> spells it out: with no art it calls
+        /// <c>setStyleSheet(QString())</c> and <c>setIcon(QIcon())</c>, dropping back to the platform button
+        /// complete with its text label. Our own controls look nothing like that, so "Settings", "Change
+        /// character", "Reload theme", "Call mod" and the volume sliders used to render in Oceanya styling
+        /// in every theme that simply left them alone.
+        ///
+        /// Applied first, so anything the theme DID say - a background colour from its stylesheet, artwork,
+        /// a font - still wins on top.
+        /// </remarks>
+        /// <param name="descriptor">Panel descriptor, for its kind.</param>
+        /// <param name="element">Panel element.</param>
+        /// <param name="state">Saved state.</param>
+        private static void ApplyAo2DefaultChrome(
+            OceanyaPanelDescriptor descriptor,
+            FrameworkElement element,
+            OceanyaPanelPlacementState state)
+        {
+            if (!state.UseAo2DefaultChrome || !string.IsNullOrWhiteSpace(state.ImagePath))
+            {
+                return;
+            }
+
+            // A checkbox is its own Qt widget with its own stock look - a white tick box beside the label.
+            // Ours drew no box at all, so every themed checkbox read as a bare word.
+            CheckBox? checkBox = element as CheckBox ?? FindDescendant<CheckBox>(element);
+            if (checkBox != null)
+            {
+                Style? checkStyle = TryResolveAo2ChromeStyle("Ao2DefaultCheckBoxStyle");
+                if (checkStyle != null && string.IsNullOrWhiteSpace(state.IndicatorImagePath))
+                {
+                    ApplyAo2ChromeStyle(checkBox, checkStyle);
+                    ApplyIndicatorColours(checkBox, state);
+                }
+
+                return;
+            }
+
+            // Qt's drop-down sub-control is far narrower than ours, and on a dropdown sized to a theme's
+            // rectangle those extra pixels come straight out of the text, which is why the character name
+            // was being clipped where AO2 shows it in full.
+            if (descriptor.Kind == OceanyaPanelKind.Dropdown
+                && state.IndicatorWidth <= 0
+                && (element as Components.ImageComboBox ?? FindDescendant<Components.ImageComboBox>(element)) is Components.ImageComboBox themedCombo)
+            {
+                themedCombo.SetArrowWidthOverride(Ao2DropDownWidth);
+                PanelStateOverrides.Register(
+                    themedCombo,
+                    "ao2ArrowWidth",
+                    () => themedCombo.SetArrowWidthOverride(double.NaN));
+            }
+
+            // A dropdown is finished here. Falling through let the button-chrome search below find the
+            // combo's OWN drop-down toggle and replace its template - which threw away the arrow the theme
+            // had just painted into it, so GrayGarden's diamond rendered as a bare grey box.
+            if (descriptor.Kind == OceanyaPanelKind.Dropdown)
+            {
+                return;
+            }
+
+            if (descriptor.Kind == OceanyaPanelKind.Slider)
+            {
+                Slider? slider = element as Slider ?? FindDescendant<Slider>(element);
+                Style? sliderStyle = TryResolveAo2ChromeStyle("Ao2DefaultSliderStyle");
+                if (slider != null && sliderStyle != null)
+                {
+                    ApplyAo2ChromeStyle(slider, sliderStyle);
+                }
+
+                return;
+            }
+
+            // A bar button panel is usually the button itself, but some are wrapped. Resolve the control
+            // FIRST and pick the style from what it actually is: a Button style cannot be applied to a
+            // ToggleButton, and choosing from the outer element got exactly that pairing wrong.
+            ButtonBase? target = element as ButtonBase ?? FindDescendant<ButtonBase>(element);
+            if (target == null)
+            {
+                return;
+            }
+
+            Style? style = TryResolveAo2ChromeStyle(
+                target is ToggleButton ? "Ao2DefaultToggleButtonStyle" : "Ao2DefaultButtonStyle");
+            if (style != null && style.TargetType.IsInstanceOfType(target))
+            {
+                ApplyAo2ChromeStyle(target, style);
+                ApplyAo2ButtonCaption(descriptor.Id, target);
+            }
+        }
+
+        /// <summary>
+        /// Makes text in a themed panel sit and rasterise the way Qt's does.
+        /// </summary>
+        /// <remarks>
+        /// Two differences that show up when the pair is blink-compared:
+        ///
+        /// A Qt <c>QLabel</c> defaults to <c>AlignLeft | AlignVCenter</c>, so its text sits in the middle of
+        /// the rectangle the theme gave it. WPF defaults to the top, which is why the music name read as
+        /// top-left against AO2's vertically centred one.
+        ///
+        /// WPF's default <c>TextFormattingMode.Ideal</c> positions glyphs on fractional pixels and renders
+        /// them softer and heavier than Qt, which snaps to the pixel grid. <c>Display</c> mode is the
+        /// closest match available and is what makes small theme text stop looking bolder than AO2's. It
+        /// does not make the two renderers identical - different engines, different hinting - but it
+        /// removes most of the difference.
+        /// </remarks>
+        /// <param name="element">Panel element.</param>
+        /// <param name="state">Saved state; only themed panels are adjusted.</param>
+        private static void ApplyAo2TextMetrics(FrameworkElement element, OceanyaPanelPlacementState state)
+        {
+            if (!state.UseAo2DefaultChrome)
+            {
+                return;
+            }
+
+            object? previousFormatting = element.ReadLocalValue(TextOptions.TextFormattingModeProperty);
+            object? previousRendering = element.ReadLocalValue(TextOptions.TextRenderingModeProperty);
+            PanelStateOverrides.Register(element, "ao2TextMetrics", () =>
+            {
+                RestoreLocalValue(element, TextOptions.TextFormattingModeProperty, previousFormatting);
+                RestoreLocalValue(element, TextOptions.TextRenderingModeProperty, previousRendering);
+            });
+
+            TextOptions.SetTextFormattingMode(element, TextFormattingMode.Display);
+            TextOptions.SetTextRenderingMode(element, TextRenderingMode.ClearType);
+
+            // Only a control whose content IS text gets Qt's vertical centring. Applying it to every
+            // control collapsed the ones whose content must stretch to fill them: the music name label
+            // hosts a marquee canvas, and a Canvas has no desired height, so centring it made the label
+            // render nothing at all.
+            if (element is Label label && label.Content is string)
+            {
+                label.VerticalContentAlignment = VerticalAlignment.Center;
+            }
+
+            // A log owns its own anchoring: AO2's QTextEdit lays the document from the top, and an inverted
+            // log hugs the bottom instead. Centring it - which the pass above used to do to every control -
+            // left a short log floating in the middle of its box.
+            if (element is Components.ICLog icLog)
+            {
+                icLog.ApplyLogAnchor(SaveFile.Data.InvertICLog);
+            }
+
+            int generation = styleGeneration;
+            element.Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+            {
+                if (generation == styleGeneration)
+                {
+                    CentreLabelTextRecursive(element);
+                }
+            }));
+        }
+
+        /// <summary>
+        /// Gives the text blocks inside a panel Qt's vertical centring.
+        /// </summary>
+        private static void CentreLabelTextRecursive(DependencyObject element)
+        {
+            // A text block that is the direct content of a panel, not one laid out inside a Canvas or a
+            // template that positions it itself - centring those moved text the control had already placed.
+            if (element is TextBlock textBlock
+                && textBlock.VerticalAlignment == VerticalAlignment.Stretch
+                && VisualTreeHelper.GetParent(textBlock) is not Canvas)
+            {
+                textBlock.VerticalAlignment = VerticalAlignment.Center;
+            }
+
+            int childCount = VisualTreeHelper.GetChildrenCount(element);
+            for (int i = 0; i < childCount; i++)
+            {
+                CentreLabelTextRecursive(VisualTreeHelper.GetChild(element, i));
+            }
+        }
+
+        /// <summary>Puts a dependency property back to the local value it had, or clears it.</summary>
+        private static void RestoreLocalValue(DependencyObject target, DependencyProperty property, object? previous)
+        {
+            if (previous == DependencyProperty.UnsetValue || previous == null)
+            {
+                target.ClearValue(property);
+                return;
+            }
+
+            target.SetValue(property, previous);
+        }
+
+        /// <summary>
+        /// The text AO2 puts on its own un-skinned buttons.
+        /// </summary>
+        /// <remarks>
+        /// Taken from <c>courtroom.cpp</c>'s own <c>setText</c> calls. Only used to fill a button that has
+        /// no content of its own - Oceanya draws a few of these as icon-only glyphs, and the glyph lives in
+        /// the template we just replaced, so without this the button would render blank.
+        /// </remarks>
+        private static readonly Dictionary<string, string> Ao2ButtonCaptions = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [OceanyaPanelCatalog.BarButtonSettingsPanelId] = "Settings",
+            [OceanyaPanelCatalog.BarButtonChangeCharacterPanelId] = "Change character",
+            [OceanyaPanelCatalog.BarButtonReloadThemePanelId] = "Reload theme",
+            [OceanyaPanelCatalog.BarButtonCallModPanelId] = "Call mod",
+            [OceanyaPanelCatalog.BarButtonAreaMusicSwitchPanelId] = "A/M",
+            [OceanyaPanelCatalog.BarButtonMutePanelId] = "Mute",
+            [OceanyaPanelCatalog.BarButtonEvidencePanelId] = "Evidence"
+        };
+
+        /// <summary>
+        /// Labels a button the way AO2 labels it, and lets the chrome style own its text colour.
+        /// </summary>
+        /// <remarks>
+        /// The caption is AO2's, not ours: these panels only reach this path for an imported AO2 theme,
+        /// where matching AO2 is the whole point, and our own labels are abbreviated ("Character" against
+        /// AO2's "Change character"). Some of these buttons are icon-only glyphs here, so without a caption
+        /// they would render blank once the glyph's template is replaced.
+        ///
+        /// The foreground is cleared rather than set: a local value assigned in XAML - the pale colour a
+        /// glyph button uses - outranks a style setter in WPF, which left the caption almost invisible.
+        /// </remarks>
+        private static void ApplyAo2ButtonCaption(string panelId, ContentControl target)
+        {
+            if (!Ao2ButtonCaptions.TryGetValue(panelId, out string? caption))
+            {
+                return;
+            }
+
+            object? previous = target.Content;
+            bool hadLocalForeground = target.ReadLocalValue(Control.ForegroundProperty) != DependencyProperty.UnsetValue;
+            object? previousForeground = hadLocalForeground ? target.GetValue(Control.ForegroundProperty) : null;
+
+            PanelStateOverrides.Register(target, "ao2Caption", () =>
+            {
+                target.Content = previous;
+                if (hadLocalForeground)
+                {
+                    target.SetValue(Control.ForegroundProperty, previousForeground);
+                }
+            });
+
+            target.Content = caption;
+            if (hadLocalForeground)
+            {
+                target.ClearValue(Control.ForegroundProperty);
+            }
+        }
+
+        /// <summary>
+        /// Gives a checkbox's tick box the colours its theme asked for.
+        /// </summary>
+        /// <remarks>
+        /// Set on the control's own resources, the way the themed slider does it, so the shared style stays
+        /// shared and only the boxes a theme actually named change. A theme that names only the checked
+        /// state - AOHD names <c>:checked</c> and <c>:hover</c> but no plain rule - keeps AO2's stock
+        /// unchecked box, which is exactly what AO2 shows.
+        /// </remarks>
+        private static void ApplyIndicatorColours(CheckBox checkBox, OceanyaPanelPlacementState state)
+        {
+            // Every key is written, not just the ones a theme named. The template resolves them with
+            // DynamicResource, and the chrome dictionary is loaded detached - only its Style object is
+            // taken out - so a key that is not on the control itself resolves to null and the tick box
+            // renders with NO brush at all, which is exactly how the boxes disappeared.
+            (string Key, string Colour, string Stock)[] slots =
+            {
+                ("Ao2CheckBoxFill", state.IndicatorBackgroundColor, Ao2StockCheckBoxFill),
+                ("Ao2CheckBoxBorder", state.IndicatorBorderColor, Ao2StockCheckBoxBorder),
+                ("Ao2CheckBoxCheckedFill",
+                    FirstNonEmpty(state.CheckedIndicatorBackgroundColor, state.IndicatorBackgroundColor),
+                    Ao2StockCheckBoxFill),
+                ("Ao2CheckBoxCheckedBorder",
+                    FirstNonEmpty(state.CheckedIndicatorBorderColor, state.IndicatorBorderColor),
+                    Ao2StockCheckBoxBorder)
+            };
+
+            List<string> applied = new List<string>();
+            foreach ((string key, string colour, string stock) in slots)
+            {
+                Brush brush = TryParseBrush(colour) ?? TryParseBrush(stock) ?? Brushes.White;
+                checkBox.Resources[key] = brush;
+                applied.Add(key);
+            }
+
+            PanelStateOverrides.Register(checkBox, "ao2Indicator", () =>
+            {
+                foreach (string key in applied)
+                {
+                    checkBox.Resources.Remove(key);
+                }
+            });
+        }
+
+        /// <summary>Template part name of the AO2 checkbox tick box, so generic passes can skip it.</summary>
+        private const string Ao2CheckBoxIndicatorPart = "PART_Ao2CheckBoxIndicator";
+
+        /// <summary>Width of Qt's drop-down sub-control, which is much narrower than our stock arrow.</summary>
+        private const double Ao2DropDownWidth = 18d;
+
+        /// <summary>AO2's stock tick-box fill, used when the theme names none.</summary>
+        private const string Ao2StockCheckBoxFill = "#FFFFFFFF";
+
+        /// <summary>AO2's stock tick-box border, used when the theme names none.</summary>
+        private const string Ao2StockCheckBoxBorder = "#FF333333";
+
+        private static string FirstNonEmpty(string preferred, string fallback)
+        {
+            return string.IsNullOrWhiteSpace(preferred) ? fallback : preferred;
+        }
+
+        /// <summary>
+        /// Swaps a control onto an AO2 chrome style, registering the undo so a layout reset restores it.
+        /// </summary>
+        private static void ApplyAo2ChromeStyle(FrameworkElement control, Style style)
+        {
+            Style? previous = control.Style;
+            PanelStateOverrides.Register(
+                control,
+                "ao2Chrome",
+                () => control.Style = previous);
+            control.Style = style;
+        }
+
+        /// <summary>
+        /// Loads one style out of the AO2 default chrome dictionary, once per thread.
+        /// </summary>
+        private static Style? TryResolveAo2ChromeStyle(string key)
+        {
+            try
+            {
+                ao2DefaultChrome ??= new ResourceDictionary
+                {
+                    Source = new Uri("/OceanyaClient;component/Styles/Ao2DefaultChrome.xaml", UriKind.Relative)
+                };
+
+                return ao2DefaultChrome[key] as Style;
+            }
+            catch (Exception exception)
+            {
+                Common.CustomConsole.Warning("The AO2 default chrome style could not be loaded.", exception);
+                return null;
+            }
         }
 
         /// <summary>Cached themed slider style, per thread (a WPF style is thread-affine).</summary>

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
@@ -620,7 +620,7 @@ namespace OceanyaClient
             BottomBar.IsSwitchPositionOnIniSwapChecked = SaveFile.Data.SwitchPosOnIniSwap;
             BottomBar.IsStickyEffectsChecked = SaveFile.Data.StickyEffect;
             BottomBar.IsInvertIcLogChecked = SaveFile.Data.InvertICLog;
-            if (OceanyaTestMode.Current.IsEnabled)
+            if (AreOptionCheckBoxesAllowed())
             {
                 BottomBar.SetOptionCheckBoxesVisible(true);
             }
@@ -673,6 +673,7 @@ namespace OceanyaClient
                 [OceanyaPanelCatalog.BarButtonAreaMusicSwitchPanelId] = new OceanyaPanelElements(btnAreaMusicSwitch),
                 [OceanyaPanelCatalog.BarButtonMutePanelId] = new OceanyaPanelElements(btnMute),
                 [OceanyaPanelCatalog.BarButtonEvidencePanelId] = new OceanyaPanelElements(btnEvidence),
+                [OceanyaPanelCatalog.BarButtonCasingPanelId] = new OceanyaPanelElements(btnCasing),
                 [OceanyaPanelCatalog.BarButtonReloadThemePanelId] = new OceanyaPanelElements(btnReloadTheme),
                 [OceanyaPanelCatalog.BarButtonChangeCharacterPanelId] = new OceanyaPanelElements(btnChangeCharacter),
                 [OceanyaPanelCatalog.BarButtonCallModPanelId] = new OceanyaPanelElements(btnCallMod),
@@ -931,10 +932,54 @@ namespace OceanyaClient
         private void ApplyConditionalPanelVisibility()
         {
             BottomBar.SetDebugButtonVisible(debug);
-            BottomBar.SetOptionCheckBoxesVisible(OceanyaTestMode.Current.IsEnabled);
+            BottomBar.SetOptionCheckBoxesVisible(AreOptionCheckBoxesAllowed());
             UpdateDreddFeatureVisibility();
             UpdateJudgeControlVisibility();
             UpdateDropdownResetButtons();
+            UpdateEmotePagingVisibility();
+
+            // Re-subscribe rather than add: this runs on every layout pass.
+            ICMessageSettingsControl.EmoteGrid.PagingStateChanged -= EmoteGrid_PagingStateChanged;
+            ICMessageSettingsControl.EmoteGrid.PagingStateChanged += EmoteGrid_PagingStateChanged;
+        }
+
+        private void EmoteGrid_PagingStateChanged(object? sender, EventArgs e)
+        {
+            UpdateEmotePagingVisibility();
+        }
+
+        /// <summary>
+        /// Shows each emote paging arrow only while that direction exists, the way AO2 does.
+        /// </summary>
+        /// <remarks>
+        /// AO2 reference: <c>Courtroom::set_emote_page</c> hides both arrows and shows only the ones whose
+        /// page exists, so a character whose emotes fit on one page shows none. Applied here rather than
+        /// inside the grid alone because a THEME places the arrows as panels, and the layout pass re-applies
+        /// a placed panel's visibility - which put both arrows back on top of the grid's own decision.
+        /// </remarks>
+        private void UpdateEmotePagingVisibility()
+        {
+            ApplyResetButtonVisibilityLike(
+                OceanyaPanelCatalog.IcEmotePreviousPanelId,
+                ICMessageSettingsControl.EmoteGrid.CanPageBack);
+            ApplyResetButtonVisibilityLike(
+                OceanyaPanelCatalog.IcEmoteNextPanelId,
+                ICMessageSettingsControl.EmoteGrid.CanPageForward);
+        }
+
+        /// <summary>
+        /// Shows a placed panel only when the runtime says it has something to do, and never when the
+        /// layout hid it.
+        /// </summary>
+        private void ApplyResetButtonVisibilityLike(string panelId, bool isUsable)
+        {
+            if (!reparentedPanelControls.TryGetValue(panelId, out FrameworkElement? control) || control == null)
+            {
+                return;
+            }
+
+            bool hiddenByLayout = OceanyaPanelEditModeController.IsHiddenByLayout(panelId);
+            control.Visibility = isUsable && !hiddenByLayout ? Visibility.Visible : Visibility.Hidden;
         }
 
         /// <summary>
@@ -1206,6 +1251,17 @@ namespace OceanyaClient
         }
 
         /// <summary>
+        /// Which parts of a hosted list surface are currently hidden.
+        /// </summary>
+        /// <param name="DecorationHidden">True when the title and status rows are hidden.</param>
+        /// <param name="CommandsHidden">True when the command row is hidden.</param>
+        private readonly record struct HostedListCompactState(bool DecorationHidden, bool CommandsHidden);
+
+        /// <summary>Compact state per hosted list surface, so the decision has somewhere to hold on to.</summary>
+        private readonly Dictionary<FrameworkElement, HostedListCompactState> hostedListCompactState =
+            new Dictionary<FrameworkElement, HostedListCompactState>();
+
+        /// <summary>
         /// Sheds the parts of a list that stop being usable once its panel is small.
         /// </summary>
         /// <remarks>
@@ -1226,8 +1282,33 @@ namespace OceanyaClient
                 return;
             }
 
-            bool hideDecoration = !forceFullLayout && (height < 260 || width < 220);
-            bool hideCommands = !forceFullLayout && (height < 180 || width < 170);
+            // Hysteresis, not a bare threshold: this runs from the surface's own SizeChanged, and the
+            // padding and rows it toggles change that size, so a single threshold makes the two layouts
+            // alternate forever at certain sizes. See HostedListCompactMode.
+            bool hasPreviousState = hostedListCompactState.TryGetValue(surface, out HostedListCompactState previous);
+            bool hideDecoration = !forceFullLayout && HostedListCompactMode.ShouldBeCompact(
+                previous.DecorationHidden,
+                height,
+                width,
+                HostedListCompactMode.DecorationHeightThreshold,
+                HostedListCompactMode.DecorationWidthThreshold);
+            bool hideCommands = !forceFullLayout && HostedListCompactMode.ShouldBeCompact(
+                previous.CommandsHidden,
+                height,
+                width,
+                HostedListCompactMode.CommandsHeightThreshold,
+                HostedListCompactMode.CommandsWidthThreshold);
+
+            if (hasPreviousState
+                && previous.DecorationHidden == hideDecoration
+                && previous.CommandsHidden == hideCommands)
+            {
+                // Nothing to change. Returning early also keeps a resize from re-running layout work that
+                // would itself raise SizeChanged again.
+                return;
+            }
+
+            hostedListCompactState[surface] = new HostedListCompactState(hideDecoration, hideCommands);
             Thickness framePadding = new Thickness(hideDecoration ? 2 : 10);
 
             if (ReferenceEquals(surface, AreaNavigatorPopupSurface))
@@ -1651,6 +1732,18 @@ namespace OceanyaClient
         /// <summary>
         /// Reports that evidence is unsupported, which is what this button is for.
         /// </summary>
+        /// <summary>
+        /// Tells the user casing is not supported, the way the evidence button does.
+        /// </summary>
+        private void btnCasing_Click(object sender, RoutedEventArgs e)
+        {
+            OceanyaMessageBox.Show(
+                "Oceanya Client is not compatible with casing!",
+                "Casing",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+
         private void btnEvidence_Click(object sender, RoutedEventArgs e)
         {
             OceanyaMessageBox.Show(
@@ -2758,6 +2851,9 @@ namespace OceanyaClient
                         Dispatcher.BeginInvoke(
                             new Action(AddFirstClientIfNoneRestored),
                             DispatcherPriority.ApplicationIdle);
+                        Dispatcher.BeginInvoke(
+                            new Action(RunThemeCaptureIfRequested),
+                            DispatcherPriority.ApplicationIdle);
                     });
             }
             else
@@ -2766,6 +2862,99 @@ namespace OceanyaClient
             }
 
             FinishedLoading?.Invoke();
+        }
+
+        /// <summary>
+        /// Gets a value indicating whether Oceanya's own option toggles may be shown.
+        /// </summary>
+        /// <remarks>
+        /// They are a test-mode affordance, but a layout that hides them outranks that: an imported AO2
+        /// theme hides every panel AO2 has no equivalent for, and these three have none. Without this the
+        /// capture sweep - which runs in test mode - put three stray checkboxes into every themed shot.
+        /// </remarks>
+        private bool AreOptionCheckBoxesAllowed()
+        {
+            if (!OceanyaTestMode.Current.IsEnabled)
+            {
+                return false;
+            }
+
+            Dictionary<string, OceanyaPanelPlacementState>? panels = SaveFile.Data.OceanyaThemeLayout?.Panels;
+            if (panels == null)
+            {
+                return true;
+            }
+
+            foreach (string panelId in new[]
+                     {
+                         OceanyaPanelCatalog.BarCheckStickyPanelId,
+                         OceanyaPanelCatalog.BarCheckSwitchPosPanelId,
+                         OceanyaPanelCatalog.BarCheckInvertLogPanelId
+                     })
+            {
+                if (panels.TryGetValue(panelId, out OceanyaPanelPlacementState? state) && state?.IsHidden == true)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Runs the AO2 theme capture sweep when this launch asked for one.
+        /// </summary>
+        /// <remarks>
+        /// Theme-parity work compares an AO2 screenshot of a theme against ours of the same theme. The AO2
+        /// side is fixed, so ours is re-captured every time the theme system changes - see
+        /// <see cref="Ao2ThemeCaptureRunner"/> for why that runs in-process instead of by driving the UI.
+        /// </remarks>
+        private void RunThemeCaptureIfRequested()
+        {
+            if (!Ao2ThemeCaptureRunner.IsRequested || isMainWindowClosing)
+            {
+                return;
+            }
+
+            OceanyaTestModeOptions options = OceanyaTestMode.Current;
+            Ao2ThemeCaptureRunner runner = new Ao2ThemeCaptureRunner(
+                Ao2ThemeCaptureRunner.ResolveThemeNames(options.ThemeCaptureThemes),
+                options.ThemeCaptureOutputDirectory,
+                options.ThemeCaptureSettleMilliseconds,
+                options.ThemeCaptureMessage,
+                ApplyAo2ThemeForCapture,
+                message => ICMessageSettingsControl.OnSendICMessage?.Invoke(message),
+                () => ActualWidth > 0 && ActualHeight > 0 ? this : null);
+
+            runner.Start(captured =>
+            {
+                CustomConsole.Info($"Theme capture finished: {captured} theme(s) written to {options.ThemeCaptureOutputDirectory}");
+                if (options.ThemeCaptureExitWhenDone)
+                {
+                    Application.Current.Shutdown();
+                }
+            });
+        }
+
+        /// <summary>
+        /// Applies one AO2 theme as the live layout, exactly as the Settings window's import button does.
+        /// </summary>
+        /// <returns>False when the theme has no <c>courtroom_design.ini</c> to import.</returns>
+        private bool ApplyAo2ThemeForCapture(string themeName)
+        {
+            Dictionary<string, string> configValues = Ao2ConfigIniSettings.Load();
+            if (Ao2ThemeLayoutApplier.ApplyToSavefile(themeName, configValues) == null)
+            {
+                return false;
+            }
+
+            // Same refresh the reload-theme button performs: the layout comes from the savefile, but the
+            // chatbox art and colours are cached per theme and have to be dropped by hand.
+            Features.ChatPreview.AO2ChatPreviewResolver.ClearCache();
+            ReapplyPanelLayoutFromSavefile();
+            viewportContent?.ReloadThemeLayout();
+            pictureInPictureViewportContent?.ReloadThemeLayout();
+            return true;
         }
 
         /// <summary>

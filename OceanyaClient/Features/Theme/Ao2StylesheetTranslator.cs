@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -88,7 +88,8 @@ namespace OceanyaClient.Features.Theme
             string cssText,
             OceanyaThemeLayoutState layout,
             IReadOnlyList<Ao2WidgetGeometry>? widgets = null,
-            IReadOnlyList<string>? assetRoots = null)
+            IReadOnlyList<string>? assetRoots = null,
+            IReadOnlySet<string>? excludedPanelIds = null)
         {
             if (string.IsNullOrWhiteSpace(cssText) || layout == null)
             {
@@ -96,6 +97,13 @@ namespace OceanyaClient.Features.Theme
             }
 
             HashSet<string> touched = new HashSet<string>(StringComparer.Ordinal);
+            // Panels with no AO2 counterpart are deliberately left alone. The theme has no opinion about
+            // Oceanya's own controls, so letting its class rules reach them is guesswork - and AAI's
+            // `QLabel { background-color: transparent }` guessed the clients strip and its add/remove
+            // buttons into being invisible.
+            excluded = excludedPanelIds;
+            try
+            {
             foreach ((string selector, Dictionary<string, string> declarations) in ParseRules(cssText))
             {
                 // Qt allows several comma-separated selectors per rule, and they can disagree about
@@ -119,6 +127,12 @@ namespace OceanyaClient.Features.Theme
             }
 
             return touched.Count;
+            }
+            finally
+            {
+                // Thread-static, so it must never survive into the next call on this thread.
+                excluded = null;
+            }
         }
 
         /// <summary>
@@ -158,6 +172,16 @@ namespace OceanyaClient.Features.Theme
 
             /// <summary>Qt sub-control the rule addresses, empty for the widget itself.</summary>
             public string SubControl { get; init; } = string.Empty;
+
+            /// <summary>
+            /// Qt object name the rule addresses (`QPushButton#ui_ooc_toggle`), empty when it has none.
+            /// </summary>
+            /// <remarks>
+            /// This is how a theme styles ONE widget rather than every widget of a class, and AOHD does
+            /// almost all of its per-widget work this way. Ignoring it meant those widgets - the OOC toggle,
+            /// the spectator and back-to-lobby buttons - silently kept our own look.
+            /// </remarks>
+            public string ObjectName { get; init; } = string.Empty;
         }
 
         /// <summary>
@@ -185,6 +209,16 @@ namespace OceanyaClient.Features.Theme
                 }
 
                 trimmed = trimmed.Replace("::" + subControlMatch.Groups[1].Value, string.Empty);
+            }
+
+            // `QPushButton#ui_ooc_toggle`, and the malformed-but-real `QPushButton::hover#ui_ooc_toggle`
+            // that AOHD writes - the object name is taken wherever it appears.
+            string objectName = string.Empty;
+            Match objectNameMatch = Regex.Match(trimmed, @"#([A-Za-z_][\w]*)");
+            if (objectNameMatch.Success)
+            {
+                objectName = objectNameMatch.Groups[1].Value;
+                trimmed = trimmed.Remove(objectNameMatch.Index, objectNameMatch.Length);
             }
 
             Dictionary<string, double> geometry = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
@@ -237,7 +271,8 @@ namespace OceanyaClient.Features.Theme
                 QtClass = qtClass,
                 Geometry = geometry,
                 State = state,
-                SubControl = subControl
+                SubControl = subControl,
+                ObjectName = objectName
             };
         }
 
@@ -250,10 +285,11 @@ namespace OceanyaClient.Features.Theme
         public static int ApplyThemeStylesheet(
             string themeName,
             OceanyaThemeLayoutState layout,
-            IReadOnlyList<Ao2WidgetGeometry>? widgets = null)
+            IReadOnlyList<Ao2WidgetGeometry>? widgets = null,
+            IReadOnlySet<string>? excludedPanelIds = null)
         {
             string? path = Ao2ThemeLayoutImporter.ResolveThemeFilePath(themeName, "courtroom_stylesheets.css");
-            return path == null ? 0 : ApplyStylesheetFile(path, layout, widgets);
+            return path == null ? 0 : ApplyStylesheetFile(path, layout, widgets, excludedPanelIds);
         }
 
         /// <summary>
@@ -265,11 +301,12 @@ namespace OceanyaClient.Features.Theme
         public static int ApplyStylesheetFile(
             string filePath,
             OceanyaThemeLayoutState layout,
-            IReadOnlyList<Ao2WidgetGeometry>? widgets = null)
+            IReadOnlyList<Ao2WidgetGeometry>? widgets = null,
+            IReadOnlySet<string>? excludedPanelIds = null)
         {
             try
             {
-                return Apply(File.ReadAllText(filePath), layout, widgets, ResolveAssetRoots(filePath));
+                return Apply(File.ReadAllText(filePath), layout, widgets, ResolveAssetRoots(filePath), excludedPanelIds);
             }
             catch (IOException exception)
             {
@@ -303,9 +340,21 @@ namespace OceanyaClient.Features.Theme
             if (!string.IsNullOrWhiteSpace(themeFolder))
             {
                 roots.Add(themeFolder);
+
+                // Every ancestor of the stylesheet, too. A theme writes its URLs relative to the INSTALL
+                // ROOT (`url(base/themes/<theme>/...)`), and deriving that root only from the theme catalog
+                // means it is missing whenever the catalog has not been configured - which is exactly when
+                // GrayGarden's dropdown diamonds silently resolved to nothing. Walking up from the file we
+                // just read always finds it.
+                DirectoryInfo? ancestor = Directory.GetParent(themeFolder);
+                while (ancestor != null)
+                {
+                    roots.Add(ancestor.FullName);
+                    ancestor = ancestor.Parent;
+                }
             }
 
-            return roots;
+            return roots.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         }
 
         /// <summary>
@@ -347,6 +396,20 @@ namespace OceanyaClient.Features.Theme
             Ao2SelectorTarget selector,
             IReadOnlyList<Ao2WidgetGeometry>? widgets)
         {
+            if (selector.ObjectName.Length > 0)
+            {
+                // An object name addresses exactly one widget. AO2 names them `ui_` + the design.ini
+                // identifier, so the mapping table we already have resolves them with no second list to
+                // keep in step.
+                string identifier = selector.ObjectName.StartsWith("ui_", StringComparison.OrdinalIgnoreCase)
+                    ? selector.ObjectName.Substring(3)
+                    : selector.ObjectName;
+                return Ao2ThemeLayoutImporter.TryResolvePanelForIdentifier(identifier, out string namedPanel)
+                    && (excluded == null || !excluded.Contains(namedPanel))
+                        ? new[] { namedPanel }
+                        : Array.Empty<string>();
+            }
+
             if (selector.Geometry.Count > 0)
             {
                 // A coordinate selector addresses ONE widget, so it needs the theme's own rectangles.
@@ -373,14 +436,15 @@ namespace OceanyaClient.Features.Theme
 
                 targets.AddRange(OceanyaPanelCatalog.BuiltInPanels
                     .Where(panel => kinds.Contains(panel.Kind))
-                    .Select(panel => panel.Id));
+                    .Select(panel => panel.Id)
+                    .Where(panelId => IsCompatibleClass(qtClass, panelId)));
             }
 
             foreach ((string candidate, string[] panelIds) in SelectorPanels)
             {
                 if (string.Equals(candidate, qtClass, StringComparison.OrdinalIgnoreCase))
                 {
-                    targets.AddRange(panelIds);
+                    targets.AddRange(panelIds.Where(panelId => excluded == null || !excluded.Contains(panelId)));
                 }
             }
 
@@ -421,8 +485,17 @@ namespace OceanyaClient.Features.Theme
         /// <param name="qtClass">Qt class name, possibly empty.</param>
         /// <param name="panelId">Panel to test.</param>
         /// <returns>True when the class maps to that panel's kind, or carries no class at all.</returns>
+        /// <summary>Panels the current Apply call must not touch; see the note in <see cref="Apply"/>.</summary>
+        [ThreadStatic]
+        private static IReadOnlySet<string>? excluded;
+
         private static bool IsCompatibleClass(string qtClass, string panelId)
         {
+            if (excluded != null && excluded.Contains(panelId))
+            {
+                return false;
+            }
+
             if (string.IsNullOrEmpty(qtClass))
             {
                 return true;
@@ -430,6 +503,17 @@ namespace OceanyaClient.Features.Theme
 
             OceanyaPanelDescriptor? descriptor = OceanyaPanelCatalog.TryGet(panelId);
             if (descriptor == null)
+            {
+                return false;
+            }
+
+            // Qt matches on the widget's real class. A panel backed by an AOButton is a QPushButton, so a
+            // theme's QLabel or QCheckBox rule must not reach it, however close our kinds are: AAI's
+            // `QLabel { background-color: transparent }` would otherwise erase the fill of every bar button
+            // and shout in the theme.
+            if (OceanyaPanelCatalog.Ao2PushButtonPanelIds.Contains(panelId)
+                && !string.Equals(qtClass, "QPushButton", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(qtClass, "QWidget", StringComparison.OrdinalIgnoreCase))
             {
                 return false;
             }
@@ -631,6 +715,37 @@ namespace OceanyaClient.Features.Theme
                 return ApplyScrollBarDeclarations(layout, panelId, descriptor, declarations, trackColour: false);
             }
 
+            // A slider handle can be skinned with colours instead of art, and AOHD does exactly that.
+            if (string.Equals(subControl, "handle", StringComparison.OrdinalIgnoreCase)
+                && selectorState == Ao2SelectorState.Normal)
+            {
+                OceanyaPanelPlacementState handleState = ResolveState(layout, panelId, descriptor);
+                bool wroteHandle = false;
+                if (TryResolveBackground(declarations, out string handleColour))
+                {
+                    handleState.SliderHandleColor = handleColour;
+                    wroteHandle = true;
+                }
+
+                if (TryResolveBorder(declarations, out string handleBorder, out _) && handleBorder.Length > 0)
+                {
+                    handleState.SliderHandleBorderColor = handleBorder;
+                    wroteHandle = true;
+                }
+
+                if (declarations.TryGetValue("border-radius", out string? handleRadius)
+                    && TryParsePixels(handleRadius, out double radius))
+                {
+                    handleState.SliderHandleCornerRadius = radius;
+                    wroteHandle = true;
+                }
+
+                if (wroteHandle && !hasImage)
+                {
+                    return true;
+                }
+            }
+
             // A slider's two pages are the filled and empty halves of its track, which is the part AO2
             // themes give a colour rather than an image.
             bool isFilledPage = string.Equals(subControl, "sub-page", StringComparison.OrdinalIgnoreCase);
@@ -661,6 +776,18 @@ namespace OceanyaClient.Features.Theme
                 return wrote;
             }
 
+            // A checkbox indicator can be skinned with colours instead of art - AOHD paints its checked
+            // tick box #328CBD with a white border and ships no image at all.
+            if (string.Equals(subControl, "indicator", StringComparison.OrdinalIgnoreCase)
+                && selectorState != Ao2SelectorState.Hover
+                && ApplyIndicatorColours(layout, panelId, descriptor, declarations, selectorState))
+            {
+                if (!hasImage)
+                {
+                    return true;
+                }
+            }
+
             if (!hasImage || selectorState == Ao2SelectorState.Hover)
             {
                 // Only artwork is representable here, and there is no hover slot for an indicator yet.
@@ -681,6 +808,58 @@ namespace OceanyaClient.Features.Theme
             else
             {
                 state.IndicatorImagePath = imagePath;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Applies a <c>QCheckBox::indicator</c> rule's colours to the panel's tick box.
+        /// </summary>
+        /// <param name="layout">Layout to update.</param>
+        /// <param name="panelId">Panel being styled.</param>
+        /// <param name="descriptor">Panel descriptor.</param>
+        /// <param name="declarations">Declarations of the rule.</param>
+        /// <param name="selectorState">Which state the rule addresses.</param>
+        /// <returns>True when a colour was written.</returns>
+        private static bool ApplyIndicatorColours(
+            OceanyaThemeLayoutState layout,
+            string panelId,
+            OceanyaPanelDescriptor descriptor,
+            IReadOnlyDictionary<string, string> declarations,
+            Ao2SelectorState selectorState)
+        {
+            bool hasBackground = TryResolveBackground(declarations, out string backgroundHex);
+            bool hasBorder = TryResolveBorder(declarations, out string borderColour, out _) && borderColour.Length > 0;
+            if (!hasBackground && !hasBorder)
+            {
+                return false;
+            }
+
+            OceanyaPanelPlacementState state = ResolveState(layout, panelId, descriptor);
+            bool isChecked = selectorState == Ao2SelectorState.Selected;
+            if (hasBackground)
+            {
+                if (isChecked)
+                {
+                    state.CheckedIndicatorBackgroundColor = backgroundHex;
+                }
+                else
+                {
+                    state.IndicatorBackgroundColor = backgroundHex;
+                }
+            }
+
+            if (hasBorder)
+            {
+                if (isChecked)
+                {
+                    state.CheckedIndicatorBorderColor = borderColour;
+                }
+                else
+                {
+                    state.IndicatorBorderColor = borderColour;
+                }
             }
 
             return true;
@@ -730,6 +909,59 @@ namespace OceanyaClient.Features.Theme
             return true;
         }
 
+        /// <summary>Fully transparent, in the #AARRGGBB form the layout stores.</summary>
+        private const string TransparentColor = "#00000000";
+
+        /// <summary>
+        /// Lets the long-hand border properties override what the <c>border</c> shorthand said.
+        /// </summary>
+        /// <remarks>
+        /// Qt applies declarations in source order like CSS does, so a rule that opens with
+        /// <c>border: 1px solid rgba(255, 0, 255, 150)</c> and then says <c>border-color: black</c> draws a
+        /// BLACK border - the shorthand's colour is overwritten. AAI does exactly that, and reading only the
+        /// shorthand is what put magenta outlines around its dropdowns where AO2 shows none.
+        ///
+        /// The parsed rule is keyed by property, so true source order is not available; applying the
+        /// long-hands after the shorthand reproduces the only order themes actually write.
+        /// </remarks>
+        /// <param name="declarations">Declarations of the rule.</param>
+        /// <param name="colour">Border colour, replaced when a long-hand supplies one.</param>
+        /// <param name="width">Border width, replaced when <c>border-width</c> supplies one.</param>
+        private static void ApplyBorderLonghandOverrides(
+            IReadOnlyDictionary<string, string> declarations,
+            ref string colour,
+            ref double? width)
+        {
+            // Most specific last: a uniform `border-color` loses to a per-side one, matching Qt.
+            foreach (string property in new[]
+                     {
+                         "border-color", "border-top-color", "border-right-color",
+                         "border-bottom-color", "border-left-color"
+                     })
+            {
+                if (!declarations.TryGetValue(property, out string? value))
+                {
+                    continue;
+                }
+
+                string candidate = (value ?? string.Empty).Trim();
+                if (candidate.Equals("transparent", StringComparison.OrdinalIgnoreCase))
+                {
+                    colour = TransparentColor;
+                }
+                else if (TryResolveBorderColour(candidate, out string longhandColour))
+                {
+                    colour = longhandColour;
+                }
+            }
+
+            if (declarations.TryGetValue("border-width", out string? widthValue)
+                && TryParsePixels(widthValue ?? string.Empty, out double parsedWidth))
+            {
+                width = parsedWidth;
+            }
+        }
+
         /// <summary>
         /// Reads a background colour from either the shorthand or the long-hand property.
         /// </summary>
@@ -742,6 +974,16 @@ namespace OceanyaClient.Features.Theme
             if (declarations.TryGetValue("background-color", out string? value)
                 || declarations.TryGetValue("background", out value))
             {
+                // `transparent` is a real instruction here, not a value we failed to read: AAI and many
+                // other themes write `QLabel { background-color: transparent }` so their labels show the
+                // courtroom backdrop through. Dropping it left our stock opaque fill in place, which is
+                // why such a label read as solid black where AO2 showed the art behind it.
+                if ((value ?? string.Empty).Trim().Equals("transparent", StringComparison.OrdinalIgnoreCase))
+                {
+                    backgroundHex = TransparentColor;
+                    return true;
+                }
+
                 return TryConvertColor(value, out backgroundHex);
             }
 
@@ -776,8 +1018,20 @@ namespace OceanyaClient.Features.Theme
                     if (declarations.TryGetValue(side, out string? sideValue)
                         && TryResolveBorderColour(sideValue, out colour))
                     {
+                        ApplyBorderLonghandOverrides(declarations, ref colour, ref width);
                         return true;
                     }
+                }
+
+                // No shorthand and no side, but a bare `border-color` still describes a border.
+                string standalone = colour;
+                double? standaloneWidth = width;
+                ApplyBorderLonghandOverrides(declarations, ref standalone, ref standaloneWidth);
+                if (standalone.Length > 0 || standaloneWidth.HasValue)
+                {
+                    colour = standalone;
+                    width = standaloneWidth;
+                    return true;
                 }
 
                 return false;
@@ -803,6 +1057,7 @@ namespace OceanyaClient.Features.Theme
                     : 0;
 
             TryResolveBorderColour(declaration, out colour);
+            ApplyBorderLonghandOverrides(declarations, ref colour, ref width);
             return true;
         }
 
